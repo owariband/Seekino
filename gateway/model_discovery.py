@@ -6,7 +6,12 @@ import httpx
 from .personal_endpoint import endpoint_http_client
 
 
-def discover_models(protocol: str, base_url: str, api_key: str | None, *, allow_local: bool) -> list[str]:
+# Status codes meaning the server has no model-list endpoint at all (e.g. whisper.cpp), not a failed request.
+LIST_NOT_PROVIDED = {404, 405, 501}
+
+
+def discover_models(protocol: str, base_url: str, api_key: str | None, *, allow_local: bool) -> list[str] | None:
+    """Return the model IDs the service lists, or None when the service has no model-list endpoint."""
     headers = {}
     if protocol == "ark":
         raise ValueError("请使用方舟推理接入点的模型 ID")
@@ -34,6 +39,8 @@ def discover_models(protocol: str, base_url: str, api_key: str | None, *, allow_
         with endpoint_http_client(base_url, allow_local=allow_local, timeout=8) as client:
             for _ in range(5):
                 with client.stream("GET", base_url + path, headers=headers, params=params) as response:
+                    if response.status_code in LIST_NOT_PROVIDED and not found and not params:
+                        return None
                     if not response.is_success:
                         raise ValueError(f"模型列表接口返回 HTTP {response.status_code}，可手动填写模型 ID")
                     content = bytearray()

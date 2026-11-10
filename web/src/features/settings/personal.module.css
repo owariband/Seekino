@@ -136,6 +136,22 @@
 .registryHeading { margin: 0; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
 .registryHeading { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
 .registryHeading h4 { font-size: .94rem; margin: 0; }
+
+/* Fetch result: a one-line summary, then every listed model as a chip; registered ones read as done. */
+.discovered { display: grid; gap: 10px; }
+.discoveredSummary { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 12px; }
+.discoveredSummary p { margin: 0; color: var(--ink-soft); font-size: .84rem; font-variant-numeric: tabular-nums; }
+.discoveredNote { margin: 0; padding: 10px 12px; color: var(--ink-soft); border-radius: var(--radius-small); background: var(--surface-muted); font-size: .84rem; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.chip, .chipDone { display: inline-flex; min-height: 32px; align-items: center; gap: 6px; max-width: 100%; padding: 0 12px 0 10px; overflow: hidden; border-radius: var(--radius-pill); font-size: .82rem; text-overflow: ellipsis; white-space: nowrap; }
+.chip { color: var(--ink); border: 1px solid var(--line); background: var(--surface-raised); cursor: pointer;
+  transition: color var(--duration-fast) var(--ease-out), background-color var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out); }
+.chip svg { color: var(--teal-deep); }
+.chip:hover:enabled { color: var(--teal-deep); border-color: var(--line-strong); background: var(--teal-wash); }
+.chip:active:enabled { transform: scale(.96); transition-duration: var(--duration-press); }
+.chip:disabled { cursor: not-allowed; opacity: .5; }
+.chip:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+.chipDone { color: var(--teal-deep); border: 1px solid transparent; background: var(--teal-wash); }
 .modelRow { margin: 0; min-width: 0; padding: 12px 14px; display: grid; gap: 6px; border: 1px solid var(--line); border-radius: 12px; }
 .modelInputs { display: grid; grid-template-columns: minmax(0, 1fr) minmax(105px, .56fr) auto; align-items: end; gap: 8px; }
 .iconButton, .addModel { display: inline-flex; align-items: center; justify-content: center; gap: 6px; background: transparent; color: var(--teal-deep); border: 0; font: inherit; cursor: pointer; }

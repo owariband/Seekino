@@ -957,7 +957,7 @@ export function saveModelRole(role: ModelRole, modelId: string | null, revision:
 }
 
 export function discoverModelIds(id: string, endpoint: Pick<PersonalModelConnectionInput, "protocol" | "baseUrl" | "revision" | "apiKey">, signal?: AbortSignal) {
-  return requestJson<{ modelIds: string[] }>(personalModelsPath + "/discover?" + new URLSearchParams({ connectionId: id }), {
+  return requestJson<{ modelIds: string[]; listAvailable?: boolean }>(personalModelsPath + "/discover?" + new URLSearchParams({ connectionId: id }), {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(endpoint), signal,
   });
 }

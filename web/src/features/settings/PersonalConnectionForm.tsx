@@ -1,4 +1,4 @@
-import { Plus, X } from "lucide-react";
+import { Check, Plus, X } from "lucide-react";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { discoverModelIds, errorMessage } from "../../api/client";
 import type { PersonalModelConnection, PersonalModelConnectionInput, PersonalModelProtocol, RegistryModelKind } from "../../api/contracts";
@@ -62,11 +62,12 @@ export function PersonalConnectionForm({ id, connection, busy, cancel, save }: {
     return items.size ? Array.from(items.values()) : [modelRow(allowedKinds[0]!)];
   });
   const [error, setError] = useState("");
-  const [suggestions, setSuggestions] = useState<string[] | null>(null);
+  // What the last "fetch model list" returned; listAvailable is false when the service has no list endpoint.
+  const [discovered, setDiscovered] = useState<{ ids: string[]; listAvailable: boolean } | null>(null);
   const [discovering, setDiscovering] = useState(false);
   const request = useRef<AbortController | null>(null);
   useEffect(() => {
-    setSuggestions(null); setDiscovering(false); setError("");
+    setDiscovered(null); setDiscovering(false); setError("");
     return () => request.current?.abort();
   }, [protocol, url, key, clearKey]);
 
@@ -89,15 +90,28 @@ export function PersonalConnectionForm({ id, connection, busy, cancel, save }: {
     }
     return true;
   }
+  const registered = new Set(rows.map((r) => r.modelId.trim()).filter(Boolean));
+  const newIds = discovered?.ids.filter((m) => !registered.has(m)) ?? [];
+  // Fill empty rows first so an untouched draft row doesn't stay blank above the added models.
+  function addModels(ids: string[]) {
+    let next = [...rows];
+    for (const id of ids) {
+      if (next.some((r) => r.modelId.trim() === id)) continue;
+      const empty = next.find((r) => !r.modelId.trim());
+      if (empty) next = next.map((r) => r === empty ? { ...r, modelId: id } : r);
+      else if (next.length < 64) next = [...next, modelRow(allowedKinds[0]!, id)];
+    }
+    setRows(next);
+  }
   async function discover() {
     if (!validDestination()) return;
     request.current?.abort();
     const controller = new AbortController();
     request.current = controller;
-    setError(""); setDiscovering(true); setSuggestions(null);
+    setError(""); setDiscovering(true); setDiscovered(null);
     try {
       const result = await discoverModelIds(id, { protocol: native?.protocol ?? protocol, baseUrl: url.trim(), revision: connection?.revision ?? 0, ...credentials() }, controller.signal);
-      if (!controller.signal.aborted) setSuggestions(result.modelIds);
+      if (!controller.signal.aborted) setDiscovered({ ids: result.modelIds, listAvailable: result.listAvailable !== false });
     } catch (e) {
       if (!controller.signal.aborted) setError(errorMessage(e, locale));
     } finally {
@@ -135,16 +149,25 @@ export function PersonalConnectionForm({ id, connection, busy, cancel, save }: {
       onChange={(e) => { setClearKey(e.target.checked); setKey(""); }} />{t("清除已保存的密钥")}</label>}
     </>}
     <div className={styles.registryHeading}><h4>{t("已注册模型")}</h4>
-      {(native ? native.discoverable === true : protocol !== "ark") && <button type="button" className={styles.button} disabled={busy || discovering || !url.trim()} onClick={() => void discover()}>
+      {(native ? native.discoverable === true : protocol !== "ark" && protocol !== "openai_audio") && <button type="button" className={styles.button} disabled={busy || discovering || !url.trim()} onClick={() => void discover()}>
         {t(discovering ? "正在获取…" : "获取模型列表")}</button>}
     </div>
-    {suggestions !== null && (suggestions.length
-      ? <label className={styles.field}><span>{t("从服务添加模型")}</span><select aria-label={t("从服务添加模型")} value="" disabled={busy || rows.length >= 64} onChange={(e) => {
-        const value = e.target.value; if (!value) return;
-        const empty = rows.find((r) => !r.modelId); if (empty) update(empty, { modelId: value });
-        else setRows([...rows, modelRow(allowedKinds[0]!, value)]);
-      }}><option value="">{t("选择模型")}</option>{suggestions.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>
-      : <p className={styles.meta} role="status">{t("未获取到模型 ID，可手动填写。")}</p>)}
+    {discovered && <section className={styles.discovered} aria-label={t("获取到的模型")}>
+      {!discovered.listAvailable ? <p className={styles.discoveredNote} role="status">{t("该服务不提供模型列表，请手动填写模型 ID。")}</p>
+        : !discovered.ids.length ? <p className={styles.discoveredNote} role="status">{t("未获取到模型 ID，可手动填写。")}</p>
+        : <>
+          <div className={styles.discoveredSummary}>
+            <p role="status">{t("获取到 {total} 个模型，{registered} 个已注册", { total: discovered.ids.length, registered: discovered.ids.length - newIds.length })}</p>
+            {newIds.length > 1 && <button type="button" className={styles.addModel} disabled={busy || rows.length >= 64} onClick={() => addModels(newIds)}>
+              <Plus size={14} aria-hidden="true" />{t("全部添加（{n}）", { n: newIds.length })}</button>}
+          </div>
+          <ul className={styles.chips}>{discovered.ids.map((id) => registered.has(id)
+            ? <li key={id}><span className={styles.chipDone} dir="ltr" title={t("{model} 已注册", { model: id })}><Check size={13} aria-hidden="true" />{id}<span className="sr-only">{t("已注册")}</span></span></li>
+            : <li key={id}><button type="button" className={styles.chip} dir="ltr" disabled={busy || rows.length >= 64} aria-label={t("添加 {model}", { model: id })}
+                onClick={() => addModels([id])}><Plus size={13} aria-hidden="true" />{id}</button></li>)}
+          </ul>
+        </>}
+    </section>}
     {rows.map((r, index) => <fieldset className={styles.modelRow} key={r.key} disabled={busy}>
       <div className={styles.modelInputs}>
         <label className={styles.field}><span>{t("模型 ID")}</span><input dir="ltr" required maxLength={255} spellCheck={false} aria-label={index === 0 ? t("模型 ID") : t("模型 ID {n}", { n: index + 1 })} value={r.modelId} onChange={(e) => update(r, { modelId: e.target.value })} /></label>
