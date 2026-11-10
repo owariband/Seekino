@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
@@ -92,6 +92,27 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 
 describe("WatchHomePage", () => {
+  it("welcomes first-time public visitors once and never shows the welcome on a local library", async () => {
+    window.localStorage.removeItem("seekino-welcome-dismissed");
+    const welcome = () => screen.queryByRole("region", { name: "欢迎来到 Seekino" });
+    renderPage();
+    expect(welcome()).toBeNull();
+    cleanup();
+
+    mocks.useAuth.mockReturnValue({ activeSource: { kind: "public" }, canUpload: false });
+    renderPage();
+    const card = welcome()!;
+    expect(within(card).getByRole("link", { name: "试着描述一个画面" })).toHaveAttribute("href", "/search");
+    expect(within(card).getByRole("link", { name: /Cloud 和本地版有什么不同/ })).toHaveAttribute("href", "/docs");
+    fireEvent.click(within(card).getByRole("button", { name: "关闭欢迎提示" }));
+    expect(welcome()).toBeNull();
+    cleanup();
+
+    renderPage();
+    expect(welcome()).toBeNull();
+    window.localStorage.removeItem("seekino-welcome-dismissed");
+  });
+
   it("preserves a public Series tenant and separates owner controls from the card link", async () => {
     const shared = { ...secondSeries, tenantId: "another-owner", access: "public" as const,
       visibility: "public" as const, publisher: { kind: "user" as const, displayName: "分享者", avatar: null } };
