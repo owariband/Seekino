@@ -46,6 +46,7 @@ def test_mcp_mount_runs_with_application_lifespan():
         assert tools.status_code == 200
         assert {tool["name"] for tool in tools.json()["result"]["tools"]} == {
             "list_series", "retrieve", "read_evidence", "browse_events",
+            "find_edit_templates", "get_style_card",
         }
     assert events == ["started", "closed"]
 

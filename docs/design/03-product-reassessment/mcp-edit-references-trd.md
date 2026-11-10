@@ -1,10 +1,8 @@
 # 1. 问题与现状
 
-找到正片表演后，编辑仍得翻参考片才能知道某种手法是否值得借用。#84 的代表片段、风格卡与来源属于同一解析版本；现有 retrieve、browse_events、read_evidence 提供正片事件。编辑需要直接用自己的话寻找参考，并播放返回的原片区间。
+编辑只给剧本，需要在同一个 Seekino 素材库找到可剪的表演、可借鉴的手法，并回到两者的原片。一个 MCP 服务在 `/mcp` 同时提供这六个工具。编辑可以用同一个客户端走完搜索、看依据、自选入出点和下载。
 
-分支 `feat/mcp-edit-references`，依赖[参考片解析 #84](https://github.com/owariband/Seekino/pull/84)、[档案 #83](https://github.com/owariband/Seekino/pull/83)。沿用[双召回主设计 #50](https://github.com/owariband/Seekino/pull/50)。本分支包含 [#81](https://github.com/owariband/Seekino/pull/81) 的原始区间取片提交，可从一份检出运行两条链路。
-
-实施 [PR #85](https://github.com/owariband/Seekino/pull/85)。
+主设计沿用 [#50](https://github.com/owariband/Seekino/pull/50)。完整实现和验收集中在 [PR #85](https://github.com/owariband/Seekino/pull/85)，分支 `feat/mcp-edit-references` 直接面向 `dev`。此前分别开发的取片、用途识别和参考片解析已包含在这份提交历史中。
 
 # 2. 影响因素、假设与评价指标
 
@@ -25,5 +23,11 @@
 #50 §3.3 指定逐段采用 Weekend B 提示词。正式代码加载[逐段原文](../../../agent/video_parse_v2/edit_reference_pick.txt)和[整片 Refine 原文](../../../agent/video_parse_v2/edit_reference_refine.txt)。前者替换实测参数，后者接收结构化笔记。分帧排版、失效引用校验、区间 MP4 的 inline 响应属于实现细节。本轮优先复验提示词原文与源时刻。具体怎样呈现登场、如何选择配色和字体由编辑决定。
 
 # 6. 结果验收与闭环
+
+从 #85 检出后运行下列测试。端口指向本机专用 Elasticsearch 8.x 测试实例，命令需要 FFmpeg 和 ffprobe。测试通过正常 API 启动应用，在临时数据库中上传两支各两秒的合成片，执行 Parse V2 和索引发布，再用同一 MCP 客户端读取新生成的带引证风格卡、下载自选表演与参考原片。它使用固定模型响应，验证 HTTP、SQL、ES 和 FFmpeg 的衔接。索引名每次随机生成，结束时释放。默认使用临时 SQLite；设置 `SEEKINO_EDITING_TEST_DATABASE_URL` 可在本机空的 MySQL `*_test` 数据库执行同一用例。
+
+```bash
+SEEKINO_TEST_ELASTICSEARCH_URL=http://127.0.0.1:19451 uv run --locked python -m pytest -q tests/server/test_editing_mcp_flow.py
+```
 
 本机编辑库里已有的浅版卡标作 `legacy_technique_groups`，保留实际已发布的观察和版本。正式 Refine 现写入 `scope`、`signals` 及指到具体毫秒的 `examples`。回归在独立库重放 #50 的八段观察和片主盲选 B 组用过的原卡。当前提示词未新增付费推理。后续由片主发起 Claude 验收，编辑只拿剧本、MCP 和本机 `motion-showreel` 工具，验收者另持已知答案。成片里的动作连续性、发缘、眼镜和手指的质量、实际借用及返工由该次验收记录。
