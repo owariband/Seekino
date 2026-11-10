@@ -40,12 +40,15 @@ class ReferenceSegment(_Model):
         return self
 
 
-class Step(_Model):
-    start_ms: int
-    end_ms: int
+class ShotView(_Model):
     framing: Literal["ECU", "CU", "MCU", "MS", "FULL", "WIDE", "INSERT", "GRAPHIC", "OTHER"]
     subject: Text
     enter: Literal["CUT", "FLASH", "WIPE", "MATCH", "MOVEMENT", "HOLD", "NONE", "UNCERTAIN"]
+
+
+class Step(ShotView):
+    start_ms: int
+    end_ms: int
 
 
 class Look(_Model):
@@ -61,14 +64,17 @@ class Motion(_Model):
     easing: Text | None
 
 
-class Note(_Model):
+class NoteDescription(_Model):
     name: Text
     summary: Text
     role: Literal["INTRO", "TRANSITION", "ACCENT", "TITLE", "LOOP", "OUTRO"] | None
     look: Look
-    motion: Motion
     slots: list[Text] = Field(max_length=8)
     signals: list[Text] = Field(max_length=8)
+
+
+class Note(NoteDescription):
+    motion: Motion
 
 
 class TechniqueObservation(_Model):
