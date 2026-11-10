@@ -72,7 +72,7 @@
 .channels dt { color: var(--ink); font-size: .875rem; font-weight: 560; }
 .channels dd { margin: 0; color: var(--ink-soft); font-size: .875rem; line-height: 1.5; }
 
-.star { display: flex; align-items: center; gap: 16px; margin-top: 28px; padding: 20px 22px; color: var(--ink); border: 1px solid var(--line-strong); border-radius: var(--radius-medium); background: var(--teal-wash); text-decoration: none; transition: border-color 160ms ease, transform 160ms ease; }
+.star { display: flex; align-items: center; gap: 16px; margin-top: 28px; padding: 20px 22px; color: var(--ink); border: 1px solid var(--line-strong); border-radius: var(--radius-medium); background: var(--teal-wash); text-decoration: none; transition: border-color 160ms var(--ease-out), transform 160ms var(--ease-out); }
 .star:hover { border-color: var(--teal); transform: translateY(-1px); }
 .star > span { display: grid; flex: 1; gap: 4px; }
 .star strong { font: 650 .95rem/1.3 var(--display); }

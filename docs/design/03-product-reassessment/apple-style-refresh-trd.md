@@ -37,6 +37,7 @@
 - **色板：** 中性灰白：浅色 canvas `#f5f5f7`、卡片 `#ffffff`、文字 `#1d1d1f` / `#6e6e73`；深色 canvas `#000000`、卡片 `#1c1c1e`、文字 `#f5f5f7`。Teal 保留为唯一强调色。Hero 舞台由绿黑改为中性黑。
 - **材质与形状：** 顶栏改为半透明磨砂（`backdrop-filter: saturate(180%) blur(20px)`）+ 发丝线；主要按钮和 Hero 按钮改为胶囊形；Hero 主按钮改为白色胶囊；去掉悬停上浮和彩色投影；阴影改为两层低不透明度。
 - **标题：** 大标题字重 700，字距 -0.022em；页面标题略放大。
+- **动效（2026-11-10 追加）：** hypnos 反馈页面切换和按钮动画“生硬、突兀”。核对源码：已有 39 处 transition，无 linear 缓动，因此“缺少过渡、使用线性缓动”的说法不成立。实际原因有三：路由切换没有任何动画，页面瞬间替换；顶栏图标按钮、上传、账号菜单、导航项、Hero 与系列页按钮、关闭按钮完全没有 transition；按钮没有按下反馈。改法：新增 `--ease-out: cubic-bezier(.25, 1, .5, 1)`、`--duration-fast: 160ms`、`--duration-press: 110ms`、`--duration-page: 320ms`；48 处短时 `ease` 改用 `--ease-out`；上述控件补上颜色、背景和 transform 过渡，`:active` 缩放 0.92–0.98。路径变化时，`AppShell` 用 Web Animations API 让内容区淡入并上移 10px（320ms）。不引入 framer-motion：路由组件不需要重新挂载，避免播放页和对话状态丢失。不用 React Router 的 `viewTransition`：它需要 data router，而项目使用 `BrowserRouter`。查询参数、hash 与设置浮层不触发动画；`prefers-reduced-motion` 下不运行。动画期间的 transform 会让内容区内 `position: fixed` 的元素暂时以内容区为参照；现有这类元素都是交互后才打开的菜单、抽屉和对话框，不会在页面进入的 320ms 内出现。
 
 迁移与兼容：无数据、接口或配置变化。回退方式为 revert 本分支提交。
 
@@ -50,6 +51,8 @@
 | 标签字号 | 替换后最小 0.72rem |
 | 深色主按钮 | 欢迎卡片主按钮文字跟随 `--canvas`，深色下为黑字配薄荷色底，可读 |
 | typecheck / test / build | 全部通过（630 项测试） |
+| 页面进入动画 | 浏览器实测：从 `/watch` 点到 `/docs` 时，内容区上有一个运行中的动画；首次加载不触发 |
+| 按下反馈 | 浏览器实测：按住顶栏 GitHub 按钮时 `transform` 为 `matrix(0.92, …)` |
 
 # 5. 试点验证与方案取舍
 

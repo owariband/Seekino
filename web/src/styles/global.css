@@ -101,6 +101,11 @@
     --radius-medium: 16px;
     --radius-small: 10px;
     --radius-pill: 980px;
+    /* Motion: a quick ease-out (fast start, long settle) for controls, a slightly longer one for page entry. */
+    --ease-out: cubic-bezier(.25, 1, .5, 1);
+    --duration-fast: 160ms;
+    --duration-press: 110ms;
+    --duration-page: 320ms;
     /* Translucent bar material: content scrolls beneath a frosted layer, as in Apple's navigation bars. */
     --material: color-mix(in srgb, var(--canvas) 78%, transparent);
     /* Brand colors come from the mascot (assets/mascot/seekino-logo.svg). */
@@ -199,7 +204,7 @@
     border-radius: var(--radius-pill);
     font-weight: 500;
     cursor: pointer;
-    transition: transform 160ms ease, background 160ms ease, border-color 160ms ease, color 160ms ease;
+    transition: transform 160ms var(--ease-out), background 160ms var(--ease-out), border-color 160ms var(--ease-out), color 160ms var(--ease-out);
   }
 
   .button-primary {
@@ -219,6 +224,13 @@
     padding-inline: 12px;
     color: var(--ink-soft);
     background: transparent;
+  }
+
+  .button-primary:active,
+  .button-secondary:active,
+  .button-quiet:active {
+    transform: scale(0.97);
+    transition-duration: var(--duration-press);
   }
 
   .button-primary:hover {
@@ -249,7 +261,7 @@
     border-radius: var(--radius-small);
     outline: none;
     background: var(--surface-raised);
-    transition: border-color 160ms ease, box-shadow 160ms ease;
+    transition: border-color 160ms var(--ease-out), box-shadow 160ms var(--ease-out);
   }
 
   .field:focus {

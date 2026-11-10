@@ -383,7 +383,7 @@
 }
 
 .usageDetails summary span { margin-left: auto; color: var(--ink-faint); font-size: .6rem; }
-.usageChevron { transition: transform .15s ease; }
+.usageChevron { transition: transform .15s var(--ease-out); }
 .usageDetails[open] .usageChevron { transform: rotate(180deg); }
 .usageBody { margin-top: 18px; }
 .usageBody > p { font-size: .65rem; }
@@ -466,7 +466,7 @@
   font-size: .64rem;
 }
 
-.historyToggle svg { transition: transform .15s ease; }
+.historyToggle svg { transition: transform .15s var(--ease-out); }
 .historyToggle[aria-expanded="true"] svg { transform: rotate(180deg); }
 
 .historyList {
