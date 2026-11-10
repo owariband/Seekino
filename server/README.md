@@ -97,7 +97,11 @@ Service 负责；Repository 保留事务内的状态与并发约束。
 | `list_series` | `offset=0, limit=20`，分页列出本地系列与状态，`next_offset` 用于续页 |
 | `retrieve` | `query` 必填，可选 `series_ids`、`top_k=5`、`event_types`、`speaker`；返回 Event 证据及 `evidence_ref`。使用相同条件和 `next_cursor` 继续读取排序结果 |
 | `browse_events` | 指定 `series_id`，按集和时间翻完已发布事件。可用 `visible_names` 筛选出镜角色，自动展开明确的系列别名。单页 `limit` 为 1–50，传回 `next_cursor` 直到为空 |
-| `read_evidence` | 接收 `evidence_ref`，核对来源及发布版本。可成对传 `start_ms`、`end_ms`，返回该段独立 MP4 的 `media.clip_url` |
+| `read_evidence` | 接收正片事件或参考片的 `evidence_ref`，核对来源及发布版本。成对传入 `start_ms`、`end_ms` 可下载自选区间的 `media.clip_url` |
+| `find_edit_templates` | 用 `query` 找已发布的手法观察。可传 `series_ids`、`top_k`。每项给出步骤、原片区间、证据引用及可直接播放的 `media.play_url` |
+| `get_style_card` | 传 `video_id` 读取当前全片 Refine 卡。`anchored_signals` 的例子含 `segment_id`、`at_ms`、画面依据和 `evidence_ref`。早期卡标作 `legacy_technique_groups`，各代表段也能从 `exemplars` 打开 |
+
+参考片通过上传或重解析的 `parseConfig.profile = "edit_reference"` 选择。普通剧集可逐集发布，`retrieve` 在部分集已就绪时返回已有事件及覆盖提示。参考片发布后，编辑通过手法命中或全片卡进入 `read_evidence`，默认可播放、下载该代表段，并查原生帧时间和分步观察。引证时刻属于原视频坐标，独立 MP4 的播放时钟从零开始。人物分离、手法取舍和出片由编辑在本机完成。[双召回主设计 #50](https://github.com/owariband/Seekino/pull/50)
 
 使用剪辑素材策略解析后，可以搜索“镜头向右横移，灯塔从左边出画，小船在右边入画”。命中的 `SCENE.camera_ref` 给出镜头方向、速度类别、起幅、落幅和画面依据。对这条事件调用 `read_evidence`，适合二维复现的运镜会附带 `camera_replay`，其中有版本化 ES 模块、入口 `cameraAt(elapsedMs, params, world, viewport)` 和原片时长。返回值是新画面中的裁取矩形，可直接用于 Canvas 的 `drawImage`。
 

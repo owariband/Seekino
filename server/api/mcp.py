@@ -27,8 +27,8 @@ _ERRORS = {
     "NO_SEARCHABLE_SERIES": "No searchable series are available in this local library.",
     "SERIES_SELECTION_REQUIRED": "Use list_series and choose a smaller set of series_ids.",
     "INVALID_CURSOR": "The publication or filters changed, or the cursor is invalid. Restart from the first page.",
-    "EVIDENCE_STALE": "The source changed. Run retrieve again for current evidence.",
-    "INVALID_EVIDENCE_REF": "Use an evidence_ref returned by retrieve or read_evidence.",
+    "EVIDENCE_STALE": "The source changed. Repeat the search or open its current style card.",
+    "INVALID_EVIDENCE_REF": "Copy an evidence_ref from a search result, a style-card exemplar or read_evidence.",
     "EVIDENCE_SCOPE_MISMATCH": "This evidence is unavailable in the current library.",
     "INVALID_CLIP_RANGE": "Supply start_ms and end_ms together, with 0 <= start_ms < end_ms <= duration_ms.",
     "CLIP_TOO_LONG": "Cloud clips may be at most 60,000 milliseconds. Choose a shorter range.",
@@ -88,7 +88,8 @@ def create_mcp_app(service: McpRetrievalService, *, auth_mode: str) -> Starlette
         "seekino",
         instructions=(
             "Find source performances with retrieve. For editing techniques and shot changes, use find_edit_templates, "
-            "play its media.play_url and inspect the source frames. get_style_card returns the whole reference. Results are indexed evidence, "
+            "play its media.play_url and inspect the source frames. get_style_card returns a whole-film card "
+            "with an evidence_ref for every exemplar. Read those references with read_evidence. Results are indexed evidence, "
             "not proof of unrecorded visual details. Use read_evidence for current source "
             "context and media URLs. All video times are integer milliseconds; intervals "
             "include start_ms and exclude end_ms. For editing, collect different candidate shots, "
@@ -126,8 +127,8 @@ def create_mcp_app(service: McpRetrievalService, *, auth_mode: str) -> Starlette
                     if parsed.scheme or parsed.netloc or parsed.path != path or parsed.fragment:
                         raise ToolError("RETRIEVAL_FAILED: Invalid media reference.")
                     media[key] = base_url + value
-            if "segment_id" in item and media.get("original_url"):
-                media["play_url"] = media["original_url"] + f"#t={item['start_ms']/1000:.3f},{item['end_ms']/1000:.3f}"
+            if "segment_id" in item:
+                media["play_url"] = media["clip_url"] + "&inline=true" if media.get("clip_url") else None
             item["media"] = media
         if len(json.dumps(result, ensure_ascii=False).encode("utf-8")) > _MAX_RESULT_BYTES:
             raise ToolError("RESULT_TOO_LARGE: Narrow the query or request fewer results.")
@@ -184,7 +185,8 @@ def create_mcp_app(service: McpRetrievalService, *, auth_mode: str) -> Starlette
 
     @server.tool(annotations=annotations, structured_output=True)
     async def get_style_card(video_id: Annotated[str, Field(min_length=1, max_length=64)], ctx: Context) -> dict[str, Any]:
-        """Read the current whole-video Refine card and its exemplar segment IDs for a reference video."""
+        """Read the current whole-video Refine card and every exemplar. Each exemplar has a source
+        range and an evidence_ref accepted by read_evidence for playback and download."""
         return await invoke(ctx, service.get_style_card, video_id=video_id)
 
     @server.tool(annotations=annotations, structured_output=True)
@@ -217,7 +219,8 @@ def create_mcp_app(service: McpRetrievalService, *, auth_mode: str) -> Starlette
         end_ms: Annotated[int | None, Field(gt=0, strict=True, description="Exclusive source end in milliseconds. "
                                            "May span adjacent events in the same video; Cloud limit: 60,000 ms per clip.")] = None,
     ) -> dict[str, Any]:
-        """Read current evidence and media for an opaque reference from retrieve or browse_events. Follow
+        """Read current evidence from retrieve, browse_events, find_edit_templates or get_style_card.
+        For an editing reference, omitting bounds returns the measured source clip, note and native-frame evidence. Follow
         next_evidence_ref to continue bounded context. A stale reference requires a new retrieval.
         Omit both bounds to review source context. Supply both to get a downloadable MP4 at media.clip_url
         for your chosen source range, with its original motion and audio when present.

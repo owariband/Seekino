@@ -14,12 +14,16 @@ from engine.rag.indexing.events import compute_event_id
 from engine.rag.retrieval.contracts import EventIndexNotReadyError
 
 from ..constants.media import CLOUD_CLIP_MAX_MS
+from ..model.dto.parseContentDTO import PublishedReference
 from ..error.retrieval import SeriesScopeNotFoundError
 from .pagination import decode_cursor, encode_cursor
 from .library import LibraryService
 from .media import MediaMissingError, MediaNotReadyError, MediaService, validate_clip_range
 from .video_event_retrieval import VideoEventRetrievalService
-from .mcp_evidence import EvidenceRef, evidence_identity, published_chunk
+from .mcp_evidence import (
+    REFERENCE_PREFIX, EvidenceRef, encode_reference_evidence, evidence_clip_url, evidence_identity,
+    published_chunk, resolve_reference_evidence,
+)
 from .video_parse_persistence import VideoParsePersistenceService
 
 
@@ -54,27 +58,39 @@ class McpRetrievalService:
                                                         index_name=self._reference_store.index_name)
         techniques = []
         media_by_video = {}
-        for hit, obs in notes[:top_k]:
-            video_id = hit["video_id"]
+        for source in notes[:top_k]:
+            video_id = source.key.video_id
             if video_id not in media_by_video:
-                try:
-                    self._media.get_original(video_id, tenant_id=self._tenant_id)
-                    media_by_video[video_id] = "/api/videos/content?" + urlencode({
-                        "tenantId": self._tenant_id, "videoId": video_id, "variant": "original",
-                    })
-                except (MediaMissingError, MediaNotReadyError, OSError):
-                    media_by_video[video_id] = None
-            segment = obs.segment
-            techniques.append({"video_id": video_id, "series_id": hit["series_id"], "parse_task_id": hit["task_id"],
-                               "video_chunk_id": hit["chunk_id"], "content_version": hit["version"],
-                               "segment_id": segment.segment_id, "start_ms": segment.start_ms, "end_ms": segment.end_ms,
-                               "technique_key": obs.technique_key, "name": obs.note.name, "summary": obs.note.summary,
-                               "steps": [s.model_dump() for s in obs.note.motion.steps],
-                               "fine_starts_ms": segment.fine_starts_ms, "media": {"original_url": media_by_video[video_id]}})
+                media_by_video[video_id] = self._reference_original_url(video_id)
+            card = _reference_card(source)
+            card.update(steps=[s.model_dump() for s in source.observation.note.motion.steps],
+                        fine_starts_ms=source.observation.segment.fine_starts_ms)
+            card["media"] = _reference_media(media_by_video[video_id], card["evidence_ref"], card["start_ms"], card["end_ms"])
+            techniques.append(card)
         return {"techniques": techniques, "templates": []}
 
+    def _reference_original_url(self, video_id):
+        try:
+            self._media.get_original(video_id, tenant_id=self._tenant_id)
+        except (MediaMissingError, MediaNotReadyError, OSError):
+            return None
+        return "/api/videos/content?" + urlencode({"tenantId": self._tenant_id, "videoId": video_id, "variant": "original"})
+
     def get_style_card(self, video_id):
-        return self._persistence.reference_style_card(tenant_id=self._tenant_id, video_id=video_id)
+        if self._reference_store is None:
+            raise ValueError("REFERENCE_INDEX_UNAVAILABLE: Reference search is not configured")
+        task_id, card, sources = self._persistence.reference_style_card(
+            tenant_id=self._tenant_id, video_id=video_id, index_name=self._reference_store.index_name,
+        )
+        exemplars = [_reference_card(source) for source in sources]
+        style = card.model_dump()
+        if "signals" in style:
+            refs = {item["segment_id"]: item["evidence_ref"] for item in exemplars}
+            for signal in style["signals"]:
+                for example in signal["examples"]:
+                    example["evidence_ref"] = refs[example["segment_id"]]
+        return {"video_id": video_id, "parse_task_id": task_id, "style_card": style, "exemplars": exemplars,
+                "style_card_format": "anchored_signals" if "signals" in style else "legacy_technique_groups"}
 
     def list_series(self, offset: int = 0, limit: int = 20) -> dict[str, Any]:
         _integer(offset, "offset", 0, 1_000_000)
@@ -229,6 +245,20 @@ class McpRetrievalService:
     def read_evidence(
         self, evidence_ref: str, *, start_ms: int | None = None, end_ms: int | None = None, cloud: bool = False,
     ) -> dict[str, Any]:
+        if isinstance(evidence_ref, str) and evidence_ref.startswith(REFERENCE_PREFIX):
+            if cloud or self._reference_store is None:
+                raise ValueError("EVIDENCE_SCOPE_MISMATCH: Editing references are available in the local library")
+            source = resolve_reference_evidence(evidence_ref, self._persistence, tenant_id=self._tenant_id,
+                                                index_name=self._reference_store.index_name)
+            segment = source.observation.segment
+            if start_ms is None and end_ms is None:
+                start_ms, end_ms = segment.start_ms, segment.end_ms
+            validate_clip_range(start_ms, end_ms, duration_ms=source.duration_ms, cloud=False)
+            original_url = self._reference_original_url(source.key.video_id)
+            return {**_reference_card(source), "duration_ms": source.duration_ms, "kind": "edit_reference",
+                    "note": source.observation.note.model_dump(), "measured": segment.model_dump(),
+                    "media": _reference_media(original_url, evidence_ref, start_ms, end_ms),
+                    "warnings": [] if original_url else ["Original media is unavailable."]}
         ref = EvidenceRef.decode(evidence_ref)
         evidence = ref.resolve(self._persistence, tenant_id=self._tenant_id)
         clip_requested = start_ms is not None or end_ms is not None
@@ -258,7 +288,7 @@ class McpRetrievalService:
             try:
                 self._media.get_original(evidence.video_id, tenant_id=self._tenant_id, video=evidence)
                 if clip_requested:
-                    url = "/api/videos/clip?" + urlencode({"evidenceRef": evidence_ref, "startMs": start_ms, "endMs": end_ms})
+                    url = evidence_clip_url(evidence_ref, start_ms, end_ms)
                 else:
                     url = "/api/videos/content?" + urlencode({
                         "tenantId": self._tenant_id, "videoId": evidence.video_id, "variant": "original",
@@ -292,6 +322,22 @@ class McpRetrievalService:
             result["camera_replay"] = camera_replay(observation, matched_event["start_ms"], matched_event["end_ms"],
                                                     evidence.camera_hints)
         return result
+
+
+def _reference_card(source: PublishedReference) -> dict[str, Any]:
+    key, obs = source.key, source.observation
+    return {"evidence_ref": encode_reference_evidence(key), "series_id": key.series_id, "video_id": key.video_id,
+            "source_filename": source.source_filename, "parse_task_id": key.task_id, "video_chunk_id": key.chunk_id,
+            "content_version": key.version, "index_generation": key.generation, "segment_id": key.segment_id,
+            "start_ms": obs.segment.start_ms, "end_ms": obs.segment.end_ms, "technique_key": obs.technique_key,
+            "name": obs.note.name, "summary": obs.note.summary, "palette": [p.model_dump() for p in obs.segment.palette]}
+
+
+def _reference_media(original_url, evidence_ref, start_ms, end_ms):
+    return {"original_url": original_url,
+            "clip_url": evidence_clip_url(evidence_ref, start_ms, end_ms) if original_url else None,
+            "start_ms": start_ms, "end_ms": end_ms, "mime_type": "video/mp4"}
+
 
 def _normalized_name(name: str) -> str:
     return unicodedata.normalize("NFKC", name).strip().casefold()

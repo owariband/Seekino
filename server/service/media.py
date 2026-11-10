@@ -40,7 +40,7 @@ from ..utils.media import (
 )
 from .library import LibraryService
 from .access import series_access, require_tenant_read
-from .mcp_evidence import EvidenceRef, StaleEvidenceError
+from .mcp_evidence import REFERENCE_PREFIX, EvidenceRef, StaleEvidenceError, resolve_reference_evidence
 
 
 def validate_clip_range(start_ms: int | None, end_ms: int | None, *, duration_ms: int, cloud: bool) -> None:
@@ -65,12 +65,14 @@ class MediaService:
         artifact_store: ArtifactStore,
         *,
         parse_persistence: VideoParsePersistenceService | None = None,
+        reference_index_name: str | None = None,
         probe_playback: Callable[[Path], bool] | None = None,
         config: ImageUploadConfig | None = None,
     ) -> None:
         self._library = library
         self._artifact_store = artifact_store
         self._parse_persistence = parse_persistence
+        self._reference_index_name = reference_index_name
         self._probe_playback = probe_playback or _cached_browser_playable
         self.image_upload_config = config or ImageUploadConfig()
 
@@ -236,6 +238,20 @@ class MediaService:
         self, identity: AuthIdentity, evidence_ref: str, *, start_ms: int, end_ms: int, destination: Path,
     ) -> None:
         """Recheck access and the publication when downloading, including on replayed URLs."""
+        if isinstance(evidence_ref, str) and evidence_ref.startswith(REFERENCE_PREFIX):
+            if identity.mode != "local":
+                raise SeriesNotFoundError("视频资源不存在")
+            if self._parse_persistence is None or self._reference_index_name is None:
+                raise MediaNotReadyError("参考片证据读取尚未装配")
+            try:
+                reference = resolve_reference_evidence(evidence_ref, self._parse_persistence,
+                    tenant_id=identity.tenant_id, index_name=self._reference_index_name)
+            except StaleEvidenceError as error:
+                raise VideoParseConflictError("EVIDENCE_STALE: 参考片版本已变化，请重新检索") from error
+            validate_clip_range(start_ms, end_ms, duration_ms=reference.duration_ms, cloud=False)
+            source = self.get_original(reference.key.video_id, tenant_id=identity.tenant_id)
+            _encode_source_clip(source.path, destination, start_ms, end_ms, cloud=False)
+            return
         ref = EvidenceRef.decode(evidence_ref)
         tenant_id = ref.identity.tenant_id
         cloud = identity.mode == "cloud"

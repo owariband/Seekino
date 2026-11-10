@@ -20,6 +20,7 @@ from engine.rag.contracts import VideoChunkEvidence, VideoChunkRetrievalIdentity
 
 from ..constants.parse import MAX_INDEX_GENERATION, PREPARE_FAILURES_KEY, RUNTIME_DETAIL_KEY
 from ..model.dto.parseContentDTO import (
+    ReferenceKey,
     ChunkParseContentState,
     ChunkIndexingSnapshot,
     IntervalMemberSnapshot,
@@ -335,42 +336,27 @@ class VideoParsePersistenceService:
             return read_store.current_reference_tasks(session, tenant_id=tenant_id, series_ids=series_ids)
 
     def reference_observations(self, hits, *, tenant_id, series_ids, index_name):
-        from engine.parsev2.edit_reference import ReferenceChunk
-        from ..storage.elasticsearch_references import observation_fingerprint
+        from pydantic import ValidationError
 
+        keys = []
+        for hit in hits:
+            try:
+                keys.append(ReferenceKey.model_validate(hit))
+            except ValidationError:
+                continue  # A malformed derived hit cannot identify a published observation.
+        if not keys:
+            return []
         with self._session_factory() as session:
             current = read_store.current_reference_tasks(session, tenant_id=tenant_id, series_ids=series_ids)
-            task_ids = {hit["task_id"] for hit in hits}.intersection(current)
-            if not task_ids:
-                return []
-            rows = read_store.load_candidate_rows(session, task_ids=tuple(task_ids), chunk_ids={h["chunk_id"] for h in hits},
-                                                  task_status="COMPLETE", phase=ChunkTaskPhase.INDEX, status="COMPLETE")
-            published = {}
-            for series, video, chunk, task, child, content in rows:
-                if (series.tenant_id != tenant_id or chunk.video_id != video.id
-                        or current.get(task.id) != (video.id, series.id)):
-                    continue
-                receipt = content_ops._index_receipt(content, task.id, chunk.id)
-                ref = receipt.get("edit_reference", {})
-                if (ref.get("index_name") != index_name
-                        or receipt["index_generation"] != task.parse_config["indexing"]["index_generation"]):
-                    continue
-                notes = ReferenceChunk.model_validate(content.content).validate_owner(chunk.start_ms, chunk.end_ms, video.duration_ms)
-                for obs in notes.observations:
-                    if obs.segment.segment_id in ref["segments"]:
-                        key = (task.id, video.id, series.id, chunk.id, content.version, receipt["index_generation"],
-                               obs.segment.segment_id, observation_fingerprint(obs))
-                        published[key] = obs
-            result = []
-            for hit in hits:
-                key = tuple(hit[k] for k in ("task_id", "video_id", "series_id", "chunk_id", "version",
-                                             "generation", "segment_id", "fingerprint"))
-                if hit["tenant_id"] == tenant_id and key in published:
-                    result.append((hit, published[key]))
-            return result
+            scope = {key.task_id: current[key.task_id] for key in keys if key.task_id in current}
+            published = retrieval_ops.published_reference_sources(
+                session, tenant_id=tenant_id, task_scope=scope,
+                chunk_ids={key.chunk_id for key in keys}, index_name=index_name,
+            )
+            return [published[key] for key in keys if key in published]
 
-    def reference_style_card(self, *, tenant_id, video_id):
-        from engine.parsev2.edit_reference import StyleCard
+    def reference_style_card(self, *, tenant_id, video_id, index_name):
+        from engine.parsev2.edit_reference import ReferenceRefinement, StyleCard
 
         with self._session_factory() as session:
             scope = read_store.current_reference_tasks(session, tenant_id=tenant_id, video_id=video_id)
@@ -383,8 +369,26 @@ class VideoParsePersistenceService:
             result = interval_store.get_content(session, intervals[0].id)
             if result is None:
                 raise ValueError("EVIDENCE_STALE: Current style card unavailable")
+            published = retrieval_ops.published_reference_sources(
+                session, tenant_id=tenant_id, task_scope=scope, chunk_ids=None, index_name=index_name,
+            )
+            sources = sorted(published.values(), key=lambda item: item.observation.segment.start_ms)
+            if "members" in result.content:
+                refined = ReferenceRefinement.model_validate(result.content)
+                card = refined.style_card.validate_sources(s.observation for s in sources)
+                updates = [(member.sequence_no, note) for member in refined.members for note in member.observations]
+                by_segment = {s.key.segment_id: s for s in sources}
+                if ({note.segment_id for _, note in updates} != by_segment.keys() or len(updates) != len(sources)
+                        or any(seq != by_segment[note.segment_id].sequence_no or
+                               note.apply(by_segment[note.segment_id].observation) != by_segment[note.segment_id].observation
+                               for seq, note in updates)):
+                    raise VideoParseConflictError("style signals differ from the published member observations")
+                return task_id, card, sources
             card = StyleCard.model_validate(result.content["style_card"])
-            return {"video_id": video_id, "parse_task_id": task_id, "style_card": card.model_dump()}
+            assignments = card.assignments(item.key.segment_id for item in sources)
+            if any(assignments[item.key.segment_id] != item.observation.technique_key for item in sources):
+                raise VideoParseConflictError("style card does not match its published observations")
+            return task_id, card, sources
 
     def validate_event_coverage(
         self, scope: VideoParseRetrievalScope, *, index_name: str, contract_id: str,

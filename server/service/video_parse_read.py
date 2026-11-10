@@ -7,6 +7,7 @@ from copy import deepcopy
 from typing import Any
 
 from agent.video_parse_v2.input import ParseConfig
+from engine.parsev2.edit_reference import ReferenceChunk
 from engine.parsev2.schemas import DialogueEvent, VideoParseResult
 from engine.parsev2.validation import validate_result_time_range
 from engine.rag.contracts import TranscriptCueView, VideoChunkEvidence, VideoChunkRetrievalIdentity
@@ -21,7 +22,10 @@ from ..repository import video_parse_task as task_store
 from ..model.dto.parseContentDTO import (
     ChunkParseContentData,
     ParseExportChunkSnapshot,
+    PublishedReference,
+    ReferenceKey,
 )
+from ..storage.elasticsearch_references import observation_fingerprint
 from ..model.dto.taskDTO import (
     ChunkParseTaskData,
     VideoParseTaskData,
@@ -191,6 +195,35 @@ def _video_parse_evidence(
         },
         parsed_at=datetime_to_unix_time_ms(content.update_date),
     )
+
+
+def published_reference_sources(session, *, tenant_id, task_scope, chunk_ids, index_name):
+    """Hydrate complete chunks inside an already resolved, current tenant scope."""
+    if not task_scope:
+        return {}
+    rows = read_store.load_candidate_rows(
+        session, task_ids=tuple(task_scope), chunk_ids=chunk_ids, task_status="COMPLETE",
+        phase=ChunkTaskPhase.INDEX, status="COMPLETE",
+    )
+    published = {}
+    for series, video, chunk, task, _child, content in rows:
+        if (series.tenant_id != tenant_id or chunk.video_id != video.id
+                or task_scope.get(task.id) != (video.id, series.id)):
+            continue
+        receipt = _index_receipt(content, task.id, chunk.id)
+        generation = task.parse_config["indexing"]["index_generation"]
+        projection = receipt.get("edit_reference", {})
+        if projection.get("index_name") != index_name or receipt["index_generation"] != generation:
+            continue
+        source = ReferenceChunk.model_validate(content.content).validate_owner(chunk.start_ms, chunk.end_ms, video.duration_ms)
+        if sorted(o.segment.segment_id for o in source.observations) != projection.get("segments"):
+            raise VideoParseConflictError("reference publication disagrees with current segments")
+        for obs in source.observations:
+            key = ReferenceKey(tenant_id=tenant_id, series_id=series.id, video_id=video.id, task_id=task.id,
+                               chunk_id=chunk.id, version=content.version, generation=generation,
+                               segment_id=obs.segment.segment_id, fingerprint=observation_fingerprint(obs))
+            published[key] = PublishedReference(key, obs, video.filename, video.duration_ms, chunk.sequence_no)
+    return published
 
 
 def resolve_retrieval_scope(

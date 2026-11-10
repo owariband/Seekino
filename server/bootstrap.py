@@ -271,12 +271,17 @@ def _build_application_services(
     construction_cleanup.callback(parse_usage.close)
     parse_dispatch = ParseDispatch(session_factory, reconcile_interval=settings.mq.heartbeat_interval)
     parse_persistence = VideoParsePersistenceService(session_factory, dispatch=parse_dispatch)
+    assert settings.elasticsearch is not None
+    reference_store = ElasticsearchReferenceStore(
+        resources.elasticsearch_client, index_name=settings.elasticsearch.index_name + "_edit_reference",
+        environment=settings.environment,
+    ) if resources.elasticsearch_client is not None else None
     media = MediaService(
         library, artifact_store, config=settings.images,
         parse_persistence=parse_persistence,
+        reference_index_name=reference_store.index_name if reference_store is not None else None,
     )
 
-    assert settings.elasticsearch is not None
     retrieval, video_parse_query_encoder = build_retrieval_service(
         parse_persistence, elasticsearch_store,
         gateway_config=gateway_config, embedding_config=parse_defaults.embedding,
@@ -290,10 +295,6 @@ def _build_application_services(
         max_output_tokens=settings.agent.max_output_tokens, tracing=tracing,
         gateway_client=gateway_client,
     )
-    reference_store = ElasticsearchReferenceStore(
-        resources.elasticsearch_client, index_name=settings.elasticsearch.index_name + "_edit_reference",
-        environment=settings.environment,
-    ) if resources.elasticsearch_client is not None else None
     event_store = resources.elasticsearch_event_store
     event_contract = None
     event_retrieval = None

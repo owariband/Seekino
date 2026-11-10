@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-10T11:35:00+08:00",
+ "updatedAt": "2026-11-10T14:57:49+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 32,
+ "revision": 33,
  "categories": [
   {
    "id": "parse",
@@ -5122,6 +5122,39 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "label": "EP04 实测",
      "kind": "evidence",
      "url": "https://github.com/owariband/Seekino/blob/feat/mcp-source-clips/docs/report/server/mcp-source-clips-20261109.json"
+    }
+   ]
+  },
+  {
+   "id": "EDIT-REFERENCE-01",
+   "title": "从手法搜索和风格卡回到同一段原片",
+   "category": "search",
+   "type": "requirement",
+   "status": "verifying",
+   "priority": "P1",
+   "description": "从剧本寻找可剪表演和有原片依据的手法，编辑在本机选入点、出点并判断如何使用。",
+   "next": "片主决定何时由 Claude 用剧本、MCP 和本地工具独立验收。",
+   "verification": "六个 MCP 工具实调，部分集发布即可取片。P5R 回看 34 帧，#50 的 B 组原卡在独立库回放通过 16 处引证。",
+   "updatedAt": "2026-11-10",
+   "tags": [
+    "参考片",
+    "MCP"
+   ],
+   "related": [
+    "EDIT-CLIP-01",
+    "EDIT-ANIME-01"
+   ],
+   "branch": "feat/mcp-edit-references",
+   "links": [
+    {
+     "label": "只读接口设计",
+     "kind": "trd",
+     "url": "https://github.com/owariband/Seekino/blob/feat/mcp-edit-references/docs/design/03-product-reassessment/mcp-edit-references-trd.md"
+    },
+    {
+     "label": "协议与回放回执",
+     "kind": "evidence",
+     "url": "https://github.com/owariband/Seekino/blob/feat/mcp-edit-references/docs/report/server/editing-mcp-code-loop-20261110.json"
     }
    ]
   }

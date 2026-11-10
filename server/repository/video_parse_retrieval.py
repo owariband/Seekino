@@ -155,13 +155,16 @@ def _candidate_query(*, task_ids: Sequence[str], task_status: str, phase: int, s
 
 
 def load_candidate_rows(
-    session: Session, *, task_ids: Sequence[str], chunk_ids: set[str],
+    session: Session, *, task_ids: Sequence[str], chunk_ids: set[str] | None,
     task_status: str, phase: int, status: str,
 ) -> list[tuple[SeriesData, VideoData, VideoChunkData, VideoParseTaskData,
                 ChunkParseTaskData, ChunkParseContentData]]:
-    rows = session.execute(_candidate_query(
+    query = _candidate_query(
         task_ids=task_ids, task_status=task_status, phase=phase, status=status,
-    ).where(VideoChunk.id.in_(chunk_ids)))
+    )
+    if chunk_ids is not None:
+        query = query.where(VideoChunk.id.in_(chunk_ids))
+    rows = session.execute(query)
     return [(task_store.series_data(series), task_store.video_data(video),
              chunk_store.video_chunk_data(chunk), task_store.task_data(task),
              chunk_store.task_data(child), chunk_store.content_data(content))

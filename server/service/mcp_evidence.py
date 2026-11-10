@@ -4,15 +4,47 @@ from __future__ import annotations
 
 import base64
 import binascii
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
+from urllib.parse import urlencode
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from engine.rag.contracts import VideoChunkEvidence, VideoChunkRetrievalIdentity
 from engine.rag.indexing.events import compute_event_id
 
+from ..model.dto.parseContentDTO import PublishedReference, ReferenceKey
 from .video_parse_errors import VideoParseConflictError
-from .video_parse_persistence import VideoParsePersistenceService
+if TYPE_CHECKING:
+    from .video_parse_persistence import VideoParsePersistenceService
+
+
+REFERENCE_PREFIX = "reference."
+
+
+def encode_reference_evidence(key: ReferenceKey) -> str:
+    return REFERENCE_PREFIX + base64.urlsafe_b64encode(key.model_dump_json().encode()).decode()
+
+
+def resolve_reference_evidence(token: str, persistence: VideoParsePersistenceService, *,
+                               tenant_id: str, index_name: str) -> PublishedReference:
+    try:
+        if not token.startswith(REFERENCE_PREFIX) or len(token) > 4096:
+            raise ValueError("invalid reference")
+        body = base64.b64decode(token[len(REFERENCE_PREFIX):], altchars=b"-_", validate=True)
+        key = ReferenceKey.model_validate_json(body)
+    except (ValueError, binascii.Error, ValidationError) as error:
+        raise ValueError("INVALID_EVIDENCE_REF: Copy the complete editing reference.") from error
+    if key.tenant_id != tenant_id:
+        raise ValueError("EVIDENCE_SCOPE_MISMATCH: Reference belongs to a different library.")
+    sources = persistence.reference_observations([key], tenant_id=tenant_id, series_ids=[key.series_id],
+                                                index_name=index_name)
+    if len(sources) != 1:
+        raise StaleEvidenceError("EVIDENCE_STALE: Reference is no longer published at this version.")
+    return sources[0]
+
+
+def evidence_clip_url(token: str, start_ms: int, end_ms: int) -> str:
+    return "/api/videos/clip?" + urlencode({"evidenceRef": token, "startMs": start_ms, "endMs": end_ms})
 
 
 class StaleEvidenceError(ValueError):
