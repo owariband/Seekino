@@ -139,7 +139,7 @@ class ModelSettings:
             data.setdefault("model_roles", {})[role] = ref
         return self._change(edit)
 
-    def discover(self, cid: str, body: ModelConnectionEndpoint) -> list[str]:
+    def discover(self, cid: str, body: ModelConnectionEndpoint) -> list[str] | None:
         from gateway.model_discovery import discover_models
         catalog = self.catalog()
         current = catalog.connections.get(cid)

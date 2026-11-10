@@ -99,13 +99,46 @@ it("discovers model IDs into a draft and saves per-model types only after confir
   await userEvent.type(screen.getByLabelText("服务名称"), "我的连接");
   await userEvent.click(screen.getByRole("button", { name: "获取模型列表" }));
   expect(fetchIds).toHaveBeenCalledWith("draft", expect.not.objectContaining({ apiKey: expect.anything() }), expect.any(AbortSignal));
-  await userEvent.selectOptions(await screen.findByLabelText("从服务添加模型"), "my-vector");
+  expect(await screen.findByText("获取到 1 个模型，0 个已注册")).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "添加 my-vector" }));
+  expect(screen.getByText("获取到 1 个模型，1 个已注册")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "添加 my-vector" })).toBeNull();
   await userEvent.selectOptions(screen.getByLabelText("模型类型"), "embedding");
   await userEvent.type(screen.getByLabelText("向量维度"), "768");
   expect(save).not.toHaveBeenCalled();
   await userEvent.click(screen.getByRole("button", { name: "保存连接" }));
   expect(save).toHaveBeenCalledWith(expect.objectContaining({ modelIds: ["my-vector"],
     models: [{ modelId: "my-vector", kind: "embedding", dimensions: 768 }] }));
+});
+
+it("shows fetched models inline, marks registered ones and adds the rest without duplicates", async () => {
+  vi.spyOn(api, "discoverModelIds").mockResolvedValue({ modelIds: ["kept", "new-a", "new-b"] });
+  render(<PersonalConnectionForm id="draft" busy={false} save={vi.fn()} />);
+  await userEvent.type(screen.getByLabelText("服务名称"), "我的连接");
+  await userEvent.type(screen.getByLabelText("模型 ID"), "kept");
+  await userEvent.click(screen.getByRole("button", { name: "获取模型列表" }));
+  expect(await screen.findByText("获取到 3 个模型，1 个已注册")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "添加 kept" })).toBeNull();
+  expect(screen.getByTitle("kept 已注册")).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "全部添加（2）" }));
+  expect(screen.getByText("获取到 3 个模型，3 个已注册")).toBeInTheDocument();
+  expect(screen.getAllByRole("textbox", { name: /^模型 ID/ }).map((input) => (input as HTMLInputElement).value)).toEqual(["kept", "new-a", "new-b"]);
+  expect(screen.queryByRole("button", { name: /^全部添加/ })).toBeNull();
+});
+
+it("explains services without a model list instead of reporting an error", async () => {
+  vi.spyOn(api, "discoverModelIds").mockResolvedValue({ modelIds: [], listAvailable: false });
+  render(<PersonalConnectionForm id="draft" busy={false} save={vi.fn()} />);
+  await userEvent.type(screen.getByLabelText("服务名称"), "我的连接");
+  await userEvent.click(screen.getByRole("button", { name: "获取模型列表" }));
+  expect(await screen.findByRole("status")).toHaveTextContent("该服务不提供模型列表，请手动填写模型 ID。");
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
+it("does not offer model discovery for audio transcription servers", async () => {
+  render(<PersonalConnectionForm id="draft" busy={false} save={vi.fn()} />);
+  await userEvent.selectOptions(screen.getByLabelText("接口协议"), "openai_audio");
+  expect(screen.queryByRole("button", { name: "获取模型列表" })).toBeNull();
 });
 
 it("opens one service at a time while keeping other connection names in view", async () => {

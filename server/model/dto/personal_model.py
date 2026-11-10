@@ -114,3 +114,5 @@ class ModelRoleSave(ContractModel):
 
 class DiscoveredModels(ContractModel):
     model_ids: list[str]
+    # False when the service has no model-list endpoint; the user then enters model IDs by hand.
+    list_available: bool = True
