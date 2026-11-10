@@ -213,7 +213,8 @@ def plan_event_index(
         # Encode each text independently; metadata labels never enter model input.
         semantic_requests = [EventSemanticRequest(
             EventSemanticSource(source="description"),
-            EmbeddingRequest("semantic", contract.semantic_encoder, event.description),
+            EmbeddingRequest("semantic", contract.semantic_encoder,
+                             next(field.raw_text for field in lexical if field.field == "event_description")),
         )]
         if isinstance(event, DialogueEvent):
             semantic_requests.extend(EventSemanticRequest(

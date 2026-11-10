@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 
 
 class _Model(BaseModel):
@@ -26,12 +26,22 @@ class ReferenceSegment(_Model):
     end_ms: int
     first_frame: int = Field(ge=0)
     frame_ms: list[int] = Field(min_length=1, max_length=90)
+    frame_delta: list[Annotated[float, Field(ge=0, le=255)]] | None = None
     fine_starts_ms: list[int]
     flashes_ms: list[int]
     palette: list[PaletteColor] = Field(max_length=4)
 
+    @model_serializer(mode="wrap")
+    def serialize_measured(self, handler):
+        values = handler(self)
+        if self.frame_delta is None:
+            values.pop("frame_delta", None)  # preserve already-published observation fingerprints
+        return values
+
     @model_validator(mode="after")
     def measured_clock(self):
+        if self.frame_delta is not None and len(self.frame_delta) != len(self.frame_ms):
+            raise ValueError("each frame must keep its own measured change")
         if (self.segment_id != f"seg-{self.start_ms:07d}" or self.frame_ms[0] != self.start_ms
                 or self.frame_ms != sorted(set(self.frame_ms)) or self.frame_ms[-1] >= self.end_ms):
             raise ValueError("segment identity and frame timestamps must match its source range")

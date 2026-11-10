@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi import Request
 
+from engine.parsev2.camera import CameraReference
 from engine.rag.contracts import VideoChunkSearchEvidence
 
 from .context import get_identity, get_services, revalidate_identity
@@ -104,7 +105,11 @@ def evidence_view(
             and isinstance(end, int) and not isinstance(end, bool)
             and 0 <= start < end <= evidence.duration_seconds
             and isinstance(description, str) and description.strip()):
-            events.append(VisualEventView(description=description, start_seconds=start, end_seconds=end))
+            camera = item.get("camera_ref") if item.get("event_type") == "SCENE" else None
+            events.append(VisualEventView(
+                description=description, start_seconds=start, end_seconds=end,
+                camera_description=CameraReference.model_validate(camera).describe() if camera else None,
+            ))
         else:
             warnings.append("部分视觉事件缺少合法的原视频时间位置，已保留文字摘要")
     transcript = [cue for cue in evidence.transcript if 0 <= cue.start_seconds < cue.end_seconds <= evidence.duration_seconds]

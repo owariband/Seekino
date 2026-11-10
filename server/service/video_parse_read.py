@@ -123,6 +123,7 @@ def _video_parse_evidence(
     events = [event.model_dump(mode="json") for event in result.timeline]
     event_text = "\n".join(event.description for event in result.timeline).strip()
     detail = content.detail if isinstance(content.detail, Mapping) else {}
+    retained = detail.get("evidence")
     compact = detail.get("compact")
     video_compact = compact.strip() if isinstance(compact, str) else ""
     summary = (
@@ -170,6 +171,7 @@ def _video_parse_evidence(
         baseline_visual_caption=chunk.baseline_visual_caption,
         keyframe_uris=chunk.keyframe_uris,
         all_time_events=events,
+        camera_hints=retained.get("camera_hints", []) if isinstance(retained, Mapping) else [],
         all_time_event_text=event_text,
         retrieval_text=retrieval_text,
         video_compact=video_compact,

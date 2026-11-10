@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from bisect import bisect_right
 from functools import lru_cache
 
@@ -47,8 +48,15 @@ def _frame_sheets(segment, frames, boundaries):
 async def observe_segments(segments, frames, generate, attempts):
     observations = []
     for segment in segments:
-        facts = segment.model_dump(exclude={"first_frame", "frame_ms"})
+        facts = segment.model_dump(exclude={"first_frame", "frame_ms", "frame_delta"})
         boundaries = [segment.start_ms, *segment.fine_starts_ms, segment.end_ms]
+        # A run of held drawings with isolated jumps looks like a smooth zoom on a sparse storyboard.
+        if segment.frame_delta:
+            facts["native_runs"] = [
+                {"view": f"B{i}", "frames": [[t, delta] for t, delta in zip(segment.frame_ms, segment.frame_delta)
+                                             if start <= t < end]}
+                for i, (start, end) in enumerate(zip(boundaries, boundaries[1:]))
+            ]
         schema = _observation_response(len(boundaries)-1)
         prompt = (
             "你在帮剪辑师决定是否回看这段原片。按图页顺序、每行从左到右读所有连续原生帧。"
@@ -57,6 +65,12 @@ async def observe_segments(segments, frames, generate, attempts):
             "同取景只变姿态用 HOLD，连续运动用 MOVEMENT，无法确定用 UNCERTAIN。"
             "ECU=脸的一部分，CU=脸部，MCU=胸部以上，MS=腰部以上，FULL=完整人物，WIDE=人物在大环境中，"
             "INSERT=局部物件，GRAPHIC=纯图形或文字。区分镜内运动与跨切换的构图变化。"
+            "native_runs 每项是[原片毫秒,与前一张原生帧的灰度平均绝对差，0–255]。所给区间内每帧都在图中。"
+            "独立判断相邻 B 的衔接。若取景在相邻两帧间突然换档，前后都是停留帧，中间没有过渡帧，"
+            "即使主体和背景相同，也写 CUT（跳切式换景别），不能因为几次跳变方向一致就写连续推拉。"
+            "即使两个画面都是 FULL，也可能有跳变，逐一比较同一面孔、服装、轮廓在画幅中所占大小。"
+            "差值大但仅换姿势、字卡或一帧闪光也很常见，单凭数值不足以断定换景。只在可指认中间过渡帧时写 MOVEMENT。"
+            "看完全段再命名，名字不能是 B 编号；在 summary 写出主要变化与片内停留依据。"
             "用具体简体中文写 name、summary、signals、subject。说明先后变化，字卡可见时描述字形及入画方式。"
             "记录画面依据，创作选择由编辑决定。测量资料如下。\n"
             + json.dumps(facts, ensure_ascii=False)
@@ -84,6 +98,23 @@ class _CardEntry(BaseModel):
     description: Text
 
 
+def _completed_card_response(schema, error):
+    """Accept a complete set of entries when only the closing root brace was dropped."""
+    issues = error.errors(include_url=False)
+    raw = issues[0].get("input") if len(issues) == 1 and issues[0]["type"] == "json_invalid" else None
+    if not isinstance(raw, str) or not raw.rstrip().endswith("}}"):
+        raise error
+    text = raw.rstrip()
+    try:
+        json.loads(text)
+    except json.JSONDecodeError as exc:
+        if exc.pos == len(text) and exc.msg == "Expecting ',' delimiter":
+            result = schema.model_validate_json(text + "}")
+            logging.getLogger(__name__).info("reference Refine recovered a missing final object delimiter")
+            return result
+    raise error
+
+
 async def consolidate(members, generate, attempts):
     notes = [o for chunk in members.values() for o in chunk.observations]
     if not notes:
@@ -100,7 +131,10 @@ async def consolidate(members, generate, attempts):
               "不自行写时间，不向编辑指定素材、排版或节奏。观察数据如下。\n" + json.dumps(source, ensure_ascii=False))
     for attempt in range(attempts):
         try:
-            draft = await generate([TextInput(prompt)], schema)
+            try:
+                draft = await generate([TextInput(prompt)], schema)
+            except ValidationError as error:
+                draft = _completed_card_response(schema, error)
             groups = {}
             for i, obs in enumerate(notes):
                 entry = getattr(draft.exemplars, f"S{i}")

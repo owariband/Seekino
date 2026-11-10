@@ -12,6 +12,7 @@ from urllib.parse import urlencode
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from engine.common.background import character_name_groups
+from engine.parsev2.camera import CameraReference, camera_replay
 from engine.rag.contracts import VideoChunkEvidence, VideoChunkRetrievalIdentity
 from engine.rag.indexing.events import compute_event_id
 from engine.rag.retrieval.contracts import EventIndexNotReadyError
@@ -255,7 +256,8 @@ class McpRetrievalService:
         timeline = evidence.all_time_events
         if ref.offset >= len(timeline):
             raise ValueError("INVALID_EVIDENCE_REF: Context offset is outside this Chunk.")
-        matched_event, truncated = _event(timeline[ref.timeline_index])
+        source_event = timeline[ref.timeline_index]
+        matched_event, truncated = _event(source_event)
         events, size, end = [], 0, ref.offset
         for index in range(ref.offset, min(len(timeline), ref.offset + 8)):
             event, clipped = _event(timeline[index])
@@ -283,7 +285,7 @@ class McpRetrievalService:
         playback = self._media.playback_view(evidence.video_id, tenant_id=self._tenant_id, video=evidence)
         if playback.status != "READY":
             warnings.append("Browser playback is unavailable; inspect original_url if present.")
-        return {
+        result = {
             "evidence_ref": evidence_ref, "series_id": evidence.series_id,
             "series_name": evidence.series_name[:255], "video_id": evidence.video_id,
             "episode_order": evidence.episode_order, "video_chunk_id": evidence.video_chunk_id,
@@ -297,6 +299,11 @@ class McpRetrievalService:
             "media": {"original_url": original_url, "playback_url": playback.url,
                       "playback_status": playback.status},
         }
+        if source_event["event_type"] == "SCENE" and source_event.get("camera_ref") is not None:
+            observation = CameraReference.model_validate(source_event["camera_ref"])
+            result["camera_replay"] = camera_replay(observation, matched_event["start_ms"], matched_event["end_ms"],
+                                                    evidence.camera_hints)
+        return result
 
     def _published_chunk(self, chunk_id: str, identity: VideoChunkRetrievalIdentity) -> VideoChunkEvidence:
         if identity.tenant_id != self._tenant_id:
@@ -389,6 +396,6 @@ def _event(source: dict[str, Any]) -> tuple[dict[str, Any], bool]:
         return value
 
     # Keep type/timing before potentially long descriptions and name lists.
-    ordered = {key: source[key] for key in ("event_type", "start_seconds", "end_seconds") if key in source}
+    ordered = {key: source[key] for key in ("event_type", "start_seconds", "end_seconds", "camera_ref") if key in source}
     ordered.update(source)
     return project(ordered), truncated

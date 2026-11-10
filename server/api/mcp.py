@@ -156,7 +156,8 @@ def create_mcp_app(service: McpRetrievalService, *, auth_mode: str) -> Starlette
         """Retrieve event evidence by natural language, dialogue or action. top_k counts distinct chunks,
         not events. Omit series_ids to search the accessible local library. Read returned evidence_ref
         with read_evidence for verified source context and downloadable media. Follow next_cursor for more
-        ranked hits. For all candidate shots in a series, use browse_events. Times are milliseconds.
+        ranked hits. For all candidate shots in a series, use browse_events. Search camera moves by
+        observed direction, pace or reveal. A matching SCENE can carry a camera_ref. Times are milliseconds.
         """
         return await invoke(
             ctx, service.retrieve, query=query, series_ids=series_ids, top_k=top_k,
@@ -208,6 +209,8 @@ def create_mcp_app(service: McpRetrievalService, *, auth_mode: str) -> Starlette
         """Read current evidence and media for an opaque reference from retrieve or browse_events. Follow
         next_evidence_ref to continue bounded context. A stale reference requires a new retrieval.
         Media URLs serve source videos; use the returned millisecond boundaries when clipping.
+        For a matched camera_ref, camera_replay contains an editable ES module and params for supported
+        continuous 2-D moves. Anchors are creative defaults; verify the observed framing in matched_event.
         """
         return await invoke(ctx, service.read_evidence, evidence_ref=evidence_ref)
 
