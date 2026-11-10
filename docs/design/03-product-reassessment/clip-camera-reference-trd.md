@@ -1,6 +1,6 @@
 # 1. 问题与现状
 
-剪辑师希望在 Seekino 中找到一段“沿海岸丝滑向右移，小船从右侧入画”的素材，并让创作 Agent 把同一种运镜用在另一幅画上。分支 `feat/clip-camera-reference`，目标 `dev`。PR 创建后回填。依赖已合入的 [上传路由 #82](https://github.com/owariband/Seekino/pull/82) 与 [事件检索 #77](https://github.com/owariband/Seekino/pull/77)，承接 [剪辑参考主设计 #50](https://github.com/owariband/Seekino/pull/50)。
+剪辑师希望在 Seekino 中找到一段“沿海岸丝滑向右移，小船从右侧入画”的素材，并让创作 Agent 把同一种运镜用在另一幅画上。分支 `feat/clip-camera-reference` 通过 [PR #86](https://github.com/owariband/Seekino/pull/86) 向 `dev` 集成。依赖已合入的 [上传路由 #82](https://github.com/owariband/Seekino/pull/82) 与 [事件检索 #77](https://github.com/owariband/Seekino/pull/77)，承接 [剪辑参考主设计 #50](https://github.com/owariband/Seekino/pull/50)。
 
 在基线 `2139cbaf`，自动或显式选为 `clip` 的素材会收到记录切镜、构图、字卡与时间范围的提示。普通事件只有自然语言描述和来源时间，显式提交 `camera_ref` 会被 Schema 拒绝。实验中的 `PAN` 标签和灯塔片可执行的 `cameraAt` 尚未连接到正式素材。只追主体容易看反方向，复制角色停帧会把平滑的镜头做成卡顿。
 
@@ -38,4 +38,4 @@
 
 # 6. 结果验收与闭环
 
-剪辑 Agent 可以先检索“平滑向右横移”或按源时间浏览，再从命中事件取得画面描述、来源范围与可运行的镜头。灯塔试点验证了“先只看左半幅，再跟随镜头看到右侧小船”，也验证了观察中的画面事件可保留各自时间而由同一条曲线回放。量化验收仅涵盖纹理充分的二维横移。实拍视差、遮挡、飞速甩镜和低采样率仍需真实素材验证。当前交付位于独立功能分支，发布和库内重解析待进行。[工作台 EDIT-CAMERA-01](../../dev/workbench.html)
+剪辑 Agent 可以先检索“平滑向右横移”或按源时间浏览，再从命中事件取得画面描述、来源范围与可运行的镜头。灯塔试点验证了“先只看左半幅，再跟随镜头看到右侧小船”，也验证了观察中的画面事件可保留各自时间而由同一条曲线回放。量化验收仅涵盖纹理充分的二维横移。实拍视差、遮挡、飞速甩镜和低采样率仍需真实素材验证。部署及库内历史素材重解析待进行。[工作台 EDIT-CAMERA-01](../../dev/workbench.html)

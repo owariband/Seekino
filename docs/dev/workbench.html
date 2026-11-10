@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-10T11:20:00+08:00",
+ "updatedAt": "2026-11-10T11:35:00+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 30,
+ "revision": 31,
  "categories": [
   {
    "id": "parse",
@@ -5036,13 +5036,18 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "status": "verifying",
    "priority": "P1",
    "description": "场景事件记录可见的镜头运动。剪辑素材保留方向、起落幅、节奏和画面依据，可在普通片段详情查看或从同一发布事件读取运镜参考。",
-   "next": "集成功能分支，在实际部署用一段有手持或视差的剪辑素材复核。",
+   "next": "在实际部署按剪辑策略解析一段有手持或视差的素材，核对片段详情与原片。",
    "verification": "四个原创控制样例与一条 10 秒 MP4 实模验证。灯塔片真实 Refine 保留连续横移，229 帧回放均方根误差 3.80 像素。另验隔离发布、检索、普通片段详情和 MCP 回读。",
    "updatedAt": "2026-11-10",
    "tags": ["剪辑素材", "运镜"],
    "related": ["MOD-PARSE", "MOD-SEARCH", "EDIT-ANIME-01"],
    "branch": "feat/clip-camera-reference",
    "links": [
+    {
+     "label": "运镜解析与片段详情 PR #86",
+     "kind": "pr",
+     "url": "https://github.com/owariband/Seekino/pull/86"
+    },
     {
      "label": "上游普通上传判型 #82",
      "kind": "pr",
