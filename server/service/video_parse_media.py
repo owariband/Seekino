@@ -19,6 +19,8 @@ from uuid import uuid4
 from engine.common.frame_sampler import plan_frame_timestamps, extract_video_frames_batch
 from engine.common.media_probe import probe_video_duration_seconds
 from engine.parsev2.planning import plan_chunks
+from engine.parsev2.edit_reference import ReferenceSegment
+from engine.parsev2.reference_scan import scan_reference
 
 from ..utils.validation import canonical_uuid
 
@@ -50,12 +52,13 @@ class PreparedVideoParseMedia:
     """Paths valid only inside ``VideoParseMediaService.prepare_chunk``."""
 
     video_path: Path | None
-    audio_path: Path
+    audio_path: Path | None
     frames: tuple[tuple[int, Path], ...]
     visual_video_path: Path | None = None
     visual_start_ms: int | None = None
     visual_end_ms: int | None = None
     ocr_frames: tuple[tuple[int, Path], ...] | None = None
+    reference_segments: tuple[ReferenceSegment, ...] = ()
 
 
 class VideoParseMediaService:
@@ -166,6 +169,37 @@ class VideoParseMediaService:
             yield manifest
 
     @contextmanager
+    def prepare_reference_episode(self, identity, *, source_video, duration_ms, chunk_duration, max_height, check_active):
+        """Select and extract by presentation frame number, including silent source videos."""
+        source = Path(source_video)
+        with self._workspace(identity) as directory:
+            check_active()
+            picks = [ReferenceSegment.model_validate(s) for s in
+                     scan_reference(source, duration_ms=duration_ms, check_active=check_active, ffmpeg=self._ffmpeg_bin)]
+            paths = {}
+            if picks:
+                selector = "+".join(f"between(n,{p.first_frame},{p.first_frame+len(p.frame_ms)-1})" for p in picks)
+                command = [self._ffmpeg_bin, "-nostdin", "-v", "error", "-i", str(source), "-map", "0:v:0",
+                           "-vf", f"select='{selector}',scale=-2:'min({max_height},ih)'", "-fps_mode", "passthrough",
+                           "-q:v", "3", str(directory / "ref-%05d.jpg")]
+                self._command_runner(command)
+                paths = dict(zip((t for p in picks for t in p.frame_ms), sorted(directory.glob("ref-*.jpg")), strict=True))
+            chunks = []
+            for plan in plan_chunks(duration_seconds=duration_ms, chunk_duration=chunk_duration):
+                owned = [p for p in picks if plan.start_seconds <= p.start_ms < plan.end_seconds]
+                chunks.append({"start_ms": plan.start_seconds, "end_ms": plan.end_seconds,
+                               "visual_start_ms": plan.start_seconds, "visual_end_ms": plan.end_seconds,
+                               "video_path": None, "audio_path": None, "visual_video_path": None, "ocr_frames": None,
+                               "reference_segments": [p.model_dump() for p in owned],
+                               "frames": [[t, paths[t].name] for p in owned for t in p.frame_ms]})
+            check_active()
+            manifest = directory / "episode.json"
+            pending = manifest.with_suffix(".tmp")
+            pending.write_text(json.dumps({"chunks": chunks}, separators=(",", ":")))
+            pending.replace(manifest)
+            yield manifest
+
+    @contextmanager
     def use_episode_chunk(
         self, identity: MediaLeaseIdentity, *, video_lease_version: int,
         sequence_no: int, start_ms: int, end_ms: int, check_active: Callable[[], None],
@@ -194,12 +228,13 @@ class VideoParseMediaService:
             check_active()
             yield PreparedVideoParseMedia(
                 directory / row["video_path"] if row["video_path"] is not None else None,
-                directory / row["audio_path"],
+                directory / row["audio_path"] if row["audio_path"] is not None else None,
                 tuple((stamp, directory / path) for stamp, path in row["frames"]),
                 directory / row["visual_video_path"] if row["visual_video_path"] is not None else None,
                 row["visual_start_ms"], row["visual_end_ms"],
                 tuple((stamp, directory / path) for stamp, path in row["ocr_frames"])
                 if row["ocr_frames"] is not None else None,
+                tuple(ReferenceSegment.model_validate(s) for s in row.get("reference_segments", [])),
             )
 
     @contextmanager

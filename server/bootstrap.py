@@ -48,6 +48,7 @@ from .repository.parse_output_draft import ParseOutputDraftRepository
 from .repository.upload import UploadRepository
 from .service.video_parse_persistence import VideoParsePersistenceService
 from .service.video_parse_dispatch import ParseDispatch
+from .storage.elasticsearch_references import ElasticsearchReferenceStore
 from .service.agent_checkpoint import create_agent_checkpoint_store
 from .service.agent_chat import AgentChatService
 from .service.agent_attachments import AgentAttachmentService
@@ -289,6 +290,10 @@ def _build_application_services(
         max_output_tokens=settings.agent.max_output_tokens, tracing=tracing,
         gateway_client=gateway_client,
     )
+    reference_store = ElasticsearchReferenceStore(
+        resources.elasticsearch_client, index_name=settings.elasticsearch.index_name + "_edit_reference",
+        environment=settings.environment,
+    ) if resources.elasticsearch_client is not None else None
     event_store = resources.elasticsearch_event_store
     event_contract = None
     event_retrieval = None
@@ -337,6 +342,7 @@ def _build_application_services(
         gateway_client=gateway_client,
         event_store=event_store,
         event_contract=event_contract,
+        reference_store=reference_store,
     )
     summary_service = (
         VideoSummarizeService(

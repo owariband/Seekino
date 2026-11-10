@@ -4,6 +4,8 @@
 
 分支 `feat/edit-reference-profile`，承接[Claude 与 Codex 共同维护的双召回设计 #50](https://github.com/owariband/Seekino/pull/50)。上游 `refactor/parse-profile` 冻结任务用途，合入顺序为档案、解析、只读 MCP。普通上传路由见 [#82](https://github.com/owariband/Seekino/pull/82)，编辑自选正片区间沿用 [#81](https://github.com/owariband/Seekino/pull/81)。
 
+实施 [PR #84](https://github.com/owariband/Seekino/pull/84)，上游[解析用途 #83](https://github.com/owariband/Seekino/pull/83)。
+
 # 2. 影响因素、假设与评价指标
 
 普通稀疏抽帧会漏掉 2–3 帧的亮相动作。代表片段应涵盖不同构图，片内密集变化还可能来自原画换姿。时间窗、切点候选和实际画面含义要分别核对。
