@@ -278,6 +278,84 @@
     font: 600 0.75rem/1.3 var(--sans);
   }
 
+  /* Model menus: where the browser supports a styleable select, the list opens as a card below its button
+     (flipping above near the viewport edge). The native macOS menu instead centres the chosen item over the
+     control, which hides the button the user just pressed. Other browsers keep the native menu. */
+  @supports (appearance: base-select) {
+    select[data-menu],
+    select[data-menu]::picker(select) {
+      appearance: base-select;
+    }
+
+    select[data-menu]::picker(select) {
+      min-width: anchor-size(width);
+      max-width: min(420px, calc(100vw - 24px));
+      max-height: min(360px, 60vh);
+      margin-block: 6px;
+      padding: 6px;
+      overflow-y: auto;
+      color: var(--ink);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--surface-raised);
+      box-shadow: var(--shadow);
+      position-try-fallbacks: flip-block;
+      opacity: 1;
+      transform: none;
+      transform-origin: top center;
+      transition: opacity var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out),
+        overlay var(--duration-fast) allow-discrete, display var(--duration-fast) allow-discrete;
+    }
+
+    select[data-menu]:not(:open)::picker(select) {
+      opacity: 0;
+      transform: translateY(-4px) scale(0.98);
+    }
+
+    @starting-style {
+      select[data-menu]:open::picker(select) {
+        opacity: 0;
+        transform: translateY(-4px) scale(0.98);
+      }
+    }
+
+    select[data-menu] option {
+      gap: 8px;
+      min-height: 36px;
+      padding: 7px 10px;
+      color: var(--ink);
+      border-radius: 9px;
+      font-size: 0.86rem;
+      white-space: nowrap;
+    }
+
+    select[data-menu] option:is(:hover, :focus-visible):not(:disabled) {
+      outline: 0;
+      background: var(--surface-muted);
+    }
+
+    select[data-menu] option:checked {
+      color: var(--teal-deep);
+      font-weight: 600;
+    }
+
+    select[data-menu] option:disabled {
+      color: var(--ink-faint);
+    }
+
+    select[data-menu] option::checkmark {
+      order: 1;
+      margin-left: auto;
+    }
+
+    select[data-menu] optgroup {
+      padding-top: 4px;
+      color: var(--ink-faint);
+      font-size: 0.74rem;
+      font-weight: 600;
+    }
+  }
+
   .status-dot {
     width: 7px;
     height: 7px;

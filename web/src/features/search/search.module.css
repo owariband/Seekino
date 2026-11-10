@@ -777,6 +777,12 @@
 .modelPicker select:hover { border-color: var(--line-strong); color: var(--ink); }
 .modelPicker select:disabled { color: var(--ink-faint); cursor: progress; }
 .modelPicker select:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+/* With the styleable select, keep the pill's text centred and swap the UA triangle for a quiet chevron. */
+@supports (appearance: base-select) {
+  .modelPicker select { display: inline-flex; align-items: center; gap: 7px; padding: 0 10px 0 12px; }
+  .modelPicker select::picker-icon { content: ""; width: 5px; height: 5px; margin-top: -3px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(45deg); transition: transform var(--duration-fast) var(--ease-out), margin var(--duration-fast) var(--ease-out); }
+  .modelPicker select:open::picker-icon { margin-top: 3px; transform: rotate(225deg); }
+}
 .modelError { margin: 6px 4px 0; font-size: .72rem; }
 .standalonePage .keyboardHint { width: fit-content; margin: 4px 4px 0 auto; padding: 3px 0; font-size: .6rem; }
 .standalonePage[data-draft="true"] .agentPanel { justify-content: center; padding-bottom: clamp(24px, 9vh, 100px); }

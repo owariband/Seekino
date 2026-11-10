@@ -207,12 +207,13 @@
   border-radius: var(--radius-small);
   background: var(--surface);
   pointer-events: none;
+  transition: background-color var(--duration-fast) var(--ease-out);
 }
 .roleValue { display: grid; min-width: 0; gap: 2px; }
 .roleValue strong, .roleValue small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .roleValue strong { color: var(--ink); font: 550 .87rem/1.4 var(--sans); }
 .roleValue small { color: var(--ink-soft); font: 400 .73rem/1.4 var(--sans); }
-.roleFace svg { flex: none; color: var(--ink-soft); }
+.roleFace svg { flex: none; color: var(--ink-soft); transition: transform var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out); }
 .roleChoice select:is(:hover, :focus-visible):enabled + .roleFace { background: var(--surface-muted); }
 .roleChoice select:focus-visible { outline: 0; }
 .roleChoice select:focus-visible + .roleFace { outline: 2px solid var(--teal); outline-offset: -1px; }

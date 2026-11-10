@@ -16,7 +16,7 @@ export function PersonalModelSelect({ connections, value, label, placeholder, on
   const isKnown = containsModel(connections, value);
   const groups = connections.filter((connection) => connection.models.some((m) => m.available !== false));
   return (
-    <select aria-label={label} aria-busy={busy || undefined} disabled={disabled || busy}
+    <select data-menu aria-label={label} aria-busy={busy || undefined} disabled={disabled || busy}
       value={isKnown ? value : ""} onChange={(event) => onChange(event.currentTarget.value)}>
       {!isKnown && <option value="" disabled hidden>{placeholder}</option>}
       {groups.map((connection) => (
