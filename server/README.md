@@ -341,6 +341,8 @@ Agent 对话中的既有回答和证据快照属于聊天历史，不在任务�
 `Idempotency-Key` 在 Workspace 内唯一。Conversation 详情直接返回 `workspaceId`，
 同一 Conversation 可以在后续消息选择不同动画。`messages/send` 的 JSON 可传 `seriesIds`，
 省略或空数组默认搜索当前 Workspace 全部 READY 动画；显式选择未 READY 动画返回 409。
+公开系列由管理者显式发布和撤回，原片和索引各自决定每集的播放与检索能力。普通聊天允许已授权的零索引课程。指定一门课时，`POST /api/search` 可用 `episodeOrder` 限定单集，Agent 的检索工具使用 `episode`。部分就绪的响应带实际 `searchedVideoIds`、`partial` 与集数提示。零就绪和服务离线分别返回 `SERIES_NOT_READY`（409）与 `RETRIEVAL_UNAVAILABLE`（503）。[设计和验收](../docs/design/03-product-reassessment/public-course-readiness-trd.md)
+
 每次 Kick 冻结实际 Scope，USER / ASSISTANT 消息均公开保存 `seriesIds`。前端复用
 `GET /api/series/list?workspaceId=...` 的 `seriesId/name/status` 实现多选；改变选择只影响
 下一次发送。消息幂等限定在 Conversation，并按原请求范围比较；原 Key 的“全部”重放

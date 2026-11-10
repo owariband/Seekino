@@ -103,6 +103,7 @@ Event / Sub-Chunk 的实施入口是 [sub-chunk-trd.md](02-agent-harness/sub-chu
 | Feature / 主题 | 文档 | 内容与定位 |
 |---|---|---|
 | 独立对话页布局 | [chat-sidebar-layout-trd.md](03-product-reassessment/chat-sidebar-layout-trd.md) | 左侧历史、居中草稿、简洁输入栏；依赖 #66，状态见工作台 CHAT-LAYOUT-01。 |
+| 公开课程解析期间的访问 | [公开观看、对话与逐集检索](03-product-reassessment/public-course-readiness-trd.md) | 显式公开、原片播放、零索引对话、按集覆盖和撤回校验。 |
 | 聊天页顶栏与公开范围 | [chat-header-scope-trd.md](03-product-reassessment/chat-header-scope-trd.md) | 紧凑的 Seekino 字标导航、公开系列空态及 CPU 侧栏实测。 |
 | 个人模型服务 | [personal-model-connections-trd.md](03-product-reassessment/personal-model-connections-trd.md) | 本机或 cloud 管理员编辑 YAML 中的协议、地址和模型，聊天按会话选模。 |
 | 模型注册与用途 | [model-registry-roles-trd.md](03-product-reassessment/model-registry-roles-trd.md) | 具名连接、按模型登记能力、六个用途的 YAML 绑定与权限。 |

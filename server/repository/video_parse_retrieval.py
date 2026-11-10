@@ -28,20 +28,32 @@ from ..model.task import ChunkParseTask, VideoParseTask
 from ..model.video import Series, Video, VideoChunk
 from . import video_parse_chunk as chunk_store
 from . import video_parse_task as task_store
+from .upload import video_deletion_pending
 
 
-def list_series_ids(
+def series_names(
     session: Session, *, series_ids: Sequence[str], workspace: str,
-) -> tuple[str, ...]:
-    return tuple(session.scalars(select(Series.id).where(
+) -> dict[str, str]:
+    return dict(session.execute(select(Series.id, Series.name).where(
         Series.id.in_(series_ids), Series.tenant_id == workspace,
-    )))
+    )).all())
 
 
-def list_series_videos(session: Session, *, series_ids: Sequence[str]) -> list[VideoData]:
-    return [task_store.video_data(row) for row in session.scalars(select(Video).where(
-        Video.series_id.in_(series_ids),
-    ).order_by(Video.episode_order, Video.id))]
+def list_series_videos(
+    session: Session, *, series_ids: Sequence[str], episode_order: int | None = None,
+) -> list[VideoData]:
+    query = select(Video).where(
+        Video.series_id.in_(series_ids), ~video_deletion_pending(),
+    )
+    if episode_order is not None:
+        query = query.where(Video.episode_order == episode_order)
+    return [task_store.video_data(row) for row in session.scalars(query.order_by(Video.episode_order, Video.id))]
+
+
+def chunk_video_ids(session: Session, *, chunk_ids: set[str], video_ids: Sequence[str]) -> dict[str, str]:
+    return dict(session.execute(select(VideoChunk.id, VideoChunk.video_id).where(
+        VideoChunk.id.in_(chunk_ids), VideoChunk.video_id.in_(video_ids),
+    )).all())
 
 
 def list_video_tasks(session: Session, *, video_ids: Sequence[str]) -> list[VideoParseRetrievalTaskData]:

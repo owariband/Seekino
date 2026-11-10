@@ -37,7 +37,7 @@ def media_fixture(tmp_path, *, playable=True):
     source.write_bytes(b"managed-original-video")
     frame = store.base_directory / "frame.png"
     frame.write_bytes(b"\x89PNG\r\n\x1a\nregistered-image")
-    state = SimpleNamespace(video_id=video_id, tenant_id="workspace", original_source_uri=store.uri_for_path(source), keyframe_uris=(store.uri_for_path(frame),))
+    state = SimpleNamespace(video_id=video_id, tenant_id="workspace", upload_status="COMPLETED", original_source_uri=store.uri_for_path(source), keyframe_uris=(store.uri_for_path(frame),))
     def get_video(identifier, *, tenant_id):
         if identifier != video_id or tenant_id != "workspace":
             raise SeriesNotFoundError("视频资源不存在")

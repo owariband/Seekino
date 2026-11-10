@@ -49,11 +49,11 @@
 .videoMeta { display: flex; flex-wrap: wrap; gap: 16px; color: var(--ink-soft); font-size: .78rem; }
 .watchSynopsis > p { margin: 24px 0; color: var(--ink-soft); font-size: .9rem; line-height: 1.85; white-space: pre-line; }
 .neighbors { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 28px; }
-.neighbors a { display: inline-flex; align-items: center; gap: 4px; min-height: 38px; padding: 0 12px; color: var(--teal-deep); border: 1px solid var(--line); border-radius: var(--radius-small); font-size: .78rem; text-decoration: none; }
+.neighbors :is(a, [aria-disabled="true"]) { display: inline-flex; align-items: center; gap: 4px; min-height: 38px; padding: 0 12px; color: var(--teal-deep); border: 1px solid var(--line); border-radius: var(--radius-small); font-size: .78rem; text-decoration: none; }
 .neighbors a:hover { background: var(--surface-muted); }
 .upNext h2 { margin: 0 0 18px; color: var(--ink); font-size: 1rem; font-weight: 600; }
 .nextEpisodes { display: grid; gap: 18px; margin: 0; padding: 0; list-style: none; }
-.nextEpisodes a { display: grid; grid-template-columns: minmax(112px, 42%) minmax(0, 1fr); align-items: start; gap: 14px; color: var(--ink); text-decoration: none; }
+.nextEpisodes :is(a, [aria-disabled="true"]) { display: grid; grid-template-columns: minmax(112px, 42%) minmax(0, 1fr); align-items: start; gap: 14px; color: var(--ink); text-decoration: none; }
 .nextPreview { position: relative; display: grid; aspect-ratio: 16 / 9; overflow: hidden; place-items: center; color: var(--teal-deep); border-radius: 3px; background: var(--surface-muted); }
 .nextPreview img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .nextPreview img[hidden] { display: none; }
@@ -90,17 +90,17 @@
 .episodePanel h2 a:hover { text-decoration: underline; }
 .episodePanel small { color: var(--ink-faint); font-size: .65rem; font-weight: 400; }
 .episodeList { display: grid; gap: 2px; margin: 0; padding: 8px; list-style: none; }
-.episodeList a { display: grid; grid-template-columns: 52px minmax(0, 1fr) auto; gap: 10px; min-width: 0; align-items: center; padding: 12px 10px; color: var(--ink-soft); border-radius: 4px; text-decoration: none; }
+.episodeList :is(a, [aria-disabled="true"]) { display: grid; grid-template-columns: 52px minmax(0, 1fr) auto; gap: 10px; min-width: 0; align-items: center; padding: 12px 10px; color: var(--ink-soft); border-radius: 4px; text-decoration: none; }
 .episodeList a:hover { background: var(--surface-muted); }
 .episodeList a[aria-current="page"] { background: var(--teal-wash); }
-.episodeList a > span { color: var(--teal-deep); font: 600 .65rem/1.4 var(--mono); }
+.episodeList :is(a, [aria-disabled="true"]) > span { color: var(--teal-deep); font: 600 .65rem/1.4 var(--mono); }
 .episodeList strong { overflow: hidden; color: var(--ink); font-size: .72rem; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 800px) {
   .sidePanel { width: 100vw; border-left: 0; border-top: 1px solid var(--line); }
   .watchDetails { grid-template-columns: minmax(0, 1fr); gap: 32px; padding-top: 26px; }
   .resizeHandle { display: none; }
-  .nextEpisodes a { grid-template-columns: minmax(120px, 32%) minmax(0, 1fr); }
-  .episodeList a { grid-template-columns: 46px minmax(0, 1fr); }
+  .nextEpisodes :is(a, [aria-disabled="true"]) { grid-template-columns: minmax(120px, 32%) minmax(0, 1fr); }
+  .episodeList :is(a, [aria-disabled="true"]) { grid-template-columns: 46px minmax(0, 1fr); }
   .episodeList small { grid-column: 2; }
 }
 @media (max-width: 580px) { .watchSynopsis h1 { font-size: 1.15rem; } .panelToggle { width: 36px; flex-shrink: 0; } }

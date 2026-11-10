@@ -6,7 +6,8 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError, model_validator
 
-from engine.rag.contracts import VideoChunkEvidence, VideoChunkSearchResult
+from engine.rag.contracts import AgentReply, VideoChunkEvidence, VideoChunkSearchResult
+from engine.rag.retrieval.contracts import EpisodeNotFoundError, RetrievalUnavailableError, SeriesNotReadyError
 from engine.rag.retrieval.fusion import (
     AGENT_RETRIEVAL_STRATEGY_VERSION,
     normalize_hybrid_retrieval_weights,
@@ -30,53 +31,38 @@ from ..state import (
     RetrievalChannelWeights,
 )
 from .shared import (
-    _OptionalCursor, _ToolCallBudget, _bounded_text, _retrieval_card, _start_tool_call,
+    _OptionalCursor, _ToolCallBudget, _bounded_text, _retrieval_card, _start_tool_call, retrieval_episode,
 )
 
-class RetrieveArguments(BaseModel):
+
+class _ScopedRetrievalArguments(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    query: Annotated[
-        str,
-        StringConstraints(strip_whitespace=True, min_length=1, max_length=20_000),
-    ] | None = None
+    query: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=20_000)] | None = None
     top_k: int | None = Field(default=None, ge=1, strict=True)
+    channel_weights: RetrievalChannelWeights | LexicalRetrievalChannelWeights | None = None
+    cursor: _OptionalCursor = None
+    episode: int | None = Field(
+        default=None, gt=0, le=2_147_483_647, strict=True,
+        description="For a single-episode request, use its episode number. Omit for the whole course.",
+    )
+
+    @model_validator(mode="after")
+    def validate_initial_or_continuation_call(self) -> _ScopedRetrievalArguments:
+        search_values = (self.query, self.top_k, self.channel_weights)
+        if self.cursor is None and any(value is None for value in search_values):
+            raise ValueError("query, top_k and channel_weights are required without cursor")
+        if self.cursor is not None and any(value is not None for value in (*search_values, self.episode)):
+            raise ValueError("cursor continuation must not repeat search arguments")
+        return self
+
+
+class RetrieveArguments(_ScopedRetrievalArguments):
     channel_weights: RetrievalChannelWeights | None = None
-    cursor: _OptionalCursor = None
-
-    @model_validator(mode="after")
-    def validate_initial_or_continuation_call(self) -> RetrieveArguments:
-        search_values = (self.query, self.top_k, self.channel_weights)
-        if self.cursor is None and any(value is None for value in search_values):
-            raise ValueError(
-                "query, top_k and channel_weights are required without cursor"
-            )
-        if self.cursor is not None and any(value is not None for value in search_values):
-            raise ValueError("cursor continuation must not repeat search arguments")
-        return self
 
 
-class LexicalRetrieveArguments(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    query: Annotated[
-        str,
-        StringConstraints(strip_whitespace=True, min_length=1, max_length=20_000),
-    ] | None = None
-    top_k: int | None = Field(default=None, ge=1, strict=True)
+class LexicalRetrieveArguments(_ScopedRetrievalArguments):
     channel_weights: LexicalRetrievalChannelWeights | None = None
-    cursor: _OptionalCursor = None
-
-    @model_validator(mode="after")
-    def validate_initial_or_continuation_call(self) -> LexicalRetrieveArguments:
-        search_values = (self.query, self.top_k, self.channel_weights)
-        if self.cursor is None and any(value is None for value in search_values):
-            raise ValueError(
-                "query, top_k and channel_weights are required without cursor"
-            )
-        if self.cursor is not None and any(value is not None for value in search_values):
-            raise ValueError("cursor continuation must not repeat search arguments")
-        return self
 
 
 class ReadItemArguments(BaseModel):
@@ -114,7 +100,7 @@ def build_retrieve_tool(
         channel_weights: (
             RetrievalChannelWeights | LexicalRetrievalChannelWeights | None
         ) = None,
-        cursor: str | None = None,
+        cursor: str | None = None, episode: int | None = None,
     ) -> ToolResult:
         with invocation_lock:
             _start_tool_call(control, budget, "retrieve")
@@ -181,6 +167,8 @@ def build_retrieve_tool(
                     visual=visual_weight,
                 )
                 first_weight_argument = {"transcript_weight": first_effective}
+            episode = retrieval_episode(inputs, episode)
+            scope_filter = {"episode_order": episode} if episode is not None else {}
             try:
                 result = search(
                     query,
@@ -190,7 +178,18 @@ def build_retrieve_tool(
                     text_weight=semantic_weight,
                     vision_weight=visual_weight,
                     **first_weight_argument,
+                    **scope_filter,
                 )
+            except (EpisodeNotFoundError, SeriesNotReadyError, RetrievalUnavailableError) as exc:
+                control.check()
+                calls.append(RetrievalCall(
+                    query=query, top_k=top_k, requested_weights=requested_weights, effective_weights=effective_weights,
+                    role=role, status="error", effective_filters=scope_filter or None,
+                    error={"code": exc.code, "message": exc.public_message},
+                    result=VideoChunkSearchResult(query=query, series_ids=list(inputs["series_ids"]), hits=[],
+                        partial=True, agent_reply=AgentReply(message=exc.public_message, result_count=0)),
+                ))
+                raise AgentToolFeedbackError(exc.code, exc.public_message, "说明该限制并继续对话，保留指定的资料范围。") from exc
             except AgentModelInvocationError:
                 raise
             except Exception as exc:
@@ -200,7 +199,7 @@ def build_retrieve_tool(
                 result = VideoChunkSearchResult.model_validate(result).model_copy(deep=True)
             except ValidationError as exc:
                 raise AgentModelInvocationError("Retrieval returned invalid source evidence") from exc
-            validate_result(result, inputs)
+            validate_result(result, inputs, episode_order=episode)
             if result.query != query:
                 raise AgentModelInvocationError(
                     "Retrieval result query does not match the actual call"
@@ -215,6 +214,7 @@ def build_retrieve_tool(
                 effective_weights=effective_weights,
                 result=result,
                 role=role,
+                effective_filters=scope_filter or None,
             )
             merge_retrieval_calls(inputs, [*calls, call])
             calls.append(call)

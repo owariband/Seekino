@@ -1573,7 +1573,7 @@ describe("application shell", () => {
     await user.click(await screen.findByLabelText("选择检索视频系列"));
     const firstChoice = await screen.findByRole("checkbox", { name: new RegExp(apiSeries.name) });
     const secondChoice = screen.getByRole("checkbox", { name: /第二部动画/ });
-    expect(screen.getByRole("checkbox", { name: /解析中的动画/ })).toBeDisabled();
+    expect(screen.getByRole("checkbox", { name: /解析中的动画/ })).toBeEnabled();
     await user.click(firstChoice);
     await user.click(secondChoice);
     expect(screen.getByLabelText("选择检索视频系列")).toHaveTextContent("已选 2 个系列");
@@ -1600,7 +1600,7 @@ describe("application shell", () => {
     act(finishAnswer);
   });
 
-  it("allows deselecting an animation that became unready and preserves unsent text when Enter is blocked", async () => {
+  it("keeps a processing series selected and preserves the draft if the series is withdrawn", async () => {
     const secondSeries = { ...apiSeries, seriesId: "second-series", name: "第二部动画" };
     const { fetchMock, queryClient, finishAnswer } = renderApp([apiSeries, secondSeries]);
     const user = userEvent.setup();
@@ -1611,17 +1611,16 @@ describe("application shell", () => {
     await user.type(composer, "雨天门口");
     await waitFor(() => expect(screen.getByRole("button", { name: "发送问题" })).toBeEnabled());
     act(() => queryClient.setQueriesData({ queryKey: ["series"] }, [{ ...apiSeries, status: "INDEXING" }, secondSeries]));
-    await waitFor(() => expect(screen.getByRole("button", { name: "发送问题" })).toBeDisabled());
+    expect(screen.getByRole("button", { name: "发送问题" })).toBeEnabled();
     expect(firstChoice).toBeChecked();
-    expect(firstChoice).toBeEnabled();
-    expect(screen.getByRole("alert")).toHaveTextContent("所选视频系列暂不可检索");
+    act(() => queryClient.setQueriesData({ queryKey: ["series"] }, [secondSeries]));
+    await waitFor(() => expect(screen.getByRole("button", { name: "发送问题" })).toBeDisabled());
+    expect(await screen.findByRole("alert")).toHaveTextContent("所选课程暂不可访问");
     await user.click(composer);
     await user.keyboard("{Enter}");
     expect(composer).toHaveValue("雨天门口");
     expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/api/agent/messages/send"))).toBe(false);
-    await user.click(firstChoice);
-    expect(firstChoice).not.toBeChecked();
-    expect(firstChoice).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "检索全部视频系列" }));
     expect(screen.getByLabelText("选择检索视频系列")).toHaveTextContent("全部视频系列");
     expect(screen.getByRole("button", { name: "发送问题" })).toBeEnabled();
     await user.click(composer);

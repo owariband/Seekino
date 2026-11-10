@@ -20,7 +20,7 @@ from gateway.tracing import LangfuseTracing
 from gateway.usage import model_call_context
 
 from .video_parse_persistence import VideoParseConflictError, VideoParsePersistenceService
-from ..error.retrieval import SeriesNotReadyError
+from ..error.retrieval import retrieval_backend_errors
 from ..storage.elasticsearch_events import ElasticsearchVideoEventStore
 from .video_retrieval import QueryEmbedder, RetrievalIndexConsistencyError
 
@@ -52,11 +52,13 @@ class VideoEventRetrievalService:
         self._vision_embedder = embedder if vision_embedder is None else vision_embedder
         self._exact, self._tracing = exact, tracing
 
+    @retrieval_backend_errors()
     def search(
         self, query: str, *, tenant_id: str, series_ids: Sequence[str], top_k: int = 10,
         lexical_weight: float | None = None, text_weight: float | None = None,
         vision_weight: float | None = None, event_types: Sequence[str] | None = None,
         speaker: str | None = None, video_chunk_ids: Sequence[str] | None = None,
+        episode_order: int | None = None,
     ) -> EventSearchResult:
         if not isinstance(query, str) or not query.strip():
             raise ValueError("query must be nonblank")
@@ -82,19 +84,18 @@ class VideoEventRetrievalService:
         }))
         query = query.strip()
         try:
-            selected = self._persistence.resolve_retrieval_scope(series_ids, tenant_id=tenant_id)
-        except (VideoParseConflictError, SeriesNotReadyError) as error:
-            raise EventIndexNotReadyError(str(error)) from error
-        # Absence/coverage is checked before any model call; it is not an empty match.
-        self._store.bind_contract(self._contract)
-        try:
-            sources = self._persistence.validate_event_coverage(
-                selected, index_name=self._store.index_name, contract_id=self._contract.contract_id,
+            selected = self._persistence.resolve_retrieval_scope(
+                series_ids, tenant_id=tenant_id,
+                event_index=(self._store.index_name, self._contract.contract_id),
                 video_chunk_ids=filters.video_chunk_ids or None,
+                **({"episode_order": episode_order} if episode_order is not None else {}),
             )
         except VideoParseConflictError as error:
             raise EventIndexNotReadyError(str(error)) from error
-        source_set = set(sources)
+        # Absence/coverage is checked before any model call; it is not an empty match.
+        self._store.bind_contract(self._contract)
+        source_generations = selected.event_source_generations
+        sources = tuple(source_generations)
         context = {
             "tenant_id": tenant_id, "series_ids": selected.series_ids,
             "video_ids": selected.searched_video_ids,
@@ -130,7 +131,7 @@ class VideoEventRetrievalService:
                     limit=policy.channel_top_k, exact=self._exact,
                 ))
         for hit in raw:
-            if (hit.parse_task_id, hit.video_chunk_id, hit.version) not in source_set:
+            if (hit.parse_task_id, hit.video_chunk_id, hit.version) not in source_generations:
                 raise RetrievalIndexConsistencyError("Event candidate escaped its authorized SQL source")
         fused = fuse_event_hits(raw, channel_weights=effective, rrf_k=policy.rrf_k)
         budgeted = fused[:policy.candidate_budget]
@@ -141,7 +142,7 @@ class VideoEventRetrievalService:
             identity = VideoChunkRetrievalIdentity(
                 tenant_id=tenant_id, series_id=selected.series_by_video_id[video_id], video_id=video_id,
                 parse_task_id=hit.parse_task_id, content_version=hit.version,
-                index_generation=selected.index_generation,
+                index_generation=source_generations[hit.parse_task_id, hit.video_chunk_id, hit.version],
             )
             previous = identities.setdefault(hit.video_chunk_id, identity)
             if previous != identity:
@@ -151,6 +152,8 @@ class VideoEventRetrievalService:
         except VideoParseConflictError as error:
             raise RetrievalIndexConsistencyError(str(error)) from error
         by_chunk = {item.facts.video_chunk_id: item for item in hydrated}
+        if episode_order is not None and any(item.evidence.episode_order != episode_order for item in hydrated):
+            raise RetrievalIndexConsistencyError("Episode order changed during Event retrieval")
         verified, rejected = [], []
         for hit in budgeted:
             try:
@@ -203,7 +206,7 @@ class VideoEventRetrievalService:
             warnings.append("部分 Event 候选与当前正式内容不一致，已剔除；可重试或使用 Chunk 检索。")
         chunk_result = VideoChunkSearchResult(
             query=query, series_ids=list(selected.series_ids), searched_video_ids=list(selected.searched_video_ids),
-            partial=selected.partial or bool(rejected), warnings=warnings, hits=hits,
+            partial=selected.partial or bool(rejected), warnings=warnings, coverage_messages=list(selected.warnings), hits=hits,
             agent_reply=AgentReply(message=f"找到 {len(hits)} 个相关视频片段。", result_count=len(hits)),
         )
         return EventSearchResult(chunk_result=chunk_result, matches=matches, trace={

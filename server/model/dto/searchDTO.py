@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from pydantic import Field
@@ -17,6 +17,7 @@ class VideoSearchRequest(ContractModel):
     tenant_id: str = Field(min_length=1, max_length=64)
     query: str = Field(min_length=1)
     series_ids: list[str] = Field(min_length=1)
+    episode_order: int | None = Field(default=None, gt=0, le=2_147_483_647, strict=True)
     top_k: int | None = Field(
         default=None, ge=1, strict=True,
         description="Omitted or null values use the retrieval search default; explicit positive integers are passed through",
@@ -55,7 +56,7 @@ class PublishedTimelineChunk:
 
 @dataclass(frozen=True, slots=True)
 class VideoParseRetrievalScope:
-    """Current queryable V2 task set and its shared index contract."""
+    """Queryable V2 tasks, with the frozen Chunk generation for each verified Event source."""
 
     series_ids: tuple[str, ...]
     searched_video_ids: tuple[str, ...]
@@ -65,6 +66,7 @@ class VideoParseRetrievalScope:
     index_generation: int
     partial: bool = False
     warnings: tuple[str, ...] = ()
+    event_source_generations: Mapping[tuple[str, str, int], int] = field(default_factory=dict)
 
     @property
     def embedding_model(self) -> str:

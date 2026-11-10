@@ -2,6 +2,8 @@
 
 分支 `fix/chat-header-scope` 对应 [PR #78](https://github.com/owariband/Seekino/pull/78)，基于已经集成[聊天侧栏 #67](https://github.com/owariband/Seekino/pull/67) 与[设置 #76](https://github.com/owariband/Seekino/pull/76) 的 `dev`。2026-11-08，游客看到“请选择要检索的公开系列”，真正说明没有可用系列的文字却在输入区下方另起一条红色警报。顶栏在 Seekino 字标旁重复展示 Kino，并占用 76px 桌面高度。CPU 截图还出现旧版独立聊天历史浮层，需核对该站实际提供的构建。
 
+2026-11-10，空态的判断条件修订为公开目录中没有可访问课程。已经公开且索引数为零的系列仍可选中并对话。[后续设计](public-course-readiness-trd.md)
+
 # 2. 影响因素与验收口径
 
 | 场景 | 现有行为 | 验收 |

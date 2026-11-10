@@ -2855,3 +2855,9 @@ micrograd v5 共 146 块，整集 90 分 04.884 秒。调度反复锁取候选�
 ## EDIT-CAMERA-01 · 剪辑素材缺少可检索和连续回放的镜头运动
 
 2026-11-10。单看构图和主体动作，解析会把向左移的镜头说成向右，也会把同一次横移按“灯亮”和“船入画”拆成两次起步。验收需要从原片取得同一镜头的方向、起落幅、节奏与证据，从已发布事件取回可运行的代码，再逐帧与已知镜头位置对照。固定机位下移动的小船与硬切是反例。[设计](../design/03-product-reassessment/clip-camera-reference-trd.md) · [实测](../report/agent/video_parse_v2/clip-camera-reference-20261110.md) · [工作台](workbench.html)
+
+## PUBLIC-COURSE-01 · 追加一集导致已公开的课程无法观看和提问
+
+2026-11-10，Karpathy 课程八集已上传，前七集可搜，E08 索引 114/134。游客打开首页后看不到课程，详情和搜索返回 404。首次发布与游客读取共用全量就绪要求，零索引课程另受前端选课和发送范围限制。验收要求是逐集播放、无索引时连续对话、检索如实给出覆盖范围，撤回后媒体与历史证据重新鉴权。[专项设计与现场基线](../design/03-product-reassessment/public-course-readiness-trd.md) · [工作台](workbench.html)
+
+同日复核还发现 Event 工具在缩小片段范围前生成了覆盖信息，并要求所有候选视频都具备事件索引。已授权课程中缺少某个集号也会终止对话。补充验收直接对照送给 ES 的来源集合、游客看到的提示，以及刷新后恢复的回答。[逐集对照与浏览器结果](../design/03-product-reassessment/public-course-readiness-trd.md#5-试点验证与方案取舍)

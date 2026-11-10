@@ -77,7 +77,7 @@ export interface VideoSummary {
   durationSeconds: number;
   uploadStatus: string;
   parseStatus: string;
-  uploadProgress: number;
+  uploadProgress: number | null;
   parseProgress: number | null;
   indexStatus: IndexStatus;
   playbackStatus: PlaybackStatus;
@@ -518,6 +518,7 @@ export interface VideoChunkSearchEvidence {
   searchedVideoIds: string[];
   partial: boolean;
   warnings: string[];
+  coverageMessages?: string[];
   hits: VideoChunkSearchHit[];
 }
 
@@ -542,6 +543,7 @@ export interface LexicalRetrievalChannelWeights {
 export type RetrievalChannelWeights = LegacyRetrievalChannelWeights | LexicalRetrievalChannelWeights;
 
 export interface RetrievalTraceEntry {
+  status?: "success" | "error";
   query: string;
   topK: number;
   strategyVersion: string;
@@ -552,6 +554,7 @@ export interface RetrievalTraceEntry {
 }
 
 export interface AgentSearchEvidence extends Omit<VideoChunkSearchEvidence, "query"> {
+  hadCandidates?: boolean | null;
   retrievalTrace?: RetrievalTraceEntry[];
 }
 
@@ -559,6 +562,7 @@ export interface VideoSearchRequest {
   tenantId: string;
   query: string;
   seriesIds: string[];
+  episodeOrder?: number;
   topK: number;
 }
 

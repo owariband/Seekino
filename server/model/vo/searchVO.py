@@ -73,6 +73,7 @@ class SearchEvidenceFieldsView(ContractModel):
     searched_video_ids: list[str]
     partial: bool
     warnings: list[str]
+    coverage_messages: list[str] = Field(default_factory=list)
     hits: list[SearchHitView]
 
 

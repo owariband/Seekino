@@ -480,7 +480,7 @@ def _authorize_query_scope(
         selected = []
         while True:
             page, total = services.library.list_public_series_page(
-                tenant_id=tenant_id, media=services.media, owner_user_id=identity.user_id,
+                tenant_id=tenant_id, owner_user_id=identity.user_id,
                 offset=offset, limit=100,
             )
             selected.extend(item.series_id for item in page)
@@ -745,15 +745,33 @@ def _agent_search_evidence_view(
         media.require_series_access(
             identity, result.get("seriesIds", result.get("series_ids", [])), tenant_id=tenant_id,
         )
+    public_view = identity is not None and not is_series_member(identity, tenant_id)
     evidence = search_evidence_fields(
         result, media, tenant_id=tenant_id,
-        public_view=identity is not None and not is_series_member(identity, tenant_id),
+        public_view=public_view,
     )
     raw_trace = result.get("retrievalTrace", result.get("retrieval_trace", []))
     return AgentSearchEvidenceView(
         **evidence.model_dump(),
-        retrieval_trace=raw_trace if isinstance(raw_trace, list) else [],
+        retrieval_trace=raw_trace if not public_view and isinstance(raw_trace, list) else [],
+        had_candidates=True if evidence.hits else _trace_had_candidates(raw_trace),
     )
+
+
+def _trace_had_candidates(trace: object) -> bool | None:
+    if not isinstance(trace, list) or not trace:
+        return None
+    all_empty = True
+    for entry in trace:
+        if not isinstance(entry, dict) or entry.get("error") or entry.get("status") not in (None, "success"):
+            all_empty = False
+            continue
+        count = entry.get("resultCount", entry.get("result_count"))
+        if type(count) is int and count > 0:
+            return True
+        if type(count) is not int or count != 0:
+            all_empty = False
+    return False if all_empty else None
 
 
 _ANSWER_EVENT_MODELS = {

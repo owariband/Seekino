@@ -20,6 +20,7 @@ from gateway.model_events import ModelReasoningDelta, ModelTextDelta
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, create_model, model_validator
 
 from engine.rag.contracts import AgentReply, VideoChunkEvidence, VideoChunkSearchHit, VideoChunkSearchResult
+from engine.rag.retrieval.contracts import EpisodeNotFoundError, EventIndexNotReadyError
 
 from agent.utils.tool import AgentTool
 from .common.state import AnswerPhase, ExecutionControl, RunInputs, context_json
@@ -71,6 +72,7 @@ class SearchArguments(BaseModel):
 
 
 class VideoSearchArguments(SearchArguments):
+    episode: int | None = Field(default=None, gt=0, le=2_147_483_647, strict=True)
     attachments: list[Annotated[str, StringConstraints(min_length=1)]] = Field(
         default_factory=list, strict=True,
         description="Copy mediaUri addresses from the provided attachments; omitted or [] sends no images.",
@@ -83,13 +85,14 @@ class QueryArguments(BaseModel):
     query: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)] | None = None
     attachments: list[Annotated[str, StringConstraints(min_length=1)]] = Field(default_factory=list, strict=True)
     queries: list[VideoSearchArguments] | None = Field(default=None, min_length=1, max_length=8)
+    episode: int | None = Field(default=None, gt=0, le=2_147_483_647, strict=True)
 
     @model_validator(mode="after")
     def single_or_parallel(self):
         if (self.query is None) == (self.queries is None):
             raise ValueError("Provide query or queries, exclusively")
-        if self.queries is not None and self.attachments:
-            raise ValueError("Put attachments on each independent query")
+        if self.queries is not None and (self.attachments or self.episode is not None):
+            raise ValueError("Put attachments and episode on each independent query")
         return self
 
 
@@ -622,6 +625,7 @@ class SupervisorRuntime:
         def query_video(
             query: str | None = None, attachments: list[str] | None = None,
             queries: list[dict] | None = None,
+            episode: int | None = None,
         ) -> ToolResult:
             nonlocal query_number
             with tool_lock:
@@ -632,7 +636,7 @@ class SupervisorRuntime:
                         retryable=False, retry_hint="Explain that local video evidence is unavailable.",
                     ).as_dict()})
                 tasks = [VideoSearchArguments.model_validate(item) for item in queries] if queries else [
-                    VideoSearchArguments(query=query, attachments=attachments or [])
+                    VideoSearchArguments(query=query, attachments=attachments or [], episode=episode)
                 ]
                 if len(tasks) > self._maximum_parallel_queries:
                     raise AgentToolFeedbackError(
@@ -655,6 +659,7 @@ class SupervisorRuntime:
                 for task in tasks:
                     scoped = deepcopy(inputs)
                     scoped["user_message"] = task.query
+                    scoped["retrieval_episode"] = task.episode
                     scoped["original_user_message"] = inputs["user_message"]
                     scoped["attachments"] = [{"mediaUri": address} for address in task.attachments]
                     scoped["image_urls"] = [attachment_images[address] for address in task.attachments]
@@ -1126,7 +1131,7 @@ class SupervisorRuntime:
             if isinstance(item, dict)
         }
         scope_description = (
-            "本次可检索的视频系列："
+            "本次选择的视频系列："
             + "、".join(
                 str(display_names.get(item["seriesId"]) or item["name"] or item["seriesId"])
                 for item in scope
@@ -1207,6 +1212,8 @@ class SupervisorRuntime:
             "仅评价你的回答或纠正你的理解时，直接回应这项反馈即可。不要把反馈当作待查台词，"
             "也不要拿上一轮视频答案换一种说法来代替回应；本轮没有提出的剧情、出处和人物无需重说。"
             "根据已有文字解释或改写时，直接完成这个任务，只有当前任务存在具体证据缺口才补查。\n"
+            "明确只查某一集时，调用 retrieve、search_video_events 或 query_video 必须传 episode 集数；搜整课则省略。"
+            "按工具返回的覆盖范围标明哪些集已查、哪些还在处理。指定集未就绪或检索服务离线时，说明原因并继续对话，不能拿其他集作证。\n"
             "明确要求找台词、场景、出处或补证时，实际调用相应工具。查询参数保留台词原话、否定和限定，"
             "按历史补齐明确指代，不猜人物或剧情；无需先改写整条用户消息或输出意图标签。\n"
             "同一消息包含回应与检索时，本轮必须完成两项。用户要求先解释、先改写或先回应，"
@@ -1363,6 +1370,18 @@ def _markdown_label(value: str) -> str:
 
 def _video_failure_tool_error(failure: VideoSearchFailure) -> ToolError:
     message, retry_hint = {
+        VideoSearchFailureCode.EPISODE_NOT_FOUND: (
+            failure.public_message or EpisodeNotFoundError.public_message, "请用户核对集号，保留本轮指定的范围。",
+        ),
+        VideoSearchFailureCode.EVENT_INDEX_NOT_READY: (
+            failure.public_message or EventIndexNotReadyError.public_message, "可在同一范围内检索 Chunk，或继续普通对话。",
+        ),
+        VideoSearchFailureCode.SCOPE_NOT_READY: (
+            failure.public_message or "所选范围暂时无法检索", "说明资料就绪情况，保留指定的范围并继续对话。",
+        ),
+        VideoSearchFailureCode.SERVICE_UNAVAILABLE: (
+            failure.public_message or "检索服务暂不可用，请稍后重试", "说明服务状态并继续对话。",
+        ),
         VideoSearchFailureCode.OUTPUT_TOKEN_LIMIT: (
             "Video analysis was truncated before a complete result was produced.",
             "Explain that video verification was interrupted and suggest retrying "

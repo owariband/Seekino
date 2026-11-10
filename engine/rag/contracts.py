@@ -195,6 +195,7 @@ class VideoChunkSearchEvidence(_RetrievalContractModel):
     searched_video_ids: list[str] | None = None
     partial: bool = False
     warnings: list[str] = Field(default_factory=list)
+    coverage_messages: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_result_contract(self) -> "VideoChunkSearchEvidence":

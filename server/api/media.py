@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse, Response
 
 from .context import get_identity, get_services
 from .library import read_series
-from ..service.access import is_series_member, require_tenant_write
+from ..service.access import is_series_member, require_tenant_write, series_access
 from ..model.dto.mediaDTO import ParseExportOptions, ParseExportRequest, parse_export_event_types
 from ..repository.library import SeriesNotFoundError
 from ..model.vo.searchVO import VideoChunkEvidenceView
@@ -70,7 +70,7 @@ def get_image_content(
     identity = get_identity(request)
     if identity.mode == "cloud":
         series = services.media.image_series(image_id, tenant_id=tenant_id, owner_user_id=identity.user_id)
-        services.media.require_readable_series(identity, series)
+        series_access(identity, series)
     media = services.media.get_image(image_id, tenant_id=tenant_id)
     return FileResponse(media.path, media_type=media.media_type, content_disposition_type="inline",
                         headers={"Cache-Control": "private, no-store"} if identity.mode == "cloud" else None)

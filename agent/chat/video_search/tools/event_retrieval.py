@@ -9,7 +9,8 @@ from pydantic import Field, ValidationError, model_validator
 
 from engine.rag.contracts import AgentReply, VideoChunkSearchResult
 from engine.rag.retrieval.contracts import (
-    EventFilters, EventIndexNotReadyError, EventSearchResult, EventType,
+    EpisodeNotFoundError, EventFilters, EventIndexNotReadyError, EventSearchResult, EventType,
+    RetrievalUnavailableError, SeriesNotReadyError,
 )
 from engine.rag.retrieval.fusion import (
     normalize_hybrid_retrieval_weights,
@@ -26,7 +27,7 @@ from ...common.tool_result import TextToolResult, ToolResult
 from ..output import merge_retrieval_calls, validate_result
 from ..state import LexicalRetrievalChannelWeights, RetrievalCall
 from .retrieval import LexicalRetrieveArguments
-from .shared import _ToolCallBudget, _bounded_text, _start_tool_call
+from .shared import _ToolCallBudget, _bounded_text, _start_tool_call, retrieval_episode
 
 
 _TOOL_NAME = "search_video_events"
@@ -69,7 +70,7 @@ def build_search_video_events_tool(
         event_types: list[EventType] | None = None,
         speaker: str | None = None,
         video_chunk_ids: list[str] | None = None,
-        cursor: str | None = None,
+        cursor: str | None = None, episode: int | None = None,
     ) -> ToolResult:
         with invocation_lock:
             _start_tool_call(control, budget, _TOOL_NAME)
@@ -102,32 +103,39 @@ def build_search_video_events_tool(
                 requested.lexical, requested.semantic, requested.visual,
             )
             effective = LexicalRetrievalChannelWeights(lexical=lexical, semantic=semantic, visual=visual)
+            episode = retrieval_episode(inputs, episode)
+            search_filters = filters.model_dump(mode="json")
+            if episode is not None:
+                search_filters["episode_order"] = episode
             try:
                 found = search(
                     query, tenant_id=inputs["tenant_id"], series_ids=list(inputs["series_ids"]),
                     top_k=top_k, lexical_weight=lexical, text_weight=semantic, vision_weight=visual,
-                    **filters.model_dump(mode="json"),
+                    **search_filters,
                 )
             except AgentModelInvocationError:
                 raise
             except Exception as exc:
                 control.check()
-                code = "EVENT_INDEX_NOT_READY" if isinstance(exc, EventIndexNotReadyError) else "EVENT_RETRIEVAL_FAILED"
+                code, message = "EVENT_RETRIEVAL_FAILED", "Event retrieval did not complete for the requested scope."
+                hint = "Continue with retrieve in the same scope. Missing coverage is not evidence of no matching scenes."
+                if isinstance(exc, EventIndexNotReadyError):
+                    code, message = exc.code, exc.public_message
+                elif isinstance(exc, (EpisodeNotFoundError, SeriesNotReadyError, RetrievalUnavailableError)):
+                    code, message = exc.code, exc.public_message
+                    hint = "说明该限制并继续对话，保留指定的资料范围。"
                 calls.append(RetrievalCall(
                     query=query, top_k=top_k, requested_weights=requested.model_copy(deep=True),
                     effective_weights=effective, granularity="event", role=role, status="error",
                     strategy_version=EVENT_RETRIEVAL_STRATEGY_VERSION,
-                    effective_filters=filters.model_dump(mode="json"),
-                    error={"code": code, "type": type(exc).__name__, "message": str(exc)},
+                    effective_filters=search_filters,
+                    error={"code": code, "message": message},
                     result=VideoChunkSearchResult(
                         query=query, series_ids=list(inputs["series_ids"]), hits=[], partial=True,
                         agent_reply=AgentReply(message="Event retrieval did not complete", result_count=0),
                     ),
                 ))
-                raise AgentToolFeedbackError(
-                    code, "Event retrieval did not complete for the requested scope.",
-                    "Continue with retrieve or retry Event search. Missing coverage is not evidence of no matching scenes.",
-                ) from exc
+                raise AgentToolFeedbackError(code, message, hint) from exc
             control.check()
             try:
                 found = EventSearchResult.model_validate(found).model_copy(deep=True)
@@ -137,7 +145,7 @@ def build_search_video_events_tool(
             if strategy_version != EVENT_RETRIEVAL_STRATEGY_VERSION:
                 raise AgentModelInvocationError("Event retrieval returned an incompatible strategy version")
             result = found.chunk_result
-            validate_result(result, inputs)
+            validate_result(result, inputs, episode_order=episode)
             if result.query != query or len(result.hits) > top_k:
                 raise AgentModelInvocationError("Event retrieval result does not match query or top_k")
             hits = {hit.candidate.video_chunk_id: hit for hit in result.hits}
@@ -184,7 +192,7 @@ def build_search_video_events_tool(
             call = RetrievalCall(
                 query=query, top_k=top_k, requested_weights=requested.model_copy(deep=True),
                 effective_weights=effective, result=result, granularity="event",
-                effective_filters=filters.model_dump(mode="json"), event_trace=event_trace, role=role,
+                effective_filters=search_filters, event_trace=event_trace, role=role,
                 status="success",
                 strategy_version=strategy_version,
             )
@@ -196,7 +204,7 @@ def build_search_video_events_tool(
                 "result_count": len(result.hits), "event_count": len(found.matches),
                 "partial": result.partial,
                 "warnings": [_bounded_text(value, 500) for value in result.warnings[:8]],
-                "effective_filters": filters.model_dump(mode="json"),
+                "effective_filters": search_filters,
                 "retrieval_strategy": {
                     "version": strategy_version,
                     "requested_weights": requested.model_dump(mode="json"),

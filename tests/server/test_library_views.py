@@ -24,6 +24,7 @@ from server.repository.library import LibraryRepository, VideoEpisodeOrderConfli
 from server.model.video import VideoIndexStatus
 from server.repository.upload import UploadRepository
 from server.service.library import LibraryService, update_video_episode_order_in_session
+from server.error.retrieval import SeriesNotReadyError
 from server.service.media import MediaService
 from server.storage.artifact import LocalArtifactStore
 from server.utils.time import now_unix_time_ms, now_utc, timedelta_to_ms
@@ -89,8 +90,8 @@ def _add_prefix_task(
     return task_id
 
 
-def test_deletion_pending_video_is_hidden_from_series(repository, seed_video):
-    factory, _videos, library = _library(repository)
+def test_deletion_pending_video_is_hidden_from_series_and_coverage(repository, seed_video):
+    factory, videos, library = _library(repository)
     report = seed_video(create_session_factory(repository[0]))
     with factory.begin() as session:
         session.add(UploadSession(
@@ -105,6 +106,8 @@ def test_deletion_pending_video_is_hidden_from_series(repository, seed_video):
     state = library.get_series(report.series_id, tenant_id="local-default")
     assert state.video_count == 0
     assert state.videos == ()
+    with pytest.raises(SeriesNotReadyError):
+        videos.resolve_retrieval_scope([report.series_id], tenant_id=report.tenant_id)
     with factory.begin() as session:
         upload = session.scalar(select(UploadSession).where(
             UploadSession.video_id == report.video_id,
@@ -492,7 +495,6 @@ def test_global_public_candidates_keep_tenant_facts_and_viewer_history(repositor
     repository = LibraryRepository(factory, execution_mode="v2")
     library = LibraryService(repository)
     store = LocalArtifactStore(tmp_path / "artifacts", environment=DatabaseEnvironment.TEST)
-    media = MediaService(library, store, probe_playback=lambda _path: True)
     viewer_id, owner_id = str(uuid4()), str(uuid4())
     with factory.begin() as session:
         session.add_all([
@@ -557,27 +559,27 @@ def test_global_public_candidates_keep_tenant_facts_and_viewer_history(repositor
         repository.list_series(None)
 
     page, total = library.list_public_series_page(
-        tenant_id=None, media=media, owner_user_id=viewer_id,
+        tenant_id=None, owner_user_id=viewer_id,
     )
-    assert total == 1 and [item.series_id for item in page] == [first.series_id]
+    assert total == 2 and {item.series_id for item in page} == {first.series_id, second.series_id}
     with factory.begin() as session:
         upload = session.get(UploadSession, pending_upload.upload_session_id)
         upload.status, upload.active_slot_key = "EXPIRED", None
     page, total = library.list_public_series_page(
-        tenant_id=None, media=media, owner_user_id=viewer_id, offset=1, limit=1,
+        tenant_id=None, owner_user_id=viewer_id, offset=1, limit=1,
     )
     assert total == 2 and len(page) == 1
     page, total = library.list_public_series_page(
-        tenant_id="second", media=media, owner_user_id=viewer_id,
+        tenant_id="second", owner_user_id=viewer_id,
     )
     assert total == 1 and page[0].series_id == second.series_id
     store.resolve(library.get_series(first.series_id, tenant_id="first").videos[0].original_source_uri).unlink()
     with factory.begin() as session:
         session.get(Tenant, "second").status = "DISABLED"
     page, total = library.list_public_series_page(
-        tenant_id=None, media=media, owner_user_id=viewer_id,
+        tenant_id=None, owner_user_id=viewer_id,
     )
-    assert page == [] and total == 0
+    assert total == 1 and [item.series_id for item in page] == [first.series_id]
 
 
 def test_visibility_update_validates_values_and_keeps_new_series_private(repository):
@@ -587,8 +589,9 @@ def test_visibility_update_validates_values_and_keeps_new_series_private(reposit
     for invalid in (None, True, "team", "PUBLIC"):
         with pytest.raises(ValueError, match="visibility"):
             library.update_series(series.series_id, tenant_id=series.tenant_id, changes={"visibility": invalid})
-    with pytest.raises(ValueError, match="ready"):
-        library.update_series(series.series_id, tenant_id=series.tenant_id, changes={"visibility": "public"})
+    assert library.update_series(
+        series.series_id, tenant_id=series.tenant_id, changes={"visibility": "public"},
+    ).visibility == SeriesVisibility.PUBLIC
     assert library.update_series(
         series.series_id, tenant_id=series.tenant_id, changes={"visibility": "private"},
     ).visibility == SeriesVisibility.PRIVATE

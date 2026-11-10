@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useLocation, useNavigate, useOutletContext, useParams } from "react-router";
 
 import { errorMessage, getSeries, mediaUrl, shouldRetryApiRequest, TENANT_ID } from "../../api/client";
+import type { VideoSummary } from "../../api/contracts";
 import type { WatchPanelLayout } from "../../app/AppShell";
 import { episodeLabel, videoTitle, formatTimecode, previewFramePosition, seriesTitle } from "../../shared/format";
 import { Mascot } from "../../shared/Mascot";
@@ -30,6 +31,11 @@ type PlaybackExtraContext = {
     positionSeconds: number;
   };
 };
+
+function EpisodeLink({ video, to, current, children }: { video: VideoSummary; to: string; current?: boolean; children: ReactNode }) {
+  if (video.playbackStatus !== "READY" || !video.playbackUrl) return <span aria-disabled="true">{children}</span>;
+  return <Link to={to} aria-current={current ? "page" : undefined}>{children}</Link>;
+}
 
 function savedPanelWidth(): number {
   try {
@@ -342,11 +348,11 @@ export function WatchPage() {
           <ol className={styles.episodeList}>
             {episodes.map((episode) => (
               <li key={episode.videoId}>
-                <Link to={watchPath(series, episode.videoId)} aria-current={episode.videoId === selected?.videoId ? "page" : undefined}>
+                <EpisodeLink video={episode} to={watchPath(series, episode.videoId)} current={episode.videoId === selected?.videoId}>
                   <span>{episodeLabel(episode.episodeOrder)}</span>
                   <strong title={episode.originalFilename ?? undefined}>{videoTitle(episode, locale)}</strong>
                   <small>{formatTimecode(episode.durationSeconds)} · {episode.playbackStatus === "READY" ? t("可播放") : t("播放未就绪")}</small>
-                </Link>
+                </EpisodeLink>
               </li>
             ))}
           </ol>
@@ -360,15 +366,15 @@ export function WatchPage() {
           <div className={styles.videoMeta}><span>{selected ? formatTimecode(selected.durationSeconds) : null}</span><span>{t("共 {count} 集", { count: episodes.length })}</span></div>
           {selected?.description || series.description ? <p>{selected?.description || series.description}</p> : null}
           {selected ? <nav className={styles.neighbors} aria-label={t("切换集数")}>
-            {selectedIndex > 0 ? <Link to={watchPath(series, episodes[selectedIndex - 1]!.videoId)}><ChevronLeft size={16} />{t("上一集")}</Link> : null}
-            {selectedIndex < episodes.length - 1 ? <Link to={watchPath(series, episodes[selectedIndex + 1]!.videoId)}>{t("下一集")}<ChevronRight size={16} /></Link> : null}
+            {selectedIndex > 0 ? <EpisodeLink video={episodes[selectedIndex - 1]!} to={watchPath(series, episodes[selectedIndex - 1]!.videoId)}><ChevronLeft size={16} />{t("上一集")}</EpisodeLink> : null}
+            {selectedIndex < episodes.length - 1 ? <EpisodeLink video={episodes[selectedIndex + 1]!} to={watchPath(series, episodes[selectedIndex + 1]!.videoId)}>{t("下一集")}<ChevronRight size={16} /></EpisodeLink> : null}
           </nav> : null}
         </section>
         <section className={styles.upNext} aria-label={t("后续集数")}>
           <h2>{followingEpisodes.length ? t("接下来") : t("本系列选集")}</h2>
           <ol className={styles.nextEpisodes}>
             {suggestedEpisodes.map((episode) => <li key={episode.videoId}>
-              <Link to={watchPath(series, episode.videoId)} aria-current={episode.videoId === selected?.videoId ? "page" : undefined}>
+              <EpisodeLink video={episode} to={watchPath(series, episode.videoId)} current={episode.videoId === selected?.videoId}>
                 <span className={styles.nextPreview} aria-hidden="true">
                   <Clapperboard size={24} strokeWidth={1} />
                   {episode.thumbnail ? <img src={mediaUrl(episode.thumbnail.url) ?? undefined} alt="" loading="lazy" onError={(event) => { event.currentTarget.hidden = true; }} />
@@ -376,7 +382,7 @@ export function WatchPage() {
                   <span className={styles.nextPlay}><Play size={17} fill="currentColor" /></span>
                 </span>
                 <span className={styles.nextTitle}><small>{episodeLabel(episode.episodeOrder)}{episode.videoId === selected?.videoId ? t(" · 当前集") : ""}</small><strong title={episode.originalFilename ?? undefined}>{videoTitle(episode, locale)}</strong><span>{formatTimecode(episode.durationSeconds)}{episode.playbackStatus !== "READY" ? t(" · 播放未就绪") : ""}</span></span>
-              </Link>
+              </EpisodeLink>
             </li>)}
           </ol>
         </section>

@@ -189,19 +189,19 @@ def test_public_library_filters_before_count_and_pagination(cloud_library):
     f = cloud_library
     visible, _ = _course(f, "Second available course")
     _course(f, "Draft course", published=False)
-    _course(f, "Processing course", task_status="PENDING")
-    _course(f, "Missing media course", managed=False)
-    response = f.client.get("/api/series/list", params={"tenantId": PUBLIC, "limit": 1})
+    pending, _ = _course(f, "Processing course", task_status="PENDING")
+    missing, _ = _course(f, "Missing media course", managed=False)
+    response = f.client.get("/api/series/list", params={"tenantId": PUBLIC, "limit": 2})
     assert response.status_code == 200
     page = response.json()
-    assert page["total"] == 2 and page["hasMore"]
+    assert page["total"] == 4 and page["hasMore"]
     assert page["items"][0]["visibility"] == "public"
     assert page["items"][0]["publisher"] == {"kind": "platform", "displayName": "Seekino", "avatar": None}
     next_page = f.client.get("/api/series/list", params={
-        "tenantId": PUBLIC, "limit": 1, "cursor": page["nextCursor"],
+        "tenantId": PUBLIC, "limit": 2, "cursor": page["nextCursor"],
     }).json()
-    assert next_page["total"] == 2 and not next_page["hasMore"]
-    assert {page["items"][0]["seriesId"], next_page["items"][0]["seriesId"]} == {f.prepared.series_id, visible}
+    assert next_page["total"] == 4 and not next_page["hasMore"]
+    assert {item["seriesId"] for item in page["items"] + next_page["items"]} == {f.prepared.series_id, visible, pending, missing}
     _login(f, "guest-b")
     assert f.client.get("/api/series/list", params={
         "tenantId": PUBLIC, "cursor": page["nextCursor"],
@@ -236,9 +236,9 @@ def test_private_media_and_library_require_personal_tenant(cloud_library):
     ("bob", "public", True, 200, "public"),
     ("admin", "public", True, 200, "public"),
     ("alice", "public", True, 200, "member"),
-    ("guest", "public", False, 404, None),
-    ("bob", "public", False, 404, None),
-    ("admin", "public", False, 404, None),
+    ("guest", "public", False, 200, "public"),
+    ("bob", "public", False, 200, "public"),
+    ("admin", "public", False, 200, "public"),
     ("alice", "public", False, 200, "member"),
 ])
 def test_personal_series_access_matrix(cloud_library, token, visibility, ready, status, access):
@@ -315,21 +315,21 @@ def test_public_discovery_crosses_tenants_and_cursor_is_not_viewer_scoped(cloud_
     alice_id, _ = _course(f, "Alice available", tenant_id="tenant-alice")
     bob_id, _ = _course(f, "Bob available", tenant_id="tenant-bob")
     _course(f, "Alice draft", tenant_id="tenant-alice", published=False)
-    _course(f, "Bob processing", tenant_id="tenant-bob", task_status="PENDING")
-    _course(f, "Missing available", tenant_id="tenant-bob", managed=False)
+    pending_id, _ = _course(f, "Bob processing", tenant_id="tenant-bob", task_status="PENDING")
+    missing_id, _ = _course(f, "Missing available", tenant_id="tenant-bob", managed=False)
     first = f.client.get("/api/series/public", params={"limit": 1})
     assert first.status_code == 200, first.text
     page = first.json()
-    assert page["total"] == 3 and page["hasMore"]
+    assert page["total"] == 5 and page["hasMore"]
     items = page["items"]
     _login(f, "bob")
     while page["hasMore"]:
         response = f.client.get("/api/series/public", params={"limit": 1, "cursor": page["nextCursor"]})
         assert response.status_code == 200, response.text
         page = response.json()
-        assert page["total"] == 3
+        assert page["total"] == 5
         items.extend(page["items"])
-    assert {item["seriesId"] for item in items} == {f.prepared.series_id, alice_id, bob_id}
+    assert {item["seriesId"] for item in items} == {f.prepared.series_id, alice_id, bob_id, pending_id, missing_id}
     assert {item["tenantId"] for item in items} == {PUBLIC, "tenant-alice", "tenant-bob"}
     assert all(item["videoCount"] == 1 and item["publisher"] is not None for item in items)
     assert f.client.get("/api/series/public", params={"cursor": first.json()["nextCursor"], "query": "Alice"}).status_code == 400
@@ -393,7 +393,7 @@ def test_withdrawal_blocks_existing_media_image_chunk_and_range_urls(cloud_libra
     f.retrieval.search.assert_not_called()
 
 
-def test_visibility_requires_ownership_ready_and_playable_media(cloud_library):
+def test_visibility_requires_management_access_and_is_independent_of_media(cloud_library):
     f = cloud_library
     for token, expected in (("guest", 403), ("alice", 404)):
         _login(f, token)
@@ -403,20 +403,26 @@ def test_visibility_requires_ownership_ready_and_playable_media(cloud_library):
     assert _visibility(f, "public", series_id=private_id, tenant_id="tenant-admin").status_code == 200
     assert _visibility(f, "private").status_code == 200
     f.probe.return_value = False
-    assert _visibility(f, "public").status_code == 400
+    assert _visibility(f, "public").json()["videos"][0]["playbackStatus"] == "FAILED"
     f.probe.return_value = True
     assert _visibility(f, "public").json()["visibility"] == "public"
     not_ready, _ = _course(f, "Unready course", published=False, task_status="PENDING")
-    assert _visibility(f, "public", series_id=not_ready).status_code == 400
+    assert _visibility(f, "public", series_id=not_ready).status_code == 200
+    empty = f.library.create_series(tenant_id=PUBLIC, name="An empty public course")
+    published = _visibility(f, "public", series_id=empty.series_id)
+    assert published.status_code == 200 and published.json()["videoCount"] == 0
     assert _visibility(f, None).status_code == 400
     assert _visibility(f, "unlisted").status_code == 422
     assert _visibility(f, True).status_code == 422
     f.source.unlink()
     _login(f, "guest")
-    assert f.client.get("/api/series/list", params={"tenantId": PUBLIC}).json()["total"] == 0
+    assert f.client.get("/api/series/list", params={"tenantId": PUBLIC}).json()["total"] == 3
+    detail = f.client.get("/api/series/get", params={"tenantId": PUBLIC, "seriesId": f.prepared.series_id})
+    assert detail.json()["videos"][0]["playbackStatus"] == "MISSING"
+    assert detail.json()["videos"][0]["playbackUrl"] is None
 
 
-def test_pending_upload_hides_course_and_blocks_publication(cloud_library):
+def test_pending_upload_is_private_and_does_not_hide_published_course(cloud_library):
     f = cloud_library
     with f.factory.begin() as session:
         session.add(UploadSession(
@@ -426,12 +432,13 @@ def test_pending_upload_hides_course_and_blocks_publication(cloud_library):
             segment_size_bytes=20, segment_count=1, status="UPLOADING",
             idempotency_key="pending-course", expire_time=now_utc() + timedelta(hours=1),
         ))
-    assert f.client.get("/api/series/list", params={"tenantId": PUBLIC}).json()["total"] == 0
-    assert f.client.get("/api/series/get", params={"tenantId": PUBLIC, "seriesId": f.prepared.series_id}).status_code == 404
-    assert _search(f).status_code == 404
-    f.retrieval.search.assert_not_called()
+    assert f.client.get("/api/series/list", params={"tenantId": PUBLIC}).json()["total"] == 1
+    detail = f.client.get("/api/series/get", params={"tenantId": PUBLIC, "seriesId": f.prepared.series_id})
+    assert detail.status_code == 200 and "future-private" not in detail.text
+    assert detail.json()["pendingUploads"] == [] and detail.json()["pendingUploadCount"] == 0
+    assert _search(f).status_code == 200
     _login(f, "admin")
-    assert _visibility(f, "public").status_code == 400
+    assert _visibility(f, "public").status_code == 200
 
 
 def test_last_search_is_scoped_to_user_within_public_tenant(cloud_library):
@@ -488,6 +495,8 @@ def test_agent_history_and_evidence_stream_project_filename_for_actual_viewer(cl
     f = cloud_library
     identity = f.auth.identities[token]
     result = f.result.model_dump(by_alias=True, exclude={"query"})
+    if public_view:
+        result["retrievalTrace"] = [{"error": {"message": "private historical diagnostic"}}]
     message = AgentMessageState(
         message_id=str(uuid4()), conversation_id=str(uuid4()), sequence_no=1,
         role="ASSISTANT", status="COMPLETED", content="Found course",
@@ -499,6 +508,7 @@ def test_agent_history_and_evidence_stream_project_filename_for_actual_viewer(cl
         message, media=f.media, tenant_id=identity.tenant_id or PUBLIC, identity=identity,
     )
     assert historical.search_result.hits[0].evidence.original_filename == expected
+    assert "private historical diagnostic" not in historical.model_dump_json()
     request = Request({
         "type": "http", "method": "GET", "path": "/api/agent/messages/events",
         "app": f.client.app,
@@ -523,6 +533,7 @@ def test_agent_history_and_evidence_stream_project_filename_for_actual_viewer(cl
     assert len(events) == 1
     payload = json.loads(next(line[6:] for line in events[0].splitlines() if line.startswith("data: ")))
     assert payload["searchResult"]["hits"][0]["evidence"]["originalFilename"] == expected
+    assert "private historical diagnostic" not in events[0]
     execution.detach.assert_called_once()
 
 
