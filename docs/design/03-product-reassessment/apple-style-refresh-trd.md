@@ -49,7 +49,7 @@
 | Inter 加载 | `document.fonts`：`Seekino Inter 100 900 loaded`；字体文件 200、`font/woff2` |
 | 标签字号 | 替换后最小 0.72rem |
 | 深色主按钮 | 欢迎卡片主按钮文字跟随 `--canvas`，深色下为黑字配薄荷色底，可读 |
-| typecheck / test / build | 见第 6 节 |
+| typecheck / test / build | 全部通过（630 项测试） |
 
 # 5. 试点验证与方案取舍
 
@@ -62,6 +62,6 @@
 | 字体一致性 | 已实现；Apple 上为 SF，强制 Inter 截图确认非 Apple 字形 |
 | 视觉质感 | 待 hypnos 评审前后截图 |
 | 可读性、字体体积 | 满足（0.72rem 下限；72.9 kB，仅拉丁字符） |
-| 既有行为 | typecheck、前端测试、build 通过（见 PR） |
+| 既有行为 | 2026-11-10：typecheck 通过；32 个文件 630 项前端测试通过；build 通过 |
 
 剩余事项：Windows / Android 真机渲染未验证；任务、上传、资料库、播放页未单独截图，只依赖全局 token 变化；hypnos 评审后可能继续调整。

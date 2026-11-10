@@ -412,7 +412,7 @@
 }
 
 .segment strong {
-  font: 600 0.72rem/1 var(--mono);
+  font: 600 .72rem/1 var(--sans); font-variant-numeric: tabular-nums;
 }
 
 .segmentCheck {
@@ -469,7 +469,7 @@
   border-radius: 9px;
   outline: none;
   background: var(--surface-raised);
-  font: 500 0.875rem/1.4 var(--mono);
+  font: 500 0.875rem/1.4 var(--sans); font-variant-numeric: tabular-nums;
 }
 
 .numberInput:focus {
@@ -611,7 +611,7 @@
 
 .choiceMeta {
   color: var(--ink-faint);
-  font: 500 0.72rem/1.45 var(--mono);
+  font: 500 .72rem/1.45 var(--sans); font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
 }
 
@@ -961,7 +961,7 @@
 .agentFieldText small {
   grid-column: 1 / -1;
   color: var(--ink-faint);
-  font: 400 0.68rem/1.4 var(--mono);
+  font: 400 .72rem/1.4 var(--sans); font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
 }
 
