@@ -227,6 +227,7 @@ def resolve_retrieval_scope(
         (video, latest_by_video[video.id])
         for video in videos
         if video.id in latest_by_video
+        and latest_by_video[video.id].parse_config.get("profile", "content") == "content"
         and latest_by_video[video.id].status
         == VideoParseTaskStatus.COMPLETE.value
     ]
@@ -395,6 +396,8 @@ def hydrate_retrieval_candidates(
                 "retrieval candidate is missing from COMPLETE V2 facts"
             )
         series, video, chunk, task, child, content = row
+        if task.parse_config.get("profile") == "edit_reference":
+            raise VideoParseConflictError("editing reference has no content events")
         if chunk.video_id != video.id:
             raise VideoParseConflictError(
                 "retrieval candidate Chunk belongs to a different Video"
@@ -484,6 +487,8 @@ def load_chunk_evidence_identity(
     task = task_store.get_task(session, task_id)
     if task is None or task.is_deleted:
         raise VideoChunkNotFoundError("videoChunkId has no current V2 task")
+    if task.parse_config.get("profile") == "edit_reference":
+        raise VideoChunkNotFoundError("videoChunkId has no current content events")
     if task.status != VideoParseTaskStatus.COMPLETE.value:
         raise VideoParseConflictError("videoChunkId latest V2 task is not COMPLETE")
     content = read_store.load_indexed_chunk_content(
@@ -568,6 +573,8 @@ def export_snapshots(
     for source_id in selected_ids:
         source_rows = grouped[source_id]
         task, video, *_ = source_rows[0]
+        if task.parse_config.get("profile") == "edit_reference":
+            raise VideoParseConflictError("editing references have no timeline to export")
         runtime = (task.detail or {}).get(RUNTIME_DETAIL_KEY, {})
         if task.is_test or not isinstance(runtime, Mapping) or runtime.get("accepted") is not True:
             raise VideoParseConflictError(f"export task {task.id} is not a formal accepted parse")

@@ -13,7 +13,7 @@ from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
-from engine.parsev2.planning import plan_intervals
+from engine.parsev2.planning import MAX_INTERVAL_CHUNKS, plan_intervals
 from agent.video_parse_v2.scheduler import chunk_index_ready, summarize_video_task
 from ..constants.parse import (
     PREPARE_FAILURES_KEY,
@@ -1542,7 +1542,10 @@ def _planned_chunk_count(duration_seconds: int, parse_config: dict) -> int:
             "VideoParseTask parse_config has invalid chunk_duration"
         )
     # The stored media duration is milliseconds; task configuration stays seconds.
-    return math.ceil(duration_seconds / (chunk_duration * 1000))
+    count = math.ceil(duration_seconds / (chunk_duration * 1000))
+    if parse_config.get("profile") == "edit_reference" and count > MAX_INTERVAL_CHUNKS:
+        raise UploadConflictError("edit_reference requires at most 63 chunks in its whole-video Refine window")
+    return count
 
 
 def _require_compatible_video_topology(
