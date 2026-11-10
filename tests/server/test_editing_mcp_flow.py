@@ -225,7 +225,9 @@ def test_one_mcp_from_upload_to_both_source_clips(tmp_path, editing_app):
             return result["structuredContent"]
         group, = call("list_series")["items"]
         assert group["series_id"] == series_id and group["ready_video_count"] == 2
-        event, = call("retrieve", query="白色方块向右平移")["items"]
+        found = call("retrieve", query="白色方块向右平移")
+        assert not found["partial"], found["warnings"]
+        event, = found["items"]
         browsed, = call("browse_events", series_id=series_id)["items"]
         assert event["video_id"] == content_id and browsed["evidence_ref"] == event["evidence_ref"]
         evidence = call("read_evidence", evidence_ref=event["evidence_ref"], start_ms=100, end_ms=850)

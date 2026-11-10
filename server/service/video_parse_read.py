@@ -278,16 +278,22 @@ def resolve_retrieval_scope(
     for task in read_store.list_video_tasks(session, video_ids=video_ids):
         latest_by_video.setdefault(task.video_id, task)
 
+    empty_series = series_names.keys() - {video.series_id for video in videos}
+    # Reference observations have their own index. Only content videos owe Event coverage.
+    videos = [video for video in videos if video.id not in latest_by_video
+              or latest_by_video[video.id].parse_config.get("profile", "content") == "content"]
+    if not videos:
+        raise SeriesNotReadyError("selected videos have no content profile",
+                                  public_message="所选范围只含剪辑参考素材")
     selected = [
         (video, latest_by_video[video.id])
         for video in videos
         if video.id in latest_by_video
-        and latest_by_video[video.id].parse_config.get("profile", "content") == "content"
         and latest_by_video[video.id].status
         == VideoParseTaskStatus.COMPLETE.value
     ]
     if not selected:
-        processing = any(not task.status.endswith("_FAILED") for task in latest_by_video.values())
+        processing = any(not latest_by_video[v.id].status.endswith("_FAILED") for v in videos if v.id in latest_by_video)
         message = "课程正在解析，暂时没有可检索的集数" if processing else "所选课程暂时没有可检索的集数"
         if episode_order is not None or (requested is not None and len(videos) == 1):
             task = latest_by_video.get(videos[0].id)
@@ -373,10 +379,10 @@ def resolve_retrieval_scope(
     grouped: dict[str, list[VideoData]] = {}
     for video in videos:
         grouped.setdefault(video.series_id, []).append(video)
-    partial = len(selected) != len(videos) or (requested is None and grouped.keys() != series_names.keys())
+    partial = len(selected) != len(videos) or (requested is None and bool(empty_series))
     for series_id in ordered_series_ids:
         members = grouped.get(series_id, [])
-        if requested is not None and not members:
+        if not members and (requested is not None or series_id not in empty_series):
             continue
         covered, processing, unavailable, no_events = [], [], [], []
         for video in members:

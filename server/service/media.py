@@ -233,7 +233,7 @@ class MediaService:
         cloud = identity.mode == "cloud"
         if cloud:
             series = self._library.get_series(ref.identity.series_id, tenant_id=tenant_id, owner_user_id=identity.user_id)
-            self.require_readable_series(identity, series)
+            series_access(identity, series)
         elif tenant_id != identity.tenant_id:
             raise SeriesNotFoundError("视频资源不存在")
         if self._parse_persistence is None:
