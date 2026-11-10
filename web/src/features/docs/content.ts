@@ -19,7 +19,7 @@ export type DocBlock =
   | { kind: "question"; text: string }
   | { kind: "steps"; items: { title: string; body: string; code?: string }[] }
   | { kind: "examples"; label: string; items: { text: string; note: string }[] }
-  | { kind: "result"; label: string; asked: string; found: string; query: string; source: string; range: string; length: string; note: string }
+  | { kind: "shot"; label: string; asked: string; query: string; src: string; alt: string; note: string }
   | { kind: "compare"; columns: [string, string, string]; rows: [string, string, string][] }
   | { kind: "tools"; items: { name: string; body: string }[] }
   | { kind: "roadmap"; status: string; items: { title: string; body: string }[] }
@@ -62,10 +62,10 @@ const zh: DocsContent = {
           { title: "点开时间，直接看", body: "每条结果都带着原片和精确到秒的时间范围。点一下，视频从那一秒开始播放，不用再前后拖。" },
           { title: "看不懂，就接着问", body: "播放时打开右侧的助手，问“刚才这段在讲什么”。它知道你看到了哪里，回答里的每个片段都能点开核对。" },
         ] },
-        { kind: "result", label: "一次真实检索 · 剪辑测试记录", asked: "问", found: "找到", query: "Anon 咬牙切齿的那一下", source: "MyGO!!!!! 第 4 集", range: "15:43 – 15:44", length: "1.3 秒", note: "一整集动画里，那个表情只有 1.3 秒。" },
+        { kind: "shot", label: "Cloud 上的真实截图 · 2026-11-10", asked: "问", query: "self-attention 是在哪一集哪一分钟讲的", src: "/docs/recall-self-attention.png", alt: "Seekino 的回答：一张 EP 07 · 71:00–71:40 的片段卡片，下面列出第 7 集里讲 self-attention 的六个时间点", note: "8 集、14.6 小时的课，回答直接落到第 7 集的具体时间点，并附上可以点开的原片片段。你现在就可以在 Cloud 上问同一句。" },
         { kind: "examples", label: "也可以这样问", items: [
-          { text: "attention 到底在算什么", note: "课程" },
-          { text: "反向传播为什么要用链式法则", note: "课程" },
+          { text: "反向传播的链式法则是在哪一集讲的", note: "课程" },
+          { text: "Karpathy 说 tokenizer 是很多问题根源的那一段", note: "课程" },
           { text: "下雨天有人在门口等待的画面", note: "动画" },
         ] },
         { kind: "h", text: "为什么不直接倍速看？" },
@@ -177,10 +177,10 @@ const en: DocsContent = {
           { title: "Click the time and watch", body: "Every result comes with its source video and a time range down to the second. One click and playback starts right there, with no more scrubbing." },
           { title: "Lost? Just ask", body: "While watching, open the assistant beside the player and ask \"what was that part about?\". It knows where you are, and every clip in its answer links back to the source." },
         ] },
-        { kind: "result", label: "A real search · from our editing tests", asked: "Asked", found: "Found", query: "the moment Anon grits her teeth", source: "MyGO!!!!! Episode 4", range: "15:43 – 15:44", length: "1.3 s", note: "In a whole episode, the expression lasts 1.3 seconds." },
+        { kind: "shot", label: "Real screenshot from Cloud · 2026-11-10", asked: "Asked", query: "self-attention 是在哪一集哪一分钟讲的 (which episode and minute covers self-attention?)", src: "/docs/recall-self-attention.png", alt: "Seekino's answer: a clip card for EP 07 · 71:00–71:40, followed by six time points in episode 7 where self-attention is explained", note: "Across 8 episodes and 14.6 hours, the answer lands on exact time points in episode 7, with source clips you can open. You can ask the same question on Cloud right now." },
         { kind: "examples", label: "Or ask things like", items: [
-          { text: "what is attention actually computing", note: "Lectures" },
-          { text: "why backprop needs the chain rule", note: "Lectures" },
+          { text: "which episode covers the chain rule in backprop", note: "Lectures" },
+          { text: "the part where Karpathy says the tokenizer causes a lot of problems", note: "Lectures" },
           { text: "someone waiting at the door in the rain", note: "Anime" },
         ] },
         { kind: "h", text: "Why not just watch at 3×?" },

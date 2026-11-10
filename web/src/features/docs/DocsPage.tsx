@@ -32,13 +32,11 @@ function Block({ block, content }: { block: DocBlock; content: DocsContent }) {
       <p>{step.body}</p>
       {step.code ? <CodeBlock code={step.code} copy={content.copy} copied={content.copied} /> : null}
     </li>)}</ol>;
-    // A record of one real search, not a control: nothing here looks pressable.
-    case "result": return <figure className={styles.result}>
-      <p className={styles.resultLabel}>{block.label}</p>
-      <dl>
-        <div><dt>{block.asked}</dt><dd className={styles.resultQuery}>“{block.query}”</dd></div>
-        <div><dt>{block.found}</dt><dd className={styles.resultFound}><span>{block.source}</span><span className={styles.resultRange}>{block.range}</span><span className={styles.resultLength}>{block.length}</span></dd></div>
-      </dl>
+    // A real screenshot of one Cloud answer, with the exact question so readers can repeat it.
+    case "shot": return <figure className={styles.shot}>
+      <p className={styles.shotLabel}>{block.label}</p>
+      <p className={styles.shotQuery}><span>{block.asked}</span>“{block.query}”</p>
+      <img src={block.src} alt={block.alt} width={1170} height={772} loading="lazy" />
       <figcaption>{block.note}</figcaption>
     </figure>;
     case "examples": return <div className={styles.examples}>
