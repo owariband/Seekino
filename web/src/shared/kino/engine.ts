@@ -15,11 +15,11 @@ export const PALETTE = {
 export type Colour = keyof typeof PALETTE;
 export const COLOURS = Object.keys(PALETTE) as Colour[];
 
-export type MascotState = "idle" | "wander" | "look" | "jump" | "leap" | "happy" | "think" | "oops" | "loading" | "run" | "sleep";
-export const STATES: readonly MascotState[] = ["idle", "wander", "look", "jump", "leap", "happy", "think", "oops", "loading", "run", "sleep"];
+export type MascotState = "idle" | "wander" | "look" | "jump" | "leap" | "happy" | "think" | "oops" | "loading" | "run" | "dashLeft" | "dashRight" | "sleep";
+export const STATES: readonly MascotState[] = ["idle", "wander", "look", "jump", "leap", "happy", "think", "oops", "loading", "run", "dashLeft", "dashRight", "sleep"];
 /** Playback rate per state; jumping and running are quicker, idling and sleeping breathe slowly. All divide 30 so video frames stay even. */
 export const STATE_FPS: Record<MascotState, number> = {
-  idle: 6, wander: 10, look: 10, jump: 15, leap: 15, happy: 15, think: 6, oops: 10, loading: 10, run: 15, sleep: 6,
+  idle: 6, wander: 10, look: 10, jump: 15, leap: 15, happy: 15, think: 6, oops: 10, loading: 10, run: 15, dashLeft: 15, dashRight: 15, sleep: 6,
 };
 export type Facing = "left" | "right" | "front";
 export type PoseName = "side" | "run" | "q34" | "front" | "center" | "sleep" | "sleepIn";
@@ -311,6 +311,7 @@ const HOLD_SHORT: HoldBeats = { length: 20, left: [3, 7], right: [9, 13], blink:
 const HOP_LIFT = [1, 2, 1];
 const SLEEP_CYCLE = 24;
 const LOADING_CYCLE = 12;
+const DASH_CYCLE = 8;
 // The small Z is one row taller than wide so its diagonal reads as a Z, not an I.
 const Z_SMALL = ["####", "...#", "..#.", ".#..", "####"];
 const Z_LARGE = ["#####", "...#.", "..#..", ".#...", "#####"];
@@ -437,6 +438,17 @@ class Builder {
         cue: i % 4 === 0 ? "dot" : undefined,
       });
     }
+  }
+
+  /** Sprints in place while the ground scrolls past, as when Kino is carried along. */
+  dash() {
+    const flip = this.facing === "right", dir = flip ? 1 : -1;
+    for (let i = 0; i < DASH_CYCLE; i++) {
+      const f = i % 4;
+      const fx = [0, 2, 4, 6].filter(at => i >= at && i - at <= 2).map(at => puff(this.x - dir * 8, -dir, i - at));
+      this.push({ pose: "run", flip, gait: f, stride: 2, fx, lift: f % 2 ? 1 : 0, groundShift: -dir * 2 * i, cue: f % 2 === 0 ? "step" : undefined });
+    }
+    this.running = true;
   }
 
   sleep() {
@@ -631,6 +643,14 @@ export function buildTimeline(state: MascotState, from: Cursor, width: number): 
       if (b.facing === "front") b.turn("left");
       const intro = split();
       b.loading();
+      return { intro, loop: b.frames };
+    }
+    case "dashLeft":
+    case "dashRight": {
+      b.stand();
+      b.turn(state === "dashLeft" ? "left" : "right", true);
+      const intro = split();
+      b.dash();
       return { intro, loop: b.frames };
     }
     case "sleep": {

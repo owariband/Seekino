@@ -293,6 +293,7 @@ describe("Search assistant presentation", () => {
       captureExtraContext: () => ({ playback: { seriesId: watched.seriesId, videoId: "video-1", episodeOrder: 1, positionSeconds: 0 } }),
     });
     const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "展开输入选项" }));
     await user.click(screen.getByLabelText("选择检索视频系列"));
     expect(screen.getByRole("checkbox", { name: /Watched series/ })).toBeChecked();
     expect(screen.queryByRole("checkbox", { name: /Other publisher/ })).not.toBeInTheDocument();

@@ -676,7 +676,7 @@
 .embeddedPage :is(.candidate, .candidateSelected):has(> :is(.whyLine, .candidateThumbnailFallback)) > :is(.candidateTop, strong, blockquote) { grid-column: 1; }
 .embeddedPage .composerArea { width: 100%; padding: 6px 0 0; border-top: 1px solid var(--line); }
 .embeddedPage .composer { gap: 4px; padding: 8px 10px 6px; border: 1px solid var(--line); border-radius: 10px; box-shadow: none; }
-.embeddedPage .composer textarea { min-height: 38px; max-height: 130px; font-size: .82rem; line-height: 1.5; }
+.embeddedPage .composer textarea { min-height: 24px; max-height: 130px; font-size: .82rem; line-height: 1.5; }
 .embeddedPage .composerToolbar { position: relative; min-height: 30px; align-items: center; gap: 6px; margin-top: 0; }
 .embeddedPage .composerControls { min-width: 0; flex: 1; flex-wrap: nowrap; gap: 2px; }
 .embeddedPage .composerControls:has(.scopeEmpty) { flex-wrap: wrap; column-gap: 6px; }
@@ -848,3 +848,14 @@
 .modelSettingsLink { display: inline-grid; width: 30px; height: 30px; place-items: center; color: var(--ink-soft); border-radius: 7px; }
 .modelSettingsLink:hover, .modelSettingsLink:focus-visible { color: var(--teal-deep); background: var(--teal-wash); }
 @media (max-width: 760px) { .modelSettingsLink { width: 44px; height: 44px; } }
+.embeddedPage .composer { grid-template-columns: 28px minmax(0, 1fr) 30px; align-items: center; gap: 6px; padding: 6px 8px; }
+.embeddedPage .composer > textarea { grid-column: 2; grid-row: 1; height: 24px; max-height: 24px; min-height: 24px; }
+.embeddedPage .composerToolbar { display: contents; }
+.embeddedPage .composerTools { position: relative; grid-column: 1; grid-row: 1; }
+.toolsToggle { display: grid; width: 28px; height: 30px; place-items: center; padding: 0; border-radius: 6px; color: var(--ink-soft); background: transparent; cursor: pointer; }
+.toolsToggle:hover, .toolsToggle[aria-expanded="true"] { color: var(--teal-deep); background: var(--teal-wash); }
+.toolsToggle[aria-expanded="true"] svg { transform: rotate(90deg); }
+.embeddedPage .composerTools .composerControls { position: absolute; z-index: 35; bottom: calc(100% + 10px); left: 0; display: flex; width: max-content; max-width: min(300px, calc(100vw - 70px)); padding: 8px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-raised); box-shadow: var(--shadow-small); }
+.embeddedPage .composerTools .composerControls[hidden] { display: none; }
+.embeddedPage .composerToolbar > .sendButton { grid-column: 3; grid-row: 1; }
+.embeddedPage .composer > :is(.draftAttachments, .referenceChip) { grid-column: 1 / -1; grid-row: auto; }

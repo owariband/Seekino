@@ -206,7 +206,6 @@ export function AppShell() {
           <Search size={18} strokeWidth={1.8} aria-hidden="true" /><span>{t("描述一个画面，找回那一刻…")}</span><kbd aria-hidden="true">{isMac ? "⌘" : "Ctrl"} K</kbd>
         </NavLink>}
         <div className={styles.headerActions}>
-          <span id="watch-header-actions" style={{ display: "contents" }} />
           <button className={styles.uploadButton} type="button" onClick={uploadAction}
             aria-label={canUpload ? activeCount > 0 ? t("并行传输 · {count} 项进行中，{progress}%", { count: activeCount, progress: overallProgress }) : t("并行传输 · 打开上传案台") : t(uploadPrompt)}
             title={t(canUpload ? "上传视频与管理并行传输" : uploadPrompt)}>
