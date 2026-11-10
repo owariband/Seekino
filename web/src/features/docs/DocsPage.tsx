@@ -1,4 +1,4 @@
-import { ArrowRight, Check, Copy, ExternalLink, Play, Search } from "lucide-react";
+import { ArrowRight, Check, Copy, ExternalLink, Search } from "lucide-react";
 import { useLayoutEffect, useRef, useState } from "react";
 import { Link, Navigate, NavLink, useParams } from "react-router";
 
@@ -32,14 +32,14 @@ function Block({ block, content }: { block: DocBlock; content: DocsContent }) {
       <p>{step.body}</p>
       {step.code ? <CodeBlock code={step.code} copy={content.copy} copied={content.copied} /> : null}
     </li>)}</ol>;
+    // A record of one real search, not a control: nothing here looks pressable.
     case "result": return <figure className={styles.result}>
-      <div className={styles.resultQuery}><Search size={15} aria-hidden="true" /><span>{block.query}</span></div>
-      <div className={styles.resultHit}>
-        <span className={styles.resultPlay}><Play size={14} fill="currentColor" aria-hidden="true" /></span>
-        <span className={styles.resultSource}>{block.source}</span>
-        <span className={styles.resultRange}>{block.range}</span>
-        <span className={styles.resultLength}>{block.length}</span>
-      </div>
+      <p className={styles.resultLabel}>{block.label}</p>
+      <dl>
+        <div><dt>{block.asked}</dt><dd className={styles.resultQuery}>“{block.query}”</dd></div>
+        <div><dt>{block.found}</dt><dd className={styles.resultFound}><span>{block.source}</span><span className={styles.resultRange}>{block.range}</span><span className={styles.resultLength}>{block.length}</span></dd></div>
+      </dl>
+      <figcaption>{block.note}</figcaption>
     </figure>;
     case "examples": return <div className={styles.examples}>
       <p>{block.label}</p>

@@ -19,7 +19,7 @@ export type DocBlock =
   | { kind: "question"; text: string }
   | { kind: "steps"; items: { title: string; body: string; code?: string }[] }
   | { kind: "examples"; label: string; items: { text: string; note: string }[] }
-  | { kind: "result"; query: string; source: string; range: string; length: string }
+  | { kind: "result"; label: string; asked: string; found: string; query: string; source: string; range: string; length: string; note: string }
   | { kind: "compare"; columns: [string, string, string]; rows: [string, string, string][] }
   | { kind: "tools"; items: { name: string; body: string }[] }
   | { kind: "roadmap"; status: string; items: { title: string; body: string }[] }
@@ -62,8 +62,7 @@ const zh: DocsContent = {
           { title: "点开时间，直接看", body: "每条结果都带着原片和精确到秒的时间范围。点一下，视频从那一秒开始播放，不用再前后拖。" },
           { title: "看不懂，就接着问", body: "播放时打开右侧的助手，问“刚才这段在讲什么”。它知道你看到了哪里，回答里的每个片段都能点开核对。" },
         ] },
-        { kind: "result", query: "Anon 咬牙切齿的那一下", source: "MyGO!!!!! · 第 4 集", range: "15:43 – 15:44", length: "1.3 秒" },
-        { kind: "p", text: "这是我们剪辑测试里的一次真实检索：一整集动画里，那个表情只有 1.3 秒。" },
+        { kind: "result", label: "一次真实检索 · 剪辑测试记录", asked: "问", found: "找到", query: "Anon 咬牙切齿的那一下", source: "MyGO!!!!! 第 4 集", range: "15:43 – 15:44", length: "1.3 秒", note: "一整集动画里，那个表情只有 1.3 秒。" },
         { kind: "examples", label: "也可以这样问", items: [
           { text: "attention 到底在算什么", note: "课程" },
           { text: "反向传播为什么要用链式法则", note: "课程" },
@@ -178,8 +177,7 @@ const en: DocsContent = {
           { title: "Click the time and watch", body: "Every result comes with its source video and a time range down to the second. One click and playback starts right there, with no more scrubbing." },
           { title: "Lost? Just ask", body: "While watching, open the assistant beside the player and ask \"what was that part about?\". It knows where you are, and every clip in its answer links back to the source." },
         ] },
-        { kind: "result", query: "the moment Anon grits her teeth", source: "MyGO!!!!! · Episode 4", range: "15:43 – 15:44", length: "1.3 s" },
-        { kind: "p", text: "That's a real search from our editing tests: in a whole episode, the expression lasts 1.3 seconds." },
+        { kind: "result", label: "A real search · from our editing tests", asked: "Asked", found: "Found", query: "the moment Anon grits her teeth", source: "MyGO!!!!! Episode 4", range: "15:43 – 15:44", length: "1.3 s", note: "In a whole episode, the expression lasts 1.3 seconds." },
         { kind: "examples", label: "Or ask things like", items: [
           { text: "what is attention actually computing", note: "Lectures" },
           { text: "why backprop needs the chain rule", note: "Lectures" },
