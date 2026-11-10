@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from agent.video_parse_v2.scheduler import chunk_index_ready
 from engine.parsev2.schemas import VideoParseResult
-from engine.parsev2.edit_reference import ReferenceChunk, StyleCard
+from engine.parsev2.edit_reference import ReferenceChunk, ReferenceRefinement
 from engine.parsev2.validation import (
     RefinementMergeConflictError, merge_refinement_content,
     parse_content_fingerprint, validate_result_time_range,
@@ -1003,25 +1003,24 @@ def commit_interval_refinement(
     asr = (parent.parse_config.get("models") or {}).get("asr") or {}
     dialogue_bounds = (0, video.duration_ms) if asr.get("scope") == "video" else None
     candidates = {}
-    assignments = None
+    reference_updates = None
     if parent.parse_config.get("profile") == "edit_reference":
         if (interval.start_sequence_no != 0 or interval.chunk_count != parent.chunk_count
-                or set(interval_content) != {"style_card"} or member_updates):
+                or member_updates):
             raise VideoParseConflictError("reference Refine requires one complete video window and one style card")
-        card = StyleCard.model_validate(interval_content["style_card"])
-        assignments = card.assignments(
-            o.segment.segment_id for content in input_contents.values()
-            for o in ReferenceChunk.model_validate(content).observations
-        )
+        sources = {chunk.sequence_no: ReferenceChunk.model_validate(input_contents[child.id])
+                   for child, chunk, _content in rows}
+        refined = ReferenceRefinement.model_validate(interval_content).for_sources(sources)
+        interval_content = refined.model_dump(mode="json")
+        reference_updates = {o.segment_id: o for member in refined.members for o in member.observations}
     for chunk_task, chunk, result in rows:
-        if assignments is not None:
+        if reference_updates is not None:
             if result.version != input_versions[chunk_task.id]:
                 raise VideoParseSnapshotConflictError("reference member changed", reason="member_snapshot_changed",
                                                       context={"chunk_task_id": chunk_task.id})
             source = ReferenceChunk.model_validate(result.content).validate_owner(chunk.start_ms, chunk.end_ms, video.duration_ms)
-            for observation in source.observations:
-                observation.technique_key = assignments[observation.segment.segment_id]
-            candidates[chunk_task.id] = source.model_dump(mode="json")
+            updated = [reference_updates[o.segment.segment_id].apply(o) for o in source.observations]
+            candidates[chunk_task.id] = ReferenceChunk(observations=updated).model_dump(mode="json")
             continue
         base = deepcopy(dict(input_contents[chunk_task.id]))
         current = deepcopy(dict(result.content or {}))

@@ -53,16 +53,58 @@ def test_native_changes_preserve_old_observations_and_require_all_frame_times():
         ReferenceChunk.model_validate(data)
 
 
-def test_card_repair_can_only_close_a_complete_required_entry_set():
+def test_frozen_prompts_and_whole_film_anchors(tmp_path):
     import asyncio
-    from agent.video_parse_v2.edit_reference import consolidate
+    import hashlib
+    import json
+    from pathlib import Path
+
+    from PIL import Image
+    from agent.video_parse_v2 import edit_reference as harness
+    from engine.parsev2.edit_reference import ReferenceRefinement
+
+    expected_keys = {"pick": "d62c1e493dd4100f801fed5078e5659277febc680af4048e94eb6dfa4715f429",
+                     "refine": "6054845122e23d8da72e64506e001e7b5df3c934215249934ab3ec23182b5ea4"}
+    for name, digest in expected_keys.items():
+        data = Path(harness.__file__).with_name(f"edit_reference_{name}.txt").read_bytes()
+        assert hashlib.sha256(data).hexdigest() == digest
 
     chunk = ReferenceChunk.model_validate(make_chunk())
-    async def close_root(_inputs, schema):
-        return schema.model_validate_json('{"summary":"变化","exemplars":{"S0":{"technique_key":"硬切","description":"切远"}}')
-    result = asyncio.run(consolidate({"member": chunk}, close_root, 1))
-    assert result.assignments(["seg-0000100"]) == {"seg-0000100": "硬切"}
-    async def missing_description(_inputs, schema):
-        return schema.model_validate_json('{"summary":"变化","exemplars":{"S0":{"technique_key":"硬切"}}')
+    source, = chunk.observations
+    image = tmp_path / "frame.jpg"
+    Image.new("RGB", (16, 16)).save(image)
+    async def pick(inputs, schema):
+        assert inputs[0].text == harness._PICK_PROMPT.format(start_ms=100, end_ms=200, fps="30",
+                                                            fine_starts_ms=[167], flashes_ms=[])
+        return schema.model_validate(source.note.model_dump())
+    observed = asyncio.run(harness.observe_segments([source.segment],
+        {ms: image for ms in source.segment.frame_ms}, pick, 1))
+    assert observed.model_dump() == chunk.model_dump()
+
+    ident = source.segment.segment_id
+    signal = {"segment_id": ident, "at_ms": 167, "detail": "wide shot"}
+    answer = {"members": [{"sequence_no": 0, "observations": [
+        {"segment_id": ident, "technique_key": "cut", "name": "wide cut", "summary": "close to wide",
+         "role": "INTRO", "camera": "STATIC"}]}],
+        "style_card": {"scope": "opening", "signals": [{"name": "cut", "description": "framing changes",
+                                                        "examples": [signal]}]}}
+    async def close_root(inputs, schema):
+        assert inputs[0].text == harness._REFINE_PROMPT
+        packet = json.loads(inputs[1].text)
+        assert packet["observations"][0]["sequence_no"] == 1
+        return schema.model_validate_json(json.dumps(answer)[:-1])
+    refined = asyncio.run(harness.consolidate({0: ReferenceChunk(observations=[]), 1: observed}, close_root, 1))
+    assert [(m.sequence_no, len(m.observations)) for m in refined.members] == [(0, 0), (1, 1)]
+    update = refined.members[1].observations[0].apply(source)
+    assert update.technique_key == "cut" and update.note.name == "wide cut"
+    assert update.segment == source.segment and update.note.motion.steps == source.note.motion.steps
+    signal["at_ms"] = 200
+    with pytest.raises(ValueError, match="measured position"):
+        ReferenceRefinement.model_validate(answer).for_sources({1: observed})
+    signal["at_ms"] = 167
+    answer["members"][0]["observations"] *= 2
+    with pytest.raises(ValueError, match="exactly once"):
+        ReferenceRefinement.model_validate(answer).for_sources({1: observed})
+    answer["members"][0]["observations"][0].pop("summary")
     with pytest.raises(ValidationError):
-        asyncio.run(consolidate({"member": chunk}, missing_description, 1))
+        asyncio.run(harness.consolidate({1: observed}, close_root, 1))

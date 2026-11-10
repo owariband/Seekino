@@ -1254,15 +1254,15 @@ class VideoParseRuntimeService:
 
     async def _refine_reference(self, lease, config):
         snapshot = await asyncio.to_thread(self._persistence.load_interval_members, lease)
-        members = {m.chunk_parse_task_id: ReferenceChunk.model_validate(m.content) for m in snapshot.members}
+        members = {m.sequence_no: ReferenceChunk.model_validate(m.content) for m in snapshot.members}
         binding = config.models.refine or config.models.understanding
 
         async def generate(inputs, schema):
             return await self._generate_multimodal(binding, inputs, schema_name="edit_reference_style_card", result_type=schema)
 
-        card = await consolidate(members, generate, config.execution.max_retry_count + 1)
+        refined = await consolidate(members, generate, config.execution.max_retry_count + 1)
         await asyncio.to_thread(
-            self._persistence.commit_interval_refinement, lease, interval_content={"style_card": card.model_dump()},
+            self._persistence.commit_interval_refinement, lease, interval_content=refined.model_dump(mode="json"),
             member_updates={}, input_versions={m.chunk_parse_task_id: m.version for m in snapshot.members},
             input_fingerprints={m.chunk_parse_task_id: parse_content_fingerprint(m.content) for m in snapshot.members},
             input_contents={m.chunk_parse_task_id: m.content for m in snapshot.members},
