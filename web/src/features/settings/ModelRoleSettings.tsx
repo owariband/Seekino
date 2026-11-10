@@ -47,7 +47,7 @@ function RoleRow({ current, connections, busy, choose }: {
     <label htmlFor={selectId}>{t(labels[role])}</label>
     <div className={styles.roleControl}>
       <div className={styles.roleChoice}>
-        <select id={selectId} value={overridden ? modelId ?? "" : ""}
+        <select id={selectId} data-menu value={overridden ? modelId ?? "" : ""}
           title={source && selected ? `${source.name} / ${selected.modelId}` : modelName}
           aria-describedby={description || undefined}
           disabled={busy || (!candidates.length && !overridden)}

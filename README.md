@@ -276,7 +276,7 @@ docker compose --env-file .env.docker up --build -d --wait
 首次启动会检查配置、初始化业务表、DeepAgents checkpoint 和检索索引，再启动 API 与 Web。已有旧库仍需按版本升级，不会自动重建数据。
 
 - **Web：** <http://127.0.0.1:5173>
-- **API 文档：** <http://127.0.0.1:5173/docs>
+- **API 文档：** <http://127.0.0.1:5173/api/docs>
 - **运行状态：** <http://127.0.0.1:5173/healthz>（API 也可通过 `9621` 直连）
 
 首次验收建议：**创建系列 → 上传一个短视频 → 等待解析完成 → 检索片段 → 回到原片 → 连续追问两轮**。`/healthz` 正常不代表模型链路已经验收。
@@ -337,7 +337,7 @@ main 工作区使用 `./start.sh`、`./start.sh status`、`./start.sh stop`。�
 采用“Docker 全栈 + 默认 DeepAgents / API 模型”路线，使用 .env.docker，按文档顺序执行。
 不要修改业务代码，不要删除或重建已有数据库、Elasticsearch 索引和 outputs/。
 需要我填写 API Key、选择模型或处理端口冲突时，先停下来告诉我。
-完成后检查 Web、/healthz 和 /docs，并给出上传一个短视频后的验收步骤。
+完成后检查 Web、/healthz 和 /api/docs，并给出上传一个短视频后的验收步骤。
 ```
 
 ## API 接入
@@ -352,7 +352,7 @@ Web 界面与外部工具使用同一套服务接口：
 | Agent 对话 | `/api/agent/conversations/*`、`/api/agent/messages/*`，支持持续对话与流式回答 |
 | 外部 Agent 取素材（MCP） | `/mcp`（Streamable HTTP，仅 local 身份模式），工具 `list_series`、`retrieve`、`browse_events`、`read_evidence` |
 
-启动后查看 [OpenAPI 文档](http://127.0.0.1:9621/docs)，接入说明见 [Server](server/README.md)。当前范围字段使用 `tenantId`；视频时间采用相对原片起点的整数毫秒，部分字段仍保留 `*Seconds` 旧名。
+启动后查看 [OpenAPI 文档](http://127.0.0.1:9621/api/docs)，接入说明见 [Server](server/README.md)。当前范围字段使用 `tenantId`；视频时间采用相对原片起点的整数毫秒，部分字段仍保留 `*Seconds` 旧名。
 
 ## 进阶与开发
 

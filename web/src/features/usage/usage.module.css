@@ -44,7 +44,7 @@
 .table th, .table td { padding: 16px; white-space: nowrap; border-bottom: 1px solid var(--line); }
 .table thead th { color: var(--ink-faint); background: var(--surface-raised); font-weight: 500; font-size: .69rem; }
 .table tbody th { color: var(--ink); font-weight: 500; }
-.table tbody td { color: var(--ink-soft); font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.table tbody td { color: var(--ink-soft); font-family: var(--sans); font-variant-numeric: tabular-nums; font-variant-numeric: tabular-nums; }
 .table tbody td:nth-child(2) { font-family: var(--sans); }
 .table tbody tr:last-child th, .table tbody tr:last-child td { border-bottom: 0; }
 .table small { display: block; max-width: 300px; margin-top: 4px; white-space: normal; color: var(--ink-faint); font: 400 .67rem/1.5 var(--sans); }

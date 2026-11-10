@@ -20,7 +20,7 @@ MySQL 8.4 和 Elasticsearch 8.19.22。ffmpeg 和模型 SDK 已放进应用镜像
 2. 在仓库根目录执行 `cp deploy/docker/env.example .env.docker`（已有文件则保留），
    填写 `ARK_API_KEY`、`DEEPSEEK_API_KEY`，确认账号可访问 `config.yaml` 中的模型。
 3. 执行 `docker compose --env-file .env.docker up --build -d --wait`。
-4. 访问 `http://127.0.0.1:5173`；同一端口的 `/docs`、`/healthz` 由 Web 转发至 API。
+4. 访问 `http://127.0.0.1:5173`；同一端口的 `/api/docs`、`/healthz` 由 Web 转发至 API，`/docs` 为站内使用文档。
 
 首次下载镜像和构建需要网络；容器健康不表示模型密钥和视频解析已完成验收。
 配置与凭据持久化、切换 Kimi / Codex 和当前验证范围见[本地配置指南](local-setup.md)。

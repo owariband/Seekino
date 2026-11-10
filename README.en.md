@@ -238,7 +238,7 @@ The web interface and external tools use the same service APIs. Your tools can c
 | Find footage through Agent chat | `/api/agent/conversations/*` and `/api/agent/messages/*`, with ongoing conversations and streamed answers. |
 | Let an external agent fetch clips (MCP) | Streamable HTTP at `/mcp` (local auth mode), tools `list_series`, `retrieve`, `browse_events`, and `read_evidence`. |
 
-After starting the service, inspect requests and responses in the [OpenAPI docs](http://127.0.0.1:9621/docs). See [Server](server/README.md) for integration details. The current scope field is `tenantId`. Video time fields use integer milliseconds relative to the original video, including fields that retain legacy `*Seconds` names; follow the current contract when integrating.
+After starting the service, inspect requests and responses in the [OpenAPI docs](http://127.0.0.1:9621/api/docs). See [Server](server/README.md) for integration details. The current scope field is `tenantId`. Video time fields use integer milliseconds relative to the original video, including fields that retain legacy `*Seconds` names; follow the current contract when integrating.
 
 ## Creative experiments
 
@@ -269,7 +269,7 @@ docker compose --env-file .env.docker up --build -d --wait
 Initialization checks the configuration and creates the business tables, DeepAgents checkpoints and search indexes before starting the API and Web. Existing databases still require the documented upgrade procedure.
 
 - Web: <http://127.0.0.1:5173>
-- API docs: <http://127.0.0.1:5173/docs>
+- API docs: <http://127.0.0.1:5173/api/docs>
 - Health: <http://127.0.0.1:5173/healthz>; the API is also published on port `9621`.
 
 Kimi and Codex remain optional through the existing source/model/harness fields in **the same `config.yaml`**. No extra provider YAML is required. Kimi uses `KIMI_API_KEY`; Codex uses the bundled SDK runtime and a persistent container login. See the [Docker setup guide](deploy/local-setup.md) for these steps, custom ports and configuration updates.
@@ -354,7 +354,7 @@ uv run --no-sync --env-file .env.local -- npm --prefix web run dev -- --host 127
 ```
 
 - Web: <http://127.0.0.1:5173>
-- API docs: <http://127.0.0.1:9621/docs>
+- API docs: <http://127.0.0.1:9621/api/docs>
 - Consumer status: <http://127.0.0.1:9621/healthz>
 
 `python -m server.api` forwards to the official `server.main` entry point. The API process already includes the V2 consumer, so no separate worker is needed. Stop each hand-started process with Ctrl-C. Stop the databases with `docker compose --env-file .env.local stop mysql elasticsearch`; their volumes are kept.

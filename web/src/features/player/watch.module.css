@@ -5,7 +5,7 @@
 .panelToggle { display: inline-flex; width: 42px; height: 42px; align-items: center; justify-content: center; color: var(--ink-soft); border-radius: 6px; background: transparent; cursor: pointer; }
 .panelToggle:hover, .panelToggle[aria-expanded="true"] { color: var(--teal-deep); background: var(--teal-wash); }
 .floatingTools { position: absolute; z-index: 10; top: 12px; left: 16px; }
-.floatingTools .panelToggle { color: #f7f8f7; background: rgb(9 12 11 / 75%); }
+.floatingTools .panelToggle { color: #f7f8f7; background: rgb(0 0 0 / 75%); }
 .layout { position: relative; container: watch-player / inline-size; min-width: 0; scroll-margin-top: var(--app-header-height, 64px); background: var(--stage); }
 .viewer { width: 100%; min-width: 0; aspect-ratio: 16 / 9; }
 .resizeHandle { position: absolute; z-index: 46; top: 0; left: 0; bottom: 0; width: 8px; cursor: col-resize; touch-action: none; user-select: none; }
@@ -19,7 +19,7 @@
 .page[data-fullscreen="false"] .videoPlayerStage::before, .page[data-fullscreen="false"] .videoPlayerStage::after { position: absolute; z-index: 1; right: 0; left: 0; pointer-events: none; content: ""; }
 .page[data-fullscreen="false"] .videoPlayerStage::before { top: 0; height: 8px; background: linear-gradient(var(--surface), transparent); }
 .page[data-fullscreen="false"] .videoPlayerStage::after { bottom: 0; height: var(--watch-edge-fade); background: linear-gradient(transparent, var(--canvas)); }
-.videoPlayerCenterPlay { position: absolute; z-index: 2; display: grid; width: 64px; height: 64px; place-items: center; padding-left: 5px; color: white; border: 1px solid rgb(255 255 255 / 44%); border-radius: 50%; background: rgb(11 20 19 / 70%); backdrop-filter: blur(8px); cursor: pointer; transition: transform 160ms ease, background 160ms ease; }
+.videoPlayerCenterPlay { position: absolute; z-index: 2; display: grid; width: 64px; height: 64px; place-items: center; padding-left: 5px; color: white; border: 1px solid rgb(255 255 255 / 44%); border-radius: 50%; background: rgb(11 20 19 / 70%); backdrop-filter: blur(8px); cursor: pointer; transition: transform 160ms var(--ease-out), background 160ms var(--ease-out); }
 .videoPlayerCenterPlay:hover { transform: scale(1.07); background: rgb(20 94 84 / 90%); }
 .videoPlayerControls { position: absolute; z-index: 2; inset: auto 0 0; display: grid; gap: 4px; padding: 32px clamp(12px, 2cqw, 28px) 8px; background: linear-gradient(transparent, rgb(0 0 0 / 48%) 40%, rgb(0 0 0 / 80%)); opacity: 1; transition: opacity 160ms ease-out; }
 .page[data-fullscreen="false"] .videoPlayerControls { background: linear-gradient(transparent, rgb(0 0 0 / 48%) 40%, rgb(0 0 0 / 80%) calc(100% - var(--watch-edge-fade)), var(--canvas)); }
@@ -31,11 +31,11 @@
 .videoPlayerControlRow button:hover:not(:disabled), .videoPlayerControlRow select:hover { background: rgb(255 255 255 / 12%); }
 .videoPlayerControlRow button:disabled { opacity: .4; cursor: wait; }
 .videoPlayerControlRow .videoPlayerSkip { width: 56px; gap: 4px; padding: 0 7px; }
-.videoPlayerSkip small { font: 600 .59rem/1 var(--mono); }
-.videoPlayerControlRow time { margin-left: 8px; color: #c6d0ce; font: .66rem/1 var(--mono); white-space: nowrap; }
+.videoPlayerSkip small { font: 600 .72rem/1 var(--sans); font-variant-numeric: tabular-nums; }
+.videoPlayerControlRow time { margin-left: 8px; color: #d2d2d7; font: .72rem/1 var(--sans); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .videoPlayerControlSpacer { flex: 1; }
 .videoPlayerVolume { width: 70px; accent-color: #89d6c8; cursor: pointer; }
-.videoPlayerControlRow select { width: 57px; height: 32px; padding: 0 3px; color: inherit; border: 0; border-radius: 6px; background: transparent; cursor: pointer; font: .65rem/1 var(--mono); }
+.videoPlayerControlRow select { width: 57px; height: 32px; padding: 0 3px; color: inherit; border: 0; border-radius: 6px; background: transparent; cursor: pointer; font: .72rem/1 var(--sans); font-variant-numeric: tabular-nums; }
 .videoPlayerControlRow option { background: #101514; }
 .videoPlayerError { position: absolute; z-index: 2; inset: 0 0 auto; margin: 0; padding: 8px 16px 12px; color: #ffc5c5; background: #101514; font-size: .72rem; }
 .videoPlayerUnavailable { display: grid; width: 100%; aspect-ratio: 16 / 9; place-items: center; padding: 24px; color: #dce3e1; border-radius: 14px; background: #101514; font-size: .82rem; text-align: center; }
@@ -57,9 +57,9 @@
 .nextPreview { position: relative; display: grid; aspect-ratio: 16 / 9; overflow: hidden; place-items: center; color: var(--teal-deep); border-radius: 3px; background: var(--surface-muted); }
 .nextPreview img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .nextPreview img[hidden] { display: none; }
-.nextPlay { position: absolute; display: grid; width: 32px; height: 32px; place-items: center; padding-left: 2px; color: white; border-radius: 50%; background: rgb(9 12 11 / 65%); }
+.nextPlay { position: absolute; display: grid; width: 32px; height: 32px; place-items: center; padding-left: 2px; color: white; border-radius: 50%; background: rgb(0 0 0 / 65%); }
 .nextTitle { display: grid; min-width: 0; gap: 7px; }
-.nextTitle small { color: var(--teal-deep); font: .68rem/1.2 var(--mono); }
+.nextTitle small { color: var(--teal-deep); font: .72rem/1.2 var(--sans); font-variant-numeric: tabular-nums; }
 .nextTitle strong { display: -webkit-box; overflow: hidden; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; font-size: .8rem; font-weight: 550; line-height: 1.5; }
 .nextEpisodes a:hover strong { color: var(--teal-deep); }
 .nextTitle > span { color: var(--ink-faint); font-size: .68rem; }
@@ -93,7 +93,7 @@
 .episodeList :is(a, [aria-disabled="true"]) { display: grid; grid-template-columns: 52px minmax(0, 1fr) auto; gap: 10px; min-width: 0; align-items: center; padding: 12px 10px; color: var(--ink-soft); border-radius: 4px; text-decoration: none; }
 .episodeList a:hover { background: var(--surface-muted); }
 .episodeList a[aria-current="page"] { background: var(--teal-wash); }
-.episodeList :is(a, [aria-disabled="true"]) > span { color: var(--teal-deep); font: 600 .65rem/1.4 var(--mono); }
+.episodeList :is(a, [aria-disabled="true"]) > span { color: var(--teal-deep); font: 600 .72rem/1.4 var(--sans); font-variant-numeric: tabular-nums; }
 .episodeList strong { overflow: hidden; color: var(--ink); font-size: .72rem; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 800px) {
   .sidePanel { width: 100vw; border-left: 0; border-top: 1px solid var(--line); }
@@ -126,26 +126,27 @@
 }
 
 .home { --home-gutter: clamp(20px, 5vw, 96px); width: 100%; max-width: none; padding: 0 0 64px; }
-.hero { position: relative; isolation: isolate; display: flex; min-height: 520px; height: min(54vw, 720px); align-items: center; overflow: hidden; padding: 64px var(--home-gutter) 100px; color: #f3f8f5; background: #10251f; }
+.hero { position: relative; isolation: isolate; display: flex; min-height: 520px; height: min(54vw, 720px); align-items: center; overflow: hidden; padding: 64px var(--home-gutter) 100px; color: #f5f5f7; background: #0b0b0c; }
 .heroFrame { position: absolute; z-index: -3; inset: 0 0 -22%; }
-.hero::before { position: absolute; z-index: -2; inset: 0; background: linear-gradient(90deg, rgb(5 16 13 / 92%), rgb(5 16 13 / 62%) 36%, rgb(5 16 13 / 8%) 78%); content: ""; }
+.hero::before { position: absolute; z-index: -2; inset: 0; background: linear-gradient(90deg, rgb(0 0 0 / 92%), rgb(0 0 0 / 62%) 36%, rgb(0 0 0 / 8%) 78%); content: ""; }
 /* Fading a dark frame into the light canvas leaves a grey haze; end on a deeper tone with a clean edge instead.
    Mixing the two bottom tones with the page progress keeps the blend in step with the palette. */
-.hero::after { position: absolute; z-index: -1; right: 0; bottom: 0; left: 0; height: 150px; background: linear-gradient(0deg, color-mix(in srgb, rgb(5 16 13 / 72%), #121816 var(--night-mix)), transparent); content: ""; }
+.hero::after { position: absolute; z-index: -1; right: 0; bottom: 0; left: 0; height: 150px; background: linear-gradient(0deg, color-mix(in srgb, rgb(0 0 0 / 72%), #000000 var(--night-mix)), transparent); content: ""; }
 .heroContent { width: min(620px, 55%); padding-block: 16px; }
-.heroKicker { display: inline-flex; align-items: center; gap: 10px; color: #b6e4d7; font-size: .8rem; letter-spacing: .12em; }
-.heroKicker::before { width: 24px; height: 2px; background: currentColor; content: ""; }
-.heroContent h2 { margin: 24px 0; font: 600 clamp(2.5rem, 5vw, 5.25rem)/1.1 var(--display); letter-spacing: -.035em; overflow-wrap: anywhere; }
-.heroMeta { display: flex; flex-wrap: wrap; gap: 10px 20px; color: #d1dfd8; font-size: .8rem; }
-.heroMeta > span:first-child { color: #9bd5c4; font-family: var(--mono); }
-.heroContent > p { display: -webkit-box; max-width: 460px; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 3; margin: 22px 0 30px; color: #d1dfd8; font-size: .95rem; line-height: 1.8; overflow-wrap: anywhere; }
+.heroKicker { display: inline-flex; align-items: center; color: #8dd3c8; font-size: .9rem; font-weight: 600; }
+.heroContent h2 { margin: 14px 0 20px; font: 700 clamp(2.5rem, 5vw, 5rem)/1.05 var(--display); letter-spacing: -.022em; overflow-wrap: anywhere; }
+.heroMeta { display: flex; flex-wrap: wrap; gap: 10px 20px; color: #d2d2d7; font-size: .8rem; }
+.heroMeta > span:first-child { color: #8dd3c8; font-family: var(--sans); font-variant-numeric: tabular-nums; }
+.heroContent > p { display: -webkit-box; max-width: 460px; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 3; margin: 22px 0 30px; color: #d2d2d7; font-size: .95rem; line-height: 1.8; overflow-wrap: anywhere; }
 .heroActions { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
-.heroPlay, .heroBrowse { display: inline-flex; min-height: 48px; align-items: center; justify-content: center; gap: 10px; padding: 0 24px; border-radius: var(--radius-small); font-size: .85rem; font-weight: 600; text-decoration: none; }
-.heroPlay { color: #10251f; background: #8cd4c2; }
-.heroPlay:hover { background: #b1e9da; }
-.heroBrowse { cursor: pointer; color: #f3f8f5; border: 1px solid rgb(255 255 255 / 35%); background: rgb(5 16 13 / 25%); }
+.heroPlay, .heroBrowse { display: inline-flex; min-height: 48px; align-items: center; justify-content: center; gap: 10px; padding: 0 24px; border-radius: var(--radius-pill); font-size: .9rem; font-weight: 600; text-decoration: none; }
+.heroPlay, .heroBrowse { transition: background-color var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out); }
+.heroPlay:active, .heroBrowse:active { transform: scale(.97); transition-duration: var(--duration-press); }
+.heroPlay { color: #1d1d1f; background: #f5f5f7; }
+.heroPlay:hover { background: #ffffff; }
+.heroBrowse { cursor: pointer; color: #f5f5f7; border: 1px solid rgb(255 255 255 / 35%); background: rgb(0 0 0 / 25%); }
 .heroBrowse:hover { background: rgb(255 255 255 / 12%); }
-.heroProgress { display: grid; width: min(320px, 100%); gap: 9px; margin-top: 30px; color: #c3d8ce; font: .68rem/1.4 var(--mono); }
+.heroProgress { display: grid; width: min(320px, 100%); gap: 9px; margin-top: 30px; color: #d2d2d7; font: .72rem/1.4 var(--sans); font-variant-numeric: tabular-nums; }
 .heroProgress progress { width: 100%; height: 3px; overflow: hidden; border: 0; border-radius: 2px; appearance: none; background: rgb(255 255 255 / 22%); }
 .heroProgress progress::-webkit-progress-bar { background: rgb(255 255 255 / 22%); }
 .heroProgress progress::-webkit-progress-value { background: #8cd4c2; }
@@ -169,7 +170,7 @@
 .publisher small { overflow-wrap: anywhere; }
 .publisherAvatar { position: relative; display: grid; width: 28px; height: 28px; flex-shrink: 0; place-items: center; overflow: hidden; color: var(--teal-deep); border-radius: 50%; background: var(--teal-wash); font-size: .72rem; }
 .publisherAvatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
-.seriesCover { position: relative; display: grid; width: 100%; aspect-ratio: 16 / 10; overflow: hidden; place-items: center; color: var(--teal-deep); border-radius: 5px; background: var(--surface-muted); box-shadow: inset 0 0 0 1px var(--line); transition: transform 180ms ease, box-shadow 180ms ease; }
+.seriesCover { position: relative; display: grid; width: 100%; aspect-ratio: 16 / 10; overflow: hidden; place-items: center; color: var(--ink-soft); border-radius: 14px; background: linear-gradient(160deg, var(--surface-raised), var(--surface-muted)); box-shadow: inset 0 0 0 1px var(--line); transition: transform 180ms var(--ease-out), box-shadow 180ms var(--ease-out); }
 .seriesFrame { position: absolute; inset: 0; }
 /* Night dims only the two home preview surfaces by 16%; the shared progress leaves other artwork untouched. */
 .home .heroFrame,
@@ -179,7 +180,7 @@
 .seriesCover img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .seriesCover img[hidden] { display: none; }
 .coverFallback { display: flex; width: 100%; height: 100%; flex-direction: column; align-items: center; justify-content: center; gap: 20px; padding: 24px; text-align: center; }
-.coverFallback b { display: -webkit-box; overflow: hidden; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow-wrap: anywhere; font: 600 clamp(1.2rem, 2vw, 1.8rem)/1.4 var(--display); }
+.coverFallback b { display: -webkit-box; overflow: hidden; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow-wrap: anywhere; font: 600 clamp(1.15rem, 1.8vw, 1.6rem)/1.3 var(--display); letter-spacing: -.02em; color: var(--ink); }
 .seriesCard > span:last-child, .seriesCardActive > span:last-child { display: grid; width: 100%; min-width: 0; gap: 7px; }
 .seriesCards strong { display: -webkit-box; overflow: hidden; -webkit-line-clamp: 2; -webkit-box-orient: vertical; font-size: 1rem; line-height: 1.45; font-weight: 600; overflow-wrap: anywhere; }
 .seriesCards small { color: var(--ink-soft); font-size: .72rem; }
@@ -196,7 +197,7 @@
 .homeEpisode { position: relative; display: grid; grid-template-columns: 66px minmax(0, 1fr) auto; align-items: center; gap: 18px; min-height: 82px; padding: 14px 18px; color: var(--ink); text-decoration: none; }
 .homeEpisode:hover { background: var(--surface-muted); }
 .homeEpisode:hover .homeEpisodeTitle strong { color: var(--teal-deep); }
-.homeEpisodeNumber { color: var(--teal-deep); font: 600 .78rem/1 var(--mono); }
+.homeEpisodeNumber { color: var(--teal-deep); font: 600 0.78rem/1 var(--sans); font-variant-numeric: tabular-nums; }
 .homeEpisodeTitle { display: grid; min-width: 0; gap: 5px; }
 .homeEpisodeTitle strong { overflow: hidden; font-size: .78rem; font-weight: 550; text-overflow: ellipsis; white-space: nowrap; }
 .homeEpisodeTitle small { color: var(--ink-faint); font-size: .68rem; }
@@ -205,12 +206,12 @@
 .homeEmpty, .homeError { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 12px 16px; margin: 0; padding: 40px 28px; color: var(--ink-soft); font-size: .85rem; text-align: center; }
 .homeEmpty a { color: var(--teal-deep); font-weight: 600; }
 .homeError { color: var(--red); }
-@media (max-width: 760px) { .hero { min-height: 590px; height: auto; align-items: end; padding: 230px var(--home-gutter) 70px; } .heroFrame { bottom: 130px; } .hero::before { background: linear-gradient(0deg, #10251f 12%, rgb(5 16 13 / 88%) 40%, rgb(5 16 13 / 4%) 85%); } .hero::after { height: 80px; } .heroContent { width: 100%; } .heroContent h2 { margin: 14px 0; font-size: clamp(2rem, 8vw, 3.5rem); } .heroContent > p { margin: 16px 0 22px; font-size: .85rem; -webkit-line-clamp: 2; } .heroMeta { font-size: .72rem; } .heroPlay, .heroBrowse { padding-inline: 18px; font-size: .8rem; } .heroProgress { margin-top: 22px; } }
+@media (max-width: 760px) { .hero { min-height: 590px; height: auto; align-items: end; padding: 230px var(--home-gutter) 70px; } .heroFrame { bottom: 130px; } .hero::before { background: linear-gradient(0deg, #0b0b0c 12%, rgb(0 0 0 / 88%) 40%, rgb(0 0 0 / 4%) 85%); } .hero::after { height: 80px; } .heroContent { width: 100%; } .heroContent h2 { margin: 14px 0; font-size: clamp(2rem, 8vw, 3.5rem); } .heroContent > p { margin: 16px 0 22px; font-size: .85rem; -webkit-line-clamp: 2; } .heroMeta { font-size: .72rem; } .heroPlay, .heroBrowse { padding-inline: 18px; font-size: .8rem; } .heroProgress { margin-top: 22px; } }
 @media (max-width: 580px) { .homeGrid { gap: 24px; } .seriesCards { grid-auto-columns: 76%; gap: 16px; } .seriesCards strong { font-size: .9rem; } .seriesCards small { font-size: .7rem; } .homeEpisode { grid-template-columns: 46px minmax(0, 1fr) auto; gap: 10px; padding-inline: 8px; } .homeEpisodeNumber { font-size: .68rem; } .coverFallback { padding: 15px; gap: 12px; } }
 @media (prefers-reduced-motion: reduce) { .seriesCover, .sidePanel[data-open="false"], .videoPlayerControls { transition: none; } }
 
 .fadePreference { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; padding: 8px 12px; color: var(--ink-soft); font-size: .75rem; }
 .fadePreference input { width: 5em; padding: 4px 6px; color: var(--ink); background: var(--canvas); border: 1px solid var(--line); border-radius: 6px; font: inherit; }
-.sidePanel[data-fade="true"]:not(:hover):not(:focus-within) { animation: watch-panel-fade 160ms ease var(--kino-fade-delay) forwards; }
+.sidePanel[data-fade="true"]:not(:hover):not(:focus-within) { animation: watch-panel-fade 160ms var(--ease-out) var(--kino-fade-delay) forwards; }
 @keyframes watch-panel-fade { to { opacity: .4; } }
 @media (prefers-reduced-motion: reduce) { .sidePanel[data-fade="true"] { animation-duration: 1ms; } }

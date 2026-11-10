@@ -3,6 +3,7 @@ import clsx from "clsx";
 import {
   Activity,
   ArrowUpFromLine,
+  BookOpen,
   ChartNoAxesCombined,
   ChevronDown,
   LibraryBig,
@@ -16,7 +17,7 @@ import {
   UserRound,
   X,
 } from "lucide-react";
-import { type CSSProperties, Suspense, useEffect, useRef, useState } from "react";
+import { type CSSProperties, Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router";
 
 import { FOCUS_SEARCH_EVENT, loadConversations } from "../features/search/conversationNavigation";
@@ -28,6 +29,8 @@ import { useI18n } from "./i18n";
 import { useTheme } from "./theme";
 import { useWorkspace } from "./workspace";
 import { SettingsLink } from "../features/settings/SettingsLink";
+import { GITHUB_URL } from "../features/docs/links";
+import { GitHubMark } from "../features/docs/GitHubMark";
 import styles from "./app-shell.module.css";
 
 const navigation = [
@@ -43,6 +46,25 @@ const managementLinks = [
 const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
 
 export type WatchPanelLayout = { open: boolean; width: number; resizing: boolean };
+
+/** Fades the new page up into place when the path changes. Runs on the existing content node,
+    so routes keep their component state; query, hash and settings-overlay changes don't animate. */
+function usePageEntrance(pathname: string) {
+  const ref = useRef<HTMLDivElement>(null);
+  const previous = useRef(pathname);
+  useLayoutEffect(() => {
+    if (previous.current === pathname) return;
+    previous.current = pathname;
+    const node = ref.current;
+    if (!node?.animate || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const styles = getComputedStyle(node);
+    node.animate([{ opacity: 0, transform: "translateY(10px)" }, { opacity: 1, transform: "none" }], {
+      duration: parseFloat(styles.getPropertyValue("--duration-page")) || 320,
+      easing: styles.getPropertyValue("--ease-out").trim() || "ease-out",
+    });
+  }, [pathname]);
+  return ref;
+}
 
 function AccountControls({ onLogin, onSettings, mobile = false }: { onLogin: () => void; onSettings: () => void; mobile?: boolean }) {
   const { t, locale } = useI18n();
@@ -100,6 +122,7 @@ export function AppShell() {
   const avatarRef = useRef<HTMLButtonElement>(null);
   const location = useLocation();
   const navigate = useNavigate();
+  const contentRef = usePageEntrance(location.pathname);
   const { theme, toggleTheme } = useTheme();
   const { activeCount, overallProgress, openDialog } = useUploads();
   const { accountIdentity, canUpload, canManage, openLogin, sources, selectSource, scopeKey } = useAuth();
@@ -190,6 +213,12 @@ export function AppShell() {
             <ArrowUpFromLine size={19} strokeWidth={1.7} aria-hidden="true" /><span>{canUpload ? activeCount > 0 ? `${overallProgress}%` : t("上传") : t(!signedIn ? "上传" : "我的资料")}</span>
             {canUpload && activeCount > 0 ? <i style={{ width: `${overallProgress}%` }} aria-hidden="true" /> : null}
           </button>
+          <NavLink className={styles.iconButton} to="/docs" aria-label={t("使用文档")} title={t("使用文档")}>
+            <BookOpen size={20} strokeWidth={1.7} aria-hidden="true" />
+          </NavLink>
+          <a className={styles.iconButton} href={GITHUB_URL} target="_blank" rel="noreferrer" aria-label={t("GitHub 仓库")} title={t("GitHub 仓库")}>
+            <GitHubMark size={19} />
+          </a>
           <button className={styles.iconButton} type="button" onClick={toggleTheme} aria-label={t(theme === "light" ? "切换至黑夜模式" : "切换至白天模式")} title={t(theme === "light" ? "切换至黑夜模式" : "切换至白天模式")}>
             {theme === "light" ? <Moon size={20} strokeWidth={1.7} aria-hidden="true" /> : <Sun size={20} strokeWidth={1.7} aria-hidden="true" />}
           </button>
@@ -204,7 +233,7 @@ export function AppShell() {
           </div>
         </div>
       </header>
-      <div className={styles.content}>
+      <div className={styles.content} ref={contentRef}>
         <Suspense fallback={<main className="page" aria-busy="true"><Mascot mood="seek" size={56} delayed /></main>}>
           <Outlet context={setWatchPanelLayout} />
         </Suspense>
@@ -229,6 +258,8 @@ export function AppShell() {
             {visibleNavigation.map(({ to, label, icon: Icon }) => (
               <NavLink key={to} className={styles.accountLink} to={to}><Icon size={20} aria-hidden="true" />{t(label)}</NavLink>
             ))}
+            <NavLink className={styles.accountLink} to="/docs"><BookOpen size={20} aria-hidden="true" />{t("使用文档")}</NavLink>
+            <a className={styles.accountLink} href={GITHUB_URL} target="_blank" rel="noreferrer"><GitHubMark size={20} />{t("GitHub 仓库")}</a>
           </nav>
           <div className={styles.drawerActions}>
             <button className={styles.accountLink} type="button" onClick={() => { closeMobileMenu(); uploadAction(); }}>

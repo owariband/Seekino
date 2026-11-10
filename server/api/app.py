@@ -64,6 +64,10 @@ def build_app(
         title="seekino Server",
         version="0.1.0",
         lifespan=application_lifespan,
+        # /docs belongs to the web user guide; API docs stay under the /api proxy rule.
+        docs_url="/api/docs",
+        openapi_url="/api/openapi.json",
+        redoc_url=None,
     )
     app.state.services = services
     app.state.auth_config = auth_config

@@ -88,7 +88,7 @@
 .welcome { display: grid; justify-items: center; gap: 16px; margin: auto; padding: 32px 0; color: var(--ink-faint); text-align: center; }
 .welcome p { margin: 0; color: var(--ink-soft); font-size: .95rem; }
 .examples { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; max-width: 560px; }
-.examples button { min-height: 34px; padding: 0 14px; color: var(--ink-soft); border: 1px solid var(--line); border-radius: 999px; background: var(--surface-raised); font-size: .8rem; cursor: pointer; transition: color 160ms ease, border-color 160ms ease; }
+.examples button { min-height: 34px; padding: 0 14px; color: var(--ink-soft); border: 1px solid var(--line); border-radius: 999px; background: var(--surface-raised); font-size: .8rem; cursor: pointer; transition: color 160ms var(--ease-out), border-color 160ms var(--ease-out); }
 .examples button:hover:not(:disabled) { color: var(--teal-deep); border-color: var(--teal); }
 .examples button:disabled { opacity: .5; cursor: not-allowed; }
 .connectionState { display: flex; width: min(100%, 880px); align-self: center; align-items: center; gap: 9px; margin: 0; color: var(--ink-faint); font-size: .8rem; }
@@ -170,7 +170,7 @@
 .scopeOptions button { padding: 8px 4px; color: var(--teal-deep); cursor: pointer; background: transparent; font-size: .75rem; }
 .scopeOptions p { margin: 8px 4px; color: var(--ink-faint); font-size: .75rem; }
 .answerSettingsPicker summary { gap: 7px; }
-.answerSettingsPicker summary small { color: var(--ink-faint); font: 500 .6rem/1 var(--mono); }
+.answerSettingsPicker summary small { color: var(--ink-faint); font: 500 .72rem/1 var(--sans); font-variant-numeric: tabular-nums; }
 .answerSettings { width: 390px; }
 .answerSettings > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; padding: 4px 4px 12px; border-bottom: 1px solid var(--line); }
 .answerSettings > header > div { display: grid; gap: 5px; }
@@ -182,7 +182,7 @@
 .answerSettingRow > span { display: grid; gap: 4px; }
 .answerSettingRow strong { color: var(--ink-soft); font-size: .7rem; font-weight: 500; }
 .answerSettingRow small { color: var(--ink-faint); font-size: .61rem; }
-.answerSettingValue { min-width: 30px; color: var(--teal-deep); font: 600 .72rem/1 var(--mono); text-align: right; }
+.answerSettingValue { min-width: 30px; color: var(--teal-deep); font: 600 .72rem/1 var(--sans); font-variant-numeric: tabular-nums; text-align: right; }
 .answerSettings .answerSettingRow input { width: 100%; grid-column: 1 / -1; accent-color: var(--teal-deep); }
 .answerSettings .answerSettingRow input:disabled { opacity: .45; }
 .answerMode { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 4px; border-bottom: 1px solid var(--line); }
@@ -201,12 +201,12 @@
 .candidateList { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .renderVideoBlock .candidateList { grid-template-columns: minmax(0, 1fr); }
 .renderVideoBlock + .answerText { margin-top: 24px; }
-.candidate, .candidateSelected { display: grid; grid-template-columns: 160px minmax(0, 1fr); width: 100%; min-width: 0; align-content: start; gap: 8px 16px; padding: 16px; color: var(--ink); border: 1px solid var(--line); border-radius: 12px; cursor: pointer; background: var(--surface); text-align: left; transition: border-color 160ms ease; }
+.candidate, .candidateSelected { display: grid; grid-template-columns: 160px minmax(0, 1fr); width: 100%; min-width: 0; align-content: start; gap: 8px 16px; padding: 16px; color: var(--ink); border: 1px solid var(--line); border-radius: 12px; cursor: pointer; background: var(--surface); text-align: left; transition: border-color 160ms var(--ease-out); }
 .candidate:hover, .candidateSelected { border-color: var(--teal-deep); }
 .candidateTop { display: grid; grid-column: 2; grid-template-columns: 24px minmax(0, 1fr); gap: 5px 9px; align-items: center; color: var(--ink-faint); font-size: .65rem; }
 .candidateTop time { grid-column: 2; }
 .candidateTop > span:nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rank { display: grid; grid-row: 1 / span 2; width: 24px; height: 24px; place-items: center; border-radius: 6px; background: var(--surface-muted); font: 500 .68rem/1 var(--mono); }
+.rank { display: grid; grid-row: 1 / span 2; width: 24px; height: 24px; place-items: center; border-radius: 6px; background: var(--surface-muted); font: 500 .72rem/1 var(--sans); font-variant-numeric: tabular-nums; }
 .candidateThumbnail { grid-column: 1; grid-row: 1 / span 2; width: 100%; align-self: start; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 8px; background: var(--surface-muted); }
 .candidatePreview { position: relative; display: block; overflow: hidden; }
 .candidatePreviewFrame { position: absolute; inset: 0; pointer-events: none; }
@@ -222,7 +222,7 @@
 .resultWarnings p { margin: 4px 0; }
 
 .renderVideoCard { margin: 12px 0; }
-.videoCard { display: flex; width: 100%; min-width: 0; align-items: center; gap: 14px; padding: 10px; color: var(--ink); border: 1px solid var(--line); border-radius: 14px; cursor: pointer; background: var(--surface); text-align: left; transition: border-color 160ms ease, background-color 160ms ease; }
+.videoCard { display: flex; width: 100%; min-width: 0; align-items: center; gap: 14px; padding: 10px; color: var(--ink); border: 1px solid var(--line); border-radius: 14px; cursor: pointer; background: var(--surface); text-align: left; transition: border-color 160ms var(--ease-out), background-color 160ms var(--ease-out); }
 .videoCard:hover { background: var(--surface-muted); }
 .videoCardSelected { border-color: var(--teal-deep); }
 .videoCardSelected:hover { background: var(--surface); }
@@ -318,7 +318,7 @@
 .clipTime {
   min-width: 79px;
   color: rgba(243,255,250,.9);
-  font: 600 .61rem/1 var(--mono);
+  font: 600 .72rem/1 var(--sans); font-variant-numeric: tabular-nums;
   text-align: right;
   white-space: nowrap;
 }
@@ -335,7 +335,7 @@
   border: 1px solid rgba(255,255,255,.12);
   border-radius: 999px;
   background: rgba(13,17,23,.58);
-  font: 600 .61rem/1 var(--mono);
+  font: 600 .72rem/1 var(--sans); font-variant-numeric: tabular-nums;
   backdrop-filter: blur(8px);
 }
 
@@ -521,9 +521,7 @@
 
 .quoteStack section span {
   color: var(--ink-faint);
-  font: 600 .59rem/1 var(--mono);
-  letter-spacing: .1em;
-  text-transform: uppercase;
+  font: 600 .72rem/1 var(--sans); font-variant-numeric: tabular-nums;
 }
 
 .quoteStack blockquote,
@@ -546,8 +544,7 @@
 
 .contextFlow article span {
   color: var(--ink-faint);
-  font: 600 .58rem/1 var(--mono);
-  letter-spacing: .1em;
+  font: 600 .72rem/1 var(--sans); font-variant-numeric: tabular-nums;
 }
 
 .contextFlow article p {
@@ -726,7 +723,7 @@
 .historySidebar { position: relative; grid-column: 1; grid-row: 1 / -1; min-height: 0; overflow: hidden; border-right: 1px solid var(--line); background: color-mix(in srgb, var(--surface) 65%, var(--canvas)); }
 .historySidebar[hidden] { display: none; }
 .historyResize { position: absolute; z-index: 20; top: 0; right: 0; bottom: 0; width: 9px; cursor: col-resize; touch-action: none; user-select: none; }
-.historyResize::before { position: absolute; top: 0; bottom: 0; left: 4px; width: 1px; border-radius: 1px; background: transparent; content: ""; transition: background-color 140ms ease, width 140ms ease; }
+.historyResize::before { position: absolute; top: 0; bottom: 0; left: 4px; width: 1px; border-radius: 1px; background: transparent; content: ""; transition: background-color 140ms var(--ease-out), width 140ms var(--ease-out); }
 .historyResize:hover::before, .historyResize:focus-visible::before { width: 2px; background: var(--teal); }
 .historyResize:focus-visible { outline: 2px solid var(--teal); outline-offset: -2px; border-radius: 4px; }
 .sidebarContent { display: flex; height: 100%; min-height: 0; flex-direction: column; gap: 12px; padding: 16px 12px; }
@@ -759,7 +756,7 @@
 .standalonePage .userMessage > div { padding: 12px 18px; border-radius: 18px; background: var(--surface-muted); }
 .standalonePage .answerText { font-size: .95rem; line-height: 1.8; }
 .standalonePage .composerArea { width: min(100%, var(--chat-content-width)); padding: 0; }
-.standalonePage .composer { grid-template-columns: minmax(0, 1fr); gap: 0; overflow: hidden; padding: 0; border: 0; border-radius: 18px; background: var(--surface-raised); box-shadow: inset 0 0 0 1px var(--line), var(--shadow-small); transition: box-shadow 160ms ease; }
+.standalonePage .composer { grid-template-columns: minmax(0, 1fr); gap: 0; overflow: hidden; padding: 0; border: 0; border-radius: 18px; background: var(--surface-raised); box-shadow: inset 0 0 0 1px var(--line), var(--shadow-small); transition: box-shadow 160ms var(--ease-out); }
 .standalonePage .composer:focus-within { border: 0; box-shadow: inset 0 0 0 1px var(--line-strong), var(--shadow-small); }
 .standalonePage .composer textarea { grid-column: 1; grid-row: auto; width: 100%; min-height: 56px; max-height: 200px; padding: 15px 16px 4px; border: 0; border-radius: 0; background: transparent; font-size: .9rem; line-height: 26px; }
 .standalonePage .composer textarea:focus { border: 0; }
@@ -780,6 +777,12 @@
 .modelPicker select:hover { border-color: var(--line-strong); color: var(--ink); }
 .modelPicker select:disabled { color: var(--ink-faint); cursor: progress; }
 .modelPicker select:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+/* With the styleable select, keep the pill's text centred and swap the UA triangle for a quiet chevron. */
+@supports (appearance: base-select) {
+  .modelPicker select { display: inline-flex; align-items: center; gap: 7px; padding: 0 10px 0 12px; }
+  .modelPicker select::picker-icon { content: ""; width: 5px; height: 5px; margin-top: -3px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(45deg); transition: transform var(--duration-fast) var(--ease-out), margin var(--duration-fast) var(--ease-out); }
+  .modelPicker select:open::picker-icon { margin-top: 3px; transform: rotate(225deg); }
+}
 .modelError { margin: 6px 4px 0; font-size: .72rem; }
 .standalonePage .keyboardHint { width: fit-content; margin: 4px 4px 0 auto; padding: 3px 0; font-size: .6rem; }
 .standalonePage[data-draft="true"] .agentPanel { justify-content: center; padding-bottom: clamp(24px, 9vh, 100px); }

@@ -58,4 +58,5 @@ def save_role(body: ModelRoleSave, service: ModelSettings = Depends(settings_ser
 
 def discover_models(body: ModelConnectionEndpoint, connection_id: UUID = Query(alias="connectionId"),
                     service: ModelSettings = Depends(settings_service)) -> DiscoveredModels:
-    return DiscoveredModels(model_ids=service.discover(str(connection_id), body))
+    model_ids = service.discover(str(connection_id), body)
+    return DiscoveredModels(model_ids=model_ids or [], list_available=model_ids is not None)
