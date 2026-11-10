@@ -31,3 +31,7 @@
 # 6. 验收
 
 两种输入每轮都只取得两次父行锁和两次子行锁。新增的检查时机与失租断言在原实现上失败，调整后通过。媒体、worker、队列、暂停、派发与持久化回归共 518 项通过，另有 31 项真实 MySQL 用例通过。批次交付的验收达到目标，整集耗时需要完整成功的解析另行测量。[Devlog](../../dev/devlog.md#devlog-frame-link-lease-20261107) · [工作台](../../dev/workbench.html)
+
+## 整集验收补录计划（2026-11-11）
+
+分支 `docs/parse-acceptance-evidence`，目标 `dev`。用 11 月 7 日 MyGO 第 3 集两次冷跑的任务记录核对起止时间、解析块和 ES 事件，再与四集并行时的同一集对读。单块锁次数有独立对照，整集耗时还受并发负载和模型配置影响。同期 micrograd 的草稿、取消和索引记录回填到[解析草稿报告](../../report/server/service/parse-output-drafts-20261107.md)。
