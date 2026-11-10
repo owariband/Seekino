@@ -1,6 +1,6 @@
 # 1. 问题与现状
 
-需求：模型服务的“获取模型列表”结果可见、可直接添加，且对不提供列表的服务给出中性说明。提出日期：2026-11-10（Asia/Shanghai）。分支：`fix/model-discovery-feedback`（基于 `feat/apple-style-refresh`，沿用其样式）；PR：待创建后回填。合并顺序：`feat/cloud-user-docs` → `feat/apple-style-refresh` → 本分支。
+需求：模型服务的“获取模型列表”结果可见、可直接添加，且对不提供列表的服务给出中性说明。提出日期：2026-11-10（Asia/Shanghai）。分支：`fix/model-discovery-feedback`（基于 `feat/apple-style-refresh`，沿用其样式）；PR：[#91](https://github.com/owariband/Seekino/pull/91)。合并顺序：`feat/cloud-user-docs` → `feat/apple-style-refresh` → 本分支。
 
 **触发。** hypnos 反馈设置页的“获取模型列表”像占位按钮，点了什么也没拿到。
 
