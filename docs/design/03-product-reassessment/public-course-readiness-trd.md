@@ -22,6 +22,10 @@
 - **可信检索范围。** 普通搜索、Agent 的 Chunk 和 Event 工具复用 V2 最新任务和内容版本核验。整课只搜索最新任务 COMPLETE 的集，按实际范围输出 `searchedVideoIds`、`partial` 和面向用户的集数提示。HTTP 请求通过 `episodeOrder`、Agent 工具通过 `episode` 指定所选一门课程中的集号。服务端在这个授权系列内解析视频和任务 ID，直接检索、Event 检索及委派子查询都沿用该范围；回源时再核对时间线和集号。零就绪、有覆盖但无匹配、向量服务故障分别反馈；工具失败可让 Supervisor 继续回应。
 - **数据与兼容。** 旧调用缺省按整门课程检索。沿用现有表、ES 投影、索引版本和时间单位，无需启动 GPU、回填素材或重建索引。
 
+Event 工具还要核验每集所有 Chunk 的事件发布回执。只指定片段时，先在已授权的视频中解析片段归属。送给 ES 的任务、片段、内容版本决定本次覆盖，命中后按各集冻结的 Chunk 索引代次回源。只有 Chunk 索引的集仍可参与普通检索。已授权课程中不存在的集号向工具返回 `EPISODE_NOT_FOUND`，私有和已撤回课程仍在入口鉴权时返回 `NOT_FOUND`。
+
+普通搜索和 Agent 回答用 `coverageMessages` 传递可公开的覆盖说明。同步消息、SSE 和历史共用证据投影。游客看到的 `hadCandidates` 取自已保存的候选片段数和已附证据。它区分有候选、成功检索但零候选、记录不足或调用失败三种情况。查询词、错误详情和原始 trace 留在受限视图。
+
 ## 4. 对照实验与结果分析
 
 2026-11-10 在实现 `3fb7125a` 上验证正式路由、SQL 范围、证据回源和消息存储。使用临时 SQLite、8 个不同视频和每集 2 个带版本的 Chunk。E08 两个 Chunk 均已解析，索引一个已发布、一个仍排队。零索引组把八集最新任务均置为 INDEXING。生产 E08 的 134 个 Chunk 和 GPU 保持原状。
@@ -40,7 +44,17 @@
 
 ## 5. 试点验证与方案取舍
 
-本机 Chrome 加载 release 构建，访问回环地址的 FastAPI，走实际游客引导、会话 Cookie、CSRF 和 SSE。游客从 `/watch` 进入课程，选 E08，跳到 6,000 毫秒，在 206 Range 响应上确认视频时间推进。四轮操作为问好、追问、搜整门课、只查 E08。页面同时验收完整的覆盖提示和单集处理提示。实际 MP4 由 FFmpeg 合成，使用真实浏览器编解码检查和播放器。语言模型、ES 搜索结果、向量和 Redis 配额使用隔离替身；SQL 范围、证据回源、工具执行和前后端网络链路使用项目代码。
+在 `868edb1f` 上复核时，指定 E01 的一个片段仍报告 E01–E07，加入只有 Chunk 索引的 E07 会中断整课 Event 检索。查询不存在的 E09 会把助手消息置为 FAILED，游客历史也会把已有候选的纯文字回答显示成零命中。首轮验收没有覆盖这四条路径。随后将修复 `cc93efdc` 与相同的八集隔离数据作对照。
+
+| 请求或反例 | 逐集验收结果 |
+| --- | --- |
+| 同一门课，E01–E06 有 Event 和 Chunk，E07 只有 Chunk，E08 处理中 | 普通检索覆盖 E01–E07。Event 实际查询前六集的 12 个片段，证据覆盖六集，另列 E07 缺事件索引、E08 处理中 |
+| 只查 E01 的一个片段 | 实际只查指定的一个来源。成功零命中仍报告 E01 的指定片段。未知、跨租户、跨集的片段选择均被拒绝，ES 返回的错集候选也无法进入回答 |
+| E02 的一个 Event 回执缺失、伪造或内容版本过期 | 三个独立用例均排除 E02 整集，其余五集继续返回已核验的事件。另有用例确认相同 Event 合同可跨不同的 Chunk 索引代次检索并逐集回源 |
+| 查 E09，再继续聊 | 部分索引和零索引两组中，直接 Chunk、Event 和委派工具均提示核对集号，当轮正常完成。撤回后同一 HTTP 查询返回通用 404 |
+| 有候选、没有附视频的游客回答 | 实际游客同步接口、浏览器的 SSE 及刷新后的历史均显示“检索到了候选片段”。成功零命中有单独提示。缺少历史记录或工具全部失败时显示中性文案，游客响应的原始 trace 为空 |
+
+本机 Chrome 加载 release 构建，访问回环地址的 FastAPI，走实际游客引导、会话 Cookie、CSRF 和 SSE。游客从 `/watch` 进入课程，选 E08，跳到 6,000 毫秒，在 206 Range 响应上确认视频时间推进。首轮试点的四轮操作为问好、追问、搜整门课、只查 E08。补充验证加入整课事件、指定片段、错误集号和检索后仅发文字，共八轮，最后刷新观看页恢复会话。实际 MP4 由 FFmpeg 合成，使用真实浏览器编解码检查和播放器。语言模型、ES 召回、向量及 Redis 配额使用隔离替身。SQL 范围、证据回源、工具执行和前后端网络链路使用项目代码。
 
 安装前后端依赖、构建 Web 并准备 FFmpeg、ffprobe、Chrome 后，在仓库根目录可复跑：
 
@@ -49,7 +63,7 @@ SEEKINO_TEST_PUBLIC_COURSE_BROWSER=1 SEEKINO_TEST_BROWSER_CHANNEL=chrome \
   uv run --no-sync python -m pytest -q -s tests/server/test_public_course_readiness.py
 ```
 
-本机三项通过，包括两组隔离 API 场景和一次实际浏览器回路。[浏览器操作与断言](../../../web/tests/public-course-readiness.mjs) 工作树的原始日志在 `outputs/verification/public-course-readiness-20261110/`。
+初版专项三项通过。补充验证的专项八项通过，含真实 Chrome。相关 Server、Agent、Engine 回归 1,148 项通过，常规运行跳过单独启用的浏览器用例和需独立 MySQL 的并发用例。Web 32 个测试文件、628 项通过，类型检查和生产构建通过。工作树原始日志在 `outputs/verification/public-course-readiness-20261110/` 的 `per-video-final-backend.log`、`per-video-final-browser.log`、`per-video-web.log` 和 `per-video-final-build.log`。[浏览器操作与断言](../../../web/tests/public-course-readiness.mjs)
 
 ## 6. 结果验收与闭环
 
