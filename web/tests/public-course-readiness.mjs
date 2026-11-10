@@ -30,12 +30,20 @@ try {
   for (const [question, answer] of [
     ["你好", "你好，我们可以聊这门课。"], ["继续解释", "可以继续讨论。"],
     ["搜整门课", "本次检索覆盖 E01–E07，E08 正在处理"], ["只查 E08", "该集正在解析，暂时无法检索"],
+    ["搜整门课的事件", "本次检索覆盖 E01–E06，E07 暂无可检索的事件索引，E08 正在处理"],
+    ["只查第一个片段的事件", "本次检索覆盖 E01 的指定片段"],
+    ["只查 E09", "所选课程中没有这一集，请核对集数"],
+    ["检索后只发文字", "检索到了候选片段，但本次回答未附带可播放视频，请重试。"],
   ]) {
     await page.getByRole("textbox", { name: "向 Seekino 助手提问" }).fill(question);
     await page.getByRole("button", { name: "发送问题" }).click();
     await expect(page.locator("#watch-chat-panel article").getByText(answer, { exact: true }).filter({ visible: true }).first()).toBeVisible({ timeout: 15000 });
   }
-  console.log("Guest watch → series → E08 at 6000 ms (206) → four chat turns; E01–E07 coverage and E08 processing visible.");
+  await page.reload();
+  const panel = page.locator("#watch-chat-panel");
+  if (!await panel.isVisible()) await page.getByRole("button", { name: "打开观看侧栏" }).click();
+  await expect(panel.getByText("检索到了候选片段，但本次回答未附带可播放视频，请重试。", { exact: true })).toBeVisible();
+  console.log("Guest E08 playback at 6000 ms (206), eight chat turns, per-tool scopes, missing episode and restored candidate outcome verified.");
 } finally {
   await browser.close();
 }

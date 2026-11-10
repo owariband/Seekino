@@ -33,6 +33,13 @@ class RetrievalConsistencyError(ValueError):
     """Returned index/fact data cannot substantiate the pinned query identity."""
 
 
+class EpisodeNotFoundError(LookupError):
+    """The authorized course has no video at the requested episode number."""
+
+    code = "EPISODE_NOT_FOUND"
+    public_message = "所选课程中没有这一集，请核对集数"
+
+
 class SeriesNotReadyError(RuntimeError):
     """The requested authorized scope currently has no published index."""
 
@@ -377,7 +384,10 @@ def validate_retrieval_identity(plan: RetrievalQueryPlan, identity: VideoChunkRe
 
 
 class EventIndexNotReadyError(RuntimeError):
-    """The requested Event scope is not completely published; Chunk search can continue."""
+    """The requested scope has no available Event publication."""
+
+    code = "EVENT_INDEX_NOT_READY"
+    public_message = "所选范围暂时无法检索事件"
 
 
 class EventFilters(_QueryModel):

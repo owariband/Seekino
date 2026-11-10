@@ -1533,6 +1533,7 @@ def test_series_and_search_contract(tmp_path: Path) -> None:
         "searchedVideoIds": [],
         "partial": False,
         "warnings": [],
+        "coverageMessages": [],
         "agentReply": {
             "message": "这次没有找到符合当前检索范围的候选片段。",
             "resultCount": 0,
@@ -2402,6 +2403,33 @@ def test_agent_evidence_view_reads_legacy_single_query_without_trace():
     serialized = view.model_dump(mode="json", by_alias=True)
     assert "query" not in serialized
     assert serialized["retrievalTrace"] == []
+    assert serialized["hadCandidates"] is None
+
+
+@pytest.mark.parametrize(("trace", "expected"), [
+    ([{"resultCount": 2}], True),
+    ([{"result_count": 2, "status": "success"}], True),
+    ([{"resultCount": 0, "status": "success"}], False),
+    ([{"resultCount": 0}], False),
+    ([{"resultCount": 0, "status": "error"}], None),
+    ([{"resultCount": 0}, {"status": "error"}], None),
+    ([{"status": "error"}, {"result_count": 2}], True),
+    ([{"status": "success"}], None),
+    ([], None),
+])
+def test_guest_history_projects_candidate_outcome_and_only_public_coverage(trace, expected):
+    guest = SimpleNamespace(mode="cloud", tenant_id="guest-workspace", public_tenant_id="platform-public",
+                            role="user", auth_level="guest", is_guest=True)
+    stored = {
+        "seriesIds": ["course"], "searchedVideoIds": ["video"], "agentReply": {"message": "回答", "resultCount": 0},
+        "hits": [], "coverageMessages": ["已查第一集"], "warnings": ["private diagnostic"],
+        "retrieval_trace": [{**entry, "query": "private diagnostic"} for entry in trace],
+    }
+    media = SimpleNamespace(require_series_access=lambda *_args, **_kwargs: None)
+    view = _agent_search_evidence_view(stored, media, tenant_id="platform-public", identity=guest)
+    assert view.had_candidates is expected
+    assert view.retrieval_trace == [] and view.warnings == view.coverage_messages == ["已查第一集"]
+    assert "private diagnostic" not in view.model_dump_json()
 
 
 @pytest.mark.parametrize("accept", ["application/json", "text/event-stream"])

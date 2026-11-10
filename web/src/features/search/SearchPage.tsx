@@ -134,9 +134,18 @@ function savedSidebarWidth(): number {
 function SearchCoverage({ result, displayMode }: { result: AgentMessageView["searchResult"]; displayMode: DisplayMode }) {
   const { t } = useI18n();
   if (!result) return null;
-  const warnings = displayMode === "debug" ? result.warnings : result.warnings.filter((warning) => warning.startsWith("本次检索覆盖 "));
+  const warnings = displayMode === "debug" ? result.warnings : result.coverageMessages ?? [];
   if (warnings.length) return <div className={styles.resultWarnings} role="status">{warnings.map((warning) => <p key={warning}>{warning}</p>)}</div>;
   return result.partial ? <p className={styles.resultWarnings} role="status">{t("本次回答仅覆盖当前可检索的视频。")}</p> : null;
+}
+
+function emptyVideoMessage(result: NonNullable<AgentMessageView["searchResult"]>) {
+  const hadCandidates = result.hadCandidates === undefined
+    ? result.retrievalTrace?.some((entry) => entry.status !== "error" && entry.resultCount > 0) || null
+    : result.hadCandidates;
+  if (hadCandidates === true) return "检索到了候选片段，但本次回答未附带可播放视频，请重试。";
+  if (hadCandidates === false) return "没有检索到可展示的视频片段，试试换个描述。";
+  return "本次回答未附带视频片段。";
 }
 
 function messageRenderBlocks(message: AgentMessageView): AgentRenderBlock[] {
@@ -1144,9 +1153,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
                     {message.status === "COMPLETED" && message.searchResult && !message.searchResult.hits.length ? (
                       <p className={styles.candidateEmpty}>
                         <Kino state="think" width={38} scale={2} ground={false} />
-                        <span>{message.searchResult.retrievalTrace?.some((entry) => entry.resultCount > 0)
-                          ? t("检索到了候选片段，但本次回答未附带可播放视频，请重试。")
-                          : t("没有检索到可展示的视频片段，试试换个描述。")}</span>
+                        <span>{t(emptyVideoMessage(message.searchResult))}</span>
                       </p>
                     ) : null}
                   </div>

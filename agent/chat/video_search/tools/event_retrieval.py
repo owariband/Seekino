@@ -9,7 +9,7 @@ from pydantic import Field, ValidationError, model_validator
 
 from engine.rag.contracts import AgentReply, VideoChunkSearchResult
 from engine.rag.retrieval.contracts import (
-    EventFilters, EventIndexNotReadyError, EventSearchResult, EventType,
+    EpisodeNotFoundError, EventFilters, EventIndexNotReadyError, EventSearchResult, EventType,
     RetrievalUnavailableError, SeriesNotReadyError,
 )
 from engine.rag.retrieval.fusion import (
@@ -117,10 +117,11 @@ def build_search_video_events_tool(
                 raise
             except Exception as exc:
                 control.check()
-                code = "EVENT_INDEX_NOT_READY" if isinstance(exc, EventIndexNotReadyError) else "EVENT_RETRIEVAL_FAILED"
-                message = "Event retrieval did not complete for the requested scope."
+                code, message = "EVENT_RETRIEVAL_FAILED", "Event retrieval did not complete for the requested scope."
                 hint = "Continue with retrieve in the same scope. Missing coverage is not evidence of no matching scenes."
-                if isinstance(exc, (SeriesNotReadyError, RetrievalUnavailableError)):
+                if isinstance(exc, EventIndexNotReadyError):
+                    code, message = exc.code, exc.public_message
+                elif isinstance(exc, (EpisodeNotFoundError, SeriesNotReadyError, RetrievalUnavailableError)):
                     code, message = exc.code, exc.public_message
                     hint = "说明该限制并继续对话，保留指定的资料范围。"
                 calls.append(RetrievalCall(

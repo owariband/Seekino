@@ -163,7 +163,7 @@ def search_evidence_fields(
                 "query", "renderBlocks", "render_blocks", "retrievalTrace", "retrieval_trace",
             }
         })
-    warnings = list(getattr(result, "warnings", []))
+    warnings = list(result.coverage_messages if public_view else result.warnings)
     searched_video_ids = result.searched_video_ids
     if searched_video_ids is None:
         warnings.append("原始记录缺少检索视频范围")
@@ -193,7 +193,7 @@ def search_evidence_fields(
         series_ids=result.series_ids,
         searched_video_ids=list(searched_video_ids or []),
         partial=bool(getattr(result, "partial", False) or searched_video_ids is None),
-        warnings=list(dict.fromkeys(warnings)), hits=hits,
+        warnings=list(dict.fromkeys(warnings)), coverage_messages=result.coverage_messages, hits=hits,
     )
 
 

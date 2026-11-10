@@ -673,6 +673,23 @@ describe("Search assistant presentation", () => {
     expect(screen.getByText("问题已发送，正在处理")).toBeInTheDocument();
   });
 
+  it.each([
+    [true, "检索到了候选片段，但本次回答未附带可播放视频，请重试。"],
+    [false, "没有检索到可展示的视频片段，试试换个描述。"],
+    [null, "本次回答未附带视频片段。"],
+  ] as const)("shows the public candidate outcome %s with the private trace hidden", (hadCandidates, expected) => {
+    const message = assistantMessage("只生成了文字");
+    message.searchResult = {
+      seriesIds: [series.seriesId], searchedVideoIds: ["video-1"], partial: true, hits: [],
+      hadCandidates, retrievalTrace: [], warnings: ["本次检索覆盖 private-diagnostic"],
+      coverageMessages: ["已查第一集"],
+    };
+    renderPage(message);
+    expect(screen.getByText(expected)).toBeInTheDocument();
+    expect(screen.getByText("已查第一集")).toBeInTheDocument();
+    expect(screen.queryByText(/private-diagnostic/)).not.toBeInTheDocument();
+  });
+
   const traceCases: Array<{ label: string; weights: RetrievalChannelWeights }> = [
     { label: "historical ASR", weights: { transcript: 0.2, semantic: 0.5, visual: 0.3 } },
     { label: "lexical", weights: { lexical: 0.2, semantic: 0.5, visual: 0.3 } },

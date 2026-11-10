@@ -20,6 +20,7 @@ from gateway.model_events import ModelReasoningDelta, ModelTextDelta
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, create_model, model_validator
 
 from engine.rag.contracts import AgentReply, VideoChunkEvidence, VideoChunkSearchHit, VideoChunkSearchResult
+from engine.rag.retrieval.contracts import EpisodeNotFoundError, EventIndexNotReadyError
 
 from agent.utils.tool import AgentTool
 from .common.state import AnswerPhase, ExecutionControl, RunInputs, context_json
@@ -1369,6 +1370,12 @@ def _markdown_label(value: str) -> str:
 
 def _video_failure_tool_error(failure: VideoSearchFailure) -> ToolError:
     message, retry_hint = {
+        VideoSearchFailureCode.EPISODE_NOT_FOUND: (
+            failure.public_message or EpisodeNotFoundError.public_message, "请用户核对集号，保留本轮指定的范围。",
+        ),
+        VideoSearchFailureCode.EVENT_INDEX_NOT_READY: (
+            failure.public_message or EventIndexNotReadyError.public_message, "可在同一范围内检索 Chunk，或继续普通对话。",
+        ),
         VideoSearchFailureCode.SCOPE_NOT_READY: (
             failure.public_message or "所选范围暂时无法检索", "说明资料就绪情况，保留指定的范围并继续对话。",
         ),

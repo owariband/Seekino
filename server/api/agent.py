@@ -754,7 +754,24 @@ def _agent_search_evidence_view(
     return AgentSearchEvidenceView(
         **evidence.model_dump(),
         retrieval_trace=raw_trace if not public_view and isinstance(raw_trace, list) else [],
+        had_candidates=True if evidence.hits else _trace_had_candidates(raw_trace),
     )
+
+
+def _trace_had_candidates(trace: object) -> bool | None:
+    if not isinstance(trace, list) or not trace:
+        return None
+    all_empty = True
+    for entry in trace:
+        if not isinstance(entry, dict) or entry.get("error") or entry.get("status") not in (None, "success"):
+            all_empty = False
+            continue
+        count = entry.get("resultCount", entry.get("result_count"))
+        if type(count) is int and count > 0:
+            return True
+        if type(count) is not int or count != 0:
+            all_empty = False
+    return False if all_empty else None
 
 
 _ANSWER_EVENT_MODELS = {

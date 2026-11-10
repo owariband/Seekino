@@ -282,7 +282,8 @@ class VideoParseRetrievalService:
         return VideoChunkSearchResult(
             query=query, series_ids=list(selected.series_ids),
             searched_video_ids=list(selected.searched_video_ids), partial=selected.partial,
-            warnings=list(selected.warnings), agent_reply=_agent_reply(hits), hits=hits,
+            warnings=list(selected.warnings), coverage_messages=list(selected.warnings),
+            agent_reply=_agent_reply(hits), hits=hits,
         )
 
 

@@ -39,10 +39,21 @@ def series_names(
     )).all())
 
 
-def list_series_videos(session: Session, *, series_ids: Sequence[str]) -> list[VideoData]:
-    return [task_store.video_data(row) for row in session.scalars(select(Video).where(
+def list_series_videos(
+    session: Session, *, series_ids: Sequence[str], episode_order: int | None = None,
+) -> list[VideoData]:
+    query = select(Video).where(
         Video.series_id.in_(series_ids), ~video_deletion_pending(),
-    ).order_by(Video.episode_order, Video.id))]
+    )
+    if episode_order is not None:
+        query = query.where(Video.episode_order == episode_order)
+    return [task_store.video_data(row) for row in session.scalars(query.order_by(Video.episode_order, Video.id))]
+
+
+def chunk_video_ids(session: Session, *, chunk_ids: set[str], video_ids: Sequence[str]) -> dict[str, str]:
+    return dict(session.execute(select(VideoChunk.id, VideoChunk.video_id).where(
+        VideoChunk.id.in_(chunk_ids), VideoChunk.video_id.in_(video_ids),
+    )).all())
 
 
 def list_video_tasks(session: Session, *, video_ids: Sequence[str]) -> list[VideoParseRetrievalTaskData]:

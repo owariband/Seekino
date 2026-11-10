@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException
 
 from agent.chat.common.errors import AgentContextBudgetError, AgentModelInvocationError
+from engine.rag.retrieval.contracts import EpisodeNotFoundError
 
 from ..config.global_agent_settings import GlobalAgentSettingsConflictError
 from ..model.vo.commonVO import ApiError, FieldError
@@ -151,6 +152,7 @@ def register_exception_handlers(app: FastAPI) -> None:
         return _error_response(request, 409, "SERIES_NOT_READY", exc.public_message)
 
     for exception_type, status, code, message in (
+        (EpisodeNotFoundError, 404, EpisodeNotFoundError.code, EpisodeNotFoundError.public_message),
         (AgentAttachmentInputUnavailableError, 409, "ATTACHMENT_INPUT_UNAVAILABLE",
          "附件已上传，当前回答服务尚未接入附件输入。"),
         (AgentReferenceInvalidError, 400, "REFERENCE_INVALID", "所引用的候选片段无效，请重新选择"),

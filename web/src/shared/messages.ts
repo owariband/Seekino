@@ -747,6 +747,7 @@ export const englishMessages: Readonly<Record<string, string>> = {
   "戳一戳 Kino": "Poke Kino",
   "正在恢复会话…": "Restoring conversation…",
   "没有检索到可展示的视频片段，试试换个描述。": "No video clips were found. Try a different description.",
+  "本次回答未附带视频片段。": "This answer did not include a video clip.",
   "检索到了候选片段，但本次回答未附带可播放视频，请重试。": "Candidate clips were found, but this response did not include playable video. Please try again.",
   "视频暂不可播放": "Video is currently unavailable",
   "播放片段": "Play clip",

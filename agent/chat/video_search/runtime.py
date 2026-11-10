@@ -248,7 +248,10 @@ class AgentRuntime:
             )
         if all(call.status == "error" for call in state["calls"]):
             error = state["calls"][-1].error or {}
-            if error.get("code") in {VideoSearchFailureCode.SCOPE_NOT_READY, VideoSearchFailureCode.SERVICE_UNAVAILABLE}:
+            if error.get("code") in {
+                VideoSearchFailureCode.SCOPE_NOT_READY, VideoSearchFailureCode.EPISODE_NOT_FOUND,
+                VideoSearchFailureCode.EVENT_INDEX_NOT_READY, VideoSearchFailureCode.SERVICE_UNAVAILABLE,
+            }:
                 raise VideoSearchFailure(
                     VideoSearchFailureCode(error["code"]), VideoSearchFailurePhase.RETRIEVAL,
                     retryable=False, public_message=error["message"],

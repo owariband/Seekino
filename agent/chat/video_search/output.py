@@ -187,6 +187,7 @@ def merge_retrieval_calls(
     searched_video_ids: set[str] = set()
     scope_recorded = True
     warnings: list[str] = []
+    coverage_messages: list[str] = []
     partial = False
     for call in calls:
         if call.status == "error":
@@ -199,6 +200,7 @@ def merge_retrieval_calls(
         searched_video_ids.update(call.result.searched_video_ids or [])
         partial = partial or call.result.partial
         warnings.extend(call.result.warnings)
+        coverage_messages.extend(call.result.coverage_messages)
         for hit in call.result.hits:
             identifier = hit.candidate.video_chunk_id
             previous = by_id.get(identifier)
@@ -215,6 +217,7 @@ def merge_retrieval_calls(
         hits=list(by_id.values()),
         searched_video_ids=sorted(searched_video_ids) if scope_recorded else None,
         partial=partial, warnings=list(dict.fromkeys(warnings)),
+        coverage_messages=list(dict.fromkeys(coverage_messages)),
     )
 
 
@@ -291,6 +294,7 @@ def build_chat_snapshot(
         "hits": [hit.model_dump(mode="json", by_alias=True) for hit in hits],
         "searchedVideoIds": draft.searched_video_ids,
         "partial": draft.partial, "warnings": list(draft.warnings),
+        "coverageMessages": list(draft.coverage_messages),
         "renderBlocks": [
             block.model_dump(mode="json", by_alias=True)
             if not isinstance(block, ChatVideoBlock)

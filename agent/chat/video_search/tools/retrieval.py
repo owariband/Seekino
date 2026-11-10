@@ -7,7 +7,7 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError, model_validator
 
 from engine.rag.contracts import AgentReply, VideoChunkEvidence, VideoChunkSearchResult
-from engine.rag.retrieval.contracts import RetrievalUnavailableError, SeriesNotReadyError
+from engine.rag.retrieval.contracts import EpisodeNotFoundError, RetrievalUnavailableError, SeriesNotReadyError
 from engine.rag.retrieval.fusion import (
     AGENT_RETRIEVAL_STRATEGY_VERSION,
     normalize_hybrid_retrieval_weights,
@@ -180,7 +180,7 @@ def build_retrieve_tool(
                     **first_weight_argument,
                     **scope_filter,
                 )
-            except (SeriesNotReadyError, RetrievalUnavailableError) as exc:
+            except (EpisodeNotFoundError, SeriesNotReadyError, RetrievalUnavailableError) as exc:
                 control.check()
                 calls.append(RetrievalCall(
                     query=query, top_k=top_k, requested_weights=requested_weights, effective_weights=effective_weights,

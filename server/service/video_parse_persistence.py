@@ -303,6 +303,8 @@ class VideoParsePersistenceService:
         tenant_id: str,
         require_sparse: bool = False,
         episode_order: int | None = None,
+        event_index: tuple[str, str] | None = None,
+        video_chunk_ids: Sequence[str] | None = None,
     ) -> VideoParseRetrievalScope:
         """Select only Videos whose latest non-deleted V2 task is COMPLETE.
 
@@ -326,6 +328,8 @@ class VideoParsePersistenceService:
         ):
             raise ValueError("按集检索需要选择一门课程和有效集数")
         workspace = require_nonempty_text(tenant_id, "tenant_id")
+        if video_chunk_ids is not None and event_index is None:
+            raise ValueError("video_chunk_ids applies only to Event retrieval")
 
         with self._session_factory() as session:
             return retrieval_ops.resolve_retrieval_scope(
@@ -334,6 +338,8 @@ class VideoParsePersistenceService:
                 ordered_series_ids=ordered_series_ids,
                 workspace=workspace,
                 episode_order=episode_order,
+                event_index=event_index,
+                video_chunk_ids=video_chunk_ids,
             )
 
     def validate_event_coverage(
@@ -342,20 +348,13 @@ class VideoParsePersistenceService:
     ) -> tuple[tuple[str, str, int], ...]:
         """Resolve paired, currently published Event sources within a trusted scope."""
 
-        requested = None
-        if video_chunk_ids is not None:
-            if isinstance(video_chunk_ids, (str, bytes)):
-                raise ValueError("video_chunk_ids must be a sequence")
-            requested = {canonical_uuid(value, "video_chunk_id") for value in video_chunk_ids}
-            if not requested:
-                raise ValueError("video_chunk_ids must not be empty")
         with self._session_factory() as session:
             sources = retrieval_ops.validate_event_coverage(
                 session,
-                scope=scope,
+                parse_tasks_by_video_id=scope.parse_tasks_by_video_id,
                 index_name=index_name,
                 contract_id=contract_id,
-                requested=requested,
+                requested=retrieval_ops.event_chunk_owners(session, video_chunk_ids, scope.searched_video_ids),
             )
         return tuple(sorted(sources))
 
