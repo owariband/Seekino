@@ -77,7 +77,7 @@ export interface VideoSummary {
   durationSeconds: number;
   uploadStatus: string;
   parseStatus: string;
-  uploadProgress: number;
+  uploadProgress: number | null;
   parseProgress: number | null;
   indexStatus: IndexStatus;
   playbackStatus: PlaybackStatus;

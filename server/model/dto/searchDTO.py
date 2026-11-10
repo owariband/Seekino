@@ -17,6 +17,7 @@ class VideoSearchRequest(ContractModel):
     tenant_id: str = Field(min_length=1, max_length=64)
     query: str = Field(min_length=1)
     series_ids: list[str] = Field(min_length=1)
+    episode_order: int | None = Field(default=None, gt=0, le=2_147_483_647, strict=True)
     top_k: int | None = Field(
         default=None, ge=1, strict=True,
         description="Omitted or null values use the retrieval search default; explicit positive integers are passed through",

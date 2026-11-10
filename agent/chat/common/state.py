@@ -23,6 +23,7 @@ class RunInputs(TypedDict):
     assistant_message_id: str
     tenant_id: str
     series_ids: list[str]
+    retrieval_episode: NotRequired[int | None]
     series_context: list[dict]
     # The video the user currently has open, addressed as (series name, episode).
     # Built by the server from validated playback; None when no video is open.

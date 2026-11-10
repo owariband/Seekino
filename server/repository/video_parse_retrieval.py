@@ -28,19 +28,20 @@ from ..model.task import ChunkParseTask, VideoParseTask
 from ..model.video import Series, Video, VideoChunk
 from . import video_parse_chunk as chunk_store
 from . import video_parse_task as task_store
+from .upload import video_deletion_pending
 
 
-def list_series_ids(
+def series_names(
     session: Session, *, series_ids: Sequence[str], workspace: str,
-) -> tuple[str, ...]:
-    return tuple(session.scalars(select(Series.id).where(
+) -> dict[str, str]:
+    return dict(session.execute(select(Series.id, Series.name).where(
         Series.id.in_(series_ids), Series.tenant_id == workspace,
-    )))
+    )).all())
 
 
 def list_series_videos(session: Session, *, series_ids: Sequence[str]) -> list[VideoData]:
     return [task_store.video_data(row) for row in session.scalars(select(Video).where(
-        Video.series_id.in_(series_ids),
+        Video.series_id.in_(series_ids), ~video_deletion_pending(),
     ).order_by(Video.episode_order, Video.id))]
 
 

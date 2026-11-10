@@ -33,6 +33,23 @@ class RetrievalConsistencyError(ValueError):
     """Returned index/fact data cannot substantiate the pinned query identity."""
 
 
+class SeriesNotReadyError(RuntimeError):
+    """The requested authorized scope currently has no published index."""
+
+    code = "SERIES_NOT_READY"
+
+    def __init__(self, detail: str, *, public_message: str = "所选课程暂时没有可检索的集数"):
+        super().__init__(detail)
+        self.public_message = public_message
+
+
+class RetrievalUnavailableError(RuntimeError):
+    """A retrieval dependency could not serve the request."""
+
+    code = "RETRIEVAL_UNAVAILABLE"
+    public_message = "检索服务暂不可用，请稍后重试"
+
+
 class _QueryModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, revalidate_instances="always")
 

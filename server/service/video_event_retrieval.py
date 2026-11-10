@@ -20,7 +20,7 @@ from gateway.tracing import LangfuseTracing
 from gateway.usage import model_call_context
 
 from .video_parse_persistence import VideoParseConflictError, VideoParsePersistenceService
-from ..error.retrieval import SeriesNotReadyError
+from ..error.retrieval import retrieval_backend_errors
 from ..storage.elasticsearch_events import ElasticsearchVideoEventStore
 from .video_retrieval import QueryEmbedder, RetrievalIndexConsistencyError
 
@@ -52,11 +52,13 @@ class VideoEventRetrievalService:
         self._vision_embedder = embedder if vision_embedder is None else vision_embedder
         self._exact, self._tracing = exact, tracing
 
+    @retrieval_backend_errors()
     def search(
         self, query: str, *, tenant_id: str, series_ids: Sequence[str], top_k: int = 10,
         lexical_weight: float | None = None, text_weight: float | None = None,
         vision_weight: float | None = None, event_types: Sequence[str] | None = None,
         speaker: str | None = None, video_chunk_ids: Sequence[str] | None = None,
+        episode_order: int | None = None,
     ) -> EventSearchResult:
         if not isinstance(query, str) or not query.strip():
             raise ValueError("query must be nonblank")
@@ -82,8 +84,11 @@ class VideoEventRetrievalService:
         }))
         query = query.strip()
         try:
-            selected = self._persistence.resolve_retrieval_scope(series_ids, tenant_id=tenant_id)
-        except (VideoParseConflictError, SeriesNotReadyError) as error:
+            selected = self._persistence.resolve_retrieval_scope(
+                series_ids, tenant_id=tenant_id,
+                **({"episode_order": episode_order} if episode_order is not None else {}),
+            )
+        except VideoParseConflictError as error:
             raise EventIndexNotReadyError(str(error)) from error
         # Absence/coverage is checked before any model call; it is not an empty match.
         self._store.bind_contract(self._contract)
@@ -151,6 +156,8 @@ class VideoEventRetrievalService:
         except VideoParseConflictError as error:
             raise RetrievalIndexConsistencyError(str(error)) from error
         by_chunk = {item.facts.video_chunk_id: item for item in hydrated}
+        if episode_order is not None and any(item.evidence.episode_order != episode_order for item in hydrated):
+            raise RetrievalIndexConsistencyError("Episode order changed during Event retrieval")
         verified, rejected = [], []
         for hit in budgeted:
             try:

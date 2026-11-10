@@ -139,8 +139,9 @@ def snap_video_range(
     )
 
 
-def validate_result(result: VideoChunkSearchResult, inputs: RunInputs) -> None:
+def validate_result(result: VideoChunkSearchResult, inputs: RunInputs, *, episode_order: int | None = None) -> None:
     scope = set(inputs["series_ids"])
+    episode_order = inputs.get("retrieval_episode") if episode_order is None else episode_order
     if set(result.series_ids) != scope:
         raise AgentModelInvocationError("Retrieval changed the fixed Series scope")
     if result.agent_reply.result_count != len(result.hits):
@@ -148,6 +149,8 @@ def validate_result(result: VideoChunkSearchResult, inputs: RunInputs) -> None:
     seen: set[str] = set()
     for hit in result.hits:
         evidence = hit.evidence
+        if episode_order is not None and evidence.episode_order != episode_order:
+            raise AgentModelInvocationError("Retrieved Evidence is outside the requested episode")
         if (hit.candidate.video_chunk_id != evidence.video_chunk_id
             or not evidence.video_chunk_id or not evidence.video_id):
             raise AgentModelInvocationError("Retrieved Candidate and Evidence IDs do not match")

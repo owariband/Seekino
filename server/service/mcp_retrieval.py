@@ -15,7 +15,7 @@ from engine.common.background import character_name_groups
 from engine.parsev2.camera import CameraReference, camera_replay
 from engine.rag.contracts import VideoChunkEvidence, VideoChunkRetrievalIdentity
 from engine.rag.indexing.events import compute_event_id
-from engine.rag.retrieval.contracts import EventIndexNotReadyError
+from engine.rag.retrieval.contracts import EventIndexNotReadyError, SeriesNotReadyError
 
 from ..error.retrieval import SeriesScopeNotFoundError
 from .pagination import decode_cursor, encode_cursor
@@ -98,7 +98,7 @@ class McpRetrievalService:
                 query, tenant_id=self._tenant_id, series_ids=series_ids, top_k=top_k,
                 event_types=event_types, speaker=speaker,
             )
-        except EventIndexNotReadyError as error:
+        except (EventIndexNotReadyError, SeriesNotReadyError) as error:
             raise ValueError("EVENT_INDEX_NOT_READY: Event coverage is unavailable or rebuilding; this is not an empty match.") from error
         except ValueError as error:
             raise ValueError("INVALID_ARGUMENT: Check series IDs, Event types and speaker filters.") from error

@@ -2337,22 +2337,19 @@ def test_reusing_message_key_with_different_series_conflicts_before_retrieval(tm
         client.app.state.services.agent.close()
 
 
-def test_explicit_non_ready_series_is_rejected_before_starting_message(tmp_path):
-    client, retrieval, _ = _client(tmp_path)
+def test_explicit_non_ready_series_allows_a_message_in_its_own_scope(tmp_path):
+    client, _, _ = _client(tmp_path)
     series_id = _create_series(client, ready=False)
     conversation_id = _create_agent_conversation(client)
     try:
         response = client.post(
             "/api/agent/messages/send", params={"tenantId": "local-default", "conversationId": conversation_id},
             headers={"Idempotency-Key": "non-ready-message"},
-            json={"tenantId": "local-default", "content": "找画面", "seriesIds": [series_id]},
+            json={"tenantId": "local-default", "content": "你好", "seriesIds": [series_id]},
         )
-        assert response.status_code == 409, response.text
-        assert response.json()["code"] == "SERIES_NOT_READY"
-        assert retrieval.calls == []
-        assert client.get(
-            "/api/agent/messages/list", params={"tenantId": "local-default", "conversationId": conversation_id},
-        ).json()["items"] == []
+        assert response.status_code == 200, response.text
+        assert response.json()["userMessage"]["seriesIds"] == [series_id]
+        assert response.json()["assistantMessage"]["status"] == "COMPLETED"
     finally:
         client.app.state.services.agent.close()
 
@@ -2897,18 +2894,16 @@ def test_send_respects_accept_quality(tmp_path, accept, expected):
 
 
 @pytest.mark.parametrize("failure,expected_status,expected_code", [
-    ("not-ready", 409, "SERIES_NOT_READY"),
     ("missing-scope", 404, "NOT_FOUND"),
     ("index-inconsistent", 409, "CONFLICT"),
 ])
 def test_retrieval_domain_errors_keep_http_mapping_through_harness(tmp_path, failure, expected_status, expected_code):
-    from server.error.retrieval import SeriesNotReadyError, SeriesScopeNotFoundError
+    from server.error.retrieval import SeriesScopeNotFoundError
     from server.service.video_retrieval import RetrievalIndexConsistencyError
     client, _, _ = _client(tmp_path)
     _create_series(client)
     conversation_id = _create_agent_conversation(client)
     error_type = {
-        "not-ready": SeriesNotReadyError,
         "missing-scope": SeriesScopeNotFoundError,
         "index-inconsistent": RetrievalIndexConsistencyError,
     }[failure]

@@ -230,9 +230,9 @@ describe("Search assistant presentation", () => {
       expect.objectContaining({ sourceTenantId: "tenant-alice" }));
   });
 
-  it.each([false, true])("shows a public catalog with no searchable series beside its control (has pending series=%s)", async (pending) => {
+  it("shows an empty public catalog beside its control", async () => {
     mocks.useAuth.mockReturnValue({ canManage: false, activeSource: { kind: "public" } });
-    renderPage(assistantMessage("可以提问"), pending ? [{ ...series, status: "EMPTY" }] : []);
+    renderPage(assistantMessage("可以提问"), []);
     await userEvent.setup().type(screen.getByRole("textbox", { name: "向 Seekino 助手提问" }), "查找这段");
     expect(screen.getByRole("button", { name: "发送问题" })).toBeDisabled();
     const picker = screen.getByLabelText("选择检索视频系列");
@@ -280,7 +280,7 @@ describe("Search assistant presentation", () => {
         expect.objectContaining({ sourceTenantId: "tenant-bob" }));
     } else {
       expect(screen.getByRole("button", { name: "发送问题" })).toBeDisabled();
-      expect(screen.getByText("所选视频系列暂不可检索，请重新选择范围。")).toHaveAttribute("role", "alert");
+      expect(screen.getByText("所选课程暂不可访问，请重新选择范围。")).toHaveAttribute("role", "alert");
       expect(mocks.send).not.toHaveBeenCalled();
     }
   });
@@ -537,49 +537,21 @@ describe("Search assistant presentation", () => {
     );
   });
 
-  it("allows retrying the same question when playback context becomes available", async () => {
-    const extraContext = {
-      playback: { seriesId: series.seriesId, videoId: "video-1", episodeOrder: 1, positionSeconds: 0 },
-    };
-    const captureExtraContext = vi.fn()
-      .mockReturnValueOnce(null)
-      .mockReturnValueOnce(extraContext);
-    renderPage(assistantMessage("可以提问"), [series], {
-      embedded: true,
-      initialSeriesId: series.seriesId,
-      captureExtraContext,
-    });
-    const textbox = screen.getByRole("textbox", { name: "向 Seekino 助手提问" });
-    textbox.focus();
-    const user = userEvent.setup();
-    await user.type(textbox, "开头讲了什么？", { skipClick: true });
-    await user.click(screen.getByRole("button", { name: "发送问题" }));
-
-    expect(mocks.send).not.toHaveBeenCalled();
-    expect(textbox).toHaveValue("开头讲了什么？");
-
-    await user.click(screen.getByRole("button", { name: "发送问题" }));
-    expect(captureExtraContext).toHaveBeenCalledTimes(2);
-    expect(mocks.send).toHaveBeenCalledWith("开头讲了什么？", [series.seriesId], null, {}, extraContext, expect.objectContaining({ attachments: [], onAccepted: expect.any(Function) }));
-  });
-
-  it("keeps the question and does not send when playback context is unavailable on submit", async () => {
-    const captureExtraContext = vi.fn(() => null);
-    renderPage(assistantMessage("可以提问"), [series], {
-      embedded: true,
-      initialSeriesId: series.seriesId,
-      captureExtraContext,
-    });
+  it("keeps a public watch conversation usable before and after a playback time is available", async () => {
+    mocks.useAuth.mockReturnValue({ canManage: false, activeSource: { kind: "public" } });
+    const pending = { ...series, tenantId: "platform-public", status: "INDEXING" as const, readyVideoCount: 0 };
+    const context = { playback: { seriesId: series.seriesId, videoId: "e08", episodeOrder: 8, positionSeconds: 8000 } };
+    const captureExtraContext = vi.fn().mockReturnValueOnce(null).mockReturnValueOnce(context);
+    renderPage(assistantMessage("可以提问"), [], { embedded: true, initialSeries: pending, initialSeriesId: pending.seriesId, captureExtraContext });
     const user = userEvent.setup();
     const textbox = screen.getByRole("textbox", { name: "向 Seekino 助手提问" });
-    textbox.focus();
-    await user.type(textbox, "这里讲了什么？", { skipClick: true });
-    await user.click(screen.getByRole("button", { name: "发送问题" }));
-
-    expect(captureExtraContext).toHaveBeenCalledOnce();
-    expect(mocks.send).not.toHaveBeenCalled();
-    expect(textbox).toHaveValue("这里讲了什么？");
-    expect(screen.getByText("当前播放位置尚未就绪，请稍后重试")).toHaveAttribute("role", "alert");
+    for (const question of ["你好", "这里讲了什么？"]) {
+      await user.type(textbox, question);
+      await user.click(screen.getByRole("button", { name: "发送问题" }));
+    }
+    const source = expect.objectContaining({ sourceTenantId: "platform-public" });
+    expect(mocks.send).toHaveBeenNthCalledWith(1, "你好", [pending.seriesId], null, {}, null, source);
+    expect(mocks.send).toHaveBeenNthCalledWith(2, "这里讲了什么？", [pending.seriesId], null, {}, context, source);
   });
 
   it("sends an example question with one click from the empty conversation", async () => {
@@ -675,12 +647,12 @@ describe("Search assistant presentation", () => {
     });
     const user = userEvent.setup();
 
-    expect(screen.getByText("检索范围：全部系列")).toBeVisible();
+    expect(screen.getByText(`检索范围：${series.name}`)).toBeVisible();
     expect(screen.getByText("本系列未完成解析")).toBeVisible();
-    expect(screen.getByLabelText("选择检索视频系列")).toHaveTextContent("全部视频系列");
+    expect(screen.getByLabelText("选择检索视频系列")).toHaveTextContent(series.name);
     await user.type(screen.getByRole("textbox", { name: "向 Seekino 助手提问" }), "你好");
     await user.click(screen.getByRole("button", { name: "发送问题" }));
-    expect(mocks.send).toHaveBeenCalledWith("你好", [], null, {}, null, expect.objectContaining({ attachments: [], onAccepted: expect.any(Function) }));
+    expect(mocks.send).toHaveBeenCalledWith("你好", [series.seriesId], null, {}, null, expect.objectContaining({ sourceTenantId: series.tenantId }));
   });
 
   it("allows a conversation without ready videos and displays a web source link", async () => {

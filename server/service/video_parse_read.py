@@ -193,20 +193,31 @@ def _video_parse_evidence(
     )
 
 
+def _episode_ranges(episodes: Sequence[int]) -> str:
+    ranges: list[tuple[int, int]] = []
+    for episode in episodes:
+        if ranges and episode == ranges[-1][1] + 1:
+            ranges[-1] = (ranges[-1][0], episode)
+        else:
+            ranges.append((episode, episode))
+    return "、".join(f"E{a:02}–E{b:02}" if a != b else f"E{a:02}" for a, b in ranges)
+
+
 def resolve_retrieval_scope(
     session,
     *,
     require_sparse: bool,
     ordered_series_ids: tuple[str, ...],
     workspace: str,
+    episode_order: int | None = None,
 ) -> VideoParseRetrievalScope:
-    existing_series_ids = set(read_store.list_series_ids(
+    series_names = read_store.series_names(
         session, series_ids=ordered_series_ids, workspace=workspace,
-    ))
+    )
     missing = [
         series_id
         for series_id in ordered_series_ids
-        if series_id not in existing_series_ids
+        if series_id not in series_names
     ]
     if missing:
         raise SeriesScopeNotFoundError(
@@ -215,6 +226,10 @@ def resolve_retrieval_scope(
         )
 
     videos = read_store.list_series_videos(session, series_ids=ordered_series_ids)
+    if episode_order is not None:
+        videos = [video for video in videos if video.episode_order == episode_order]
+        if not videos:
+            raise SeriesScopeNotFoundError("Episode does not exist in the selected course")
     if not videos:
         raise SeriesNotReadyError(
             "selected Series have no COMPLETE Video Parse V2 task"
@@ -233,8 +248,13 @@ def resolve_retrieval_scope(
         == VideoParseTaskStatus.COMPLETE.value
     ]
     if not selected:
+        processing = any(not task.status.endswith("_FAILED") for task in latest_by_video.values())
+        message = "课程正在解析，暂时没有可检索的集数" if processing else "所选课程暂时没有可检索的集数"
+        if episode_order is not None:
+            task = latest_by_video.get(videos[0].id)
+            message = "该集正在解析，暂时无法检索" if task and not task.status.endswith("_FAILED") else "该集暂时无法检索"
         raise SeriesNotReadyError(
-            "selected Series have no COMPLETE Video Parse V2 task"
+            "selected Series have no COMPLETE Video Parse V2 task", public_message=message,
         )
 
     task_ids = [task.id for _video, task in selected]
@@ -291,10 +311,32 @@ def resolve_retrieval_scope(
             "selected Video Parse V2 tasks have no published Chunks"
         )
     assert selected_config is not None
-    incomplete_scope = (
-        len(selected) != len(videos)
-        or {video.series_id for video in videos} != existing_series_ids
-    )
+    complete_ids = {video.id for video, _ in selected}
+    partial = len(selected) != len(videos) or {video.series_id for video in videos} != set(series_names)
+    warnings = []
+    grouped: dict[str, list[VideoData]] = {}
+    for video in videos:
+        grouped.setdefault(video.series_id, []).append(video)
+    for series_id in ordered_series_ids:
+        members = grouped.get(series_id, [])
+        covered, processing, unavailable = [], [], []
+        for video in members:
+            task = latest_by_video.get(video.id)
+            if video.id in complete_ids:
+                covered.append(video.episode_order)
+            elif task and not task.status.endswith("_FAILED"):
+                processing.append(video.episode_order)
+            else:
+                unavailable.append(video.episode_order)
+        name = f"《{series_names[series_id]}》" if len(ordered_series_ids) > 1 else ""
+        parts = [f"本次检索覆盖 {name}{_episode_ranges(covered) if covered else '0 集'}"]
+        if not members:
+            parts.append("课程中还没有视频")
+        if processing:
+            parts.append(f"{_episode_ranges(processing)} 正在处理")
+        if unavailable:
+            parts.append(f"{_episode_ranges(unavailable)} 暂不可检索")
+        warnings.append("，".join(parts))
     return VideoParseRetrievalScope(
         series_ids=ordered_series_ids,
         searched_video_ids=tuple(video.id for video, _task in selected),
@@ -306,14 +348,8 @@ def resolve_retrieval_scope(
         },
         parse_config=selected_config,
         index_generation=shared_contract[0],
-        partial=incomplete_scope,
-        warnings=(
-            (
-                "部分所选 Series 没有视频，或部分视频的最新 Video Parse V2 "
-                "任务尚未完成，"
-                "本次结果只覆盖当前可检索视频。"
-            ),
-        ) if incomplete_scope else (),
+        partial=partial,
+        warnings=tuple(warnings),
     )
 
 

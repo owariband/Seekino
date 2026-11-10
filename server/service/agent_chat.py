@@ -52,7 +52,6 @@ from ..repository.agent import (
     AgentConflictError, AgentConversationNotFoundError, AgentMessageInProgressError,
     AgentRepository, AgentReferenceInvalidError, AgentMessageNotFoundError,
 )
-from ..error.retrieval import SeriesNotReadyError
 from ..utils.time import now_unix_time_ms
 from ..utils.media import image_uri_to_data_url
 from ..utils.validation import canonical_uuid, require_nonempty_text
@@ -726,11 +725,7 @@ class AgentChatService:
                     raise AgentAttachmentInputUnavailableError(
                         "附件存储服务尚未配置。"
                     )
-                scope = self._resolve_scope(
-                    requested_scope, normalized_source,
-                    allow_empty=True,
-                    playback_series_id=playback_series_id,
-                )
+                scope = self._resolve_scope(requested_scope, normalized_source)
                 reference_context = self._load_reference(
                     normalized_reference, normalized_conversation_id, normalized_workspace, scope,
                     owner_user_id=owner_user_id,
@@ -908,25 +903,18 @@ class AgentChatService:
         except AgentMessageNotFoundError as exc:
             raise AgentReferenceInvalidError("引用的消息已失效。") from exc
 
-    def _resolve_scope(
-        self, requested: list[str], tenant_id: str, *, allow_empty: bool,
-        playback_series_id: str | None = None,
-    ) -> list[str]:
+    def _resolve_scope(self, requested: list[str], tenant_id: str) -> list[str]:
+        # Freeze the selected courses on the message so history can reauthorize them.
         if requested:
             series = [
                 self._library.get_series(series_id, tenant_id=tenant_id)
                 for series_id in requested
             ]
-            if any(item.status != "READY" and item.series_id != playback_series_id for item in series):
-                raise SeriesNotReadyError("selected Series must be READY before retrieval")
-            series = [item for item in series if item.status == "READY"]
         else:
             series = [
                 item for item in self._library.list_series(tenant_id=tenant_id)
                 if item.status == "READY"
             ]
-        if not series and not allow_empty:
-            raise SeriesNotReadyError("this workspace has no READY Series to retrieve")
         return sorted(item.series_id for item in series)
 
     def _execute(
@@ -1177,7 +1165,7 @@ class AgentChatService:
                 "characterBible": item.character_bible,
                 "videos": [{
                     "episodeOrder": video.episode_order,
-                    "title": (video.display_name or "").strip() or video.original_filename,
+                    "title": video.chat_title,
                     "parseStatus": video.parse_status,
                     "hasOutline": video.has_outline,
                 } for video in item.videos],
@@ -1208,7 +1196,7 @@ class AgentChatService:
                             if current_series is not None else None
                         ),
                         "episode": video.episode_order,
-                        "title": (video.display_name or "").strip() or video.original_filename,
+                        "title": video.chat_title,
                         "positionSeconds": playback.get("positionSeconds"),
                     }
 

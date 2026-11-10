@@ -8,14 +8,24 @@ from pydantic import BaseModel, ConfigDict, StringConstraints
 
 from engine.rag.contracts import VideoChunkSearchHit
 
-from ...common.errors import AgentModelInvocationError
-from ...common.state import ExecutionControl
+from ...common.errors import AgentModelInvocationError, AgentToolFeedbackError
+from ...common.state import ExecutionControl, RunInputs
 from ..context import retrieval_evidence_text
 
 _OptionalCursor = Annotated[
     str,
     StringConstraints(strip_whitespace=True, min_length=1, max_length=2_000),
 ] | None
+
+
+def retrieval_episode(inputs: RunInputs, episode: int | None) -> int | None:
+    fixed = inputs.get("retrieval_episode")
+    if fixed is not None and episode is not None and episode != fixed:
+        raise AgentToolFeedbackError("INVALID_EPISODE", "查询只能检索指定集数", "Use the original episode.")
+    target = fixed if fixed is not None else episode
+    if target is not None and len(inputs["series_ids"]) != 1:
+        raise AgentToolFeedbackError("AMBIGUOUS_EPISODE", "请先选择一门课程再指定集数", "Clarify the course.")
+    return target
 
 class RemoveItemArguments(BaseModel):
     model_config = ConfigDict(extra="forbid")

@@ -60,9 +60,6 @@ def update_series(request: Request, body: SeriesUpdateRequest) -> SeriesView | R
         require_admin(identity)
     else:
         require_tenant_write(identity, series.tenant_id)
-    if changes.get("visibility") == SeriesVisibility.PUBLIC:
-        if not services.media.publication_ready(series, require_published=False):
-            raise ValueError("only a complete Series with playable media can be published")
     state = services.library.update_series(
         body.series_id, tenant_id=body.tenant_id, changes=changes, owner_user_id=identity.user_id,
     )
@@ -133,7 +130,7 @@ def list_series(
     offset = decode_cursor(cursor, scope=scope)
     if identity.mode == "cloud" and not is_series_member(identity, tenant_id):
         states, total = services.library.list_public_series_page(
-            tenant_id=tenant_id, media=services.media, owner_user_id=identity.user_id,
+            tenant_id=tenant_id, owner_user_id=identity.user_id,
             status=status, query=normalized_query, offset=offset, limit=limit,
         )
     else:
@@ -162,7 +159,7 @@ def list_public_series(
     scope = {"source": "public", "query": normalized_query, "sort": "createdAt,seriesId:asc"}
     offset = decode_cursor(cursor, scope=scope)
     states, total = services.library.list_public_series_page(
-        tenant_id=None, media=services.media, owner_user_id=identity.user_id,
+        tenant_id=None, owner_user_id=identity.user_id,
         query=normalized_query, offset=offset, limit=limit,
     )
     has_more = offset + len(states) < total
@@ -187,7 +184,7 @@ def read_series(request: Request, series_id: str, *, tenant_id: str) -> SeriesSt
     identity = get_identity(request)
     services = get_services(request)
     state = services.library.get_series(series_id, tenant_id=tenant_id, owner_user_id=identity.user_id)
-    services.media.require_readable_series(identity, state)
+    series_access(identity, state)
     return state
 
 
@@ -210,9 +207,9 @@ def project_video(state: VideoSummaryState, media: MediaService, *, access: Lite
         original_filename=state.original_filename if access == "member" else None,
         total_bytes=state.total_bytes if access == "member" else None,
         duration_seconds=state.duration_seconds, upload_status=state.upload_status,
-        upload_progress=state.upload_progress,
+        upload_progress=state.upload_progress if access == "member" else None,
         parse_status=state.parse_status,
-        parse_progress=state.parse_progress, index_status=state.index_status,
+        parse_progress=state.parse_progress if access == "member" else None, index_status=state.index_status,
         playback_status=playback.status, playback_url=playback.url,
         playback_url_expires_at=playback.expires_at,
         thumbnail=ImageAsset.model_validate(asdict(thumbnail)) if thumbnail else None,

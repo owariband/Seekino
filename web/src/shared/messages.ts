@@ -699,7 +699,7 @@ export const englishMessages: Readonly<Record<string, string>> = {
   "去解析": "Start parsing",
   "本系列未完成解析": "This series has not finished parsing",
   "检索范围：": "Search scope: ",
-  "所选视频系列暂不可检索，请重新选择范围。": "The selected series are not searchable yet. Choose another search scope.",
+  "所选课程暂不可访问，请重新选择范围。": "The selected course is unavailable. Choose a different course.",
   "Enter 发送 · Shift + Enter 换行": "Enter to send · Shift + Enter for a new line",
   "发送问题": "Send question",
   "停止生成": "Stop generating",

@@ -50,7 +50,7 @@ def repository():
 @pytest.fixture
 def seed_video(tmp_path):
     """Seed current V2 facts for tests of the library, media and Chat boundaries."""
-    def seed(factory, *, tenant_id="local-default", series_id=None, series_name="Test Series", episode_order=7, upload_sequence=None):
+    def seed(factory, *, tenant_id="local-default", series_id=None, series_name="Test Series", episode_order=7, upload_sequence=None, content_hash="a" * 64):
         video_id, task_id = str(uuid4()), str(uuid4())
         source = tmp_path / f"{video_id}.mp4"
         source.write_bytes(b"source-video")
@@ -70,7 +70,7 @@ def seed_video(tmp_path):
                                    description="isolated fixture", status="INDEXING", character_bible=[]))
             session.add(Video(id=video_id, series_id=series_id, episode_order=episode_order,
                               upload_sequence=upload_sequence or episode_order, filename="episode.mp4",
-                              source_uri=source.as_uri(), hash="a" * 64, size_bytes=source.stat().st_size,
+                              source_uri=source.as_uri(), hash=content_hash, size_bytes=source.stat().st_size,
                               duration_ms=20_000, upload_status="COMPLETED", parse_status="COMPLETE",
                               upload_progress=100, parse_progress=100))
             session.add(VideoParseTask(id=task_id, video_id=video_id, pipeline_version="video-parse-v2",

@@ -8,6 +8,7 @@ from engine.rag.contracts import VideoChunkSearchEvidence
 from .context import get_identity, get_services, revalidate_identity
 from .library import read_series
 from ..config.retrieval import RetrievalConfig
+from ..repository.library import SeriesNotFoundError
 from ..service.access import is_series_member, model_query, require_tenant_read
 from ..model.dto.mediaDTO import PlaybackMedia
 from ..model.dto.searchDTO import VideoSearchRequest
@@ -39,11 +40,11 @@ def search_video_chunks(
             require_tenant_read(identity, body.tenant_id)
             if body.tenant_id == identity.public_tenant_id:
                 states, _total = services.library.list_public_series_page(
-                    tenant_id=body.tenant_id, media=services.media, owner_user_id=identity.user_id, limit=100,
+                    tenant_id=body.tenant_id, owner_user_id=identity.user_id, limit=100,
                 )
                 while len(states) < _total:
                     page, _total = services.library.list_public_series_page(
-                        tenant_id=body.tenant_id, media=services.media, owner_user_id=identity.user_id,
+                        tenant_id=body.tenant_id, owner_user_id=identity.user_id,
                         offset=len(states), limit=100,
                     )
                     if not page:
@@ -51,7 +52,7 @@ def search_video_chunks(
                     states.extend(page)
             else:
                 states = services.library.list_series(tenant_id=body.tenant_id, owner_user_id=identity.user_id)
-            series_ids = [state.series_id for state in states if state.status == "READY"]
+            series_ids = [state.series_id for state in states]
         if not series_ids:
             raise ValueError("当前资料来源还没有可检索的视频课程")
         for series_id in series_ids:
@@ -59,6 +60,7 @@ def search_video_chunks(
     with model_query(getattr(services, "auth", None), identity, request.client.host if request.client else "unknown"):
         result = services.retrieval.search(
             body.query, tenant_id=body.tenant_id, series_ids=series_ids, top_k=top_k,
+            **({"episode_order": body.episode_order} if body.episode_order is not None else {}),
         )
     if identity.mode == "cloud":
         identity = request.state.identity = revalidate_identity(request)
@@ -68,6 +70,8 @@ def search_video_chunks(
             [*result.series_ids, *(hit.evidence.series_id for hit in result.hits)],
             tenant_id=body.tenant_id,
         )
+        if not set(result.series_ids).issubset(series_ids):
+            raise SeriesNotFoundError("检索结果不在所选课程中")
     return search_result_view(
         result, services.media, tenant_id=body.tenant_id,
         public_view=not is_series_member(identity, body.tenant_id),
@@ -80,7 +84,6 @@ def evidence_view(
     public_view: bool = False,
 ) -> tuple[VideoChunkEvidenceView, list[str]]:
     if evidence.tenant_id != tenant_id:
-        from ..repository.library import SeriesNotFoundError
         raise SeriesNotFoundError("片段资源不存在")
     playback = playback or media.playback_view(evidence.video_id, tenant_id=tenant_id, video=evidence)
     warnings: list[str] = []
@@ -134,7 +137,8 @@ def evidence_view(
         context_before_compact=evidence.context_before_compact or None,
         context_after_compact=evidence.context_after_compact or None,
         window_summary=evidence.window_summary, is_fallback=evidence.is_fallback,
-        model_provider=evidence.model_provider, model_name=evidence.model_name,
+        model_provider=None if public_view else evidence.model_provider,
+        model_name=None if public_view else evidence.model_name,
         pipeline_version=evidence.pipeline_version, parsed_at=evidence.parsed_at,
     ), list(dict.fromkeys(warnings))
 
@@ -168,7 +172,6 @@ def search_evidence_fields(
     for rank, hit in enumerate(result.hits, start=1):
         source = hit.evidence
         if source.tenant_id != tenant_id or source.series_id not in result.series_ids:
-            from ..repository.library import SeriesNotFoundError
             raise SeriesNotFoundError("片段资源不存在")
         if source.video_id not in playback_by_video:
             playback_by_video[source.video_id] = media.playback_view(source.video_id, tenant_id=tenant_id, video=source)

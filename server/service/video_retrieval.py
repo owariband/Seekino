@@ -27,6 +27,7 @@ from gateway.usage import ModelCallControlError, model_call_context
 
 from ..config.retrieval import RetrievalConfig
 from ..constants.parse import MAX_INDEX_GENERATION
+from ..error.retrieval import retrieval_backend_errors
 from .video_parse_persistence import (
     VideoParseConflictError,
     VideoParsePersistenceService,
@@ -108,11 +109,12 @@ class VideoParseRetrievalService:
         self._expected_embedding_source = expected_embedding_source
         self._reranker, self._tracing, self._exact = reranker, tracing, exact
 
+    @retrieval_backend_errors()
     def search(
         self, query: str, *, tenant_id: str, series_ids: Sequence[str],
         top_k: int = 10, lexical_weight: float | None = None,
         transcript_weight: float | None = None, text_weight: float | None = None,
-        vision_weight: float | None = None,
+        vision_weight: float | None = None, episode_order: int | None = None,
     ) -> VideoChunkSearchResult:
         if (not isinstance(tenant_id, str) or not tenant_id
                 or tenant_id != tenant_id.strip()):
@@ -145,6 +147,7 @@ class VideoParseRetrievalService:
         try:
             selected = self._persistence.resolve_retrieval_scope(
                 series_ids, tenant_id=tenant_id,
+                **({"episode_order": episode_order} if episode_order is not None else {}),
                 **({"require_sparse": True} if policy.sparse_weight else {}),
             )
         except VideoParseConflictError as error:
@@ -221,6 +224,8 @@ class VideoParseRetrievalService:
             hydrated = self._persistence.hydrate_retrieval_candidates([
                 (item.ranking.video_chunk_id, item.ranking.retrieval_identity) for item in candidates
             ]) if candidates else ()
+            if episode_order is not None and any(item.evidence.episode_order != episode_order for item in hydrated):
+                raise RetrievalIndexConsistencyError("Episode order changed during retrieval")
             rerank_plan = plan_candidate_rerank(
                 plan, candidates, [item.facts for item in hydrated],
                 scorer=self._reranker.contract if self._reranker is not None else None,

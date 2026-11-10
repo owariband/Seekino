@@ -70,6 +70,7 @@ class UtcTimestamp(TypeDecorator[datetime]):
 
 
 UTC_TIMESTAMP = UtcTimestamp()
+COMPLETE_VIDEO_UPLOAD_STATUSES = frozenset({"COMPLETED", "UPLOADED"})
 
 
 class VideoIndexStatus(StrEnum):

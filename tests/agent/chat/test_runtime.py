@@ -820,7 +820,7 @@ def test_failed_event_attempt_is_traced_but_does_not_satisfy_real_retrieval(fail
     assert trace[0]["granularity"] == "event" and trace[0]["role"] == "query"
     assert trace[0]["strategyVersion"] == EVENT_RETRIEVAL_STRATEGY_VERSION
     assert trace[0]["effectiveFilters"] == {"speaker": "speaker", "event_types": ["DIALOGUE"], "video_chunk_ids": []}
-    assert trace[0]["error"]["message"] == str(failure)
+    assert trace[0]["error"]["message"] == "Event retrieval did not complete for the requested scope."
     assert trace[0]["resultCount"] == 0
     assert trace[1]["query"] == "query-1-0" and "status" not in trace[1]
 

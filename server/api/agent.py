@@ -480,7 +480,7 @@ def _authorize_query_scope(
         selected = []
         while True:
             page, total = services.library.list_public_series_page(
-                tenant_id=tenant_id, media=services.media, owner_user_id=identity.user_id,
+                tenant_id=tenant_id, owner_user_id=identity.user_id,
                 offset=offset, limit=100,
             )
             selected.extend(item.series_id for item in page)
@@ -745,14 +745,15 @@ def _agent_search_evidence_view(
         media.require_series_access(
             identity, result.get("seriesIds", result.get("series_ids", [])), tenant_id=tenant_id,
         )
+    public_view = identity is not None and not is_series_member(identity, tenant_id)
     evidence = search_evidence_fields(
         result, media, tenant_id=tenant_id,
-        public_view=identity is not None and not is_series_member(identity, tenant_id),
+        public_view=public_view,
     )
     raw_trace = result.get("retrievalTrace", result.get("retrieval_trace", []))
     return AgentSearchEvidenceView(
         **evidence.model_dump(),
-        retrieval_trace=raw_trace if isinstance(raw_trace, list) else [],
+        retrieval_trace=raw_trace if not public_view and isinstance(raw_trace, list) else [],
     )
 
 
