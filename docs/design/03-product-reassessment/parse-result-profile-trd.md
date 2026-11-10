@@ -4,6 +4,8 @@
 
 分支 `refactor/parse-profile` 面向 dev，承接[双召回 #50 §3.3、§3.8](https://github.com/owariband/Seekino/pull/50) 和已合入的[上传路由 #82](https://github.com/owariband/Seekino/pull/82)。参考片的生成、索引和编辑端回看由下游实现。
 
+实施 [PR #83](https://github.com/owariband/Seekino/pull/83)，参考片生产接入见 [#84](https://github.com/owariband/Seekino/pull/84)。
+
 # 2. 影响因素、假设与评价指标
 
 | 条件 | 基线 | 验收 |

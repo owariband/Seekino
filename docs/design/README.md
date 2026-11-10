@@ -116,6 +116,7 @@ Event / Sub-Chunk 的实施入口是 [sub-chunk-trd.md](02-agent-harness/sub-chu
 | 网页搜索供应商 | [deepseek-web-search-trd.md](03-product-reassessment/deepseek-web-search-trd.md) | 主 TRD：可选免 key DDGS / DeepSeek API、查询边界、错误处理与真实入口验证。 |
 | 外部 Agent MCP 接入 | [mcp-access-trd.md](03-product-reassessment/mcp-access-trd.md) | 主 TRD：localhost 工具发现、Event 召回、版本化证据与媒体取用；外部 Agent 承担制作。 |
 | 动画表情素材召回 | [E4 专项](03-product-reassessment/anime-material-recall-trd.md) | 动画表情提示词、整集对照与 MCP 全量素材浏览。 |
+| 解析结果用途 | [正片与剪辑参考档案](03-product-reassessment/parse-result-profile-trd.md) | 冻结任务用途，限定正片检索与导出范围。 |
 | 上传视频自动判型 | [解析前置路由](03-product-reassessment/parse-pre-hook-router-trd.md) | 普通上传在抽帧前判断剧情、课程或剪辑成片，并保存生效策略。 |
 | Agent Runtime | [agent-runtime-design.md](01-mvp/agent-runtime-design.md) | Runtime 结构与执行边界的设计记录，含旧 Session / 多 Agent 历史方案。 |
 | ContextCanvas | [context-canvas-design.md](02-agent-harness/context-canvas-design.md) | 专项设计：Parse / Chat 共用上下文工作区、工具协议、读取与修改边界。 |

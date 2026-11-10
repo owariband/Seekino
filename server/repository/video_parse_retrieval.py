@@ -97,6 +97,7 @@ def list_published_timeline_chunks(
     ).join(ChunkParseContent, and_(ChunkParseContent.chunk_task_id == ChunkParseTask.id,
                                    ChunkParseContent.version == ChunkParseTask.indexed_content_version)).where(
         Series.tenant_id == workspace, Series.id == series_id,
+        func.coalesce(VideoParseTask.parse_config["profile"].as_string(), "content") == "content",
         VideoParseTask.status == task_status, VideoParseTask.is_deleted.is_(False),
         ChunkParseTask.phase == phase, ChunkParseTask.status == status,
         ~exists(select(newer.id).where(newer.video_id == Video.id, newer.is_deleted.is_(False),

@@ -287,6 +287,8 @@ def load_realtime_chunks(
             or task.is_deleted or series is None or series.tenant_id != tenant_id
             or _latest_video_task_id(session, video_id) != task.id):
         raise VideoParseConflictError("Realtime Parse task changed; retry with the latest task")
+    if task.parse_config.get("profile") == "edit_reference":
+        raise VideoParseConflictError("editing references have no realtime content timeline")
     parent_error = _video_failure_status(task)
     if task.status in {VideoParseTaskStatus.PARSING_FAILED.value, VideoParseTaskStatus.INDEXING_FAILED.value}:
         parent_error = task.status

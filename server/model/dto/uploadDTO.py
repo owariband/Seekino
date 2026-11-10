@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import AliasChoices, AfterValidator, Field
 
@@ -93,6 +93,12 @@ class UploadSessionDeletion:
     deferred: bool = False
 
 
+class EditReferenceProfileRequest(ContractModel):
+    """Use server model bindings with the editing-reference result profile."""
+
+    profile: Literal["edit_reference"]
+
+
 class UploadSessionCreateRequest(ContractModel):
     tenant_id: str = Field(min_length=1, max_length=64)
     episode_order: int = Field(
@@ -105,14 +111,14 @@ class UploadSessionCreateRequest(ContractModel):
     media_type: str = Field(min_length=1, max_length=255)
     total_size_bytes: int = Field(gt=0, le=9_007_199_254_740_991, strict=True)
     content_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
-    parse_config: ParseConfig | _ValidatedVideoParseConfig | None = Field(
+    parse_config: EditReferenceProfileRequest | ParseConfig | _ValidatedVideoParseConfig | None = Field(
         default=None,
         validation_alias=AliasChoices("parseConfig", "parse_config", "videoParseConfig", "video_parse_config"),
     )
 
 
 class UploadReparseRequest(ContractModel):
-    parse_config: ParseConfig | _ValidatedVideoParseConfig | None = Field(
+    parse_config: EditReferenceProfileRequest | ParseConfig | _ValidatedVideoParseConfig | None = Field(
         default=None,
         validation_alias=AliasChoices("parseConfig", "parse_config", "videoParseConfig", "video_parse_config"),
     )

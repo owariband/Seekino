@@ -196,6 +196,7 @@ class IndexingConfig(_InputModel):
         return values
 
 
+ResultProfile = Literal["content", "edit_reference"]
 RoutedContentKind = Literal["script", "course", "clip"]
 ContentKind = Literal["anime", "script", "course", "clip"]
 
@@ -203,6 +204,7 @@ ContentKind = Literal["anime", "script", "course", "clip"]
 class ParseConfig(_InputModel):
     """保存到 video_parse_task.parse_config 的有效配置快照。"""
 
+    profile: ResultProfile = "content"
     content_kind: ContentKind | None = None
     auto_content_kind: bool = False
     chunk_duration: int = Field(gt=0)
@@ -231,6 +233,8 @@ class ParseConfig(_InputModel):
     @model_serializer(mode="wrap")
     def serialize_config(self, handler):
         values = handler(self)
+        if self.profile == "content":
+            values.pop("profile", None)
         if self.content_kind is None:
             values.pop("content_kind", None)
         if not self.auto_content_kind:
