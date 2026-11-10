@@ -49,13 +49,48 @@ class McpRetrievalService:
     def __init__(
         self, *, library: LibraryService, media: MediaService,
         event_retrieval: VideoEventRetrievalService | None,
-        parse_persistence: VideoParsePersistenceService, local_tenant_id: str,
+        parse_persistence: VideoParsePersistenceService, local_tenant_id: str, reference_store=None,
     ) -> None:
         if not isinstance(local_tenant_id, str) or not local_tenant_id.strip():
             raise ValueError("local_tenant_id must be nonblank")
         self._library, self._media = library, media
         self._events, self._persistence = event_retrieval, parse_persistence
         self._tenant_id = local_tenant_id
+        self._reference_store = reference_store
+
+    def find_edit_templates(self, query, *, series_ids=None, top_k=5):
+        _integer(top_k, "top_k", 1, 8)
+        if not query.strip() or len(query) > 2000:
+            raise ValueError("INVALID_ARGUMENT: Enter a technique query")
+        if self._reference_store is None:
+            raise ValueError("REFERENCE_INDEX_UNAVAILABLE: Reference search is not configured")
+        scope = self._persistence.reference_scope(self._tenant_id, series_ids)
+        hits = self._reference_store.search(query.strip(), tenant_id=self._tenant_id, task_ids=scope, size=top_k * 3)
+        notes = self._persistence.reference_observations(hits, tenant_id=self._tenant_id, series_ids=series_ids,
+                                                        index_name=self._reference_store.index_name)
+        techniques = []
+        media_by_video = {}
+        for hit, obs in notes[:top_k]:
+            video_id = hit["video_id"]
+            if video_id not in media_by_video:
+                try:
+                    self._media.get_original(video_id, tenant_id=self._tenant_id)
+                    media_by_video[video_id] = "/api/videos/content?" + urlencode({
+                        "tenantId": self._tenant_id, "videoId": video_id, "variant": "original",
+                    })
+                except (MediaMissingError, MediaNotReadyError, OSError):
+                    media_by_video[video_id] = None
+            segment = obs.segment
+            techniques.append({"video_id": video_id, "series_id": hit["series_id"], "parse_task_id": hit["task_id"],
+                               "video_chunk_id": hit["chunk_id"], "content_version": hit["version"],
+                               "segment_id": segment.segment_id, "start_ms": segment.start_ms, "end_ms": segment.end_ms,
+                               "technique_key": obs.technique_key, "name": obs.note.name, "summary": obs.note.summary,
+                               "steps": [s.model_dump() for s in obs.note.motion.steps],
+                               "fine_starts_ms": segment.fine_starts_ms, "media": {"original_url": media_by_video[video_id]}})
+        return {"techniques": techniques, "templates": []}
+
+    def get_style_card(self, video_id):
+        return self._persistence.reference_style_card(tenant_id=self._tenant_id, video_id=video_id)
 
     def list_series(self, offset: int = 0, limit: int = 20) -> dict[str, Any]:
         _integer(offset, "offset", 0, 1_000_000)

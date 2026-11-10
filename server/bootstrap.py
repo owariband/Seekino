@@ -605,6 +605,6 @@ def _build_application_services(
         auth=auth,
         mcp_retrieval=McpRetrievalService(
             library=library, media=media, event_retrieval=event_retrieval,
-            parse_persistence=parse_persistence, local_tenant_id=settings.auth.local_tenant_id,
+            parse_persistence=parse_persistence, local_tenant_id=settings.auth.local_tenant_id, reference_store=reference_store,
         ) if settings.auth.mode == "local" else None,
     )

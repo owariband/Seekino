@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from ..service.mcp_retrieval import McpRetrievalService
 
 _ERRORS = {
+    "REFERENCE_INDEX_UNAVAILABLE": "Editing-reference search is unavailable on this instance.",
     "INVALID_ARGUMENT": "Check the tool arguments and their documented limits.",
     "EVENT_INDEX_NOT_READY": "The event index is not ready. Finish indexing before retrying.",
     "NO_SEARCHABLE_SERIES": "No searchable series are available in this local library.",
@@ -84,7 +85,8 @@ def create_mcp_app(service: McpRetrievalService, *, auth_mode: str) -> Starlette
     server = MCPServer(
         "seekino",
         instructions=(
-            "Search the local video library using retrieve. Results are indexed evidence, "
+            "Find source performances with retrieve. For editing techniques and shot changes, use find_edit_templates, "
+            "play its media.play_url and inspect the source frames. get_style_card returns the whole reference. Results are indexed evidence, "
             "not proof of unrecorded visual details. Use read_evidence for current source "
             "context and media URLs. All video times are integer milliseconds; intervals "
             "include start_ms and exclude end_ms. For editing, collect different candidate shots, "
@@ -106,8 +108,8 @@ def create_mcp_app(service: McpRetrievalService, *, auth_mode: str) -> Starlette
         except Exception:
             raise ToolError("RETRIEVAL_FAILED: Unable to complete this request.") from None
         result = dict(result)
-        if "media" in result:
-            media = dict(result["media"])
+        for item in ([result] if "media" in result else result.get("techniques", [])):
+            media = dict(item["media"])
             request = ctx.request_context.request
             base_url = request.state.mcp_base_url
             for key in ("original_url", "playback_url"):
@@ -117,7 +119,9 @@ def create_mcp_app(service: McpRetrievalService, *, auth_mode: str) -> Starlette
                     if parsed.scheme or parsed.netloc or parsed.path != "/api/videos/content" or parsed.fragment:
                         raise ToolError("RETRIEVAL_FAILED: Invalid media reference.")
                     media[key] = base_url + value
-            result["media"] = media
+            if "segment_id" in item and media.get("original_url"):
+                media["play_url"] = media["original_url"] + f"#t={item['start_ms']/1000:.3f},{item['end_ms']/1000:.3f}"
+            item["media"] = media
         if len(json.dumps(result, ensure_ascii=False).encode("utf-8")) > _MAX_RESULT_BYTES:
             raise ToolError("RESULT_TOO_LARGE: Narrow the query or request fewer results.")
         return result
@@ -158,6 +162,22 @@ def create_mcp_app(service: McpRetrievalService, *, auth_mode: str) -> Starlette
             ctx, service.retrieve, query=query, series_ids=series_ids, top_k=top_k,
             event_types=event_types, speaker=speaker, cursor=cursor,
         )
+
+    @server.tool(annotations=annotations, structured_output=True)
+    async def find_edit_templates(
+        query: Annotated[str, Field(min_length=1, max_length=2000)], ctx: Context,
+        series_ids: Annotated[list[str] | None, Field(min_length=1, max_length=32)] = None,
+        top_k: Annotated[int, Field(ge=1, le=8, strict=True)] = 5,
+    ) -> dict[str, Any]:
+        """Find editing techniques by natural language. Each source-checked observation has original
+        start/end milliseconds, shot steps and media.play_url for that interval. Choose whether to
+        borrow it after watching the original. The optional series_ids narrow the local reference library."""
+        return await invoke(ctx, service.find_edit_templates, query=query, series_ids=series_ids, top_k=top_k)
+
+    @server.tool(annotations=annotations, structured_output=True)
+    async def get_style_card(video_id: Annotated[str, Field(min_length=1, max_length=64)], ctx: Context) -> dict[str, Any]:
+        """Read the current whole-video Refine card and its exemplar segment IDs for a reference video."""
+        return await invoke(ctx, service.get_style_card, video_id=video_id)
 
     @server.tool(annotations=annotations, structured_output=True)
     async def browse_events(

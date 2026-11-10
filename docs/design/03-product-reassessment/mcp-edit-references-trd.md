@@ -4,6 +4,8 @@
 
 分支 `feat/mcp-edit-references`，依赖[参考片解析 #84](https://github.com/owariband/Seekino/pull/84)、[档案 #83](https://github.com/owariband/Seekino/pull/83)。依次合入。沿用[双召回主设计 #50](https://github.com/owariband/Seekino/pull/50)。正片自选区间取片由 [#81](https://github.com/owariband/Seekino/pull/81) 提供，试点集成工作树组合两条链路。
 
+实施 [PR #85](https://github.com/owariband/Seekino/pull/85)。
+
 # 2. 影响因素、假设与评价指标
 
 手法说明要有可检索的语义、清楚的原片边界与可看的证据。逐级拉远很容易被误写成镜头内推拉。验收统计固定问题里的首个可用结果、逐帧可指认的切点、来源版本及媒体播放。不同租户、未发布与已替代版本的结果必须为零。

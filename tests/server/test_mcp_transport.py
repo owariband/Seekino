@@ -51,7 +51,7 @@ def test_2025_client_handshake_discovers_generated_schemas_and_structured_result
         response = client.post("/mcp", json={"jsonrpc": "2.0", "method": "notifications/initialized"})
         assert response.status_code == 202
         tools = {tool["name"]: tool for tool in _rpc(client, "tools/list").json()["result"]["tools"]}
-        assert set(tools) == {"list_series", "retrieve", "read_evidence", "browse_events"}
+        assert set(tools) == {"list_series", "retrieve", "read_evidence", "browse_events", "find_edit_templates", "get_style_card"}
         assert all(tool["description"] and tool["outputSchema"] for tool in tools.values())
         schema = tools["retrieve"]["inputSchema"]
         assert schema["required"] == ["query"]

@@ -57,6 +57,25 @@ def list_video_tasks(session: Session, *, video_ids: Sequence[str]) -> list[Vide
     ) for row in rows]
 
 
+def current_reference_tasks(session: Session, *, tenant_id: str, series_ids=None, video_id=None):
+    """A newer task of any profile supersedes a previous reference."""
+    newer = aliased(VideoParseTask)
+    query = select(VideoParseTask.id, Video.id, Video.series_id).select_from(Series).join(
+        Video, Video.series_id == Series.id,
+    ).join(VideoParseTask, VideoParseTask.video_id == Video.id).where(
+        Series.tenant_id == tenant_id, VideoParseTask.status == "COMPLETE", VideoParseTask.is_deleted.is_(False),
+        VideoParseTask.parse_config["profile"].as_string() == "edit_reference",
+        VideoParseTask.detail["_worker_runtime_v2"]["accepted"].as_boolean().is_(True),
+        ~exists(select(newer.id).where(newer.video_id == Video.id, newer.is_deleted.is_(False),
+                                       newer.version > VideoParseTask.version).correlate(Video, VideoParseTask)),
+    )
+    if series_ids is not None:
+        query = query.where(Series.id.in_(series_ids))
+    if video_id is not None:
+        query = query.where(Video.id == video_id)
+    return {task_id: (source, series) for task_id, source, series in session.execute(query)}
+
+
 def list_tasks(session: Session, *, task_ids: Sequence[str]) -> list[VideoParseTaskData]:
     return [task_store.task_data(row) for row in session.scalars(select(VideoParseTask).where(
         VideoParseTask.id.in_(task_ids), VideoParseTask.is_deleted.is_(False),

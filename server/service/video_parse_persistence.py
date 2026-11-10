@@ -330,6 +330,62 @@ class VideoParsePersistenceService:
                 workspace=workspace,
             )
 
+    def reference_scope(self, tenant_id, series_ids):
+        with self._session_factory() as session:
+            return read_store.current_reference_tasks(session, tenant_id=tenant_id, series_ids=series_ids)
+
+    def reference_observations(self, hits, *, tenant_id, series_ids, index_name):
+        from engine.parsev2.edit_reference import ReferenceChunk
+        from ..storage.elasticsearch_references import observation_fingerprint
+
+        with self._session_factory() as session:
+            current = read_store.current_reference_tasks(session, tenant_id=tenant_id, series_ids=series_ids)
+            task_ids = {hit["task_id"] for hit in hits}.intersection(current)
+            if not task_ids:
+                return []
+            rows = read_store.load_candidate_rows(session, task_ids=tuple(task_ids), chunk_ids={h["chunk_id"] for h in hits},
+                                                  task_status="COMPLETE", phase=ChunkTaskPhase.INDEX, status="COMPLETE")
+            published = {}
+            for series, video, chunk, task, child, content in rows:
+                if (series.tenant_id != tenant_id or chunk.video_id != video.id
+                        or current.get(task.id) != (video.id, series.id)):
+                    continue
+                receipt = content_ops._index_receipt(content, task.id, chunk.id)
+                ref = receipt.get("edit_reference", {})
+                if (ref.get("index_name") != index_name
+                        or receipt["index_generation"] != task.parse_config["indexing"]["index_generation"]):
+                    continue
+                notes = ReferenceChunk.model_validate(content.content).validate_owner(chunk.start_ms, chunk.end_ms, video.duration_ms)
+                for obs in notes.observations:
+                    if obs.segment.segment_id in ref["segments"]:
+                        key = (task.id, video.id, series.id, chunk.id, content.version, receipt["index_generation"],
+                               obs.segment.segment_id, observation_fingerprint(obs))
+                        published[key] = obs
+            result = []
+            for hit in hits:
+                key = tuple(hit[k] for k in ("task_id", "video_id", "series_id", "chunk_id", "version",
+                                             "generation", "segment_id", "fingerprint"))
+                if hit["tenant_id"] == tenant_id and key in published:
+                    result.append((hit, published[key]))
+            return result
+
+    def reference_style_card(self, *, tenant_id, video_id):
+        from engine.parsev2.edit_reference import StyleCard
+
+        with self._session_factory() as session:
+            scope = read_store.current_reference_tasks(session, tenant_id=tenant_id, video_id=video_id)
+            if len(scope) != 1:
+                raise ValueError("EVIDENCE_STALE: Current reference video unavailable")
+            task_id, = scope
+            intervals = interval_store.list_tasks(session, task_id)
+            if len(intervals) != 1 or intervals[0].status != "COMPLETE":
+                raise ValueError("EVIDENCE_STALE: Current style card unavailable")
+            result = interval_store.get_content(session, intervals[0].id)
+            if result is None:
+                raise ValueError("EVIDENCE_STALE: Current style card unavailable")
+            card = StyleCard.model_validate(result.content["style_card"])
+            return {"video_id": video_id, "parse_task_id": task_id, "style_card": card.model_dump()}
+
     def validate_event_coverage(
         self, scope: VideoParseRetrievalScope, *, index_name: str, contract_id: str,
         video_chunk_ids: Sequence[str] | None = None,
