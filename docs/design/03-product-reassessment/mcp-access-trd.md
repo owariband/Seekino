@@ -53,9 +53,12 @@ sequenceDiagram
 |---|---|---|
 | `list_series` | `offset`, `limit` | 分页列出本地 tenant 的系列与可检索状态 |
 | `retrieve` | `query`, 可选 `series_ids`, `top_k`, `event_types`, `speaker` | 默认 Event 三通道，沿用服务配置；不静默回退 Chunk |
+| `browse_events` | `series_id, visible_names?, limit?, cursor?` | 2026-11-08 E4 增加的逐页浏览。按集和时间遍历当前发布事件，姓名匹配 visible_persons，每条返回版本化引用。[专项验收](anime-material-recall-trd.md) |
 | `read_evidence` | `evidence_ref` | 重验引用版本，返回所选事件、Chunk 上下文与媒体信息 |
 
 SDK 从函数签名、类型和工具说明生成 JSON Schema，再通过 `tools/list` 发布。Codex 按 Schema 发出 `tools/call`，适配层校验输入并在线程池调用同步服务。不存在“模型自动获知任意后端函数”的步骤。
+
+`retrieve` 的 `next_cursor` 可读完本次排序命中的剩余卡片。查找剪辑素材时，Agent 可以比较多个候选，在 `browse_events` 翻完一个角色或整个系列后用 `read_evidence` 回看原片。
 
 `top_k` 明确按不同 Chunk 计数。对外视频时间使用 `*_ms`，内部已有 `*_seconds` 毫秒字段不改名。输出不暴露原始 ES trace、服务器绝对路径或数据库配置；可读正文有界，截断明确标记。
 

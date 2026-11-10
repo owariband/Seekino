@@ -59,6 +59,14 @@ from ..model.video import (
 from ..utils.time import datetime_to_unix_time_ms, now_utc
 
 
+def video_deletion_pending():
+    """Fence a removed video while its managed files and rows await cleanup."""
+    return select(UploadSession.id).where(
+        UploadSession.video_id == Video.id,
+        UploadSession.last_error_code == UPLOAD_DELETION_PENDING_ERROR_CODE,
+    ).correlate(Video).exists()
+
+
 class UploadSessionNotFoundError(LookupError):
     pass
 

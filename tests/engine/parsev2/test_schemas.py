@@ -95,6 +95,27 @@ def test_result_uses_names_without_person_id_mapping() -> None:
         VideoParseResult.model_validate(old_payload)
 
 
+def test_optional_camera_reference_keeps_legacy_scene_fingerprint_and_rejects_code():
+    from engine.parsev2.schemas import SceneEvent
+    from engine.parsev2.validation import parse_content_fingerprint
+
+    old = dict(event_type="SCENE", start_seconds=5, end_seconds=2000, description="远处可见灯塔",
+               participants=[], visible_persons=[])
+    loaded = SceneEvent.model_validate(old)
+    assert loaded.model_dump(mode="json") == old
+    assert parse_content_fingerprint(old) == parse_content_fingerprint(loaded.model_dump(mode="json"))
+    observation = dict(movement="PAN_RIGHT", timing="UNKNOWN", start_framing="左岸灯塔",
+                       end_framing="右侧港口", visual_evidence="固定塔身向左离开画面")
+    assert SceneEvent.model_validate({**old, "camera_ref": observation}).model_dump()["camera_ref"] == observation
+    with pytest.raises(ValidationError, match="clip model profile"):
+        VideoParseResult.model_validate({"persons": [], "timeline": [{**old, "camera_ref": observation}]},
+                                       context={"clip_camera": False})
+    with pytest.raises(ValidationError):
+        SceneEvent.model_validate({**old, "camera_ref": {**observation, "code": "untrusted()"}})
+    with pytest.raises(ValidationError):
+        ActionEvent.model_validate({**old, "event_type":"ACTION", "camera_ref": observation})
+
+
 def test_dialogue_and_emotion_may_overlap() -> None:
     result = VideoParseResult.model_validate(_valid_result_payload())
 

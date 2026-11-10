@@ -283,6 +283,27 @@ def test_event_index_not_ready_is_recoverable_and_chunk_search_remains_available
     assert len(calls) == 2 and calls[1].granularity is None
 
 
+@pytest.mark.parametrize("tool_name", ["retrieve", "search_video_events"])
+def test_single_episode_tool_rejects_evidence_from_another_episode(tool_name):
+    def crossed_search(query, *, episode_order, **options):
+        assert episode_order == 8 and options["series_ids"] == ["series"]
+        # Simulate a misbehaving adapter returning the first episode.
+        found = _event_result(query, count=1)
+        return found if tool_name == "search_video_events" else found.chunk_result
+
+    calls = []
+    tools = build_retrieval_tools(
+        crossed_search, role="query", inputs=_inputs(), control=_control(), calls=calls,
+        maximum_tool_calls=2, maximum_result_bytes=4096, maximum_catalog_items=2,
+        retrieval_channel="lexical", event_retrieve=crossed_search,
+    )
+    tool = next(tool for tool in tools if tool.name == tool_name)
+    with pytest.raises(AgentModelInvocationError, match="outside the requested episode"):
+        tool.invoke({"query": "only E08", "episode": 8, "top_k": 1,
+                     "channel_weights": {"lexical": 1, "semantic": 0, "visual": 0}})
+    assert calls == []
+
+
 @pytest.mark.parametrize("corruption", ["scope", "speaker", "time", "strategy", "schema", "missing_event", "negative_index"])
 def test_event_results_are_validated_before_recording_evidence(corruption) -> None:
     found = _event_result("quote", count=1)

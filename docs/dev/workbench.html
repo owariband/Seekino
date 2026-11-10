@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-08T18:39:27+08:00",
+ "updatedAt": "2026-11-10T15:51:31+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 26,
+ "revision": 33,
  "categories": [
   {
    "id": "parse",
@@ -3437,12 +3437,12 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "title": "课程视频动态抽帧与解析成本优化",
    "category": "parse",
    "type": "requirement",
-   "status": "todo",
+   "status": "progressing",
    "priority": "P1",
    "description": "116 分钟《Let's build GPT》使用 DeepSeek Flash 的成本接近 ¥40，7 集约为 ¥280，当前难以负担。现阶段假设是课程画面变化程度和频率较低，3 fps 的图片输入占据主要成本；目标是将单集成本降至约 ¥40/3（约 ¥13.3）。11-03 已有部分实测，见 LOOP-03：Understand 同费率节省 50.7%，未达 2/3，原因是推理输出增加；Refine 沿用 medium 时成本 +139%。",
-   "next": "评审并设计 ASR 完成后的视频类型识别：结合 Series 背景介绍与 Jev 区分课程静态画面和动画、演出等复杂内容；用户未显式配置时，课程默认 0.5 fps、动画默认 3 fps。对照全量低成本 OCR + ASR、低帧率 VLM 摘要及按画面变化补帧；用户显式配置始终优先。",
-   "verification": "分别记录图片数量、输入 token、模型费用、OCR/ASR 成本、耗时与内容质量，验证 3 fps 降至 0.5 fps 是否能实际节省约 2/3，并单独 A/B 验证推理档位（chunk 53 已测 low / medium / high，medium 最优但只有一块样本）。不预设低推理档能够减少错误，也不预设 Jev 无法联网会影响分类；使用代表性课程与动画样本验收。分类依据和最终 fps 应写入任务快照，保证重试可复现。",
-   "updatedAt": "2026-11-03",
+   "next": "在实际发布后核对 CPU 默认上传的任务类型和有效帧率，继续按原口径对照整集费用与课程质量。",
+   "verification": "分别记录图片数量、输入 token、模型费用、OCR/ASR 成本、耗时与内容质量，验证 3 fps 降至 0.5 fps 是否能实际节省约 2/3，并单独 A/B 验证推理档位（chunk 53 已测 low / medium / high，medium 最优但只有一块样本）。不预设低推理档能够减少错误，也不预设 Jev 无法联网会影响分类；使用代表性课程与动画样本验收。分类依据和最终 fps 应写入任务快照，保证重试可复现。 2026-11-09 普通上传路由已实测，14 条真实输入取得 13 个正确结果和 1 次供应端断线，详见 #82。",
+   "updatedAt": "2026-11-09",
    "tags": [
     "成本优化",
     "待评审",
@@ -3455,7 +3455,7 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
     "MOD-PARSE",
     "MOD-LOOP"
    ],
-   "branch": "",
+   "branch": "feat/parse-pre-hook-router",
    "links": [
     {
      "label": "性能 TRD",
@@ -3466,6 +3466,11 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "label": "成本记录",
      "url": "https://github.com/owariband/Seekino/blob/99e27b04/docs/report/gateway/deepseek-flash-parse-20261103.md",
      "kind": "evidence"
+    },
+    {
+     "label": "默认上传解析路由 #82",
+     "kind": "pr",
+     "url": "https://github.com/owariband/Seekino/pull/82"
     }
    ],
    "source": {
@@ -4738,6 +4743,7 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "next": "合并后在 local 观看问答复验。",
    "verification": "本机模拟 HTTP、服务快照、组件和 Chromium 模拟流已验证。",
    "updatedAt": "2026-11-07",
+   "tags": [],
    "related": [
     "MOD-CHAT"
    ],
@@ -4773,7 +4779,7 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "links": [
     {
      "label": "TRD",
-     "url": "../design/03-product-reassessment/parse-output-drafts-trd.md",
+     "url": "https://github.com/owariband/Seekino/blob/dev/docs/design/03-product-reassessment/parse-output-drafts-trd.md",
      "kind": "trd"
     },
     {
@@ -4783,7 +4789,7 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
     },
     {
      "label": "验证报告",
-     "url": "../report/server/service/parse-output-drafts-20261107.md",
+     "url": "https://github.com/owariband/Seekino/blob/dev/docs/report/server/service/parse-output-drafts-20261107.md",
      "kind": "evidence"
     }
    ]
@@ -4982,6 +4988,142 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "label": "验收",
      "url": "https://github.com/owariband/Seekino/blob/feat/personal-model-connections/docs/report/web/personal-model-connections-20261107.md",
      "kind": "source"
+    }
+   ]
+  },
+  {
+   "id": "EDIT-ANIME-01",
+   "title": "按表情找动画素材并浏览角色全部已标注出镜",
+   "category": "search",
+   "type": "requirement",
+   "status": "verifying",
+   "priority": "P1",
+   "description": "动画任务记录可回看的表情、姿态与视觉转折。MCP 在常规排序外可翻完整个系列或一个角色的发布事件。",
+   "next": "新编辑从 MCP 自主选镜、搭配 P5R 范例的成片验收沿 #50 推进。",
+   "verification": "EP04 完整重解析 24 个分块与 22 个 Refine 窗口。原剪辑查询由未命中变为第 4，表情查询为第 3。五集 2,916 个发布事件及 Anon 的 1,211 个出镜事件均逐页与 MySQL 对账。",
+   "updatedAt": "2026-11-08",
+   "tags": [
+    "动画演示"
+   ],
+   "related": [
+    "PERSON-01",
+    "MOD-SEARCH"
+   ],
+   "branch": "feat/anime-material-recall",
+   "links": [
+    {
+     "label": "实现 PR #77",
+     "kind": "pr",
+     "url": "https://github.com/owariband/Seekino/pull/77"
+    },
+    {
+     "label": "主设计 #50",
+     "kind": "design",
+     "url": "https://github.com/owariband/Seekino/pull/50"
+    },
+    {
+     "label": "E4 实测",
+     "kind": "evidence",
+     "url": "https://github.com/owariband/Seekino/blob/feat/anime-material-recall/docs/report/agent/video_parse_v2/anime-material-recall-20261108.json"
+    }
+   ]
+  },
+  {
+   "id": "EDIT-CAMERA-01",
+   "title": "在素材解析和片段详情中描述镜头，保留连续运镜供剪辑复用",
+   "category": "parse",
+   "type": "requirement",
+   "status": "verifying",
+   "priority": "P1",
+   "description": "场景事件记录可见的镜头运动。剪辑素材保留方向、起落幅、节奏和画面依据，可在普通片段详情查看或从同一发布事件读取运镜参考。",
+   "next": "在实际部署按剪辑策略解析一段有手持或视差的素材，核对片段详情与原片。",
+   "verification": "四个原创控制样例与一条 10 秒 MP4 实模验证。灯塔片真实 Refine 保留连续横移，229 帧回放均方根误差 3.80 像素。另验隔离发布、检索、普通片段详情和 MCP 回读。",
+   "updatedAt": "2026-11-10",
+   "tags": ["剪辑素材", "运镜"],
+   "related": ["MOD-PARSE", "MOD-SEARCH", "EDIT-ANIME-01"],
+   "branch": "feat/clip-camera-reference",
+   "links": [
+    {
+     "label": "运镜解析与片段详情 PR #86",
+     "kind": "pr",
+     "url": "https://github.com/owariband/Seekino/pull/86"
+    },
+    {
+     "label": "上游普通上传判型 #82",
+     "kind": "pr",
+     "url": "https://github.com/owariband/Seekino/pull/82"
+    },
+    {
+     "label": "剪辑参考主设计 #50",
+     "kind": "design",
+     "url": "https://github.com/owariband/Seekino/pull/50"
+    }
+   ]
+  },
+  {
+   "id": "WATCH-THEME-01",
+   "title": "观看首页明暗切换时同步调整页面与视频封面",
+   "category": "library",
+   "type": "task",
+   "status": "verifying",
+   "priority": "unset",
+   "description": "让顶栏、页面和首页预览图一起渐变，正片保留原色。",
+   "next": "在 dev 预览确认 360 ms 时长及夜间封面亮度。",
+   "verification": "Chrome 桌面与 390px 视口已验证双向渐变、快速反向、设置、偏好恢复、减弱动态效果与播放器。视觉 review 待确认。",
+   "updatedAt": "2026-11-09",
+   "tags": [
+    "UI"
+   ],
+   "related": [
+    "MOD-LIBRARY",
+    "F09",
+    "SETTINGS-UI-01"
+   ],
+   "branch": "fix/theme-transition",
+   "links": [
+    {
+     "label": "设计与验收",
+     "url": "https://github.com/owariband/Seekino/blob/dev/docs/design/03-product-reassessment/theme-transition-trd.md",
+     "kind": "trd"
+    },
+    {
+     "label": "PR #80",
+     "url": "https://github.com/owariband/Seekino/pull/80",
+     "kind": "pr"
+    }
+   ]
+  },
+  {
+   "id": "PUBLIC-COURSE-01",
+   "title": "公开课程在解析期间继续播放、对话和逐集检索",
+   "category": "library",
+   "type": "requirement",
+   "status": "verifying",
+   "priority": "P1",
+   "description": "显式公开独立于索引，按每集的原片和最新完成任务确定可用能力。",
+   "next": "待 dev 集成和单独发布后，在 CPU 的 Karpathy 课程复核游客播放、追问和检索覆盖。",
+   "verification": "本地 Chrome 播放 E08 并跳至 6000 ms，完成八轮对话并刷新恢复历史。Chunk 实查七集，Event 实查六集，指定片段仅查一个来源。零索引、错集、撤回、访客隔离和依赖离线均有隔离回归。模型与 ES 使用替身。",
+   "updatedAt": "2026-11-10",
+   "tags": [
+    "公开课程",
+    "游客"
+   ],
+   "related": [
+    "MOD-LIBRARY",
+    "MOD-CHAT",
+    "MOD-SEARCH"
+   ],
+   "branch": "fix/public-course-readiness",
+   "links": [
+    {
+     "label": "修订与本地验收",
+     "url": "https://github.com/owariband/Seekino/blob/fix/public-course-readiness/docs/design/03-product-reassessment/public-course-readiness-trd.md",
+     "kind": "trd"
+    },
+    {
+     "label": "PR #87",
+     "url": "https://github.com/owariband/Seekino/pull/87",
+     "kind": "pr"
     }
    ]
   }

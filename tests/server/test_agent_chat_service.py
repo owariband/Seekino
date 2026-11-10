@@ -50,7 +50,6 @@ from server.repository.agent import (
     AgentRepository, AgentReferenceInvalidError, AgentMessageNotFoundError,
 )
 from server.repository.library import LibraryRepository, SeriesNotFoundError
-from server.error.retrieval import SeriesNotReadyError
 from server.service.video_parse_persistence import VideoParsePersistenceService
 from server.schema import (
     AgentReply, SelectionReason, VideoChunkCandidate, VideoChunkSearchHit, VideoChunkSearchResult,
@@ -1032,7 +1031,7 @@ def test_current_video_scope_is_trusted_without_making_unready_series_retrievabl
 
         def run_agent(self, _prompt, *, tools, handle_text, **_kwargs):
             context = json.loads(_prompt.rsplit("\n\n", 1)[1])
-            assert context["video_scope"] == []
+            assert [item["seriesId"] for item in context["video_scope"]] == [series_id]
             assert len(context["series_context"]) == 1
             current = context["series_context"][0]
             assert current["seriesId"] == series_id
@@ -1041,8 +1040,7 @@ def test_current_video_scope_is_trusted_without_making_unready_series_retrievabl
             assert current["importantExtraData"] == background
             assert current["characterBible"] == [{"name": "若叶睦", "aliases": ["睦"]}]
             by_name = {tool.name: tool for tool in tools}
-            graph = json.loads(by_name["query_video"].invoke({"query": "now"}))
-            assert graph["error"]["code"] == "NO_VIDEO_SCOPE"
+            assert "retrieve" in by_name
             handle_text("当前视频答疑可使用实时理解。")
 
     service, conversation, _, repository, *_ = build_service(
@@ -1088,11 +1086,11 @@ def test_current_video_scope_is_trusted_without_making_unready_series_retrievabl
     completed = _send(
         service, conversation, series_ids=[series_id], extra_context={"playback": playback},
     )
-    assert completed.user_message.series_ids == ()
+    assert completed.user_message.series_ids == (series_id,)
     assert completed.user_message.extra_context["playback"]["positionSeconds"] == 123_456
     assert completed.assistant_message.content == "当前视频答疑可使用实时理解。"
-    with pytest.raises(SeriesNotReadyError):
-        _send(service, conversation, key="without-playback", series_ids=[series_id])
+    followup = _send(service, conversation, key="without-playback", series_ids=[series_id])
+    assert followup.assistant_message.series_ids == (series_id,)
 
 
 def test_playback_uses_current_episode_without_changing_request_idempotency(build_service):
@@ -1180,7 +1178,7 @@ def test_series_context_videos_and_current_video_use_series_episode_addressing(b
 
 
 @pytest.mark.parametrize("include_other_unready", [False, True])
-def test_current_unready_video_exemption_keeps_other_retrieval_scope_rules(
+def test_message_preserves_all_selected_courses_until_tool_scope_resolution(
     build_service, include_other_unready,
 ):
     class CurrentVideoModel(_DirectSupervisorModel):
@@ -1188,8 +1186,8 @@ def test_current_unready_video_exemption_keeps_other_retrieval_scope_rules(
 
         def run_agent(self, _prompt, *, tools, handle_text, **_kwargs):
             context = json.loads(_prompt.rsplit("\n\n", 1)[1])
-            assert [item["seriesId"] for item in context["video_scope"]] == [ready.series_id]
-            assert {item["seriesId"] for item in context["series_context"]} == {current_id, ready.series_id}
+            assert {item["seriesId"] for item in context["video_scope"]} == set(scope)
+            assert {item["seriesId"] for item in context["series_context"]} == set(scope)
             by_name = {tool.name: tool for tool in tools}
             by_name["query_video"].invoke({"query": "what was explained"})
             handle_text("Answer from the available evidence.")
@@ -1219,17 +1217,11 @@ def test_current_unready_video_exemption_keeps_other_retrieval_scope_rules(
         "seriesId": current_id, "videoId": video_id, "episodeOrder": 1,
         "positionSeconds": 123_456,
     }})
-    if include_other_unready:
-        with pytest.raises(SeriesNotReadyError):
-            _send(service, conversation, **kwargs)
-        assert retrieval.calls == []
-        assert service.list_all_messages(conversation.conversation_id, tenant_id="local-default") == []
-    else:
-        result = _send(service, conversation, **kwargs)
-        assert result.user_message.series_ids == (ready.series_id,)
-        assert retrieval.calls and all(call[1] == [ready.series_id] for call in retrieval.calls)
-        query_context = json.loads(query.prompts[-1].rsplit("\n\n", 1)[1])["inputs"]
-        assert [item["seriesId"] for item in query_context["series_context"]] == [ready.series_id]
+    result = _send(service, conversation, **kwargs)
+    assert set(result.user_message.series_ids) == set(scope)
+    assert retrieval.calls and all(set(call[1]) == set(scope) for call in retrieval.calls)
+    query_context = json.loads(query.prompts[-1].rsplit("\n\n", 1)[1])["inputs"]
+    assert {item["seriesId"] for item in query_context["series_context"]} == set(scope)
 
 
 @pytest.mark.parametrize("with_playback", [False, True])

@@ -1,3 +1,4 @@
+from dataclasses import replace
 from unittest.mock import Mock
 
 import pytest
@@ -22,14 +23,13 @@ class _Repository:
         self.hydrated = []
         self.coverage_error = None
 
-    def resolve_retrieval_scope(self, series_ids, *, tenant_id):
+    def resolve_retrieval_scope(self, series_ids, *, tenant_id, event_index, video_chunk_ids=None):
         assert tuple(series_ids) == self.scope.series_ids and tenant_id == self.evidence.tenant_id
-        return self.scope
-
-    def validate_event_coverage(self, scope, *, index_name, contract_id, video_chunk_ids=None):
+        assert event_index[0] == _Store.index_name
         if self.coverage_error:
             raise VideoParseConflictError(self.coverage_error)
-        return ((next(iter(scope.parse_tasks_by_video_id.values())), self.evidence.video_chunk_id, 1),)
+        source = (self.scope.parse_tasks_by_video_id[self.evidence.video_id], self.evidence.video_chunk_id, 1)
+        return replace(self.scope, event_source_generations={source: self.scope.index_generation})
 
     def hydrate_retrieval_candidates(self, identities):
         self.hydrated.append(tuple(identities))
@@ -58,8 +58,10 @@ class _Store:
     def _hits(self, channel, kwargs):
         self.calls.append((channel, kwargs))
         filters = kwargs["filters"]
+        sources = set(kwargs["sources"])
         eligible = [plan for plan in self.plans
-                    if (not filters.event_types or plan.event_type in filters.event_types)
+                    if (plan.parse_task_id, plan.video_chunk_id, plan.version) in sources
+                    and (not filters.event_types or plan.event_type in filters.event_types)
                     and (filters.speaker is None or plan.speaker == filters.speaker)]
         return tuple(RawEventHit(
             channel=channel, event_id=plan.event_id, parse_task_id=plan.parse_task_id,

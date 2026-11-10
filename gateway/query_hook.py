@@ -33,14 +33,16 @@ class QueryHookModels:
         self._config = config
         self._transport = transport
 
-    def route(self, state: dict, question: dict, *, timeout_seconds: float) -> str:
+    def route(self, state: dict, question: dict, *, timeout_seconds: float,
+              choices: tuple[str, ...] = ("respond", "retrieve", "mixed"),
+              operation: str = "query_hook_route") -> str:
         timeout = _request_timeout(self._config.router_timeout_seconds, timeout_seconds)
         api_key = os.getenv(self._config.router_api_key_env, "").strip()
         if not api_key:
             raise QueryHookModelError("Jev API key is not configured")
         with httpx.Client(timeout=timeout, trust_env=False, transport=self._transport) as client:
             with track_model_call(
-                provider="openrouter", model=self._config.router_model, operation="query_hook_route",
+                provider="openrouter", model=self._config.router_model, operation=operation,
             ) as call:
                 try:
                     response = client.post(
@@ -61,7 +63,7 @@ class QueryHookModels:
                     if not isinstance(answer, dict) or answer.get("type") != "choice":
                         raise ValueError("Expected a choice answer")
                     choice = answer.get("choice")
-                    if type(choice) is not str or choice not in ("respond", "retrieve", "mixed"):
+                    if type(choice) is not str or choice not in choices:
                         raise ValueError("Unknown routing choice")
                 except (ValueError, KeyError, TypeError):
                     raise QueryHookModelError("Jev returned an invalid decision response") from None

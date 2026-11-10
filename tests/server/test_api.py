@@ -1533,6 +1533,7 @@ def test_series_and_search_contract(tmp_path: Path) -> None:
         "searchedVideoIds": [],
         "partial": False,
         "warnings": [],
+        "coverageMessages": [],
         "agentReply": {
             "message": "这次没有找到符合当前检索范围的候选片段。",
             "resultCount": 0,
@@ -1890,6 +1891,7 @@ def test_upload_full_reparse_creates_new_v2_task_and_retains_previous_task(tmp_p
         params={**params, "tenantId": "other-workspace"},
     ).status_code == 404
     replacement_config = dict(old_config)
+    assert old_config["auto_content_kind"] is True
     replacement_config["batch_max_size"] = 4
     reparsed = client.post(
         "/api/uploads/reparse",
@@ -1904,7 +1906,8 @@ def test_upload_full_reparse_creates_new_v2_task_and_retains_previous_task(tmp_p
         "version": 2,
     }.items() <= reparsed.json().items()
     assert reparsed.json()["videoParseTaskId"] != old_task_id
-    assert reparsed.json()["parseConfig"] == replacement_config
+    expected_config = {key: value for key, value in replacement_config.items() if key != "auto_content_kind"}
+    assert reparsed.json()["parseConfig"] == expected_config
     for field in ("nextExecuteTime", "createTime", "updateTime"):
         assert type(reparsed.json()[field]) is int
     with jobs_repository._session_factory() as session:
@@ -1919,7 +1922,7 @@ def test_upload_full_reparse_creates_new_v2_task_and_retains_previous_task(tmp_p
         )
         assert old_task.parse_config == old_config
         assert new_task.version == 2
-        assert new_task.parse_config == replacement_config
+        assert new_task.parse_config == expected_config
     duplicate = client.post("/api/uploads/reparse", params=params)
     assert duplicate.status_code == 409
     with jobs_repository._session_factory() as session:
@@ -2335,22 +2338,19 @@ def test_reusing_message_key_with_different_series_conflicts_before_retrieval(tm
         client.app.state.services.agent.close()
 
 
-def test_explicit_non_ready_series_is_rejected_before_starting_message(tmp_path):
-    client, retrieval, _ = _client(tmp_path)
+def test_explicit_non_ready_series_allows_a_message_in_its_own_scope(tmp_path):
+    client, _, _ = _client(tmp_path)
     series_id = _create_series(client, ready=False)
     conversation_id = _create_agent_conversation(client)
     try:
         response = client.post(
             "/api/agent/messages/send", params={"tenantId": "local-default", "conversationId": conversation_id},
             headers={"Idempotency-Key": "non-ready-message"},
-            json={"tenantId": "local-default", "content": "找画面", "seriesIds": [series_id]},
+            json={"tenantId": "local-default", "content": "你好", "seriesIds": [series_id]},
         )
-        assert response.status_code == 409, response.text
-        assert response.json()["code"] == "SERIES_NOT_READY"
-        assert retrieval.calls == []
-        assert client.get(
-            "/api/agent/messages/list", params={"tenantId": "local-default", "conversationId": conversation_id},
-        ).json()["items"] == []
+        assert response.status_code == 200, response.text
+        assert response.json()["userMessage"]["seriesIds"] == [series_id]
+        assert response.json()["assistantMessage"]["status"] == "COMPLETED"
     finally:
         client.app.state.services.agent.close()
 
@@ -2403,6 +2403,33 @@ def test_agent_evidence_view_reads_legacy_single_query_without_trace():
     serialized = view.model_dump(mode="json", by_alias=True)
     assert "query" not in serialized
     assert serialized["retrievalTrace"] == []
+    assert serialized["hadCandidates"] is None
+
+
+@pytest.mark.parametrize(("trace", "expected"), [
+    ([{"resultCount": 2}], True),
+    ([{"result_count": 2, "status": "success"}], True),
+    ([{"resultCount": 0, "status": "success"}], False),
+    ([{"resultCount": 0}], False),
+    ([{"resultCount": 0, "status": "error"}], None),
+    ([{"resultCount": 0}, {"status": "error"}], None),
+    ([{"status": "error"}, {"result_count": 2}], True),
+    ([{"status": "success"}], None),
+    ([], None),
+])
+def test_guest_history_projects_candidate_outcome_and_only_public_coverage(trace, expected):
+    guest = SimpleNamespace(mode="cloud", tenant_id="guest-workspace", public_tenant_id="platform-public",
+                            role="user", auth_level="guest", is_guest=True)
+    stored = {
+        "seriesIds": ["course"], "searchedVideoIds": ["video"], "agentReply": {"message": "回答", "resultCount": 0},
+        "hits": [], "coverageMessages": ["已查第一集"], "warnings": ["private diagnostic"],
+        "retrieval_trace": [{**entry, "query": "private diagnostic"} for entry in trace],
+    }
+    media = SimpleNamespace(require_series_access=lambda *_args, **_kwargs: None)
+    view = _agent_search_evidence_view(stored, media, tenant_id="platform-public", identity=guest)
+    assert view.had_candidates is expected
+    assert view.retrieval_trace == [] and view.warnings == view.coverage_messages == ["已查第一集"]
+    assert "private diagnostic" not in view.model_dump_json()
 
 
 @pytest.mark.parametrize("accept", ["application/json", "text/event-stream"])
@@ -2895,18 +2922,16 @@ def test_send_respects_accept_quality(tmp_path, accept, expected):
 
 
 @pytest.mark.parametrize("failure,expected_status,expected_code", [
-    ("not-ready", 409, "SERIES_NOT_READY"),
     ("missing-scope", 404, "NOT_FOUND"),
     ("index-inconsistent", 409, "CONFLICT"),
 ])
 def test_retrieval_domain_errors_keep_http_mapping_through_harness(tmp_path, failure, expected_status, expected_code):
-    from server.error.retrieval import SeriesNotReadyError, SeriesScopeNotFoundError
+    from server.error.retrieval import SeriesScopeNotFoundError
     from server.service.video_retrieval import RetrievalIndexConsistencyError
     client, _, _ = _client(tmp_path)
     _create_series(client)
     conversation_id = _create_agent_conversation(client)
     error_type = {
-        "not-ready": SeriesNotReadyError,
         "missing-scope": SeriesScopeNotFoundError,
         "index-inconsistent": RetrievalIndexConsistencyError,
     }[failure]

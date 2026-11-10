@@ -53,12 +53,7 @@ def is_series_member(identity: AuthIdentity, tenant_id: str) -> bool:
 def series_access(identity: AuthIdentity, series: SeriesState) -> Literal["member", "public"]:
     if is_series_member(identity, series.tenant_id):
         return "member"
-    status = getattr(series.status, "value", series.status)
-    if not (
-        series.visibility == SeriesVisibility.PUBLIC and series.publisher_active
-        and status == "READY" and series.video_count > 0
-        and series.ready_video_count == series.video_count and series.pending_upload_count == 0
-    ):
+    if series.visibility != SeriesVisibility.PUBLIC or not series.publisher_active:
         raise AuthError("请求的资源不存在或无法访问", status_code=404, code="NOT_FOUND")
     return "public"
 

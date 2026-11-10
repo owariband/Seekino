@@ -5,6 +5,7 @@ from typing import Any
 
 from pydantic import RootModel
 
+from engine.parsev2.schemas import without_clip_camera
 from engine.parsev2.validation import IntervalRefinementResult
 
 
@@ -15,6 +16,12 @@ class RefineModelResponse(RootModel[Any]):
     entire value and its bound member authority before committing anything.
     """
 
+    @classmethod
+    def model_json_schema(cls, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return without_clip_camera(IntervalRefinementResult.model_json_schema(*args, **kwargs))
+
+
+class ClipRefineModelResponse(RefineModelResponse):
     @classmethod
     def model_json_schema(cls, *args: Any, **kwargs: Any) -> dict[str, Any]:
         return IntervalRefinementResult.model_json_schema(*args, **kwargs)

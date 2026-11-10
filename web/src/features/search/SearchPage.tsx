@@ -131,6 +131,23 @@ function savedSidebarWidth(): number {
   }
 }
 
+function SearchCoverage({ result, displayMode }: { result: AgentMessageView["searchResult"]; displayMode: DisplayMode }) {
+  const { t } = useI18n();
+  if (!result) return null;
+  const warnings = displayMode === "debug" ? result.warnings : result.coverageMessages ?? [];
+  if (warnings.length) return <div className={styles.resultWarnings} role="status">{warnings.map((warning) => <p key={warning}>{warning}</p>)}</div>;
+  return result.partial ? <p className={styles.resultWarnings} role="status">{t("本次回答仅覆盖当前可检索的视频。")}</p> : null;
+}
+
+function emptyVideoMessage(result: NonNullable<AgentMessageView["searchResult"]>) {
+  const hadCandidates = result.hadCandidates === undefined
+    ? result.retrievalTrace?.some((entry) => entry.status !== "error" && entry.resultCount > 0) || null
+    : result.hadCandidates;
+  if (hadCandidates === true) return "检索到了候选片段，但本次回答未附带可播放视频，请重试。";
+  if (hadCandidates === false) return "没有检索到可展示的视频片段，试试换个描述。";
+  return "本次回答未附带视频片段。";
+}
+
 function messageRenderBlocks(message: AgentMessageView): AgentRenderBlock[] {
   const blocks = Array.isArray(message.renderBlocks) && message.renderBlocks.length > 0
     ? message.renderBlocks
@@ -338,7 +355,6 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
   const [deletingConversationId, setDeletingConversationId] = useState<string | null>(null);
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
   const [conversationStatus, setConversationStatus] = useState("");
-  const [playbackContextError, setPlaybackContextError] = useState<string | null>(null);
   const [selectedSeriesIds, setSelectedSeriesIds] = useState<string[]>([]);
   const scopeTouchedRef = useRef(false);
   const [query, setQuery] = useState("");
@@ -487,9 +503,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
     pendingExampleRef.current = false;
     composerRef.current?.form?.requestSubmit();
   }, [query]);
-  const isSearchable = (status: string) => status === "READY";
-  const emptyPublicScope = requiresExplicitScope && mode === "live" && !workspaceLoading && !workspaceError
-    && !series.some((item) => isSearchable(item.status));
+  const emptyPublicScope = requiresExplicitScope && mode === "live" && !workspaceLoading && !workspaceError && !series.length;
   const initialSeries = initialSeriesId ? series.find((item) => item.seriesId === initialSeriesId) : null;
   const sourceTenantId = series.find((item) => item.seriesId === selectedSeriesIds[0])?.tenantId;
   const referenceMessage = reference ? messages.find((message) => message.messageId === reference.messageId) : null;
@@ -497,7 +511,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
   const referenceScopeValid = !reference || Boolean(referenceHit && referenceHit.evidence.tenantId === (sourceTenantId ?? TENANT_ID)
     && (!selectedSeriesIds.length || selectedSeriesIds.includes(referenceHit.evidence.seriesId)));
   const scopeValid = (!requiresExplicitScope || selectedSeriesIds.length > 0)
-    && selectedSeriesIds.every((id) => series.some((item) => item.seriesId === id && item.tenantId === sourceTenantId && isSearchable(item.status)));
+    && selectedSeriesIds.every((id) => series.some((item) => item.seriesId === id && item.tenantId === sourceTenantId));
   const canAttach = Boolean(modelSelected && !modelSaving && !loading && (!conversationId || !deletedConversationIdsRef.current.has(conversationId)) && mode === "live");
   const canSend = Boolean(query.trim() && canAttach && !creatingConversation && !pendingFiles && !searching && scopeValid && referenceScopeValid && attachments.items.every((item) => item.status === "ready"));
 
@@ -507,9 +521,9 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
 
   useEffect(() => {
     if (scopeTouchedRef.current) return;
-    const preferred = embedded && initialSeriesId ? initialSeries : requiresExplicitScope ? series.find((item) => isSearchable(item.status)) : null;
+    const preferred = embedded && initialSeriesId ? initialSeries : series[0];
     if (!embedded && !requiresExplicitScope) return;
-    const next = preferred?.status === "READY" ? [preferred.seriesId] : [];
+    const next = preferred ? [preferred.seriesId] : [];
     setSelectedSeriesIds((current) => current.length === next.length && current.every((id, index) => id === next[index]) ? current : next);
   }, [embedded, initialSeriesId, initialSeries?.status, requiresExplicitScope, workspaceSeries, suppliedSeries]);
 
@@ -639,11 +653,6 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
     event.preventDefault();
     if (!canSend) return;
     const extraContext = captureExtraContext?.() ?? null;
-    if (captureExtraContext && extraContext === null) {
-      setPlaybackContextError(t("当前播放位置尚未就绪，请稍后重试"));
-      return;
-    }
-    setPlaybackContextError(null);
     followThread.current = true;
     setConversationStatus(t("正在发送问题"));
     const options: AgentMessageRunOptions = displayMode === "debug" && messageOptionOverrides
@@ -902,7 +911,6 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
             <input
               type="checkbox"
               checked={selectedSeriesIds.includes(item.seriesId)}
-              disabled={!isSearchable(item.status) && !selectedSeriesIds.includes(item.seriesId)}
               onChange={(event) => {
                 scopeTouchedRef.current = true;
                 setSelectedSeriesIds((current) => event.target.checked
@@ -911,7 +919,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
               }}
             />
             <span>{item.name}</span>
-            <small>{isSearchable(item.status) ? t("{value0} 个视频可检索", { value0: item.readyVideoCount }) : t("暂不可检索")}</small>
+            <small>{t("{value0} 个视频可检索", { value0: item.readyVideoCount })}</small>
           </label>
         ))}
         {!series.length && !workspaceError && <p>{t(workspaceLoading ? "正在读取视频系列…" : "资料库还没有视频系列")}</p>}
@@ -1132,7 +1140,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
                       kinoHost={message.messageId === kinoHostId} kinoAwake={connecting} />
                     {message.status === "FAILED" ? <p className={styles.messageError} role="alert">{message.lastError?.message || t("本次回答未完成")}</p> : null}
                     {!message.content && message.status === "COMPLETED" && !message.searchResult ? <p className={styles.messageError}>{t("未生成回答")}</p> : null}
-                    {displayMode === "debug" && message.searchResult?.warnings.length ? <div className={styles.resultWarnings} role="status">{message.searchResult.warnings.map((warning) => <p key={warning}>{warning}</p>)}</div> : message.searchResult?.partial ? <p className={styles.resultWarnings} role="status">{t("本次回答仅覆盖当前可检索的视频。")}</p> : null}
+                    <SearchCoverage result={message.searchResult} displayMode={displayMode} />
                     {messageRenderBlocks(message).map((block, index) => {
                       if (block.type === "markdown") return <SeekContext.Provider key={`markdown:${index}`} value={{ onSeek: onSeekCurrent, displayMode }}><MarkdownAnswer markdown={block.markdown} conversationId={message.conversationId} messageId={message.messageId} /></SeekContext.Provider>;
                       if (block.type === "tool") return <ToolRow key={`tool:${block.callId}`} block={block} message={message} displayMode={displayMode} />;
@@ -1145,9 +1153,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
                     {message.status === "COMPLETED" && message.searchResult && !message.searchResult.hits.length ? (
                       <p className={styles.candidateEmpty}>
                         <Kino state="think" width={38} scale={2} ground={false} />
-                        <span>{message.searchResult.retrievalTrace?.some((entry) => entry.resultCount > 0)
-                          ? t("检索到了候选片段，但本次回答未附带可播放视频，请重试。")
-                          : t("没有检索到可展示的视频片段，试试换个描述。")}</span>
+                        <span>{t(emptyVideoMessage(message.searchResult))}</span>
                       </p>
                     ) : null}
                   </div>
@@ -1223,17 +1229,16 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
               </p>
             ) : null}
             <p className={styles.keyboardHint}>{t("Enter 发送 · Shift + Enter 换行")}</p>
-            {playbackContextError ? <p className={styles.messageError} role="alert">{playbackContextError}</p> : null}
             {!workspaceLoading && ((!scopeValid && !emptyPublicScope) || !referenceScopeValid) ? <p className={styles.messageError} role="alert">
               {workspaceError && !series.length
                 ? t("读取视频系列失败：{message}", { message: errorMessage(workspaceError, locale) })
-                : t("所选视频系列暂不可检索，请重新选择范围。")}
+                : t("所选课程暂不可访问，请重新选择范围。")}
             </p> : null}
             {embedded && initialSeriesId && !workspaceLoading && initialSeries?.status !== "READY" ? (
               <p className={styles.scopeNotice} role="status">
                 <span className={styles.scopeChip}>{t("检索范围：")}{selectedSeriesIds.length ? selectedSeriesIds.map((id) => series.find((item) => item.seriesId === id)?.name ?? id).join(locale === "en" ? ", " : "、") : t("全部系列")}</span>
                 <span className={styles.scopeWarning}><TriangleAlert size={13} aria-hidden="true" />{t("本系列未完成解析")}</span>
-                {canManage ? inRouter ? <Link to="/library">{t("去解析")}</Link> : <a href="/library">{t("去解析")}</a> : null}
+                {canManage && initialSeries?.access === "member" ? inRouter ? <Link to="/library">{t("去解析")}</Link> : <a href="/library">{t("去解析")}</a> : null}
               </p>
             ) : null}
           </div>

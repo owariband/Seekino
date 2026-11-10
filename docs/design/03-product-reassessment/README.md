@@ -28,6 +28,7 @@ hypnos 于 **2026-04-27 入职实习**，到这次面试复盘时已接近半年
 
 | 文档 | 时间归属与证据 | 提出时的视角与背景 | 本次整理时的阅读边界 |
 |---|---|---|---|
+| [首页明暗主题切换](theme-transition-trd.md) | 2026-11-09，线上观看首页的封面与页面换色不同步 | 让画布与预览画面协调变亮或变暗，保留正片色彩 | [PR #80](https://github.com/owariband/Seekino/pull/80) |
 | [parse-media-link-lease-trd.md](parse-media-link-lease-trd.md) | 2026-11-07，198 帧交付逐个触发 chunk 续租 | 清单就绪后与交付前各校验一次 | [PR #75](https://github.com/owariband/Seekino/pull/75) |
 | [parse-ready-dispatch-trd.md](parse-ready-dispatch-trd.md) | 2026-11-07，micrograd 的索引在 refine 结束后继续约 39 分钟 | 提交后按 ID 派发、有限等锁与轻量收尾；记录同一素材的真实索引对照 | [PR #70](https://github.com/owariband/Seekino/pull/70) |
 | [parse-output-drafts-trd.md](parse-output-drafts-trd.md) | 2026-11-07，SSE 逐事件续租与模型正文草稿需求澄清 | 内存累积正文，每 1,024 新字节或退出时保存独立调用草稿；续租继续由周期心跳驱动 | PR #64；隔离验证与真实解析效果分别验收 |
@@ -58,6 +59,10 @@ hypnos 于 **2026-04-27 入职实习**，到这次面试复盘时已接近半年
 | [model-streaming-trd.md](model-streaming-trd.md) | 2026-10-31，默认 stream 被 profile / 入口写死，temperature 缺少创建时配置 | 通用模型配置、默认 stream=true / temperature=0、Kimi 固定温度、独立 fallback、共享协议接收与 Parse 快照 | 承接 Kimi 接入修复；隔离 HTTP 验证与真实部署、供应商效果分开验收 |
 | [local-whisperx-asr-trd.md](local-whisperx-asr-trd.md) | 2026-10-29 本地 ASR；10-30 故障续版与 10-31 存储／GPU 测试 | 视频级 ASR／Summary 持久成果、Task／成果归类及 Turbo＋Metal 本地测试接线 | 存储与恢复隔离验证通过；Turbo＋Metal 正式 Gateway 短样本与完整 116 分 20 秒 ASR 均通过，业务库迁移、独立对齐及完整课程闭环待验 |
 | [mcp-access-trd.md](mcp-access-trd.md) | 2026-10-28，外部 Agent 素材库与演示需求 | 将首要交付收敛为 localhost MCP，Cloud 保留 Chat 与后续轻量 HTML 作品 | 区分协议与隔离测试、真实 Codex 连接、真实素材到作品；不把历史 Sandbox 探针当作已交付能力 |
+| [动画表情素材召回](anime-material-recall-trd.md) | 2026-11-08，五集盲评漏选爱音反应 | 剪辑 Agent 按画面表情找素材 | 单独核验语义排名、全量翻页与原片画面。 |
+| [上传视频自动判型](parse-pre-hook-router-trd.md) | 2026-11-09，CPU 普通上传需要自动选策略 | 沿用 Parse V2 及显式覆盖 | [#82](https://github.com/owariband/Seekino/pull/82) |
+| [公开观看、对话与逐集检索](public-course-readiness-trd.md) | 2026-11-10，追加 E08 导致七集已就绪课程消失 | 显式可见性、逐集资料依赖和撤回校验 | [系列分享 §3.7](../02-agent-harness/series-sharing-trd.md#37-首版公开条件整个系列都已就绪) |
+| [剪辑素材的运镜描述与回放](clip-camera-reference-trd.md) | 2026-11-10，镜头平移被看反或按画面内容拆断 | 同一发布事件提供中文描述、来源与可执行镜头 | [实测](../../report/agent/video_parse_v2/clip-camera-reference-20261110.md) |
 
 ## 本次讨论确定的复审问题
 

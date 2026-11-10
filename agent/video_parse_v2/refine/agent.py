@@ -6,6 +6,7 @@ import time
 
 from pydantic import BaseModel, ValidationError
 
+from engine.parsev2.camera_evidence import ground_camera_pans
 from engine.parsev2.validation import (
     IntervalRefinementResult, RefinementResultError, normalize_refinement_response,
     validate_member_scopes,
@@ -74,7 +75,15 @@ class IntervalRefine:
                         previous_candidate = response
                         response = normalize_refinement_response(response)
                         previous_candidate = response
-                        result = canvas.accept_refinement(IntervalRefinementResult.model_validate(response))
+                        candidate = IntervalRefinementResult.model_validate(
+                            response, context={"clip_camera": config.content_kind == "clip"},
+                        )
+                        evidence = snapshot.get("member_evidence", {})
+                        hints_by_sequence = {seq: evidence.get(ref, {}).get("camera_hints", [])
+                                             for ref, seq in snapshot["member_sequence_nos"].items()}
+                        checked = [ground_camera_pans(member, hints_by_sequence.get(member.sequence_no, []))
+                                   for member in candidate.members]
+                        result = canvas.accept_refinement(candidate.model_copy(update={"members": checked}))
                         candidate_error = None
                         break
                     except (ValidationError, RefinementResultError) as error:
