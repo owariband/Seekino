@@ -9,221 +9,266 @@ const README_EN = `${GITHUB_URL}/blob/main/README.en.md`;
 // Community links arrive later; [xxx] marks every spot still waiting for one.
 const COMMUNITY_PLACEHOLDER = "[xxx]";
 
+export const DOC_PAGES = ["start", "versions", "self-host", "agents", "roadmap"] as const;
+export type DocPageId = (typeof DOC_PAGES)[number];
+
+/** Each page is a short stack of blocks, written lead-first: the title and lead carry the page's one idea. */
+export type DocBlock =
+  | { kind: "p"; text: string }
+  | { kind: "h"; text: string }
+  | { kind: "question"; text: string }
+  | { kind: "steps"; items: { title: string; body: string; code?: string }[] }
+  | { kind: "examples"; label: string; items: { text: string; note: string }[] }
+  | { kind: "shot"; label: string; asked: string; query: string; src: string; alt: string; note: string }
+  | { kind: "compare"; columns: [string, string, string]; rows: [string, string, string][] }
+  | { kind: "tools"; items: { name: string; body: string }[] }
+  | { kind: "roadmap"; status: string; items: { title: string; body: string }[] }
+  | { kind: "channels"; items: { label: string; value: string; href?: string }[] }
+  | { kind: "star"; text: string }
+  | { kind: "links"; label: string; items: { label: string; href: string }[] }
+  | { kind: "next"; items: { label: string; page: DocPageId }[] };
+
+export interface DocPage { nav: string; title: string; lead: string; blocks: DocBlock[] }
+
 export interface DocsContent {
   kicker: string;
-  title: string;
-  lead: string;
+  toc: string;
+  nextLabel: string;
   tryCloud: string;
   github: string;
-  toc: string;
-  sections: {
-    versions: { title: string; intro: string; columns: [string, string, string]; rows: [string, string, string][]; note: string };
-    usage: { title: string; intro: string; items: { title: string; body: string; where: string }[] };
-    deploy: {
-      title: string;
-      intro: string;
-      steps: { title: string; body: string; code?: string }[];
-      mcpTitle: string;
-      mcpBody: string;
-      mcpCode: string;
-      more: string;
-      links: { label: string; href: string }[];
-    };
-    roadmap: { title: string; intro: string; status: string; items: { title: string; body: string }[] };
-    community: { title: string; intro: string; channels: { label: string; value: string; href?: string }[]; closing: string };
-  };
   copy: string;
   copied: string;
+  pages: Record<DocPageId, DocPage>;
 }
 
 const zh: DocsContent = {
   kicker: "Seekino 文档",
-  title: "视频只解析一次，之后像读文字一样找",
-  lead: "Seekino 把视频变成可以检索、回看和追问的素材库。每个结果都带着原片和精确的时间范围，点一下就回到那一刻。",
-  tryCloud: "在 Cloud 上试一试",
+  toc: "文档",
+  nextLabel: "接下来",
+  tryCloud: "现在试一句",
   github: "GitHub 上给个 Star",
-  toc: "本页内容",
-  sections: {
+  copy: "复制",
+  copied: "已复制",
+  pages: {
+    start: {
+      nav: "快速开始",
+      title: "41 小时的课，你要的只是其中一段",
+      lead: "Seekino 把视频变成可以搜索的素材库。说出你记得的画面或想弄懂的概念，它把你直接送到原片里的那一秒。",
+      blocks: [
+        { kind: "question", text: "想想上一次，你在一段长视频里找某个画面，拖了多久进度条？" },
+        { kind: "h", text: "三步试一次" },
+        { kind: "steps", items: [
+          { title: "说出你要找的", body: "按 ⌘K（Windows 上是 Ctrl K），像问朋友一样描述。不用记得原话，也不用知道在第几集。" },
+          { title: "点开时间，直接看", body: "每条结果都带着原片和精确到秒的时间范围。点一下，视频从那一秒开始播放，不用再前后拖。" },
+          { title: "看不懂，就接着问", body: "播放时打开右侧的助手，问“刚才这段在讲什么”。它知道你看到了哪里，回答里的每个片段都能点开核对。" },
+        ] },
+        { kind: "shot", label: "Cloud 上的真实截图 · 2026-11-10", asked: "问", query: "self-attention 是在哪一集哪一分钟讲的", src: "/docs/recall-self-attention.png", alt: "Seekino 的回答：一张 EP 07 · 71:00–71:40 的片段卡片，下面列出第 7 集里讲 self-attention 的六个时间点", note: "8 集、14.6 小时的课，回答直接落到第 7 集的具体时间点，并附上可以点开的原片片段。你现在就可以在 Cloud 上问同一句。" },
+        { kind: "examples", label: "也可以这样问", items: [
+          { text: "反向传播的链式法则是在哪一集讲的", note: "课程" },
+          { text: "Karpathy 说 tokenizer 是很多问题根源的那一段", note: "课程" },
+          { text: "下雨天有人在门口等待的画面", note: "动画" },
+        ] },
+        { kind: "h", text: "为什么不直接倍速看？" },
+        { kind: "p", text: "一节 116 分钟的课，开 3 倍速也要将近 40 分钟，而且你得一直盯着，生怕错过要找的那一段。Seekino 只把视频解析一次，之后每次查找都像在文档里按 Ctrl+F：你要的那一段，直接到。" },
+        { kind: "next", items: [{ label: "Cloud 和本地版有什么不同", page: "versions" }, { label: "在自己电脑上部署", page: "self-host" }] },
+      ],
+    },
     versions: {
-      title: "Cloud 与本地版",
-      intro: "你现在打开的是 Seekino Cloud：不用安装，直接体验我们已经解析好的样例。想用在自己的视频上，就在自己电脑上部署本地版。",
-      columns: ["", "Cloud", "本地版"],
-      rows: [
-        ["开始方式", "打开浏览器即可", "用 Docker 在自己电脑上启动"],
-        ["能看什么", "平台已解析发布的公开样例，如动画和课程", "你自己上传的任何视频"],
-        ["上传与解析", "暂未开放", "整片转写、分块并行解析、建立索引，进度可查、失败可重试"],
-        ["检索、观看、问答", "支持", "支持"],
-        ["账号", "游客即可体验，登录后保存自己的对话", "本机单用户，无需注册"],
-        ["模型与费用", "平台提供", "自选 Ark、DeepSeek、Kimi 等 API 或 Codex，费用由你的账户承担，每次调用都记录 token"],
-        ["MCP（让 Claude Code / Codex 取素材）", "暂不开放", "支持"],
-        ["数据在哪", "平台服务器", "视频和数据库都留在你的电脑上"],
-      ],
-      note: "Cloud 的服务器规格有限，所以上传、个人资料库和 MCP 目前只在本地版提供。",
-    },
-    usage: {
-      title: "怎么用 Seekino",
-      intro: "这几种用法，在 Cloud 的样例上就能先试。",
-      items: [
-        {
-          title: "找回某个画面",
-          body: "按 ⌘K / Ctrl K，用一句模糊印象描述画面，比如“在雨里奔跑的那一幕”，也可以上传一张截图。Seekino 返回命中的片段和精确时间范围，点开就从那一刻播放。",
-          where: "Cloud · 本地版",
-        },
-        {
-          title: "边看边问",
-          body: "观看时打开右侧助手，直接问“刚才这段在讲什么”。助手知道你看到了哪里，回答会附上可以跳转核对的片段。",
-          where: "Cloud · 本地版",
-        },
-        {
-          title: "先看大纲，再挑重点",
-          body: "解析完成后会自动生成视频大纲和系列概览。116 分钟的课程，先看结构，再只看你需要的那几段。",
-          where: "Cloud · 本地版",
-        },
-        {
-          title: "给剪辑找素材",
-          body: "把自己的素材库接入 Claude Code 或 Codex。你只说模糊印象，Agent 通过 MCP 找到片段、核对来源、下载原片，你最后审核即可。",
-          where: "本地版",
-        },
+      nav: "两个版本",
+      title: "Cloud 用来试，本地版用来装你自己的视频",
+      lead: "你现在打开的就是 Cloud：不用安装，直接在我们解析好的课程和动画里搜。想搜自己的视频，就在电脑上装本地版。",
+      blocks: [
+        { kind: "compare", columns: ["", "Cloud", "本地版"], rows: [
+          ["开始方式", "打开浏览器", "Docker 一条命令启动"],
+          ["能搜什么", "平台发布的公开样例：课程和动画", "你自己上传的任何视频"],
+          ["上传与解析", "暂未开放", "支持；进度可查，失败可重试"],
+          ["搜索、观看、追问", "支持", "支持"],
+          ["账号", "游客即可使用；登录后保存对话", "本机使用，无需注册"],
+          ["模型与费用", "平台提供", "自选 Ark、DeepSeek、Kimi 等，费用走你自己的账户，每次调用都记录 token"],
+          ["让 Claude Code / Codex 取素材", "暂不开放", "支持"],
+          ["数据在哪", "平台服务器", "视频和数据库都留在你的电脑上"],
+        ] },
+        { kind: "p", text: "Cloud 服务器规格有限，所以上传、个人资料库和 Agent 接入暂时只在本地版提供。" },
+        { kind: "next", items: [{ label: "部署本地版", page: "self-host" }] },
       ],
     },
-    deploy: {
-      title: "部署本地版",
-      intro: "默认部署使用 Docker，模型只调用 API，不需要显卡、本地模型权重，也不需要在电脑上装 Python 或 Node.js。",
-      steps: [
-        { title: "安装 Docker", body: "Windows 和 macOS 安装 Docker Desktop，Windows 选择 WSL 2 / Linux containers；Linux 安装 Docker Engine 与 Compose 插件。" },
-        { title: "获取代码", body: "克隆仓库并进入目录。", code: `git clone ${GITHUB_URL}.git\ncd Seekino` },
-        { title: "填写模型凭据", body: "复制环境模板，在 .env.docker 中填入 ARK_API_KEY 和 DEEPSEEK_API_KEY。", code: "cp deploy/docker/env.example .env.docker" },
-        { title: "一条命令启动", body: "首次构建需要联网下载镜像和依赖。", code: "docker compose --env-file .env.docker up --build -d --wait" },
-        { title: "上传第一个视频", body: "打开 http://127.0.0.1:5173，新建系列并上传一个短视频。解析和索引完成后，就可以检索和问答。" },
+    "self-host": {
+      nav: "部署本地版",
+      title: "一条命令，在自己电脑上跑起完整的 Seekino",
+      lead: "默认部署用 Docker，模型只调用 API：不需要显卡，不需要下载模型，也不需要在电脑上装 Python 或 Node.js。你只需要 Docker 和两把模型密钥。",
+      blocks: [
+        { kind: "steps", items: [
+          { title: "装好 Docker", body: "Windows 和 macOS 装 Docker Desktop（Windows 选 WSL 2 / Linux containers）；Linux 装 Docker Engine 与 Compose 插件。" },
+          { title: "拿到代码", body: "克隆仓库并进入目录。", code: `git clone ${GITHUB_URL}.git\ncd Seekino` },
+          { title: "填两把密钥", body: "复制环境模板，在 .env.docker 里填上 ARK_API_KEY 和 DEEPSEEK_API_KEY。", code: "cp deploy/docker/env.example .env.docker" },
+          { title: "启动", body: "第一次构建需要联网下载镜像和依赖。", code: "docker compose --env-file .env.docker up --build -d --wait" },
+          { title: "传一个短视频试试", body: "打开 http://127.0.0.1:5173，新建系列，上传一段几分钟的视频。解析完成后，回到“快速开始”的三步，用你自己的视频再试一次。" },
+        ] },
+        { kind: "links", label: "更多配置", items: [
+          { label: "本地配置指南：切换 Kimi / Codex、数据持久化、Windows", href: SETUP_GUIDE },
+          { label: "项目 README", href: GITHUB_URL },
+          { label: "API 文档（本机 /api/docs）", href: "http://127.0.0.1:5173/api/docs" },
+        ] },
+        { kind: "next", items: [{ label: "接入 Claude Code / Codex", page: "agents" }] },
       ],
-      mcpTitle: "接入 Claude Code / Codex",
-      mcpBody: "MCP 只接受本机直连，需要在宿主机上运行 API（按 README 的“宿主机开发”准备环境后执行 ./start.sh）。然后添加 Seekino：",
-      mcpCode: "claude mcp add --transport http seekino http://127.0.0.1:9621/mcp\n# 或\ncodex mcp add seekino --url http://127.0.0.1:9621/mcp",
-      more: "更多配置：",
-      links: [
-        { label: "本地配置指南（切换 Kimi / Codex、持久化、Windows）", href: SETUP_GUIDE },
-        { label: "项目 README", href: GITHUB_URL },
-        { label: "API 文档（本机 /api/docs）", href: "http://127.0.0.1:5173/api/docs" },
+    },
+    agents: {
+      nav: "接入 Agent",
+      title: "给你的 Agent 一个记得所有画面的素材库",
+      lead: "在我们的剪辑测试里，Claude Code 通过 Seekino 在第 4 集里找出 Anon 咬牙切齿的那 1.3 秒，核对来源，再把原片片段取回自己的工作区。你只说要什么，它去找。",
+      blocks: [
+        { kind: "h", text: "接入" },
+        { kind: "steps", items: [
+          { title: "在电脑上直接运行 Seekino", body: "Agent 接入只接受本机连接，需要以宿主机方式运行 API：按 README 的“宿主机开发”准备好环境，执行 ./start.sh。" },
+          { title: "把 Seekino 加给你的 Agent", body: "任选一个。", code: "claude mcp add --transport http seekino http://127.0.0.1:9621/mcp\n# 或\ncodex mcp add seekino --url http://127.0.0.1:9621/mcp" },
+          { title: "像交代同事一样说", body: "例如：“在 Seekino 里找出 Anon 咬牙切齿的镜头，核对来源后把片段存到 clips/。”" },
+        ] },
+        { kind: "h", text: "Agent 能用的四个工具" },
+        { kind: "tools", items: [
+          { name: "list_series", body: "看看素材库里有哪些系列。" },
+          { name: "retrieve", body: "用一句描述检索片段，返回原片与时间范围。" },
+          { name: "browse_events", body: "按时间顺序浏览一集里发生了什么。" },
+          { name: "read_evidence", body: "核对某个片段的上下文，并拿到原片的下载地址。" },
+        ] },
+        { kind: "next", items: [{ label: "接下来要做什么", page: "roadmap" }] },
       ],
     },
     roadmap: {
-      title: "未来计划",
-      intro: "以下是正在考虑的方向，还没有排期。你最想先要哪一个，欢迎来交流群告诉我们。",
-      status: "计划中",
-      items: [
-        { title: "Cloud 个人资料库", body: "登录后在 Cloud 上传、解析自己的视频，不用自己部署。" },
-        { title: "Cloud 接入 MCP", body: "用访问令牌把 Cloud 上的素材库接入 Claude Code / Codex。" },
-        { title: "剪辑参考复用", body: "保存解析过的动效和运镜参考，让 Agent 每次剪辑都能复用之前的经验。" },
-        { title: "按类型自动解析", body: "自动识别课程、影视剧、剪辑素材等视频类型，按类型选择解析方式、控制成本。" },
+      nav: "未来计划",
+      title: "说出一个名字，列出 TA 出场的每一秒",
+      lead: "这是我们下一个想做到的事：在整部作品里，Seekino 不只找到一个画面，而是把某个角色出现过的每一段都列出来，带着时间，一段不漏。",
+      blocks: [
+        { kind: "roadmap", status: "计划中", items: [
+          { title: "人物出场全量列举", body: "说出一个角色，列出 TA 在整部作品里出现的每一段。" },
+          { title: "Cloud 个人资料库", body: "登录后直接在 Cloud 上传、解析自己的视频，不用自己部署。" },
+          { title: "Cloud 接入 Agent", body: "用访问令牌把 Cloud 上的素材库接入 Claude Code / Codex。" },
+          { title: "剪辑参考复用", body: "记住解析过的运镜和动效，让 Agent 下次剪辑直接用上。" },
+        ] },
+        { kind: "p", text: "这些都还没有排期。你最想先要哪一个？来交流群告诉我们，你的一句话就可能决定下一步做什么。" },
+        { kind: "h", text: "加入交流" },
+        { kind: "channels", items: [
+          { label: "交流群", value: COMMUNITY_PLACEHOLDER },
+          { label: "问题与建议", value: "GitHub Issues", href: `${GITHUB_URL}/issues` },
+        ] },
+        { kind: "star", text: "如果 Seekino 帮你省下了一次拖进度条，在 GitHub 上点个 Star 吧。" },
       ],
-    },
-    community: {
-      title: "加入交流",
-      intro: "Seekino 还在早期，每一条使用反馈都会直接影响下一步做什么。用得顺手、遇到问题，或者只是想聊聊视频和 AI，都欢迎来。",
-      channels: [
-        { label: "交流群", value: COMMUNITY_PLACEHOLDER },
-        { label: "问题与建议", value: "GitHub Issues", href: `${GITHUB_URL}/issues` },
-      ],
-      closing: "如果 Seekino 对你有用，在 GitHub 上点个 Star 就是对我们最大的支持。",
     },
   },
-  copy: "复制",
-  copied: "已复制",
 };
 
 const en: DocsContent = {
   kicker: "Seekino docs",
-  title: "Parse a video once, then search it like text",
-  lead: "Seekino turns videos into a library you can search, replay and ask about. Every result links to the source video and its exact time range, so one click takes you back to that moment.",
-  tryCloud: "Try it on Cloud",
+  toc: "Docs",
+  nextLabel: "Next",
+  tryCloud: "Try a search now",
   github: "Star us on GitHub",
-  toc: "On this page",
-  sections: {
+  copy: "Copy",
+  copied: "Copied",
+  pages: {
+    start: {
+      nav: "Quick start",
+      title: "41 hours of lectures. You only need one part.",
+      lead: "Seekino turns videos into a library you can search. Describe a scene you remember or a concept you want to understand, and it takes you straight to that second in the original video.",
+      blocks: [
+        { kind: "question", text: "Think about the last time you looked for one scene in a long video. How long did you drag the progress bar?" },
+        { kind: "h", text: "Try it in three steps" },
+        { kind: "steps", items: [
+          { title: "Say what you're looking for", body: "Press ⌘K (Ctrl K on Windows) and describe it the way you'd ask a friend. You don't need the exact words or the episode number." },
+          { title: "Click the time and watch", body: "Every result comes with its source video and a time range down to the second. One click and playback starts right there, with no more scrubbing." },
+          { title: "Lost? Just ask", body: "While watching, open the assistant beside the player and ask \"what was that part about?\". It knows where you are, and every clip in its answer links back to the source." },
+        ] },
+        { kind: "shot", label: "Real screenshot from Cloud · 2026-11-10", asked: "Asked", query: "self-attention 是在哪一集哪一分钟讲的 (which episode and minute covers self-attention?)", src: "/docs/recall-self-attention.png", alt: "Seekino's answer: a clip card for EP 07 · 71:00–71:40, followed by six time points in episode 7 where self-attention is explained", note: "Across 8 episodes and 14.6 hours, the answer lands on exact time points in episode 7, with source clips you can open. You can ask the same question on Cloud right now." },
+        { kind: "examples", label: "Or ask things like", items: [
+          { text: "which episode covers the chain rule in backprop", note: "Lectures" },
+          { text: "the part where Karpathy says the tokenizer causes a lot of problems", note: "Lectures" },
+          { text: "someone waiting at the door in the rain", note: "Anime" },
+        ] },
+        { kind: "h", text: "Why not just watch at 3×?" },
+        { kind: "p", text: "A 116-minute lecture at 3× still takes nearly 40 minutes, and you have to keep watching so you don't miss the part you need. Seekino parses a video once; after that, every search works like Ctrl+F in a document: you land on the part you need." },
+        { kind: "next", items: [{ label: "How Cloud differs from Local", page: "versions" }, { label: "Run it on your computer", page: "self-host" }] },
+      ],
+    },
     versions: {
-      title: "Cloud vs. Local",
-      intro: "You are on Seekino Cloud: nothing to install, and you can explore the samples we have already parsed. To use Seekino on your own videos, deploy the Local version on your computer.",
-      columns: ["", "Cloud", "Local"],
-      rows: [
-        ["Getting started", "Open it in a browser", "Start it on your computer with Docker"],
-        ["What you can watch", "Published public samples such as anime and courses", "Any video you upload"],
-        ["Upload and parsing", "Not available yet", "Full transcription, parallel chunk parsing and indexing, with progress tracking and retries"],
-        ["Search, watch, ask", "Yes", "Yes"],
-        ["Account", "Try it as a guest; sign in to keep your conversations", "Single local user, no sign-up"],
-        ["Models and cost", "Provided by the platform", "Your choice of Ark, DeepSeek, Kimi and other APIs, or Codex; billed to your own account, with tokens recorded for every call"],
-        ["MCP (footage for Claude Code / Codex)", "Not available yet", "Yes"],
-        ["Where your data lives", "Platform servers", "Videos and databases stay on your computer"],
-      ],
-      note: "The Cloud server has limited capacity, so uploads, personal libraries and MCP are Local-only for now.",
-    },
-    usage: {
-      title: "Ways to use Seekino",
-      intro: "You can try these on the Cloud samples first.",
-      items: [
-        {
-          title: "Find a moment",
-          body: "Press ⌘K / Ctrl K and describe a scene from memory, such as “the one where they run in the rain”, or upload a screenshot. Seekino returns matching clips with exact time ranges, and playback starts at that moment.",
-          where: "Cloud · Local",
-        },
-        {
-          title: "Ask while you watch",
-          body: "Open the assistant beside the player and ask “what was that part about?”. It knows where you are in the video, and its answers link to clips you can jump to and check.",
-          where: "Cloud · Local",
-        },
-        {
-          title: "Read the outline first",
-          body: "After parsing, Seekino writes a video outline and a series overview. For a 116-minute course, see the structure first, then watch only the parts you need.",
-          where: "Cloud · Local",
-        },
-        {
-          title: "Source footage for editing",
-          body: "Connect your own library to Claude Code or Codex. Describe what you remember; the agent finds clips over MCP, checks their sources and downloads the originals, and you review the result.",
-          where: "Local",
-        },
+      nav: "Cloud vs. Local",
+      title: "Cloud is for trying it. Local is for your own videos.",
+      lead: "You're on Cloud now: nothing to install, and you can search the lectures and anime we've already parsed. To search your own videos, install the Local version.",
+      blocks: [
+        { kind: "compare", columns: ["", "Cloud", "Local"], rows: [
+          ["Getting started", "Open a browser", "One Docker command"],
+          ["What you can search", "Published public samples: lectures and anime", "Any video you upload"],
+          ["Upload and parsing", "Not available yet", "Yes, with progress tracking and retries"],
+          ["Search, watch, ask", "Yes", "Yes"],
+          ["Account", "Use it as a guest; sign in to keep your conversations", "Runs on your machine, no sign-up"],
+          ["Models and cost", "Provided by the platform", "Your choice of Ark, DeepSeek, Kimi and more; billed to your own account, with tokens recorded for every call"],
+          ["Footage for Claude Code / Codex", "Not available yet", "Yes"],
+          ["Where your data lives", "Platform servers", "Videos and databases stay on your computer"],
+        ] },
+        { kind: "p", text: "The Cloud server has limited capacity, so uploads, personal libraries and agent access are Local-only for now." },
+        { kind: "next", items: [{ label: "Deploy the Local version", page: "self-host" }] },
       ],
     },
-    deploy: {
-      title: "Deploy the Local version",
-      intro: "The default setup runs in Docker and calls models over APIs. You don't need a GPU, local model weights, or Python or Node.js on your computer.",
-      steps: [
-        { title: "Install Docker", body: "On Windows or macOS, install Docker Desktop (on Windows, choose WSL 2 / Linux containers). On Linux, install Docker Engine with the Compose plugin." },
-        { title: "Get the code", body: "Clone the repository and enter it.", code: `git clone ${GITHUB_URL}.git\ncd Seekino` },
-        { title: "Add model keys", body: "Copy the environment template, then set ARK_API_KEY and DEEPSEEK_API_KEY in .env.docker.", code: "cp deploy/docker/env.example .env.docker" },
-        { title: "Start it with one command", body: "The first build needs a network connection to download images and dependencies.", code: "docker compose --env-file .env.docker up --build -d --wait" },
-        { title: "Upload your first video", body: "Open http://127.0.0.1:5173, create a series and upload a short video. Once parsing and indexing finish, you can search and ask." },
+    "self-host": {
+      nav: "Run it locally",
+      title: "One command runs the full Seekino on your computer",
+      lead: "The default setup runs in Docker and calls models over APIs: no GPU, no model downloads, and no Python or Node.js on your machine. You need Docker and two model keys.",
+      blocks: [
+        { kind: "steps", items: [
+          { title: "Install Docker", body: "On Windows or macOS, install Docker Desktop (on Windows, choose WSL 2 / Linux containers). On Linux, install Docker Engine with the Compose plugin." },
+          { title: "Get the code", body: "Clone the repository and enter it.", code: `git clone ${GITHUB_URL}.git\ncd Seekino` },
+          { title: "Add two keys", body: "Copy the environment template, then set ARK_API_KEY and DEEPSEEK_API_KEY in .env.docker.", code: "cp deploy/docker/env.example .env.docker" },
+          { title: "Start it", body: "The first build needs a network connection to download images and dependencies.", code: "docker compose --env-file .env.docker up --build -d --wait" },
+          { title: "Try a short video", body: "Open http://127.0.0.1:5173, create a series and upload a few minutes of video. Once it's parsed, go back to the three steps in Quick start and try them on your own video." },
+        ] },
+        { kind: "links", label: "More setup", items: [
+          { label: "Local setup guide: Kimi / Codex, persistence, Windows (in Chinese)", href: SETUP_GUIDE },
+          { label: "Project README", href: README_EN },
+          { label: "API docs (/api/docs on your machine)", href: "http://127.0.0.1:5173/api/docs" },
+        ] },
+        { kind: "next", items: [{ label: "Connect Claude Code / Codex", page: "agents" }] },
       ],
-      mcpTitle: "Connect Claude Code / Codex",
-      mcpBody: "MCP accepts local connections only, so the API needs to run directly on your machine: set up host development as described in the README, then run ./start.sh. Then add Seekino:",
-      mcpCode: "claude mcp add --transport http seekino http://127.0.0.1:9621/mcp\n# or\ncodex mcp add seekino --url http://127.0.0.1:9621/mcp",
-      more: "More setup:",
-      links: [
-        { label: "Local setup guide (Kimi / Codex, persistence, Windows; in Chinese)", href: SETUP_GUIDE },
-        { label: "Project README", href: README_EN },
-        { label: "API docs (/api/docs on your machine)", href: "http://127.0.0.1:5173/api/docs" },
+    },
+    agents: {
+      nav: "Agents",
+      title: "Give your agent a library that remembers every scene",
+      lead: "In our editing tests, Claude Code used Seekino to find the 1.3 seconds where Anon grits her teeth in episode 4, checked the source, and pulled the clip into its own workspace. You say what you need; it does the finding.",
+      blocks: [
+        { kind: "h", text: "Connect" },
+        { kind: "steps", items: [
+          { title: "Run Seekino directly on your computer", body: "Agent access only accepts local connections, so the API has to run on the host: set up host development as described in the README, then run ./start.sh." },
+          { title: "Add Seekino to your agent", body: "Pick one.", code: "claude mcp add --transport http seekino http://127.0.0.1:9621/mcp\n# or\ncodex mcp add seekino --url http://127.0.0.1:9621/mcp" },
+          { title: "Ask the way you'd brief a colleague", body: "For example: \"Find the shots of Anon gritting her teeth in Seekino, check the sources, and save the clips to clips/.\"" },
+        ] },
+        { kind: "h", text: "Four tools your agent can use" },
+        { kind: "tools", items: [
+          { name: "list_series", body: "See which series are in the library." },
+          { name: "retrieve", body: "Search clips with a description; returns the source video and time range." },
+          { name: "browse_events", body: "Walk through what happens in an episode, in order." },
+          { name: "read_evidence", body: "Check a clip's context and get a download link for the original." },
+        ] },
+        { kind: "next", items: [{ label: "What's next", page: "roadmap" }] },
       ],
     },
     roadmap: {
-      title: "What's next",
-      intro: "These are directions we're considering, with no dates yet. Tell us in the community group which one you want first.",
-      status: "Planned",
-      items: [
-        { title: "Personal libraries on Cloud", body: "Sign in to upload and parse your own videos on Cloud, with nothing to deploy." },
-        { title: "MCP on Cloud", body: "Connect your Cloud library to Claude Code / Codex with an access token." },
-        { title: "Reusable editing references", body: "Keep the motion and camera references Seekino has parsed, so an agent can reuse past experience in every edit." },
-        { title: "Parsing by video type", body: "Detect courses, films and series, or editing footage, and pick the parsing approach and cost for each type." },
+      nav: "What's next",
+      title: "Say a name. Get every second they appear.",
+      lead: "This is what we want to do next: across a whole series, Seekino won't just find one scene. It will list every moment a character appears, with timestamps, without missing one.",
+      blocks: [
+        { kind: "roadmap", status: "Planned", items: [
+          { title: "Every appearance of a character", body: "Name a character and get every part of the series they appear in." },
+          { title: "Personal libraries on Cloud", body: "Sign in to upload and parse your own videos on Cloud, with nothing to deploy." },
+          { title: "Agents on Cloud", body: "Connect your Cloud library to Claude Code / Codex with an access token." },
+          { title: "Reusable editing references", body: "Remember the camera moves and motion Seekino has parsed, so an agent can reuse them in the next edit." },
+        ] },
+        { kind: "p", text: "None of these have dates yet. Which one do you want first? Tell us in the community group; one message from you can decide what we build next." },
+        { kind: "h", text: "Join the community" },
+        { kind: "channels", items: [
+          { label: "Community group", value: COMMUNITY_PLACEHOLDER },
+          { label: "Bugs and ideas", value: "GitHub Issues", href: `${GITHUB_URL}/issues` },
+        ] },
+        { kind: "star", text: "If Seekino saved you one drag of the progress bar, give it a Star on GitHub." },
       ],
-    },
-    community: {
-      title: "Join the community",
-      intro: "Seekino is early, and every piece of feedback shapes what we build next. Whether it works well for you, something breaks, or you just want to talk about video and AI, come say hi.",
-      channels: [
-        { label: "Community group", value: COMMUNITY_PLACEHOLDER },
-        { label: "Bugs and ideas", value: "GitHub Issues", href: `${GITHUB_URL}/issues` },
-      ],
-      closing: "If Seekino is useful to you, a Star on GitHub is the best way to support us.",
     },
   },
-  copy: "Copy",
-  copied: "Copied",
 };
 
 export function docsContent(locale: Locale): DocsContent {

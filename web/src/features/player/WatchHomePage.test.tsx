@@ -102,8 +102,9 @@ describe("WatchHomePage", () => {
     mocks.useAuth.mockReturnValue({ activeSource: { kind: "public" }, canUpload: false });
     renderPage();
     const card = welcome()!;
-    expect(within(card).getByRole("link", { name: "试着描述一个画面" })).toHaveAttribute("href", "/search");
-    expect(within(card).getByRole("link", { name: /Cloud 和本地版有什么不同/ })).toHaveAttribute("href", "/docs");
+    expect(within(card).getByRole("heading", { name: "41 小时的课，你要的只是其中一段" })).toBeInTheDocument();
+    expect(within(card).getByRole("link", { name: "试一句" })).toHaveAttribute("href", "/search");
+    expect(within(card).getByRole("link", { name: /怎么用/ })).toHaveAttribute("href", "/docs");
     fireEvent.click(within(card).getByRole("button", { name: "关闭欢迎提示" }));
     expect(welcome()).toBeNull();
     cleanup();
