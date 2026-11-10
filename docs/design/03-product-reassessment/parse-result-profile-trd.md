@@ -2,7 +2,7 @@
 
 编辑要在同一个素材库里找表演和手法。基线 `dev@2139cbaf` 的上传路由能判 script、course、clip，三者都提交普通时间线。内容搜索在选中 COMPLETE 任务后按同一个 Schema 读 Chunk，直接接入参考片会让不相关的素材进入内容搜索，甚至导致整次查询失败。
 
-解析用途承接[双召回 #50 §3.3、§3.8](https://github.com/owariband/Seekino/pull/50) 和已合入的[上传路由 #82](https://github.com/owariband/Seekino/pull/82)。原开发记录见 [#83](https://github.com/owariband/Seekino/pull/83)，生成、索引和编辑回看的统一交付在 `feat/mcp-edit-references` → `dev` 的 [#85](https://github.com/owariband/Seekino/pull/85)。
+解析用途承接[双召回 #50 §3.3、§3.8](https://github.com/owariband/Seekino/pull/50) 和已合入的[上传路由 #82](https://github.com/owariband/Seekino/pull/82)。原开发记录见 [#83](https://github.com/owariband/Seekino/pull/83)，生成、索引和编辑回看的统一交付在 `docs/editing-skill-style-reference` → `dev` 的 [#50](https://github.com/owariband/Seekino/pull/50)。
 
 # 2. 影响因素、假设与评价指标
 
@@ -22,8 +22,8 @@
 
 # 5. 试点验证与方案取舍
 
-档案选择及读取隔离随 #85 整体验收。用同一个系列的两支上传验证普通内容能按动作检索、参考片能按手法检索，两者的引用均能下载对应原片。
+档案选择及读取隔离随 #50 整体验收。用同一个系列的两支上传验证普通内容能按动作检索、参考片能按手法检索，两者的引用均能下载对应原片。
 
 # 6. 结果验收与闭环
 
-2026-11-10 在独立 MySQL、ES 和媒体目录复验。两类素材同库时，默认正片搜索从 5 个已发布视频返回事件，另 7 个暂停任务不妨碍检索。手法查询读参考片专用投影。两路的协议回执见[编辑 MCP #85](https://github.com/owariband/Seekino/pull/85)。
+2026-11-10 在独立 MySQL、ES 和媒体目录复验。两类素材同库时，默认正片搜索从 5 个已发布视频返回事件，另 7 个暂停任务不妨碍检索。手法查询读参考片专用投影。两路的协议回执见[编辑 MCP #50](https://github.com/owariband/Seekino/pull/50)。

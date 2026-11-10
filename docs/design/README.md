@@ -116,9 +116,9 @@ Event / Sub-Chunk 的实施入口是 [sub-chunk-trd.md](02-agent-harness/sub-chu
 | Chat 工具与证据交付 | [agent-chat-delivery-contract.md](01-mvp/agent-chat-delivery-contract.md) | 交付合同与演进记录：Query / Evaluator、业务工具、证据核准及答案交付；Event 工具结合 Sub-Chunk TRD 阅读。 |
 | 网页搜索供应商 | [deepseek-web-search-trd.md](03-product-reassessment/deepseek-web-search-trd.md) | 主 TRD：可选免 key DDGS / DeepSeek API、查询边界、错误处理与真实入口验证。 |
 | 外部 Agent MCP 接入 | [mcp-access-trd.md](03-product-reassessment/mcp-access-trd.md) | 主 TRD：localhost 工具发现、Event 召回、版本化证据与媒体取用；外部 Agent 承担制作。 |
-| 剪辑双召回（角色素材 + 剪辑风格参考） | [editing-skill-style-reference-trd.md](03-product-reassessment/editing-skill-style-reference-trd.md) | 方向 TRD：剪辑技能静态、用完即弃，Seekino 一次解析、多次召回；现有解析任务内的 `edit_reference` 档案（Prepare 选代表片段、Understanding 高帧率分析、全片 Refine 窗口汇总观察与风格卡）；模板库保存完整契约的不可变版本与可追加的评价、检查；验证 E0–E3、E2。 |
+| 剪辑双召回 | [主设计与实现](03-product-reassessment/editing-skill-style-reference-trd.md) | [#50](https://github.com/owariband/Seekino/pull/50) 从剧本召回可剪表演和有原片依据的剪辑手法。模板库待跨片复用验收后决定。 |
 | 动画表情素材召回 | [E4 专项](03-product-reassessment/anime-material-recall-trd.md) | 动画表情提示词、整集对照与 MCP 全量素材浏览。 |
-| 剧本双召回与原片取用 | [同一个 MCP 的整体验收](03-product-reassessment/mcp-edit-references-trd.md) | 从剧本找表演、查手法、取用两类原片，由 #85 直接向 dev 交付。 |
+| 剧本双召回与原片取用 | [同一个 MCP 的整体验收](03-product-reassessment/mcp-edit-references-trd.md) | 从剧本找表演、查手法、取用两类原片，随 #50 向 dev 交付。 |
 | 剪辑参考解析 | [代表片段与全片风格卡](03-product-reassessment/edit-reference-profile-trd.md) | 参考档案使用原片帧与独立手法索引。 |
 | 解析结果用途 | [正片与剪辑参考档案](03-product-reassessment/parse-result-profile-trd.md) | 冻结任务用途，限定正片检索与导出范围。 |
 | 上传视频自动判型 | [解析前置路由](03-product-reassessment/parse-pre-hook-router-trd.md) | 普通上传在抽帧前判断剧情、课程或剪辑成片，并保存生效策略。 |

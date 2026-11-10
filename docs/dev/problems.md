@@ -2868,4 +2868,4 @@ micrograd v5 共 146 块，整集 90 分 04.884 秒。调度反复锁取候选�
 
 ## EDIT-REFERENCE-01 · 全片风格卡和手法搜索缺少能直接回看的带时间引证
 
-2026-11-10。编辑需要从一段剧本同时找到连续表演和有来源的手法。验收要求手法搜索、整片卡能把同一代表段交给证据读取器，切换时刻有原生帧可核，正片可按自选区间下载。两份提示词以 #50 的 Weekend 观察与全片 Refine 存档为准。独立成片验收由片主安排。[合同](../design/03-product-reassessment/mcp-edit-references-trd.md) · [工作台](workbench.html)
+2026-11-10。编辑需要从一段剧本同时找到连续表演和有来源的手法。验收要求手法搜索、整片卡能把同一代表段交给证据读取器，切换时刻有原生帧可核，正片可按自选区间下载。两份提示词以 #50 的 Weekend 观察与全片 Refine 存档为准。主需求与代码在 [#50](https://github.com/owariband/Seekino/pull/50)，连续原片下载 EDIT-CLIP-01 是其子任务。独立成片验收由片主安排。[合同](../design/03-product-reassessment/mcp-edit-references-trd.md) · [工作台](workbench.html)

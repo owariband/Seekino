@@ -92,7 +92,7 @@ Service 负责；Repository 保留事务内的状态与并发约束。
 
 `SEEKINO_AUTH_MODE=local` 时，正常 API 进程同时提供 Streamable HTTP MCP：`http://127.0.0.1:9621/mcp`。若 API 端口不同，使用实际端口。无需单独启动 MCP 进程；Cloud 模式不提供这个入口。
 
-同一编辑客户端通过这个地址取用表演和手法范例。可从 [#85](https://github.com/owariband/Seekino/pull/85) 检出整个功能，在本机用[整体验收命令](../docs/design/03-product-reassessment/mcp-edit-references-trd.md#6-结果验收与闭环)从两个普通上传开始，验证最终能取得两段原片。
+同一编辑客户端通过这个地址取用表演和手法范例。可从 [#50](https://github.com/owariband/Seekino/pull/50) 检出整个功能，在本机用[整体验收命令](../docs/design/03-product-reassessment/mcp-edit-references-trd.md#6-结果验收与闭环)从两个普通上传开始，验证最终能取得两段原片。
 
 | 工具 | 参数与结果 |
 |---|---|

@@ -100,15 +100,16 @@
     "pick": "d62c1e493dd4100f801fed5078e5659277febc680af4048e94eb6dfa4715f429",
     "refine": "6054845122e23d8da72e64506e001e7b5df3c934215249934ab3ec23182b5ea4"
   },
-  "verification_scope": "650 related automated tests passed. Existing editor library and separate archived-response contract replay. No fresh model generation for the final prompts or independent editor acceptance.",
+  "verification_scope": "The initial implementation passed 650 focused tests. The combined PR section records the latest dev baseline, repeatable full-path checks and broader regression results. No fresh model generation for the final prompts or independent editor acceptance.",
   "combined_feature_pr": {
-    "number": 85,
+    "number": 50,
     "base": "dev",
-    "base_commit": "236bdd8c",
+    "base_commit": "3f4a806d",
     "includes_closed_implementation_prs": [
       81,
       83,
-      84
+      84,
+      85
     ],
     "design_pr": 50,
     "entry_point": "tests/server/test_editing_mcp_flow.py",
@@ -125,7 +126,12 @@
       "Read and download an editor-chosen source range and the reference exemplar from the same app",
       "Both clips preserve the requested times, ordered frames from their own originals, and audio"
     ],
-    "non_live_backend_suite": {
+    "branch": "docs/editing-skill-style-reference",
+    "implementation_head_from_pr85": "cdd5b92aae007f88a436b89383f8ef2d1d38cf45",
+    "verified_code_commit": "084b2ebcb43c3b5fe67245be3f513d27dfafb105",
+    "previous_backend_run": {
+      "pr": 85,
+      "base_commit": "236bdd8c",
       "initial_run": {
         "passed": 6197,
         "failed": 24,
@@ -161,6 +167,38 @@
         "tests/server/test_refine_video_frames.py::test_refine_keeps_frozen_config_and_uses_no_media_or_voice_tools[True-None]",
         "tests/server/test_refine_video_frames.py::test_refine_keeps_frozen_config_and_uses_no_media_or_voice_tools[True-True]"
       ]
-    }
+    },
+    "non_live_backend_suite": {
+      "passed": 6225,
+      "failed": 17,
+      "skipped": 128,
+      "deselected": 1,
+      "failed_also_on_unmodified_dev": [
+        "tests/engine/common/test_dependencies.py::test_imports_do_not_load_v1_in_a_fresh_process[common]",
+        "tests/engine/test_rag_api.py::test_persisted_identity_uses_content_version_and_generation_and_search_json_round_trips",
+        "tests/gateway/test_langfuse_integration.py::test_offline_otlp_payload_headers_hierarchy_and_time",
+        "tests/gateway/test_model_config_v2.py::test_codex_supervisor_without_independent_binding_requires_the_agent_source_to_match",
+        "tests/gateway/test_model_config_v2.py::test_default_model_migration_preserves_asr_embedding_agent_and_parse_strategy",
+        "tests/gateway/test_model_config_v2.py::test_independent_supervisor_keeps_agent_models_and_environment_overrides_separate",
+        "tests/gateway/test_multimodal_agent.py::test_fallback_media_is_checked_against_the_active_context_budget",
+        "tests/gateway/test_multimodal_agent.py::test_parse_diagnostics_restore_each_round_and_exclude_chat[deepseek]",
+        "tests/gateway/test_usage.py::test_deepseek_captures_usage_even_on_invalid_or_incomplete_output[completed-invalid]",
+        "tests/server/test_base_model.py::test_all_business_tables_inherit_indexed_nullable_audit_columns",
+        "tests/server/test_refine_video_frames.py::test_refine_keeps_frozen_config_and_uses_no_media_or_voice_tools[False-False]",
+        "tests/server/test_refine_video_frames.py::test_refine_keeps_frozen_config_and_uses_no_media_or_voice_tools[False-None]",
+        "tests/server/test_refine_video_frames.py::test_refine_keeps_frozen_config_and_uses_no_media_or_voice_tools[False-True]",
+        "tests/server/test_refine_video_frames.py::test_refine_keeps_frozen_config_and_uses_no_media_or_voice_tools[True-False]",
+        "tests/server/test_refine_video_frames.py::test_refine_keeps_frozen_config_and_uses_no_media_or_voice_tools[True-None]",
+        "tests/server/test_refine_video_frames.py::test_refine_keeps_frozen_config_and_uses_no_media_or_voice_tools[True-True]"
+      ],
+      "passed_on_isolated_rerun": [
+        "tests/gateway/test_kimi_streaming.py::test_factory_kimi_streams_json_and_tools_with_usage_and_reasoning[None-deepagents]"
+      ]
+    },
+    "dev_integration_checks": [
+      "Published references in the same series do not falsely mark ready content as partial.",
+      "Clip download on the integrated branch calls the current series access check and verifies publication at read time.",
+      "The live loopback editor instance served the six tools on this branch. The P5R excerpt played for 1133 ms and the seven incomplete jobs remained paused."
+    ]
   }
 }

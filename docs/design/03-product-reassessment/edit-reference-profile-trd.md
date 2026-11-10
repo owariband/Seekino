@@ -2,7 +2,7 @@
 
 编辑想问“有没有人物登场时从面部特写逐级硬切拉远的例子”，然后自己查看每个切点。目前普通 clip 只有事件描述；八段 P5R 笔记和整片风格卡由实验脚本产生，上传或重解析无法复现。旧卡还曾将整个候选的起点当作切到脸的时刻，编辑拿到文字仍得从头找。
 
-承接[Claude 与 Codex 共同维护的双召回设计 #50](https://github.com/owariband/Seekino/pull/50)。上传沿用 [#82](https://github.com/owariband/Seekino/pull/82)，原档案及解析开发记录见 [#83](https://github.com/owariband/Seekino/pull/83) 和 [#84](https://github.com/owariband/Seekino/pull/84)。当前完整实现由 `feat/mcp-edit-references` 的 [#85](https://github.com/owariband/Seekino/pull/85) 直接向 `dev` 交付，[整体验收](mcp-edit-references-trd.md)包括正片与参考片两种原片的实际下载。
+承接[Claude 与 Codex 共同维护的双召回设计 #50](https://github.com/owariband/Seekino/pull/50)。上传沿用 [#82](https://github.com/owariband/Seekino/pull/82)，原档案及解析开发记录见 [#83](https://github.com/owariband/Seekino/pull/83) 和 [#84](https://github.com/owariband/Seekino/pull/84)。当前完整实现由 `docs/editing-skill-style-reference` 的 [#50](https://github.com/owariband/Seekino/pull/50) 直接向 `dev` 交付，[整体验收](mcp-edit-references-trd.md)包括正片与参考片两种原片的实际下载。
 
 # 2. 影响因素、假设与评价指标
 
@@ -30,4 +30,4 @@
 
 # 6. 结果验收与闭环
 
-一次全片 Refine 返回了完整必填内容，但少了最后一个外层右花括号。保留了原始响应，仅在补齐该闭合符且全部必填字段通过校验时接收，按持久任务完成发布。解析、上传与普通内容的相关回归共 352 项通过。MCP 端验证与实片验收边界见[统一实现 #85](https://github.com/owariband/Seekino/pull/85)。
+一次全片 Refine 返回了完整必填内容，但少了最后一个外层右花括号。保留了原始响应，仅在补齐该闭合符且全部必填字段通过校验时接收，按持久任务完成发布。解析、上传与普通内容的相关回归共 352 项通过。MCP 端验证与实片验收边界见[统一实现 #50](https://github.com/owariband/Seekino/pull/50)。

@@ -2,7 +2,7 @@
 
 编辑只给剧本，需要在同一个 Seekino 素材库找到可剪的表演、可借鉴的手法，并回到两者的原片。一个 MCP 服务在 `/mcp` 同时提供这六个工具。编辑可以用同一个客户端走完搜索、看依据、自选入出点和下载。
 
-主设计沿用 [#50](https://github.com/owariband/Seekino/pull/50)。完整实现和验收集中在 [PR #85](https://github.com/owariband/Seekino/pull/85)，分支 `feat/mcp-edit-references` 直接面向 `dev`。此前分别开发的取片、用途识别和参考片解析已包含在这份提交历史中。
+主设计、实现与整体验收统一挂在 [PR #50](https://github.com/owariband/Seekino/pull/50)，分支 `docs/editing-skill-style-reference` 直接面向 `dev`。原先的取片、用途识别、参考片解析和整合工作分别记录在 #81、#83、#84、#85，相关代码均已并入本 PR。
 
 # 2. 影响因素、假设与评价指标
 
@@ -24,7 +24,7 @@
 
 # 6. 结果验收与闭环
 
-从 #85 检出后运行下列测试。端口指向本机专用 Elasticsearch 8.x 测试实例，命令需要 FFmpeg 和 ffprobe。测试通过正常 API 启动应用，在临时数据库中上传两支各两秒的合成片，执行 Parse V2 和索引发布，再用同一 MCP 客户端读取新生成的带引证风格卡、下载自选表演与参考原片。它使用固定模型响应，验证 HTTP、SQL、ES 和 FFmpeg 的衔接。索引名每次随机生成，结束时释放。默认使用临时 SQLite；设置 `SEEKINO_EDITING_TEST_DATABASE_URL` 可在本机空的 MySQL `*_test` 数据库执行同一用例。
+从 #50 检出后运行下列测试。端口指向本机专用 Elasticsearch 8.x 测试实例，命令需要 FFmpeg 和 ffprobe。测试通过正常 API 启动应用，在临时数据库中上传两支各两秒的合成片，执行 Parse V2 和索引发布，再用同一 MCP 客户端读取新生成的带引证风格卡、下载自选表演与参考原片。它使用固定模型响应，验证 HTTP、SQL、ES 和 FFmpeg 的衔接。索引名每次随机生成，结束时释放。默认使用临时 SQLite；设置 `SEEKINO_EDITING_TEST_DATABASE_URL` 可在本机空的 MySQL `*_test` 数据库执行同一用例。
 
 ```bash
 SEEKINO_TEST_ELASTICSEARCH_URL=http://127.0.0.1:19451 uv run --locked python -m pytest -q tests/server/test_editing_mcp_flow.py

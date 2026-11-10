@@ -1,6 +1,6 @@
 # 1. 问题与现状
 
-2026-11-09，取片改动最初在 [#81](https://github.com/owariband/Seekino/pull/81) 开发，沿用[原片召回 #77](https://github.com/owariband/Seekino/pull/77) 和[双召回主设计 #50](https://github.com/owariband/Seekino/pull/50)。完整代码已收入 `feat/mcp-edit-references` 的 [#85](https://github.com/owariband/Seekino/pull/85)，直接向 `dev` 交付并实施[整体验收](mcp-edit-references-trd.md)。官方 Cloud MCP 接入与部署另行负责。
+2026-11-09，取片改动最初在 [#81](https://github.com/owariband/Seekino/pull/81) 开发，沿用[原片召回 #77](https://github.com/owariband/Seekino/pull/77) 和[双召回主设计 #50](https://github.com/owariband/Seekino/pull/50)。完整代码已收入 `docs/editing-skill-style-reference` 的 [#50](https://github.com/owariband/Seekino/pull/50)，直接向 `dev` 交付并实施[整体验收](mcp-edit-references-trd.md)。官方 Cloud MCP 接入与部署另行负责。
 
 编辑能通过 `read_evidence` 回看有来源和时间的命中，但得到的是整集视频地址。《Weekend》试剪要求“挑一张带背景的爱音原帧”；EP04 咬牙特写前的抬手、收拳因此没有进入成片。需求是让编辑自己找到并取得完整表演；人物名可帮助检索，取片无需人物名或分割参数。
 

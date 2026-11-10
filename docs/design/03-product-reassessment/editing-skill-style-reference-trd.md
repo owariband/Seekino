@@ -3,10 +3,11 @@
 | Item | Value |
 | --- | --- |
 | Requirement | **Dual recall for AI video editing.** Seekino parses a video once and keeps two kinds of editing material recallable at exact ranges: **character material** (for example 爱音 frames ready for cut-out) and **editing-style references** (highlight techniques with their motion spec, plus implementation versions and the experience behind them). An editing agent in Claude Code or Codex recalls both through MCP instead of re-reading references and asking the user to point at frames |
-| Type | Feature direction + minimal validation. This PR holds the TRD only; each integration step gets its own branch + PR with a TRD-first commit (§3.8) |
+| Type | Feature design, implementation and integrated acceptance. Review the complete workflow on this PR against `dev` (§3.8 and §6). |
 | Opened / revised | Opened 2026-11-05. Direction rewritten 2026-11-06 after four rounds of owner review (decision log) |
 | Branch / PR | `docs/editing-skill-style-reference` / [PR #50](https://github.com/owariband/Seekino/pull/50) |
-| Status | Final design agreed with the owner 2026-11-07. E0, E1, E3 pass (standalone scripts, with adjustments); **E2 cost gate failed**. the separate Weekend trial led to the 2026-11-08 animation-material pilot. Whole-EP04 ranked recall and exhaustive MCP browsing passed on the local five-episode library in [PR #77](https://github.com/owariband/Seekino/pull/77) |
+| Status | Code and repeatable local integration checks are on this PR. The original E2 cost gate failed. The owner-controlled independent film and blind review are pending. See §4–§6. |
+| Earlier checkpoint | Final design agreed with the owner 2026-11-07. E0, E1, E3 pass (standalone scripts, with adjustments); **E2 cost gate failed**. the separate Weekend trial led to the 2026-11-08 animation-material pilot. Whole-EP04 ranked recall and exhaustive MCP browsing passed on the local five-episode library in [PR #77](https://github.com/owariband/Seekino/pull/77) |
 | Related | [MCP access TRD](mcp-access-trd.md); [Sub-Chunk / Event TRD](../02-agent-harness/sub-chunk-trd.md); [PR #34](https://github.com/owariband/Seekino/pull/34) (course parse profile, the base for per-type schema config); [PR #53](https://github.com/owariband/Seekino/pull/53) (ASR blank-word fix found while parsing MyGO) |
 
 ## 1.1 Why Seekino needs edit analysis
@@ -328,10 +329,12 @@ Write tools run only under MCP's current local mode (loopback-only `_LocalOnly`,
 1. **E1, E3** (§4): picks on P5R; model-written observation against the hand spec. Gate for building the profile.
 2. **E2** retains the original two-beat cost result. The owner authorized the material and reference work on the later quality evidence. Technique-level savings remain an independent gate for template storage.
 3. If a gate fails, report the evidence and the needed adjustment before building.
-4. Then develop in the order of §3.8, each step its own branch and PR with a TRD-first commit.
+4. Develop in the order of §3.8 and verify the integrated changes on PR #50.
 5. Make the promo through MCP only, log every gap, and return to this TRD.
 
 ## 3.8 Integration sequence
+
+The branches below record how the implementation was developed. [PR #50](https://github.com/owariband/Seekino/pull/50) now includes the commits from #81, #83, #84 and #85. This is the single checkout for the six MCP tools, the two upload paths and their source-media downloads. The linked [integration test](../../../tests/server/test_editing_mcp_flow.py) starts the normal API.
 
 | Step | Branch | Change | Gate |
 | --- | --- | --- | --- |
@@ -446,12 +449,16 @@ Go / no-go for dual recall: the editor independently finds the character reactio
 
 # 6. 结果验收与闭环
 
-Not closed. As of 2026-11-08:
+Historical checkpoint on 2026-11-08:
 - Settled: the `edit_reference` profile inside the existing parse task, stage responsibilities, the whole-video Refine window, and the template library contract.
 - Measured: E0/E1/E3 in standalone experiments, E2 cost miss, and the separate Weekend blind preference. P5R style-card consolidation was manual.
 - Codex implemented and verified the E4 character pilot and paged MCP access locally in [PR #77](https://github.com/owariband/Seekino/pull/77). The unprompted fresh-editor promo, P5R production integration, automatic type classification and stored representative-frame gate remain open. PR #53 is a separate fix.
 
 Acceptance returns to §1.1: the promo exists, made through MCP, and the dual recall is what made it.
+
+On 2026-11-10 the design and runnable implementation were brought together on this PR. Test uploads produce content Events and editing observations through Parse V2. A single client connects to `/mcp`, searches for each kind of material, resolves the cited source and downloads both ranges. The full-path regression uses deterministic inference, isolated SQL and Elasticsearch, and FFmpeg to compare every downloaded frame with the corresponding original. It also checks that a reference in the same series does not count as an unindexed content episode. [Run the integrated acceptance](mcp-edit-references-trd.md#6-结果验收与闭环).
+
+In the earlier Weekend trial both groups received the eight P5R notes. The owner preferred 02 from the group with the additional automatic card. The local P5R publication currently serves its original legacy card. The final prompt and anchored-card contract have been verified separately by replaying the archived observations and resolving all 16 example timestamps. The owner controls the fresh Claude edit and final review. [Verification receipt](../../report/server/editing-mcp-code-loop-20261110.json).
 
 ## Decision log
 
@@ -476,3 +483,4 @@ Acceptance returns to §1.1: the promo exists, made through MCP, and the dual re
 | 2026-11-07 | Scan starts (0.2 s debounce) are the step boundaries | E3: rungs 2–3 frames apart are suppressed by the debounce; long merged candidates hide techniques | Prepare splits candidates > 3 s and runs a fine in-pick detector whose starts are the boundaries; Refine consolidates names and roles | §3.3, E1, E3 |
 | 2026-11-07 | Recall makes the editing agent cheaper (H1), and a saved version makes the next beat cheaper (H6) | E2: B +7 % tokens / +11 % time; B2 +21 % / +3 %; reference reading is a small share of cost | Implementation held; evidence returned to owner. Measured value is fidelity, consistency and carried experience, not cost | §4 E2 |
 | 2026-11-08 | Character material and representative frames could wait until after template storage | Weekend film 2 won its own review with a shared character pack; three clearly sampled clenched-teeth frames were described as a smile | Codex follow-up: whole-episode anime prompt pilot, unchanged query, and exhaustive MCP browsing; defer template storage until measured technique reuse | §3.5, §3.8, E4, §5 |
+| 2026-11-10 | A design-only PR with a separate implementation review for each integration step | The editor needs one checkout and one MCP endpoint to test both source paths together | Keep the original design history and integrate implementation and acceptance into #50 | The read-only pilot is ready for independent review. Template writeback stays deferred until a second edit demonstrates reuse |
