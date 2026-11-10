@@ -58,18 +58,18 @@ const zh: DocsContent = {
         { kind: "question", text: "想想上一次，你在一段长视频里找某个画面，拖了多久进度条？" },
         { kind: "h", text: "三步试一次" },
         { kind: "steps", items: [
-          { title: "说出你要找的", body: "按 ⌘K（Windows 上是 Ctrl K），像问朋友一样描述。不用记得原话，也不用知道在第几集。" },
+          { title: "说出你要找的", body: "按 ⌘K（Windows 上是 Ctrl+K），像问朋友一样描述。不用记得原话，也不用知道在第几集。" },
           { title: "点开时间，直接看", body: "每条结果都带着原片和精确到秒的时间范围。点一下，视频从那一秒开始播放，不用再前后拖。" },
           { title: "看不懂，就接着问", body: "播放时打开右侧的助手，问“刚才这段在讲什么”。它知道你看到了哪里，回答里的每个片段都能点开核对。" },
         ] },
-        { kind: "shot", label: "Cloud 上的真实截图 · 2026-11-10", asked: "问", query: "self-attention 是在哪一集哪一分钟讲的", src: "/docs/recall-self-attention.png", alt: "Seekino 的回答：一张 EP 07 · 71:00–71:40 的片段卡片，下面列出第 7 集里讲 self-attention 的六个时间点", note: "8 集、14.6 小时的课，回答直接落到第 7 集的具体时间点，并附上可以点开的原片片段。你现在就可以在 Cloud 上问同一句。" },
+        { kind: "shot", label: "Cloud 上的真实截图 · 2026-11-10", asked: "问", query: "self-attention 是在哪一集哪一分钟讲的", src: "/docs/recall-self-attention.png", alt: "Seekino 的回答：一张 EP 07 · 71:00–71:40 的片段卡片，下面列出第 7 集里讲 self-attention 的六个时间点", note: "8 集、14.6 小时的课，回答落在第 7 集的具体时间点，附带可以点开的原片片段。在 Cloud 上问同一句，就能自己核对。" },
         { kind: "examples", label: "也可以这样问", items: [
           { text: "反向传播的链式法则是在哪一集讲的", note: "课程" },
           { text: "Karpathy 说 tokenizer 是很多问题根源的那一段", note: "课程" },
           { text: "下雨天有人在门口等待的画面", note: "动画" },
         ] },
         { kind: "h", text: "为什么不直接倍速看？" },
-        { kind: "p", text: "一节 116 分钟的课，开 3 倍速也要将近 40 分钟，而且你得一直盯着，生怕错过要找的那一段。Seekino 只把视频解析一次，之后每次查找都像在文档里按 Ctrl+F：你要的那一段，直接到。" },
+        { kind: "p", text: "一节 116 分钟的课，开 3 倍速也要将近 40 分钟，而且你得一直盯着，生怕错过要找的那一段。Seekino 只需把视频解析一次，之后每次查找都像在文档里按 Ctrl+F，直接跳到那一段。" },
         { kind: "next", items: [{ label: "Cloud 和本地版有什么不同", page: "versions" }, { label: "在自己电脑上部署", page: "self-host" }] },
       ],
     },
@@ -136,7 +136,7 @@ const zh: DocsContent = {
     roadmap: {
       nav: "未来计划",
       title: "说出一个名字，列出 TA 出场的每一秒",
-      lead: "这是我们下一个想做到的事：在整部作品里，Seekino 不只找到一个画面，而是把某个角色出现过的每一段都列出来，带着时间，一段不漏。",
+      lead: "这是我们接下来想做的：在整部作品里，Seekino 不只找到一个画面，而是列出某个角色出现过的每一段和对应时间，一段不漏。",
       blocks: [
         { kind: "roadmap", status: "计划中", items: [
           { title: "人物出场全量列举", body: "说出一个角色，列出 TA 在整部作品里出现的每一段。" },
@@ -144,7 +144,7 @@ const zh: DocsContent = {
           { title: "Cloud 接入 Agent", body: "用访问令牌把 Cloud 上的素材库接入 Claude Code / Codex。" },
           { title: "剪辑参考复用", body: "记住解析过的运镜和动效，让 Agent 下次剪辑直接用上。" },
         ] },
-        { kind: "p", text: "这些都还没有排期。你最想先要哪一个？来交流群告诉我们，你的一句话就可能决定下一步做什么。" },
+        { kind: "p", text: "这些都还没有排期。你最想先要哪一个？来交流群告诉我们，你的意见可能直接影响我们先做哪一个。" },
         { kind: "h", text: "加入交流" },
         { kind: "channels", items: [
           { label: "交流群", value: COMMUNITY_PLACEHOLDER },
@@ -173,7 +173,7 @@ const en: DocsContent = {
         { kind: "question", text: "Think about the last time you looked for one scene in a long video. How long did you drag the progress bar?" },
         { kind: "h", text: "Try it in three steps" },
         { kind: "steps", items: [
-          { title: "Say what you're looking for", body: "Press ⌘K (Ctrl K on Windows) and describe it the way you'd ask a friend. You don't need the exact words or the episode number." },
+          { title: "Say what you're looking for", body: "Press ⌘K (Ctrl+K on Windows) and describe it the way you'd ask a friend. You don't need the exact words or the episode number." },
           { title: "Click the time and watch", body: "Every result comes with its source video and a time range down to the second. One click and playback starts right there, with no more scrubbing." },
           { title: "Lost? Just ask", body: "While watching, open the assistant beside the player and ask \"what was that part about?\". It knows where you are, and every clip in its answer links back to the source." },
         ] },
