@@ -26,7 +26,29 @@ try {
   await video.evaluate((element) => element.pause());
   assert(ranges.includes(206));
   assert((await (await page.request.get(origin + "/api/auth/me")).json()).isGuest);
-  await page.getByRole("button", { name: "打开观看侧栏" }).click();
+  const viewer = page.getByRole("region", { name: "视频播放器" });
+  const viewerWidth = () => viewer.evaluate((element) => element.getBoundingClientRect().width);
+  const closedWidth = await viewerWidth();
+  const kino = page.getByRole("button", { name: "与 Kino 对话" });
+  const companion = page.getByRole("complementary", { name: "观看侧栏" });
+  await kino.click();
+  await expect(companion).toHaveAttribute("data-mode", "floating");
+  await expect(companion.getByRole("textbox")).toBeVisible();
+  assert.equal(await viewerWidth(), closedWidth);
+  await companion.getByRole("button", { name: "停靠到侧栏" }).click();
+  await expect.poll(viewerWidth).toBeLessThan(closedWidth - 250);
+  await page.reload();
+  await kino.click();
+  await expect(companion).toHaveAttribute("data-mode", "docked");
+  await companion.getByRole("button", { name: "改为悬浮窗" }).click();
+  await expect.poll(viewerWidth).toBe(closedWidth);
+  await companion.getByRole("button", { name: "关闭对话面板" }).click();
+  await viewer.getByRole("button", { name: "网页全屏", exact: true }).click();
+  await expect.poll(() => page.evaluate(() => Boolean(document.fullscreenElement))).toBe(true);
+  await kino.click();
+  await expect(companion.getByRole("textbox")).toBeVisible();
+  assert(await companion.evaluate((element) => document.fullscreenElement.contains(element)));
+  await page.evaluate(() => document.exitFullscreen());
   for (const [question, answer] of [
     ["你好", "你好，我们可以聊这门课。"], ["继续解释", "可以继续讨论。"],
     ["搜整门课", "本次检索覆盖 E01–E07，E08 正在处理"], ["只查 E08", "该集正在解析，暂时无法检索"],
@@ -41,9 +63,12 @@ try {
   }
   await page.reload();
   const panel = page.locator("#watch-chat-panel");
-  if (!await panel.isVisible()) await page.getByRole("button", { name: "打开观看侧栏" }).click();
+  if (!await panel.isVisible()) await kino.click();
   await expect(panel.getByText("检索到了候选片段，但本次回答未附带可播放视频，请重试。", { exact: true })).toBeVisible();
-  console.log("Guest E08 playback at 6000 ms (206), eight chat turns, per-tool scopes, missing episode and restored candidate outcome verified.");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(companion).toHaveAttribute("data-mode", "docked");
+  await expect(companion.getByRole("button", { name: "改为悬浮窗" })).toHaveCount(0);
+  console.log(`Guest E08 verified: floating player width ${closedWidth}px, docking and persistence, fullscreen, mobile drawer, playback at 6000 ms (206), eight chat turns and scoped retrieval.`);
 } finally {
   await browser.close();
 }
