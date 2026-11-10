@@ -739,7 +739,7 @@ def test_cloud_yaml_settings_permissions_and_chat_projection(cloud_api, yaml_mod
                     supportsVision=row.supports_vision, revision=row.revision)
         result = client.get(path)
         options = client.get("/api/agent/messages/options")
-        schema = client.get("/openapi.json").json()
+        schema = client.get("/api/openapi.json").json()
         assert "/api/agent/model-connections" not in schema["paths"]
         assert "PersonalModelConnectionSave" not in schema["components"]["schemas"]
         assert path + "/roles" not in schema["paths"] and path + "/discover" not in schema["paths"]

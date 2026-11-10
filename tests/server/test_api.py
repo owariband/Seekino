@@ -1729,11 +1729,20 @@ def test_upload_episode_order_is_required_unique_and_idempotent(tmp_path: Path) 
             json={**payload, "episodeOrder": episode_order},
         )
         assert invalid.status_code == 422
-    schema = client.get("/openapi.json").json()["components"]["schemas"]["UploadSessionCreateRequest"]
+    schema = client.get("/api/openapi.json").json()["components"]["schemas"]["UploadSessionCreateRequest"]
     assert "episodeOrder" in schema["required"]
     assert schema["properties"]["episodeOrder"]["exclusiveMinimum"] == 0
     assert schema["properties"]["episodeOrder"]["maximum"] == 2_147_483_647
     assert "uploadSequence" not in schema["properties"]
+
+
+def test_api_docs_live_under_api_prefix(tmp_path):
+    client, _retrieval, _jobs = _client(tmp_path)
+    assert client.get("/api/docs").status_code == 200
+    assert client.get("/api/openapi.json").json()["info"]["title"] == "seekino Server"
+    # /docs is the web user guide; the API must not shadow it.
+    assert client.get("/docs").status_code == 404
+    assert client.get("/openapi.json").status_code == 404
 
 
 def test_upload_delete_is_workspace_scoped_and_idempotent(tmp_path):
@@ -2650,7 +2659,7 @@ def test_same_send_path_supports_live_events_and_idempotent_replay(tmp_path):
     assert replay[-1]["messageId"] == final["messageId"]
     assert replay[-1]["assistantMessage"]["timing"] == final["timing"]
     assert len(retrieval.calls) == 1
-    content = client.get("/openapi.json").json()["paths"]["/api/agent/messages/send"]["post"]["responses"]["200"]["content"]
+    content = client.get("/api/openapi.json").json()["paths"]["/api/agent/messages/send"]["post"]["responses"]["200"]["content"]
     assert {"application/json", "text/event-stream"}.issubset(content)
     client.app.state.services.agent.close()
 

@@ -11,6 +11,7 @@ import { SeriesActionsMenu } from "../library/SeriesActionsMenu";
 import { seriesPath, watchPath } from "../library/seriesLinks";
 import { episodeTitle, formatTimecode, previewFramePosition, seriesTitle } from "../../shared/format";
 import { Mascot } from "../../shared/Mascot";
+import { useWideLayout, WelcomeCard } from "./WelcomeCard";
 import { readWatchHistory, type WatchProgress } from "./playbackProgress";
 import { PlaybackFrame } from "./PlaybackFrame";
 import { useI18n } from "../../app/i18n";
@@ -97,6 +98,8 @@ export function WatchHomePage() {
   const heroSeries = recentVideo ? recentSeries : selectedSeries;
   const heroVideo = recentVideo ?? firstPlayable;
   const heroCover = heroSeries?.cover ?? (recentVideo ? recentDetail.data?.cover : detailQuery.data?.cover);
+  const wide = useWideLayout();
+  const welcome = activeSource.kind === "public" && !isLoading && !error;
   const heroPosition = recentVideo && recent ? recent.positionSeconds : Math.min(30_000, (heroVideo?.durationSeconds ?? 0) * 0.1);
 
   return (
@@ -125,8 +128,11 @@ export function WatchHomePage() {
               <span>{formatTimecode(recent.positionSeconds)} / {formatTimecode(heroVideo.durationSeconds)}</span>
             </div> : null}
           </div>
+          {welcome && wide ? <WelcomeCard placement="hero" /> : null}
         </section>
       ) : null}
+
+      {welcome && !(heroSeries && wide) ? <WelcomeCard placement={heroSeries ? "belowHero" : "page"} /> : null}
 
       {error ? <p className={styles.homeError} role="alert"><Mascot mood="oops" size={56} /><span>{t("读取视频系列失败：{message}", { message: errorMessage(error, locale) })}</span></p> : null}
       {isLoading ? <p className={styles.homeEmpty} role="status"><Mascot mood="seek" size={56} delayed /><span>{t("正在读取视频系列…")}</span></p> : null}

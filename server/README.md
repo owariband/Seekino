@@ -256,7 +256,7 @@ uv run python -m server.cli init-db
 uv run python -m server.api
 ```
 
-Server 默认监听 `127.0.0.1:9621`，OpenAPI 位于 `/docs`。HTTP API 写入 MySQL 中的事实
+Server 默认监听 `127.0.0.1:9621`，OpenAPI 位于 `/api/docs`。HTTP API 写入 MySQL 中的事实
 和任务，进程内 V2 Consumer 从 MySQL Claim；任务的持久性来自数据库中的 Task、
 Lease 和 Fencing，不依赖进程内内存队列。
 `GET /healthz` 会在 `components.parseConsumer.status` 返回 `running`、`stopped` 或
