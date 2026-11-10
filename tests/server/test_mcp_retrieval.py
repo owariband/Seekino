@@ -76,6 +76,62 @@ def test_event_unavailability_is_error_and_does_not_claim_no_match():
         service.retrieve("杯子")
 
 
+@pytest.mark.parametrize("measured", [False, True], ids=["editable-default", "sampled-curve"])
+def test_camera_reference_is_indexed_then_resolved_from_version_pinned_evidence(tmp_path, measured):
+    import subprocess
+
+    observation = dict(movement="PAN_RIGHT", timing="EASE_IN_OUT", start_framing="左岸灯塔",
+                       end_framing="右边的小船", visual_evidence="灯塔和岩石一起向左移出，船头从右侧入画")
+    scene = dict(event_type="SCENE", start_seconds=1, end_seconds=9, description="夕阳下的海面",
+                 participants=[], visible_persons=[], camera_ref=observation)
+    service, persistence, _, _, store, _, _ = _service([scene])
+    if measured:
+        persistence.evidence = persistence.evidence.model_copy(update={"camera_hints": [{
+            "first_sample_ms": 1, "last_sample_ms": 8, "if_background_is_fixed": "PAN_RIGHT",
+            "sampled_timing": "EASE_IN_OUT", "travel_in_frame_widths": .5,
+            "samples": [(1, 0), (2, .08), (4, .40), (6, .47), (8, .50)],
+        }]})
+    plan = store.plans[0]
+    search_text = plan.lexical_fields[0].raw_text
+    assert all(text in search_text for text in ("向右横移", "平滑", "左岸灯塔", "右边的小船"))
+    assert plan.semantic_requests[0].request.semantic_text == search_text
+    hit = service.retrieve("平滑向右横移")["items"][0]
+    assert hit["event"]["camera_ref"] == observation and "code" not in hit["event"]
+    evidence = service.read_evidence(hit["evidence_ref"])
+    assert evidence["matched_event"]["camera_ref"] == observation
+    replay = evidence["camera_replay"]
+    assert replay["params"]["duration_ms"] == 8 and replay["template_id"] == "canvas2d/viewport@1"
+    assert replay["easing_basis"] == ("sampled_background" if measured else "observed_category")
+    assert replay["anchor_basis"] == "editable_composition_defaults"
+    (tmp_path / replay["filename"]).write_text(replay["code"])
+    js = """
+      import assert from 'node:assert/strict';
+      import { cameraAt } from './viewport-v1.mjs';
+      const params=JSON.parse(process.argv[1]), world={width:2000,height:1000}, view={width:1000,height:1000};
+      const at=t=>cameraAt(t,params,world,view);
+      const d=params.duration_ms;
+      assert.equal(at(0).x,0); assert.equal(at(d+1).y,0);
+      assert.equal(at(d).width,1000); assert.equal(at(0).height,1000);
+      if (params.progress_samples) {
+        assert.equal(at(d).x,500);
+        for (const [t,x] of [[1,80],[3,400],[5,470],[7,500],[7.5,500]]) {
+          assert.ok(Math.abs(at(t).x-x)<1e-6);
+        }
+        const positions=Array.from({length:121},(_,i)=>at(d*i/120).x);
+        assert.ok(positions.slice(1).every((x,i)=>x>=positions[i]));
+      } else {
+        assert.equal(at(d).x,1000); assert.ok(Math.abs(at(d/2).x-500)<1e-6);
+        assert.ok(at(d/2).x-at(d/2-1).x > at(1).x-at(0).x);
+      }
+    """
+    subprocess.run(["node", "--input-type=module", "-e", js, json.dumps(replay["params"])],
+                   cwd=tmp_path, check=True)
+    persistence.evidence = persistence.evidence.model_copy(update={"parse_provenance": {
+        **persistence.evidence.parse_provenance, "contentVersion": 2}})
+    with pytest.raises(ValueError, match="EVIDENCE_STALE"):
+        service.read_evidence(hit["evidence_ref"])
+
+
 def test_stale_reference_rehydrates_before_media_access():
     service, persistence, _, media, _, _, _ = _service()
     ref = service.retrieve("杯子")["items"][0]["evidence_ref"]

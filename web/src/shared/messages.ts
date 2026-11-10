@@ -840,6 +840,7 @@ export const englishMessages: Readonly<Record<string, string>> = {
   "暂无前文摘要": "No preceding-context summary",
   "暂无画面描述": "No visual description",
   "画面 / Visual event": "Visual event",
+  "运镜": "Camera movement",
   "对白 / Transcript": "Transcript",
   "核验时留意": "Verification notes",
   "前后语境": "Surrounding context",

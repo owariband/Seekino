@@ -62,6 +62,7 @@ hypnos 于 **2026-04-27 入职实习**，到这次面试复盘时已接近半年
 | [解析结果用途](parse-result-profile-trd.md) | 2026-11-10，#50 下游 | 同库正片与剪辑参考的配置及读取隔离 | [实施 #83](https://github.com/owariband/Seekino/pull/83) |
 | [动画表情素材召回](anime-material-recall-trd.md) | 2026-11-08，五集盲评漏选爱音反应 | 剪辑 Agent 按画面表情找素材 | 单独核验语义排名、全量翻页与原片画面。 |
 | [上传视频自动判型](parse-pre-hook-router-trd.md) | 2026-11-09，CPU 普通上传需要自动选策略 | 沿用 Parse V2 及显式覆盖 | [#82](https://github.com/owariband/Seekino/pull/82) |
+| [剪辑素材的运镜描述与回放](clip-camera-reference-trd.md) | 2026-11-10，镜头平移被看反或按画面内容拆断 | 同一发布事件提供中文描述、来源与可执行镜头 | [实测](../../report/agent/video_parse_v2/clip-camera-reference-20261110.md) |
 
 ## 本次讨论确定的复审问题
 

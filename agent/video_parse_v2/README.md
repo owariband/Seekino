@@ -154,6 +154,14 @@ for up to `max_retry_count` text-only repairs with the same frozen model; images
 are not sent or prepared again. The initial generation and repairs share the original
 request deadline. Media bounds, Canvas and transactional commit gates remain strict.
 
+When pictures establish a camera move, the ordinary Understanding prompt asks for a Chinese
+description of its direction, pace and starting and ending composition. Refine preserves these details.
+Uploaded material routed or explicitly set to `clip` also records the structured observation.
+A `SCENE.camera_ref` travels with that event through Refine and publication. For corroborated
+horizontal pans the host registers background features across the ordered samples. When the model
+splits one verified pan into adjacent visual beats, those beats retain their descriptions and the
+editing client gets one continuous camera interval. See the [camera reference contract](../../docs/design/03-product-reassessment/clip-camera-reference-trd.md).
+
 Model requests remain lease-fenced and counted for usage, without a cumulative
 per-video call limit. Commit is not automatically replayed.
 A final Parse exception stops dispatch for that video, fences sibling writes,

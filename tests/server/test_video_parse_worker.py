@@ -23,7 +23,7 @@ from engine.common.transcription import TranscriptAnalysis
 from engine.parsev2.observations import OCRResult
 from engine.parsev2.schemas import ActionEvent, VideoParseResult
 from agent.video_parse_v2.refine.response import RefineModelResponse
-from agent.video_parse_v2.understanding.response import UnderstandingModelResponse
+from agent.video_parse_v2.understanding.response import ClipUnderstandingModelResponse, UnderstandingModelResponse
 from engine.parsev2.validation import IntervalRefinementProposal, IntervalRefinementResult
 from engine.rag import (
     ChunkIndexingContract,
@@ -763,9 +763,11 @@ def test_index_builder_closes_gateway_model_when_store_dimensions_differ(tmp_pat
     assert closed == [True]
 
 
+@pytest.mark.parametrize("camera_clip", [False, True], ids=["content", "clip-camera"])
 def test_worker_runs_real_agent_repository_and_stage_commits(
     monkeypatch,
     tmp_path,
+    camera_clip,
 ):
     source = tmp_path / "episode.mp4"
     source.write_bytes(b"source-video")
@@ -776,11 +778,28 @@ def test_worker_runs_real_agent_repository_and_stage_commits(
     create_schema(engine)
     factory = create_session_factory(engine)
     task_id = _create_task(factory, source)
+    if camera_clip:
+        with factory.begin() as session:
+            task = session.get(VideoParseTask, task_id)
+            cfg = task.parse_config
+            task.parse_config = {**cfg, "content_kind": "clip",
+                "visual_input": {**cfg["visual_input"], "mode": "video", "fps": 3},
+                "models": {**cfg["models"], "understanding": {**cfg["models"]["understanding"], "fallback": None}}}
     repository = VideoParsePersistenceService(factory)
     queue = MySqlVideoParseQueue(factory, video_concurrency=3)
+    def write_media(command):
+        if camera_clip and "%012d.jpg" in str(command[-1]):
+            from evals.clip_camera_reference import panorama, sample
+
+            coast = panorama()
+            for i in range(30):
+                sample(coast, "right", min(11,i)).save(str(command[-1]) % round(i*1000/3), quality=90)
+            return
+        _write_media(command)
+
     media = VideoParseMediaService(
         tmp_path / "media-work",
-        command_runner=_write_media,
+        command_runner=write_media,
         probe_duration=lambda _path: 10_000,
     )
     store = _ElasticsearchBoundary()
@@ -813,8 +832,15 @@ def test_worker_runs_real_agent_repository_and_stage_commits(
         assert list((tmp_path / "media-work").rglob("episode.json"))
         with track_model_call(provider="fixture", model="vision", operation="video_parse") as tracker:
             tracker.usage = TokenUsage(10, 2, 12, None, None)
-        assert options["result_type"] is UnderstandingModelResponse
+        assert options["result_type"] is (ClipUnderstandingModelResponse if camera_clip else UnderstandingModelResponse)
         assert not options.get("tools") and "canvas" not in options
+        if camera_clip:
+            assert any(isinstance(item,TextInput) and "Host image registration" in item.text for item in _inputs)
+            return UnderstandingModelResponse.model_validate({"persons":[],"timeline":[{
+                "event_type":"SCENE","start_seconds":0,"end_seconds":4000,"description":"镜头向左",
+                "visible_persons":[],"participants":[],"camera_ref":{"movement":"PAN_LEFT","timing":"STEADY",
+                "start_framing":"左侧灯塔","end_framing":"右侧渔船","visual_evidence":"同一海岸保持连续"},
+            }]})
         return VideoParseResult(persons=[], timeline=[ActionEvent(
             event_type="ACTION", start_seconds=1000, end_seconds=4000,
             description="A hand waves in the frame.", participants=[], visible_persons=[],
@@ -921,6 +947,26 @@ def test_worker_runs_real_agent_repository_and_stage_commits(
         assert [item.status for item in chunks] == ["COMPLETE"]
         assert [item.status for item in intervals] == ["COMPLETE"]
         assert len(contents) == 1
+        if camera_clip:
+            from unittest.mock import Mock
+            from server.model.dto.mediaDTO import PlaybackMedia
+            from server.service.mcp_retrieval import McpRetrievalService
+
+            scene = contents[0].content["timeline"][0]
+            assert scene["camera_ref"]["movement"] == "PAN_RIGHT" and "向右横移" in scene["description"]
+            assert scene["camera_ref"]["timing"] == "EASE_IN_OUT"
+            assert contents[0].detail["evidence"]["camera_hints"][0]["if_background_is_fixed"] == "PAN_RIGHT"
+            current = repository.get_chunk_evidence(chunks[0].chunk_id, tenant_id="workspace-1")
+            assert current.camera_hints and current.all_time_events[0]["camera_ref"] == scene["camera_ref"]
+            media_boundary = Mock()
+            media_boundary.playback_view.return_value = PlaybackMedia("READY", "/playback")
+            editor = McpRetrievalService(library=Mock(), media=media_boundary, event_retrieval=None,
+                                         parse_persistence=repository, local_tenant_id="workspace-1")
+            hit = editor.browse_events(current.series_id)["items"][0]
+            code_ref = editor.read_evidence(hit["evidence_ref"])["camera_replay"]
+            assert code_ref["params"]["duration_ms"] == 4000
+            assert .97 < code_ref["params"]["travel_in_view_widths"] < 1.03
+            assert code_ref["easing_basis"] == "sampled_background"
         assert contents[0].detail["scope"] == [0]
         index_detail = contents[0].detail["_index_embeddings_v2"]
         assert index_detail["content_version"] == 1
