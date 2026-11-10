@@ -1,6 +1,6 @@
 # 1. 问题与现状
 
-需求：按《让创意更有黏性》（hypnos 的笔记 `宣传与粘性.md`，SUCCESs 检查表）重写 Cloud 的欢迎卡片与站内文档，并拆出快速开始等多页文档。提出日期：2026-11-10（Asia/Shanghai）。分支：`feat/sticky-docs-quickstart`；PR：待创建后回填。上游：[Cloud 使用文档 TRD](cloud-user-docs-trd.md)（#89，已合并）。
+需求：按《让创意更有黏性》（hypnos 的笔记 `宣传与粘性.md`，SUCCESs 检查表）重写 Cloud 的欢迎卡片与站内文档，并拆出快速开始等多页文档。提出日期：2026-11-10（Asia/Shanghai）。分支：`feat/sticky-docs-quickstart`；PR：[#92](https://github.com/owariband/Seekino/pull/92)。上游：[Cloud 使用文档 TRD](cloud-user-docs-trd.md)（#89，已合并）。
 
 **背景。** Cloud 推广的目标是让首次访客真的试用，比赛需要真实用户。#89 交付的欢迎卡片和 `/docs` 内容准确，但按 SUCCESs 检查表核对，第一印象抓不住人：
 
