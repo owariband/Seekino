@@ -1,6 +1,6 @@
 # 1. 问题与现状
 
-需求：Seekino Cloud 站内使用文档与 GitHub 推广入口。提出日期：2026-11-10（Asia/Shanghai）。分支：`feat/cloud-user-docs`；PR：待创建后回填。状态：初稿。
+需求：Seekino Cloud 站内使用文档与 GitHub 推广入口。提出日期：2026-11-10（Asia/Shanghai）。分支：`feat/cloud-user-docs`；PR：待创建后回填。状态：实现完成、本地验证通过，待合并与 Cloud 发布；交流群链接仍为 `[xxx]` 占位。
 
 **背景与触发场景。** Cloud 首发只开放已解析、已发布的公共样例，游客与普通邮箱用户可以观看、检索和问答，上传与管理仅限管理员（[云端部署说明](../../../deploy/cloud/README.md)）。hypnos 参加的多项比赛要求项目具备真实用户，而目前 Cloud 没有外部用户。第一次打开 Cloud 的访客看不到 Seekino 能做什么、Cloud 与本地版的区别、如何自己部署，也找不到 GitHub 仓库与交流渠道，因此访问难以转化为 Star、部署或反馈。
 
@@ -66,14 +66,33 @@ flowchart LR
 
 | 检查 | 修改前 | 修改后 | 判断 |
 | --- | --- | --- | --- |
-| SPA `/docs` | 待测 | 待测 | 未验证 |
-| `/api/openapi.json` | 404（预期） | 待测 | 未验证 |
-| 前端 typecheck / test / build | 待测 | 待测 | 未验证 |
+| SPA `/docs` | 无路由，回落到 `/watch`（源码确认） | 游客与无管理权限身份直接显示文档 | 通过：`App.test.tsx` “opens the user docs…” |
+| API 文档路径 | `/docs`、`/openapi.json` | `/api/docs` 200，`/api/openapi.json` 返回 schema；`/docs`、`/openapi.json` 404 | 通过：`test_api_docs_live_under_api_prefix` |
+| 既有 OpenAPI 断言 | 读 `/openapi.json` | 改读 `/api/openapi.json` | 通过：`tests/server/test_api.py`、`test_cloud_access.py` 共 170 项 |
+| 前端 typecheck / test / build | — | typecheck 通过；32 个文件 629 项测试通过；build 通过，`DocsPage` 为独立懒加载 chunk（JS 16.07 kB，gzip 6.97 kB） | 通过 |
+
+测试于 2026-11-10 在 `feat/cloud-user-docs` 工作区执行。
 
 # 5. 试点验证与方案取舍
 
-内容为静态页面，风险低，以本地浏览器在桌面与 390px 宽度、明暗两种主题下的截图替代独立试点。上线到 Cloud 由发布 PR 完成，不属于本 PR；交流群链接替换 `[xxx]` 前不对外推广。
+内容为静态页面，风险低，以本地浏览器在桌面与 390px 宽度、明暗两种主题下的截图替代独立试点。
+
+2026-11-10 用 Vite 开发服务与 Playwright 截图（API 以游客身份 mock，仅用于渲染页面）：桌面 1440px 中文浅色、英文深色，及 390px 中文。检查结果：顶栏文档与 GitHub 入口可见；390px 下页面宽度等于视口、无横向滚动；对比表在手机上改为逐行卡片；抽屉导航包含“使用文档”和“GitHub 仓库”。截图属于开发过程材料，未提交仓库。上线到 Cloud 由发布 PR 完成，不属于本 PR；交流群链接替换 `[xxx]` 前不对外推广。
 
 # 6. 结果验收与闭环
 
-待实施后回填：逐项对照第 2 节指标，记录截图与测试证据入口，列出仍为占位的交流群链接，以及“真实用户”问题在本 PR 之外的后续动作。
+| 指标 | 结果 | 证据 |
+| --- | --- | --- |
+| `/docs` 游客可访问 | 已实现，本地验证通过 | 前端路由测试；截图 |
+| GitHub 入口 | 顶栏、手机抽屉、文档首屏与末尾均链接仓库 | 前端测试；截图 |
+| API 文档迁移 | `/api/docs`、`/api/openapi.json` 可用，旧路径 404 | pytest |
+| 既有行为 | 前端与相关后端测试全部通过 | 第 4 节 |
+| 真实用户转化 | 未测，本 PR 不承诺 | — |
+
+剩余事项：
+
+- 交流群链接由 hypnos 提供后替换 `web/src/features/docs/content.ts` 中的 `[xxx]`。替换前不对外推广。
+- 文档页仍在 `AuthProvider` 的身份门槛之后：API 不可用时，文档也无法显示。Cloud 正常运行时不受影响，本次不改。
+- Docker 端口映射下 MCP 的 loopback 校验未实测；文档只承诺宿主机运行。
+- 依赖旧 `/docs`、`/openapi.json` 的外部脚本需要改用新路径。
+- Cloud 部署需要通过 `dev → main` 发布后执行，不属于本 PR。

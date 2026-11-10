@@ -80,6 +80,8 @@ export const englishMessages: Readonly<Record<string, string>> = {
   "服务未返回回答事件流": "The server did not return a response stream",
   "分片上传网络连接中断": "The upload connection was interrupted",
   "资料库": "Library",
+  "使用文档": "Docs",
+  "GitHub 仓库": "GitHub repository",
   "解析任务": "Parsing tasks",
   "模型消耗": "Model usage",
   "当前账号": "Current account",

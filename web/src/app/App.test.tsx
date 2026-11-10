@@ -439,6 +439,21 @@ describe("application shell", () => {
     expect(document.documentElement).toHaveAttribute("data-theme", "dark");
   });
 
+  it("opens the user docs for viewers without management permission and links the GitHub repository", async () => {
+    const realUseAuth = auth.useAuth;
+    vi.spyOn(auth, "useAuth").mockImplementation(() => {
+      const original = realUseAuth();
+      return { ...original, canUpload: false, canManage: false, canConfigure: false };
+    });
+    renderApp([apiSeries], { initialPath: "/docs" });
+    expect(await screen.findByRole("heading", { level: 1, name: "视频只解析一次，之后像读文字一样找" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Cloud 与本地版" })).toBeInTheDocument();
+    expect(screen.getByText("[xxx]")).toBeInTheDocument();
+    for (const link of screen.getAllByRole("link", { name: "GitHub 仓库" })) {
+      expect(link).toHaveAttribute("href", "https://github.com/owariband/Seekino");
+    }
+  });
+
   it("keeps normal settings in release and hides internal configuration", async () => {
     const { fetchMock, queryClient } = renderApp([apiSeries], { initialPath: "/settings" });
     await waitFor(() => expect(queryClient.getQueryState(["runtime-config"])?.status).toBe("success"));

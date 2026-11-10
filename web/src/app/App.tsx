@@ -16,6 +16,7 @@ const SeriesPage = lazy(() => import("../features/player/SeriesPage").then((modu
 const RoutedSearchPage = lazy(() => import("../features/search/SearchPage").then((module) => ({ default: module.RoutedSearchPage })));
 const SettingsPage = lazy(() => import("../features/settings/SettingsPage").then((module) => ({ default: module.SettingsPage })));
 const TasksPage = lazy(() => import("../features/tasks/TasksPage").then((module) => ({ default: module.TasksPage })));
+const DocsPage = lazy(() => import("../features/docs/DocsPage").then((module) => ({ default: module.DocsPage })));
 const UsagePage = lazy(() => import("../features/usage/UsagePage").then((module) => ({ default: module.UsagePage })));
 
 function SettingsOverlay({ origin }: { origin: Location }) {
@@ -68,6 +69,7 @@ export function App() {
             <Route path="tasks" element={canManage ? <TasksPage /> : <Navigate to="/watch" replace />} />
             <Route path="usage" element={canManage ? <UsagePage /> : <Navigate to="/watch" replace />} />
             <Route path="settings" element={<SettingsPage />} />
+            <Route path="docs" element={<DocsPage />} />
             <Route path="*" element={<Navigate to="/watch" replace />} />
           </Route>
         </Routes>
