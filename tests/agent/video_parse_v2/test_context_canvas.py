@@ -29,6 +29,29 @@ def _canvas():
     )
 
 
+@pytest.mark.parametrize("withdraw", [False, True])
+def test_refine_preserves_camera_observation_on_echo_and_allows_explicit_withdrawal(withdraw):
+    from engine.parsev2.validation import IntervalRefinementResult
+
+    observation = dict(movement="PAN_RIGHT", timing="STEADY", start_framing="灯塔",
+                       end_framing="码头", visual_evidence="灯塔向左出画")
+    scene = dict(event_type="SCENE", start_seconds=400, end_seconds=2000, description="镜头沿岸向右",
+                 camera_ref=observation, participants=[], visible_persons=[])
+    canvas = ParseContextCanvas(scope="camera", stage="refine", members={"m": {
+        "sequence_no": 0, "version": 1, "bounds": (0, 5000),
+        "content": VideoParseResult(persons=[], timeline=[scene]),
+    }})
+    echo = {k:v for k,v in scene.items() if k != "camera_ref"}
+    echo["description"] += "，海边露出码头"
+    if withdraw:
+        echo["camera_ref"] = None
+    accepted = canvas.accept_refinement(IntervalRefinementResult.model_validate({
+        "members": [{"sequence_no": 0, "persons": [], "timeline": [echo]}],
+    }))
+    stored = accepted.updates[0].timeline[0].model_dump()
+    assert stored.get("camera_ref") == (None if withdraw else observation)
+
+
 def _voice_snapshot(mode="prefill", band="ACCEPT", *, source=None):
     event = {
         **_result().timeline[0].model_dump(mode="json"),
@@ -323,6 +346,7 @@ def test_routed_refine_preserves_evidence_for_the_selected_kind(kind, marker):
         update={"content_kind": kind, "auto_content_kind": True})})
     prompt = build_refine_prompt(snapshot=snapshot, canvas=ParseContextCanvas.from_refine(snapshot))
     assert marker in prompt
+    assert ("Retain the recorded camera movement" in prompt) == (kind != "clip")
 
 
 @pytest.mark.parametrize("error", [RuntimeError("failed"), TimeoutError("expired"), asyncio.CancelledError()])

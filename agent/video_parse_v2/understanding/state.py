@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import NotRequired, TypedDict
 
 from engine.parsev2.observations import ASRResult, OCRResult
+from engine.parsev2.camera import SampledPan
 from engine.parsev2.schemas import VideoParseResult
 
 from ..input import ParseInput
@@ -17,6 +18,7 @@ class ChunkState(TypedDict):
     inputs: NotRequired[ParseInput]
     execution: NotRequired[ChunkExecution]
     visual_ready: NotRequired[bool]
+    camera_hints: NotRequired[list[SampledPan]]
     asr_result: NotRequired[ASRResult]
     ocr_result: NotRequired[OCRResult]
     result: NotRequired[VideoParseResult]

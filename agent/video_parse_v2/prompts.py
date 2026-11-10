@@ -10,6 +10,7 @@ from agent.common.chunk_understanding import (
     build_understanding_prompt as build_chunk_understanding_prompt,
 )
 from engine.parsev2.observations import ASRResult, OCRResult
+from engine.parsev2.camera import SampledPan
 from agent.utils.context_canvas import ContextCanvas
 
 from .state import ChunkExecution
@@ -39,32 +40,60 @@ _CLIP_UNDERSTANDING = (
     "graphics and repeated visual beats with their source time ranges. Mark changes at sampled frames. "
     "Describe what the editor can rewatch; do not infer unobserved cuts, exact native-frame timing, "
     "intent or a required recipe for another film.",
+    "For a meaningful camera move within one shot, write a SCENE covering the observed move. "
+    "Write a Chinese description of what the viewer sees first, where the camera moves, how fast "
+    "or smoothly it moves when visible, and what enters or leaves the frame. Add camera_ref with "
+    "movement, timing, start_framing, end_framing and visual_evidence. Write the last three in Chinese. "
+    "Compare stationary landmarks and frame edges across consecutive supplied images. PAN_RIGHT means "
+    "the view reveals the right while fixed scenery drifts left. Reverse this for PAN_LEFT. "
+    "A subject moving alone, an overlay, a wipe or a cut to a different framing is not a camera move. "
+    "Use STATIC only for a useful, visibly locked shot. For a mixed or ambiguous move, describe the "
+    "visible change and use COMPOUND or UNKNOWN, or omit camera_ref when there is no camera evidence. "
+    "Judge timing separately from smoothness. Compare a fixed landmark's travel per unit time near "
+    "the start, middle and end. Small then larger then small displacements suggest EASE_IN_OUT; "
+    "STEADY requires roughly equal travel throughout. Use UNKNOWN when that comparison is unavailable. "
+    "Do not infer native-frame "
+    "holds, pixels, focal lengths or numeric easing from sparse samples. Keep independent moves "
+    "separate and do not extend a move through a cut.",
 )
 
 
 def _content_instructions(config):
+    camera = (
+        "In the Chinese scene description, describe a visible camera move within a shot when it changes "
+        "what the viewer can see. State what was in frame first, which way the view moved, its pace if "
+        "observable, and what entered or left the frame. Report visible changes of shot size or angle "
+        "when useful. Check stable landmarks; distinguish movement of a person, a slide change or a cut."
+    )
     if config.content_kind in {"script", "anime"}:
         medium = "animated" if config.content_kind == "anime" else "scripted"
-        return (f"For {medium} character reactions, " + _REACTION_DETAILS, _REACTION_BOUNDARIES)
+        return (camera, f"For {medium} character reactions, " + _REACTION_DETAILS, _REACTION_BOUNDARIES)
     if config.content_kind == "course" and config.auto_content_kind:
-        return _COURSE_UNDERSTANDING
+        return (camera, *_COURSE_UNDERSTANDING)
     if config.content_kind == "clip":
         return _CLIP_UNDERSTANDING
-    return ()
+    return (camera,)
 
 
 def _refine_content_instructions(config):
+    camera = ("Retain the recorded camera movement and starting and ending composition "
+              "in scene descriptions when preserving the visual evidence.")
     if config.content_kind in {"script", "anime"}:
         medium = "anime" if config.content_kind == "anime" else "scripted"
-        return (f"Keep the recorded {medium} reaction changes and their visible facial cues, gestures and "
+        return (camera, f"Keep the recorded {medium} reaction changes and their visible facial cues, gestures and "
                 "visual boundaries when reconciling adjacent members. A dialogue cue alone cannot date "
                 "a change of expression.",)
     if config.content_kind == "clip":
         return ("Preserve observed edits, titles and changes in framing with their visual boundaries; "
-                "align dialogue without moving a cut to the nearest spoken word.",)
+                "align dialogue without moving a cut to the nearest spoken word. Retain each SCENE's "
+                "camera_ref, direction, pace, starting and ending framing and visual evidence. A move "
+                "starts and ends at its visual boundaries, not at the nearest speech cue. Keep cuts, "
+                "moving actors and wipes separate from continuous camera motion. Correct a camera "
+                "observation only with supporting visual evidence; explicitly set camera_ref to null "
+                "to withdraw it on the same shot.",)
     if config.content_kind == "course" and config.auto_content_kind:
-        return ("Preserve the order of demonstrated steps, exact technical terms and changes in examples.",)
-    return ()
+        return (camera, "Preserve the order of demonstrated steps, exact technical terms and changes in examples.")
+    return (camera,)
 
 
 def build_ocr_prompt(frame_timestamps: Sequence[int]) -> str:
@@ -112,11 +141,17 @@ def _all_speakers(asr_result: ASRResult, background: dict) -> dict:
     }
 
 
+def _camera_hint_summaries(hints):
+    selected = hints if len(hints) <= 16 else [hints[round(i * (len(hints) - 1) / 15)] for i in range(16)]
+    return [{key: value for key, value in hint.items() if key != "samples"} for hint in selected]
+
+
 def build_understanding_prompt(
     execution: ChunkExecution,
     *,
     asr_result: ASRResult,
     ocr_result: OCRResult | None,
+    camera_hints: Sequence[SampledPan] = (),
 ) -> str:
     """Supply observations directly; the host validates and imports the JSON draft."""
 
@@ -142,6 +177,12 @@ def build_understanding_prompt(
         "DIALOGUE includes a factual description and the supported wording in text_variants. Use ORIGINAL for source-language text and TRANSLATION only for an evidenced translation; use a BCP 47 language tag or und when unknown. Do not invent translations or missing words.",
         "Combine dialogue with significant scene changes, actions, observable emotions and supported relationship changes. Use SCENE, ACTION, EMOTION, RELATION_CHANGE, ON_SCREEN_TEXT or OTHER as appropriate; do not force every event type into every chunk or repeat one sustained event for every frame.",
         *_content_instructions(execution.inputs.parse_config),
+        *([("Host image registration on sampled frames. These are candidate translations of the "
+            "visible background, in viewport coordinates. Cross-check against the images and ignore "
+            "cuts, wipes or a moving foreground. A corroborated direction and sampled_timing are "
+            "stronger evidence than a guess. Times are observed sample spans, not edit boundaries. "
+            "Do not copy the host measurements into camera_ref. ") + json.dumps(_camera_hint_summaries(camera_hints))]
+          if camera_hints else []),
         "OCR evidence has {\"lines\":[{\"start_seconds\":integer,\"end_seconds\":integer,\"text\":string,\"language\":string|null}]}. Use it to understand visible text. Ordinary dialogue subtitles belong to the same DIALOGUE and its text_variants, not a duplicate ON_SCREEN_TEXT; reserve ON_SCREEN_TEXT for non-dialogue text such as signs or titles.",
         "Write self-contained, factual descriptions in Simplified Chinese. Explain the observed interaction or action, rather than merely restating the transcript. Background helps identify people and terms; do not turn background knowledge into unobserved events, motives or inner thoughts.",
         "Use consistent, evidence-supported person names or neutral visual labels. Every named person referenced by a DIALOGUE must be registered in persons; a known speaker must also be in participants. participants describe semantic involvement and visible_persons describe actual visual presence; off-screen speakers need not be visible_persons.",
@@ -191,6 +232,8 @@ def build_refine_prompt(*, snapshot, canvas: ParseContextCanvas) -> str:
     duration = snapshot["inputs"].parse_config.chunk_duration * 1000
     for ref, sequence in sorted(snapshot["member_sequence_nos"].items(), key=lambda item: item[1]):
         evidence = deepcopy(snapshot.get("member_evidence", {}).get(ref, {}))
+        if evidence.get("camera_hints"):
+            evidence["camera_hints"] = _camera_hint_summaries(evidence["camera_hints"])
         for cue in (evidence.get("asr") or {}).get("transcript", []):
             cue.pop("words", None)
         members.append({

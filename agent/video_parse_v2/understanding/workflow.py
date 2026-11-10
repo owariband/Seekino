@@ -14,6 +14,7 @@ from pydantic import BaseModel, ValidationError
 from gateway.agent_model.errors import ModelFailureError, ModelFailureReason
 from httpx import TransportError
 
+from engine.parsev2.camera_evidence import ground_camera_pans
 from engine.parsev2.observations import build_chunk_without_understanding
 from engine.parsev2.validation import ResultTimeRangeError, normalize_parse_response, validate_result_time_range
 from engine.parsev2.schemas import VideoParseResult
@@ -65,7 +66,10 @@ class ChunkUnderstandingWorkflow:
         return {"asr_result": await self._runtime.transcribe_chunk(state["execution"])}
 
     async def _visual(self, state):
-        await self._runtime.prepare_chunk_visual(state["execution"])
+        execution = state["execution"]
+        hints = await self._runtime.prepare_chunk_visual(execution)
+        if execution.inputs.parse_config.content_kind == "clip" and hints:
+            return {"visual_ready": True, "camera_hints": hints}
         return {"visual_ready": True}
 
     async def _ocr(self, state):
@@ -118,9 +122,12 @@ class ChunkUnderstandingWorkflow:
         canvas.register_evidence(execution.chunk_parse_task_id, {
             "asr": asr_result,
             "ocr": ocr_result.model_dump(mode="json") if ocr_result is not None else None,
+            **({"camera_hints": state["camera_hints"]} if state.get("camera_hints") else {}),
         })
         if config.understanding_enabled:
-            result = await self._generate_result(execution, asr_result, ocr_result)
+            hints = state.get("camera_hints", [])
+            result = await self._generate_result(execution, asr_result, ocr_result, hints)
+            result = ground_camera_pans(result, hints)
         else:
             result = build_chunk_without_understanding(asr_result=asr_result, ocr_result=ocr_result)
         result = validate_result_time_range(
@@ -143,14 +150,14 @@ class ChunkUnderstandingWorkflow:
         )
         return {"result": canvas.result(execution.chunk_parse_task_id), "canvas": canvas}
 
-    async def _generate_result(self, execution, asr_result, ocr_result) -> VideoParseResult:
+    async def _generate_result(self, execution, asr_result, ocr_result, camera_hints=()) -> VideoParseResult:
         config = execution.inputs.parse_config
         deadline = time.monotonic() + min(
             config.execution.parse_execution_timeout_seconds,
             config.models.understanding.request_timeout_seconds,
         )
         original_prompt = build_understanding_prompt(
-            execution, asr_result=asr_result, ocr_result=ocr_result,
+            execution, asr_result=asr_result, ocr_result=ocr_result, camera_hints=camera_hints,
         )
         prompt = original_prompt
         for attempt in range(config.execution.max_retry_count + 1):
@@ -179,7 +186,7 @@ class ChunkUnderstandingWorkflow:
                     raise TimeoutError("Understanding result-gate deadline expired")
                 response = normalize_parse_response(response)
                 return validate_result_time_range(
-                    VideoParseResult.model_validate(response),
+                    VideoParseResult.model_validate(response, context={"clip_camera": config.content_kind == "clip"}),
                     start_seconds=execution.allowed_start_seconds,
                     end_seconds=execution.allowed_end_seconds,
                     dialogue_bounds=execution.dialogue_bounds,

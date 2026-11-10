@@ -99,6 +99,10 @@ Service 负责；Repository 保留事务内的状态与并发约束。
 | `browse_events` | 指定 `series_id`，按集和时间翻完已发布事件。可用 `visible_names` 筛选出镜角色，自动展开明确的系列别名。单页 `limit` 为 1–50，传回 `next_cursor` 直到为空 |
 | `read_evidence` | 接收 `evidence_ref`，重验当前任务/内容版本，返回事件、分页 Chunk 上下文与媒体 URL |
 
+使用剪辑素材策略解析后，可以搜索“镜头向右横移，灯塔从左边出画，小船在右边入画”。命中的 `SCENE.camera_ref` 给出镜头方向、速度类别、起幅、落幅和画面依据。对这条事件调用 `read_evidence`，适合二维复现的运镜会附带 `camera_replay`，其中有版本化 ES 模块、入口 `cameraAt(elapsedMs, params, world, viewport)` 和原片时长。返回值是新画面中的裁取矩形，可直接用于 Canvas 的 `drawImage`。
+
+`params.progress_samples` 存在时，横移曲线使用带原片时间的背景位移采样。每对数字分别是镜头时长占比和行程占比，`travel_in_view_widths` 以一屏宽为单位。新画幅和起止锚点由剪辑端选择。未测得行程时，`travel_basis` 明示构图默认值。环绕等无法用此模板表达的动作仍能按描述检索。旧素材需按 `clip` 重新解析才能生成运镜记录。[设计与适用范围](../docs/design/03-product-reassessment/clip-camera-reference-trd.md)
+
 `top_k` 是不同 Chunk 的数量（最多 20），不是 Event 数量；同一 Chunk 可以包含多条命中事件。默认搜索本地 READY 系列，超过 50 个时先用 `list_series` 选择范围。Event 索引未覆盖会返回 `EVENT_INDEX_NOT_READY`，不会伪装成“没有匹配”。
 
 视频时间全部使用整数毫秒，区间左闭右开。`read_evidence` 的 `next_evidence_ref` 继续读取同一来源版本的上下文；`EVIDENCE_STALE` 表示需要重新检索。`original_url` 可用于下载原片，`playback_url` 仅在编解码检查通过时提供；地址指向本机 API，源媒体缺失时返回警告。外部 Agent 自行下载、按毫秒区间剪辑，MCP 不运行制作代码。
