@@ -22,7 +22,7 @@
   gap: 8px; min-width: 0; max-width: 100%; min-height: 44px; padding: 0 16px;
   border-radius: 9px; font: inherit; font-size: .875rem; font-weight: 600; line-height: 1.2;
   white-space: normal; cursor: pointer;
-  transition: background-color 150ms ease, border-color 150ms ease, color 150ms ease;
+  transition: background-color 150ms var(--ease-out), border-color 150ms var(--ease-out), color 150ms var(--ease-out);
 }
 .primary {
   color: var(--surface); background: var(--teal);
@@ -207,12 +207,13 @@
   border-radius: var(--radius-small);
   background: var(--surface);
   pointer-events: none;
+  transition: background-color var(--duration-fast) var(--ease-out);
 }
 .roleValue { display: grid; min-width: 0; gap: 2px; }
 .roleValue strong, .roleValue small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .roleValue strong { color: var(--ink); font: 550 .87rem/1.4 var(--sans); }
 .roleValue small { color: var(--ink-soft); font: 400 .73rem/1.4 var(--sans); }
-.roleFace svg { flex: none; color: var(--ink-soft); }
+.roleFace svg { flex: none; color: var(--ink-soft); transition: transform var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out); }
 .roleChoice select:is(:hover, :focus-visible):enabled + .roleFace { background: var(--surface-muted); }
 .roleChoice select:focus-visible { outline: 0; }
 .roleChoice select:focus-visible + .roleFace { outline: 2px solid var(--teal); outline-offset: -1px; }
@@ -250,7 +251,7 @@
 .protocol, .count { color: var(--ink-soft); font-size: .75rem; font-weight: 400; }
 .count { white-space: nowrap; }
 .count::before { content: "·"; margin-inline-end: 8px; color: var(--ink-faint); }
-.chevron { color: var(--ink-faint); transition: transform 150ms ease; }
+.chevron { color: var(--ink-faint); transition: transform 150ms var(--ease-out); }
 .disclosure[aria-expanded="true"] .serviceIcon { color: var(--teal-deep); background: var(--teal-wash); }
 .disclosure[aria-expanded="true"] .chevron { color: var(--teal-deep); transform: rotate(90deg); }
 .serviceDetails {

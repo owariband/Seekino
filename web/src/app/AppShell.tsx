@@ -17,7 +17,7 @@ import {
   UserRound,
   X,
 } from "lucide-react";
-import { type CSSProperties, Suspense, useEffect, useRef, useState } from "react";
+import { type CSSProperties, Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router";
 
 import { FOCUS_SEARCH_EVENT, loadConversations } from "../features/search/conversationNavigation";
@@ -46,6 +46,25 @@ const managementLinks = [
 const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
 
 export type WatchPanelLayout = { open: boolean; width: number; resizing: boolean };
+
+/** Fades the new page up into place when the path changes. Runs on the existing content node,
+    so routes keep their component state; query, hash and settings-overlay changes don't animate. */
+function usePageEntrance(pathname: string) {
+  const ref = useRef<HTMLDivElement>(null);
+  const previous = useRef(pathname);
+  useLayoutEffect(() => {
+    if (previous.current === pathname) return;
+    previous.current = pathname;
+    const node = ref.current;
+    if (!node?.animate || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const styles = getComputedStyle(node);
+    node.animate([{ opacity: 0, transform: "translateY(10px)" }, { opacity: 1, transform: "none" }], {
+      duration: parseFloat(styles.getPropertyValue("--duration-page")) || 320,
+      easing: styles.getPropertyValue("--ease-out").trim() || "ease-out",
+    });
+  }, [pathname]);
+  return ref;
+}
 
 function AccountControls({ onLogin, onSettings, mobile = false }: { onLogin: () => void; onSettings: () => void; mobile?: boolean }) {
   const { t, locale } = useI18n();
@@ -103,6 +122,7 @@ export function AppShell() {
   const avatarRef = useRef<HTMLButtonElement>(null);
   const location = useLocation();
   const navigate = useNavigate();
+  const contentRef = usePageEntrance(location.pathname);
   const { theme, toggleTheme } = useTheme();
   const { activeCount, overallProgress, openDialog } = useUploads();
   const { accountIdentity, canUpload, canManage, openLogin, sources, selectSource, scopeKey } = useAuth();
@@ -213,7 +233,7 @@ export function AppShell() {
           </div>
         </div>
       </header>
-      <div className={styles.content}>
+      <div className={styles.content} ref={contentRef}>
         <Suspense fallback={<main className="page" aria-busy="true"><Mascot mood="seek" size={56} delayed /></main>}>
           <Outlet context={setWatchPanelLayout} />
         </Suspense>

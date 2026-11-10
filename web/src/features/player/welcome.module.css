@@ -19,16 +19,18 @@
 
 .mascot { flex-shrink: 0; }
 .body { min-width: 0; }
-.body h2 { margin: 2px 0 0; font: 650 1.12rem/1.35 var(--display); letter-spacing: -.01em; text-wrap: balance; }
+.body h2 { margin: 2px 0 0; font: 650 1.12rem/1.35 var(--display); letter-spacing: -.018em; text-wrap: balance; }
 .body p { margin: 8px 0 0; color: var(--ink-soft); font-size: .88rem; line-height: 1.7; }
 
 .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; margin-top: 16px; }
-.primary { display: inline-flex; min-height: 40px; align-items: center; gap: 8px; padding: 0 16px; color: var(--canvas); border-radius: var(--radius-small); background: var(--teal-deep); font-size: .86rem; font-weight: 600; text-decoration: none; transition: transform 160ms ease; }
-.primary:hover { transform: translateY(-1px); }
+.primary { display: inline-flex; min-height: 40px; align-items: center; gap: 8px; padding: 0 18px; color: var(--canvas); border-radius: var(--radius-pill); background: var(--teal-deep); font-size: .86rem; font-weight: 600; text-decoration: none; transition: background-color var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out); }
+.primary:active { transform: scale(.97); transition-duration: var(--duration-press); }
+.primary:hover { background: color-mix(in srgb, var(--teal-deep) 88%, var(--ink)); }
 .secondary { display: inline-flex; min-height: 40px; align-items: center; gap: 6px; color: var(--teal-deep); font-size: .84rem; text-decoration: none; }
 .secondary:hover { text-decoration: underline; text-underline-offset: 3px; }
 
-.close { position: absolute; top: 12px; right: 12px; display: grid; width: 34px; height: 34px; place-items: center; color: var(--ink-faint); border-radius: 50%; background: transparent; cursor: pointer; }
+.close { position: absolute; top: 12px; right: 12px; display: grid; width: 34px; height: 34px; place-items: center; color: var(--ink-faint); border-radius: 50%; background: transparent; cursor: pointer; transition: color var(--duration-fast) var(--ease-out), background-color var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out); }
+.close:active { transform: scale(.9); transition-duration: var(--duration-press); }
 .close:hover { color: var(--ink); background: var(--surface-muted); }
 .primary:focus-visible, .secondary:focus-visible, .close:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
 
@@ -39,7 +41,3 @@
   .body p { font-size: .84rem; }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .primary { transition: none; }
-  .primary:hover { transform: none; }
-}
