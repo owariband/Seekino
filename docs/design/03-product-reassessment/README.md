@@ -61,6 +61,7 @@ hypnos 于 **2026-04-27 入职实习**，到这次面试复盘时已接近半年
 | [mcp-access-trd.md](mcp-access-trd.md) | 2026-10-28，外部 Agent 素材库与演示需求 | 将首要交付收敛为 localhost MCP，Cloud 保留 Chat 与后续轻量 HTML 作品 | 区分协议与隔离测试、真实 Codex 连接、真实素材到作品；不把历史 Sandbox 探针当作已交付能力 |
 | [动画表情素材召回](anime-material-recall-trd.md) | 2026-11-08，五集盲评漏选爱音反应 | 剪辑 Agent 按画面表情找素材 | 单独核验语义排名、全量翻页与原片画面。 |
 | [上传视频自动判型](parse-pre-hook-router-trd.md) | 2026-11-09，CPU 普通上传需要自动选策略 | 沿用 Parse V2 及显式覆盖 | [#82](https://github.com/owariband/Seekino/pull/82) |
+| [剪辑素材的运镜描述与回放](clip-camera-reference-trd.md) | 2026-11-10，镜头平移被看反或按画面内容拆断 | 同一发布事件提供中文描述、来源与可执行镜头 | [实测](../../report/agent/video_parse_v2/clip-camera-reference-20261110.md) |
 
 ## 本次讨论确定的复审问题
 

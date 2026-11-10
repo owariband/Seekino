@@ -143,6 +143,19 @@ describe("Evidence range playback", () => {
     expect(screen.getByText(reasonHit.selectionReason.summary)).toBeInTheDocument();
   });
 
+  it("shows the camera description in the normal viewer for just the selected time range", () => {
+    const observed = "镜头向右横移，平滑起步并收住。起幅是灯塔，落幅是右边的小船。";
+    const outside = "固定机位拍摄远处的灯塔。";
+    const current = nextHit({ allTimeEvents: [
+      { description: "海面", startSeconds: 11_000, endSeconds: 12_000, cameraDescription: outside },
+      { description: "海港", startSeconds: 12_000, endSeconds: 14_000, cameraDescription: observed },
+    ] });
+    render(<EvidencePlayer hit={current} playbackRange={playbackRange} />);
+    expect(screen.getByText(observed)).toBeInTheDocument();
+    expect(screen.queryByText(outside)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "原始证据" })).not.toBeInTheDocument();
+  });
+
   it("keeps the exact millisecond range while displaying whole seconds", () => {
     render(<EvidencePlayer hit={hit} playbackRange={{ startSeconds: 8_008, endSeconds: 8_250 }} />);
     const video = screen.getByLabelText<HTMLVideoElement>("视频证据");

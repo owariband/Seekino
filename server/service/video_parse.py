@@ -40,8 +40,8 @@ from agent.video_parse_v2.input import (
 )
 from agent.video_parse_v2.prefix.context import PrefixContext
 from agent.video_parse_v2.refine.input import RefineInput, RefineInputChanged
-from agent.video_parse_v2.refine.response import RefineModelResponse
-from agent.video_parse_v2.understanding.response import UnderstandingModelResponse
+from agent.video_parse_v2.refine.response import ClipRefineModelResponse, RefineModelResponse
+from agent.video_parse_v2.understanding.response import ClipUnderstandingModelResponse, UnderstandingModelResponse
 from agent.video_parse_v2.voiceprint import (
     VoiceprintInput, build_tools as build_voiceprint_tools,
 )
@@ -60,6 +60,8 @@ from engine.common.transcription import TranscriptAnalysis, VideoASRAgent, norma
 from .video_parse_results import build_asr_identity, build_diarization_identity
 from .video_parse_routing import classify_video, preview_times
 from engine.parsev2.diarization import normalize_diarization, assign_video_speakers
+from engine.parsev2.camera import SampledPan
+from engine.parsev2.camera_evidence import camera_motion_hints
 from engine.parsev2.observations import ASRResult, OCRResult, select_asr_window
 from engine.parsev2.planning import ChunkPlan, IntervalPlan
 from engine.parsev2.schemas import VideoParseResult
@@ -250,6 +252,7 @@ class VideoParseRuntimeService:
                     ocr_enabled=config.ocr_enabled,
                     overlap_ms=visual.context_overlap_seconds * 1000 if config.understanding_enabled else 0,
                     visual_fallback_enabled=config.models.understanding.fallback is not None,
+                    camera_frames_required=config.content_kind == "clip" and config.understanding_enabled,
                     chunk_video_required=video_required,
                     check_active=lambda: self._require_video_active(lease),
                 )
@@ -1061,8 +1064,14 @@ class VideoParseRuntimeService:
                              if asr.mode != "none" and asr.scope == "video" else None),
         )
 
-    async def prepare_chunk_visual(self, execution: ChunkExecution) -> None:
-        await self._ensure_chunk_media(execution)
+    async def prepare_chunk_visual(self, execution: ChunkExecution) -> list[SampledPan] | None:
+        media = await self._ensure_chunk_media(execution)
+        config = execution.inputs.parse_config
+        if config.content_kind == "clip" and config.understanding_enabled:
+            frames = [(at, path) for at, path in media.frames
+                      if execution.allowed_start_seconds <= at < execution.allowed_end_seconds]
+            return await self._run_blocking(camera_motion_hints, frames)
+        return None
 
     async def transcribe_chunk(self, execution: ChunkExecution) -> ASRResult:
         media = await self._ensure_chunk_media(execution)
@@ -1174,7 +1183,8 @@ class VideoParseRuntimeService:
             media_inputs,
             fallback_inputs=fallback_inputs,
             schema_name="video_parse_v2_chunk",
-            result_type=UnderstandingModelResponse,
+            result_type=(ClipUnderstandingModelResponse if execution.inputs.parse_config.content_kind == "clip"
+                         else UnderstandingModelResponse),
         )
 
     async def repair_chunk_understanding(
@@ -1193,7 +1203,8 @@ class VideoParseRuntimeService:
             "fallback": fallback,
         })
         return await self._generate_text_structured(
-            binding, prompt, tools=(), result_type=UnderstandingModelResponse,
+            binding, prompt, tools=(), result_type=(ClipUnderstandingModelResponse
+                if execution.inputs.parse_config.content_kind == "clip" else UnderstandingModelResponse),
             schema_name="video_parse_v2_chunk_repair",
         )
 
@@ -1348,7 +1359,8 @@ class VideoParseRuntimeService:
         scope = ModelCallRequestScope(manager)
         with scope.capture(), model_call_context({"refine_generation": subscription.generation}):
             request = asyncio.create_task(self._generate_text_structured(
-                binding, prompt, tools=(), result_type=RefineModelResponse,
+                binding, prompt, tools=(), result_type=(ClipRefineModelResponse
+                    if snapshot["inputs"].parse_config.content_kind == "clip" else RefineModelResponse),
                 schema_name="IntervalRefinementResult",
             ))
         changed = asyncio.create_task(subscription.wait(versions))

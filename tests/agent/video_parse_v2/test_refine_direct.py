@@ -153,7 +153,9 @@ def test_provider_schema_stays_canonical_but_invalid_payload_reaches_business_ga
     from agent.video_parse_v2.refine.response import RefineModelResponse
 
     bad = {"members": [{"sequence_no": 0, "persons": [], "timeline": [], "unexpected": "keep me"}]}
-    assert RefineModelResponse.model_json_schema() == IntervalRefinementResult.model_json_schema()
+    from agent.video_parse_v2.refine.response import ClipRefineModelResponse
+    assert ClipRefineModelResponse.model_json_schema() == IntervalRefinementResult.model_json_schema()
+    assert "camera_ref" not in json.dumps(RefineModelResponse.model_json_schema())
     received = RefineModelResponse.model_validate_json(json.dumps(bad))
     assert received.root == bad
     with pytest.raises(ValidationError, match="unexpected"):

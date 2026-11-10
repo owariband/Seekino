@@ -2851,3 +2851,7 @@ micrograd v5 共 146 块，整集 90 分 04.884 秒。调度反复锁取候选�
 ### WATCH-THEME-01：明暗切换时首页封面与页面亮度脱节
 
 2026-11-09，在公开课程首页切换主题，画布和顶栏一步换色，推荐大图与系列缩略图维持原亮度。验收要求用同一封面看到渐变的中间状态，连点能改变方向，减弱动态效果时直接到达终点，正片保留原色。[专项 TRD](../design/03-product-reassessment/theme-transition-trd.md) · [工作台](workbench.html)
+
+## EDIT-CAMERA-01 · 剪辑素材缺少可检索和连续回放的镜头运动
+
+2026-11-10。单看构图和主体动作，解析会把向左移的镜头说成向右，也会把同一次横移按“灯亮”和“船入画”拆成两次起步。验收需要从原片取得同一镜头的方向、起落幅、节奏与证据，从已发布事件取回可运行的代码，再逐帧与已知镜头位置对照。固定机位下移动的小船与硬切是反例。[设计](../design/03-product-reassessment/clip-camera-reference-trd.md) · [实测](../report/agent/video_parse_v2/clip-camera-reference-20261110.md) · [工作台](workbench.html)
