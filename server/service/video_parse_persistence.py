@@ -20,6 +20,7 @@ from engine.rag.contracts import VideoChunkEvidence, VideoChunkRetrievalIdentity
 
 from ..constants.parse import MAX_INDEX_GENERATION, PREPARE_FAILURES_KEY, RUNTIME_DETAIL_KEY
 from ..model.dto.parseContentDTO import (
+    ReferenceKey,
     ChunkParseContentState,
     ChunkIndexingSnapshot,
     IntervalMemberSnapshot,
@@ -341,6 +342,65 @@ class VideoParsePersistenceService:
                 event_index=event_index,
                 video_chunk_ids=video_chunk_ids,
             )
+
+    def reference_scope(self, tenant_id, series_ids):
+        with self._session_factory() as session:
+            return read_store.current_reference_tasks(session, tenant_id=tenant_id, series_ids=series_ids)
+
+    def reference_observations(self, hits, *, tenant_id, series_ids, index_name):
+        from pydantic import ValidationError
+
+        keys = []
+        for hit in hits:
+            try:
+                keys.append(ReferenceKey.model_validate(hit))
+            except ValidationError:
+                continue  # A malformed derived hit cannot identify a published observation.
+        if not keys:
+            return []
+        with self._session_factory() as session:
+            current = read_store.current_reference_tasks(session, tenant_id=tenant_id, series_ids=series_ids)
+            scope = {key.task_id: current[key.task_id] for key in keys if key.task_id in current}
+            published = retrieval_ops.published_reference_sources(
+                session, tenant_id=tenant_id, task_scope=scope,
+                chunk_ids={key.chunk_id for key in keys}, index_name=index_name,
+            )
+            return [published[key] for key in keys if key in published]
+
+    def reference_style_card(self, *, tenant_id, video_id, index_name):
+        from engine.parsev2.edit_reference import ReferenceRefinement, StyleCard
+
+        with self._session_factory() as session:
+            scope = read_store.current_reference_tasks(session, tenant_id=tenant_id, video_id=video_id)
+            if len(scope) != 1:
+                raise ValueError("EVIDENCE_STALE: Current reference video unavailable")
+            task_id, = scope
+            intervals = interval_store.list_tasks(session, task_id)
+            if len(intervals) != 1 or intervals[0].status != "COMPLETE":
+                raise ValueError("EVIDENCE_STALE: Current style card unavailable")
+            result = interval_store.get_content(session, intervals[0].id)
+            if result is None:
+                raise ValueError("EVIDENCE_STALE: Current style card unavailable")
+            published = retrieval_ops.published_reference_sources(
+                session, tenant_id=tenant_id, task_scope=scope, chunk_ids=None, index_name=index_name,
+            )
+            sources = sorted(published.values(), key=lambda item: item.observation.segment.start_ms)
+            if "members" in result.content:
+                refined = ReferenceRefinement.model_validate(result.content)
+                card = refined.style_card.validate_sources(s.observation for s in sources)
+                updates = [(member.sequence_no, note) for member in refined.members for note in member.observations]
+                by_segment = {s.key.segment_id: s for s in sources}
+                if ({note.segment_id for _, note in updates} != by_segment.keys() or len(updates) != len(sources)
+                        or any(seq != by_segment[note.segment_id].sequence_no or
+                               note.apply(by_segment[note.segment_id].observation) != by_segment[note.segment_id].observation
+                               for seq, note in updates)):
+                    raise VideoParseConflictError("style signals differ from the published member observations")
+                return task_id, card, sources
+            card = StyleCard.model_validate(result.content["style_card"])
+            assignments = card.assignments(item.key.segment_id for item in sources)
+            if any(assignments[item.key.segment_id] != item.observation.technique_key for item in sources):
+                raise VideoParseConflictError("style card does not match its published observations")
+            return task_id, card, sources
 
     def validate_event_coverage(
         self, scope: VideoParseRetrievalScope, *, index_name: str, contract_id: str,

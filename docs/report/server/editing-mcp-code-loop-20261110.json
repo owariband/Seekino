@@ -1,0 +1,166 @@
+{
+  "protocol": "2025-06-18",
+  "tools_called": [
+    "browse_events",
+    "find_edit_templates",
+    "get_style_card",
+    "list_series",
+    "read_evidence",
+    "retrieve"
+  ],
+  "access": "loopback test",
+  "content": {
+    "published_videos": 5,
+    "registered_videos": 12,
+    "paused_jobs": 7,
+    "retrieve_returned_events": 9,
+    "partial": true,
+    "browse_published_events": 2916,
+    "selected_duration_ms": 1200,
+    "download": {
+      "frames": 29,
+      "duration_ms": 1200,
+      "dimensions": [
+        1920,
+        1080
+      ],
+      "codecs": [
+        "h264",
+        "aac"
+      ],
+      "bytes": 461231
+    }
+  },
+  "reference": {
+    "question": "有没有人物登场时从面部特写逐级硬切拉远的例子",
+    "source": "女神异闻录5皇家版-开场.mp4",
+    "rank": 1,
+    "style_card_format": "legacy_technique_groups",
+    "style_card_exemplars": 8,
+    "search_card_reference_matches": true,
+    "measured_source_range_ms": [
+      33900,
+      35033
+    ],
+    "step_starts_ms": [
+      33900,
+      34333,
+      34400,
+      34467,
+      34567,
+      34633,
+      34733,
+      34800,
+      34900,
+      34967
+    ],
+    "frame_count_in_evidence": 34,
+    "inline_equals_download": true,
+    "download": {
+      "frames": 34,
+      "duration_ms": 1133,
+      "dimensions": [
+        1920,
+        1080
+      ],
+      "codecs": [
+        "h264",
+        "aac"
+      ],
+      "bytes": 752706
+    },
+    "mismatched_generation_http": 409,
+    "browser_playback": {
+      "width": 1920,
+      "height": 1080,
+      "duration_ms": 1133,
+      "ended": true,
+      "error": null
+    }
+  },
+  "frozen_reference_replay": {
+    "source": "#50 E3c archived observations and owner-reviewed Weekend B card",
+    "fresh_model_calls": 0,
+    "published_observations": 8,
+    "published_chunks": 2,
+    "card_signals": 8,
+    "resolved_examples": 16,
+    "owner_card_equal": true,
+    "source_members": [
+      7,
+      1
+    ],
+    "mcps": [
+      "find_edit_templates",
+      "get_style_card",
+      "read_evidence"
+    ]
+  },
+  "prompt_sha256": {
+    "pick": "d62c1e493dd4100f801fed5078e5659277febc680af4048e94eb6dfa4715f429",
+    "refine": "6054845122e23d8da72e64506e001e7b5df3c934215249934ab3ec23182b5ea4"
+  },
+  "verification_scope": "650 related automated tests passed. Existing editor library and separate archived-response contract replay. No fresh model generation for the final prompts or independent editor acceptance.",
+  "combined_feature_pr": {
+    "number": 85,
+    "base": "dev",
+    "base_commit": "236bdd8c",
+    "includes_closed_implementation_prs": [
+      81,
+      83,
+      84
+    ],
+    "design_pr": 50,
+    "entry_point": "tests/server/test_editing_mcp_flow.py",
+    "local_test_backends": [
+      "MySQL and Elasticsearch",
+      "SQLite and Elasticsearch"
+    ],
+    "inputs": "Two generated 2 s, 20 fps, 96x64 MP4s with audio, uploaded to the same series through the normal HTTP endpoint",
+    "inference": "Deterministic model and embedding responses. No external model calls.",
+    "assertions": [
+      "One MCP handshake exposes all six tools",
+      "Search and browse return the published content video",
+      "The search result and signal in the newly generated anchored style card share a versioned reference",
+      "Read and download an editor-chosen source range and the reference exemplar from the same app",
+      "Both clips preserve the requested times, ordered frames from their own originals, and audio"
+    ],
+    "non_live_backend_suite": {
+      "initial_run": {
+        "passed": 6197,
+        "failed": 24,
+        "skipped": 127,
+        "deselected": 1
+      },
+      "resolved_on_rerun": [
+        "tests/server/test_refine_content_updates.py::test_worker_subscribes_before_snapshot_reads_and_unsubscribes_on_failure"
+      ],
+      "remaining_after_rerun": 23,
+      "remaining_also_failed_on_unmodified_dev": [
+        "tests/engine/common/test_dependencies.py::test_imports_do_not_load_v1_in_a_fresh_process[common]",
+        "tests/gateway/test_langfuse_integration.py::test_offline_otlp_payload_headers_hierarchy_and_time",
+        "tests/gateway/test_model_config_v2.py::test_codex_supervisor_without_independent_binding_requires_the_agent_source_to_match",
+        "tests/gateway/test_model_config_v2.py::test_default_model_migration_preserves_asr_embedding_agent_and_parse_strategy",
+        "tests/gateway/test_model_config_v2.py::test_independent_supervisor_keeps_agent_models_and_environment_overrides_separate",
+        "tests/gateway/test_multimodal_agent.py::test_fallback_media_is_checked_against_the_active_context_budget",
+        "tests/gateway/test_multimodal_agent.py::test_parse_diagnostics_restore_each_round_and_exclude_chat[deepseek]",
+        "tests/gateway/test_usage.py::test_deepseek_captures_usage_even_on_invalid_or_incomplete_output[completed-invalid]",
+        "tests/server/test_base_model.py::test_all_business_tables_inherit_indexed_nullable_audit_columns",
+        "tests/server/test_cloud_agent_runtime.py::test_cloud_loop_options_cannot_disable_actual_tool_budget[guest-0]",
+        "tests/server/test_cloud_agent_runtime.py::test_cloud_loop_options_cannot_disable_actual_tool_budget[guest-100]",
+        "tests/server/test_cloud_agent_runtime.py::test_cloud_loop_options_cannot_disable_actual_tool_budget[user-0]",
+        "tests/server/test_cloud_agent_runtime.py::test_cloud_loop_options_cannot_disable_actual_tool_budget[user-100]",
+        "tests/server/test_cloud_agent_runtime.py::test_cloud_loop_options_preserve_actual_model_budgets[guest-0]",
+        "tests/server/test_cloud_agent_runtime.py::test_cloud_loop_options_preserve_actual_model_budgets[guest-100]",
+        "tests/server/test_cloud_agent_runtime.py::test_cloud_loop_options_preserve_actual_model_budgets[user-0]",
+        "tests/server/test_cloud_agent_runtime.py::test_cloud_loop_options_preserve_actual_model_budgets[user-100]",
+        "tests/server/test_refine_video_frames.py::test_refine_keeps_frozen_config_and_uses_no_media_or_voice_tools[False-False]",
+        "tests/server/test_refine_video_frames.py::test_refine_keeps_frozen_config_and_uses_no_media_or_voice_tools[False-None]",
+        "tests/server/test_refine_video_frames.py::test_refine_keeps_frozen_config_and_uses_no_media_or_voice_tools[False-True]",
+        "tests/server/test_refine_video_frames.py::test_refine_keeps_frozen_config_and_uses_no_media_or_voice_tools[True-False]",
+        "tests/server/test_refine_video_frames.py::test_refine_keeps_frozen_config_and_uses_no_media_or_voice_tools[True-None]",
+        "tests/server/test_refine_video_frames.py::test_refine_keeps_frozen_config_and_uses_no_media_or_voice_tools[True-True]"
+      ]
+    }
+  }
+}

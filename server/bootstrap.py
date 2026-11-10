@@ -48,6 +48,7 @@ from .repository.parse_output_draft import ParseOutputDraftRepository
 from .repository.upload import UploadRepository
 from .service.video_parse_persistence import VideoParsePersistenceService
 from .service.video_parse_dispatch import ParseDispatch
+from .storage.elasticsearch_references import ElasticsearchReferenceStore
 from .service.agent_checkpoint import create_agent_checkpoint_store
 from .service.agent_chat import AgentChatService
 from .service.agent_attachments import AgentAttachmentService
@@ -270,12 +271,17 @@ def _build_application_services(
     construction_cleanup.callback(parse_usage.close)
     parse_dispatch = ParseDispatch(session_factory, reconcile_interval=settings.mq.heartbeat_interval)
     parse_persistence = VideoParsePersistenceService(session_factory, dispatch=parse_dispatch)
+    assert settings.elasticsearch is not None
+    reference_store = ElasticsearchReferenceStore(
+        resources.elasticsearch_client, index_name=settings.elasticsearch.index_name + "_edit_reference",
+        environment=settings.environment,
+    ) if resources.elasticsearch_client is not None else None
     media = MediaService(
         library, artifact_store, config=settings.images,
         parse_persistence=parse_persistence,
+        reference_index_name=reference_store.index_name if reference_store is not None else None,
     )
 
-    assert settings.elasticsearch is not None
     retrieval, video_parse_query_encoder = build_retrieval_service(
         parse_persistence, elasticsearch_store,
         gateway_config=gateway_config, embedding_config=parse_defaults.embedding,
@@ -337,6 +343,7 @@ def _build_application_services(
         gateway_client=gateway_client,
         event_store=event_store,
         event_contract=event_contract,
+        reference_store=reference_store,
     )
     summary_service = (
         VideoSummarizeService(
@@ -599,6 +606,6 @@ def _build_application_services(
         auth=auth,
         mcp_retrieval=McpRetrievalService(
             library=library, media=media, event_retrieval=event_retrieval,
-            parse_persistence=parse_persistence, local_tenant_id=settings.auth.local_tenant_id,
+            parse_persistence=parse_persistence, local_tenant_id=settings.auth.local_tenant_id, reference_store=reference_store,
         ) if settings.auth.mode == "local" else None,
     )

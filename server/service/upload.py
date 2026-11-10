@@ -10,15 +10,16 @@ from pathlib import Path
 
 from agent.video_parse_v2.input import ParseConfig as VideoParseV2Config
 from engine.common.media_probe import probe_video_duration_seconds
+from engine.parsev2.planning import MAX_INTERVAL_CHUNKS
 from engine.rag import EncoderContract
 from gateway.model_sources import ModelReference
 
-from ..config.parse_profile import ParseConfig, index_contract_fingerprint, validate_video_parse_schedule
+from ..config.parse_profile import EDIT_REFERENCE_INDEX_FINGERPRINT, ParseConfig, index_contract_fingerprint, validate_video_parse_schedule
 from ..config.upload import UploadServiceConfig
 from ..model.identifiers import derive_video_id
 from ..model.upload import UploadSessionStatus, UploadCompletionStage, UPLOAD_DELETION_PENDING_ERROR_CODE
 from ..model.dto.uploadDTO import (
-    CompletedUploadState, UploadSegmentState, UploadSessionDetail,
+    CompletedUploadState, EditReferenceProfileRequest, UploadSegmentState, UploadSessionDetail,
     UploadSessionState,
 )
 from ..model.dto.taskDTO import VideoParseTaskState
@@ -123,7 +124,7 @@ class UploadService:
         total_size_bytes: int,
         idempotency_key: str,
         content_sha256: str | None = None,
-        parse_config: ParseConfig | VideoParseV2Config | None = None,
+        parse_config: EditReferenceProfileRequest | ParseConfig | VideoParseV2Config | None = None,
         created_by_user_id: str | None = None,
     ) -> UploadSessionState:
         normalized_workspace = require_nonempty_text(tenant_id, "tenant_id")
@@ -156,13 +157,13 @@ class UploadService:
         def resolve_config() -> dict:
             snapshot = self._resolve_parse_config(parse_config or self._parse_defaults)
             return snapshot.model_copy(update={
-                "auto_content_kind": parse_config is None and snapshot.content_kind is None,
+                "auto_content_kind": parse_config is None and snapshot.profile == "content" and snapshot.content_kind is None,
             }).model_dump(mode="json")
 
         # Fingerprint the submitted form; normalized execution settings may change
         # independently, but a replay must return the original accepted snapshot.
         requested_parse_config = parse_config.model_dump(mode="json") if parse_config else None
-        if requested_parse_config is not None:
+        if requested_parse_config is not None and not isinstance(parse_config, EditReferenceProfileRequest):
             embedding = (parse_config.embedding if isinstance(parse_config, ParseConfig)
                          else parse_config.models.embedding)
             if embedding.encoder_model is None:
@@ -274,7 +275,7 @@ class UploadService:
         *,
         tenant_id: str,
         expected_job_version: int,
-        parse_config: ParseConfig | VideoParseV2Config | None = None,
+        parse_config: EditReferenceProfileRequest | ParseConfig | VideoParseV2Config | None = None,
         actor_user_id: str | None = None,
     ) -> VideoParseTaskState:
         if (
@@ -291,7 +292,7 @@ class UploadService:
         )
 
         def resolve_snapshot(snapshot: dict) -> dict:
-            if isinstance(parse_config, ParseConfig):
+            if isinstance(parse_config, (EditReferenceProfileRequest, ParseConfig)):
                 return self._resolve_parse_config(parse_config).model_dump(mode="json")
             selected = VideoParseV2Config.model_validate(snapshot)
             if parse_config is not None:
@@ -637,9 +638,24 @@ class UploadService:
         )
         return completed
 
-    def _resolve_parse_config(self, config: ParseConfig | VideoParseV2Config) -> VideoParseV2Config:
+    def _resolve_parse_config(self, config: EditReferenceProfileRequest | ParseConfig | VideoParseV2Config) -> VideoParseV2Config:
+        if isinstance(config, EditReferenceProfileRequest):
+            config = self._parse_defaults.model_copy(update={"profile": config.profile})
         if isinstance(config, ParseConfig):
             config = config.resolve_execution(self._parse_defaults).to_video_parse_v2()
+        if config.profile == "edit_reference":
+            # Representatives supply native frames. Every member feeds one Refine window.
+            config = config.model_copy(update={
+                "auto_content_kind": False, "content_kind": None,
+                "interval_duration": MAX_INTERVAL_CHUNKS * config.chunk_duration,
+                "understanding_enabled": True, "compact_enabled": False, "prefix_context": None,
+                "voiceprint": None, "voiceprint_mode": "off", "ocr_enabled": False,
+                "models": config.models.model_copy(update={
+                    "asr": config.models.asr.model_copy(update={"mode": "none"}), "diarization": None,
+                }),
+                "visual_input": config.visual_input.model_copy(update={"mode": "ordered_frames", "context_overlap_seconds": 0}),
+                "indexing": config.indexing.model_copy(update={"sparse_enabled": False}),
+            })
         if config.indexing.sparse_enabled and not self._video_parse_query_encoder_supports_sparse:
             raise ValueError("parse_config.indexing.sparse_enabled is not supported by the active embedding source")
         indexing = self._parse_defaults.indexing
@@ -652,6 +668,10 @@ class UploadService:
             update={"index_generation": generation},
         )})
         validate_video_parse_schedule(config)
+        if config.profile == "edit_reference":
+            return config.model_copy(update={"indexing": config.indexing.model_copy(update={
+                "contract_fingerprint": EDIT_REFERENCE_INDEX_FINGERPRINT,
+            })})
         return self._require_video_parse_index_compatibility(config)
 
     def _require_video_parse_index_compatibility(

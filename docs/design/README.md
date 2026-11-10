@@ -118,8 +118,12 @@ Event / Sub-Chunk 的实施入口是 [sub-chunk-trd.md](02-agent-harness/sub-chu
 | 外部 Agent MCP 接入 | [mcp-access-trd.md](03-product-reassessment/mcp-access-trd.md) | 主 TRD：localhost 工具发现、Event 召回、版本化证据与媒体取用；外部 Agent 承担制作。 |
 | 剪辑双召回（角色素材 + 剪辑风格参考） | [editing-skill-style-reference-trd.md](03-product-reassessment/editing-skill-style-reference-trd.md) | 方向 TRD：剪辑技能静态、用完即弃，Seekino 一次解析、多次召回；现有解析任务内的 `edit_reference` 档案（Prepare 选代表片段、Understanding 高帧率分析、全片 Refine 窗口汇总观察与风格卡）；模板库保存完整契约的不可变版本与可追加的评价、检查；验证 E0–E3、E2。 |
 | 动画表情素材召回 | [E4 专项](03-product-reassessment/anime-material-recall-trd.md) | 动画表情提示词、整集对照与 MCP 全量素材浏览。 |
+| 剧本双召回与原片取用 | [同一个 MCP 的整体验收](03-product-reassessment/mcp-edit-references-trd.md) | 从剧本找表演、查手法、取用两类原片，由 #85 直接向 dev 交付。 |
+| 剪辑参考解析 | [代表片段与全片风格卡](03-product-reassessment/edit-reference-profile-trd.md) | 参考档案使用原片帧与独立手法索引。 |
+| 解析结果用途 | [正片与剪辑参考档案](03-product-reassessment/parse-result-profile-trd.md) | 冻结任务用途，限定正片检索与导出范围。 |
 | 上传视频自动判型 | [解析前置路由](03-product-reassessment/parse-pre-hook-router-trd.md) | 普通上传在抽帧前判断剧情、课程或剪辑成片，并保存生效策略。 |
 | 剪辑素材的运镜参考 | [描述、检索与回放](03-product-reassessment/clip-camera-reference-trd.md) | 解析来源镜头的取景和节奏，通过同一条发布事件取回可运行的二维镜头与参数。 |
+| 剪辑 Agent 取用连续原片 | [按证据下载片段](03-product-reassessment/mcp-source-clips-trd.md) | 编辑自选原片起止毫秒；Cloud 单次最多一分钟。 |
 | Agent Runtime | [agent-runtime-design.md](01-mvp/agent-runtime-design.md) | Runtime 结构与执行边界的设计记录，含旧 Session / 多 Agent 历史方案。 |
 | ContextCanvas | [context-canvas-design.md](02-agent-harness/context-canvas-design.md) | 专项设计：Parse / Chat 共用上下文工作区、工具协议、读取与修改边界。 |
 | 当前播放位置理解 | [realtime-parse-trd.md](02-agent-harness/realtime-parse-trd.md) | 专项 TRD：实时理解、临时解析与 Supervisor 接线；附执行流程图。 |

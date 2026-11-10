@@ -800,6 +800,28 @@ def test_partial_retry_policy_replay_preserves_snapshot_after_defaults_change(
     assert len(service.list_sessions(tenant_id="local-default")) == 1
 
 
+def test_edit_reference_selection_is_frozen_and_bounded(repository, tmp_path):
+    _, _, _, service = _upload_service(repository, tmp_path)
+    request = UploadSessionCreateRequest.model_validate({
+        "tenantId": "local-default", "episodeOrder": 1, "originalFilename": "opening.mp4",
+        "mediaType": "video/mp4", "totalSizeBytes": 10, "parseConfig": {"profile": "edit_reference"},
+    })
+    args = {**request.model_dump(exclude={"parse_config"}), "series_id": "77285f16-3e5b-592e-ba15-8b224b619806",
+            "idempotency_key": "opening", "parse_config": request.parse_config}
+    accepted = service.create_session(**args)
+    assert service.create_session(**args).upload_session_id == accepted.upload_session_id
+    config = VideoParseV2Config.model_validate(accepted.parse_config)
+    assert config.profile == "edit_reference" and not config.auto_content_kind
+    assert config.models.asr.mode == "none" and config.models.diarization is None
+    assert config.interval_duration == 63 * config.chunk_duration
+    assert config.visual_input.mode == "ordered_frames" and not config.compact_enabled
+    from server.repository.upload import _planned_chunk_count
+    limit = 63 * config.chunk_duration * 1000
+    assert _planned_chunk_count(limit, accepted.parse_config) == 63
+    with pytest.raises(UploadConflictError, match="63 chunks"):
+        _planned_chunk_count(limit + 1, accepted.parse_config)
+
+
 def test_selected_parse_config_survives_upload_completion_and_job_claim(
     repository, tmp_path,
 ) -> None:

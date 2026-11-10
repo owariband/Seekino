@@ -21,14 +21,17 @@ if TYPE_CHECKING:
     from ..service.mcp_retrieval import McpRetrievalService
 
 _ERRORS = {
+    "REFERENCE_INDEX_UNAVAILABLE": "Editing-reference search is unavailable on this instance.",
     "INVALID_ARGUMENT": "Check the tool arguments and their documented limits.",
     "EVENT_INDEX_NOT_READY": "The event index is not ready. Finish indexing before retrying.",
     "NO_SEARCHABLE_SERIES": "No searchable series are available in this local library.",
     "SERIES_SELECTION_REQUIRED": "Use list_series and choose a smaller set of series_ids.",
     "INVALID_CURSOR": "The publication or filters changed, or the cursor is invalid. Restart from the first page.",
-    "EVIDENCE_STALE": "The source changed. Run retrieve again for current evidence.",
-    "INVALID_EVIDENCE_REF": "Use an evidence_ref returned by retrieve or read_evidence.",
+    "EVIDENCE_STALE": "The source changed. Repeat the search or open its current style card.",
+    "INVALID_EVIDENCE_REF": "Copy an evidence_ref from a search result, a style-card exemplar or read_evidence.",
     "EVIDENCE_SCOPE_MISMATCH": "This evidence is unavailable in the current library.",
+    "INVALID_CLIP_RANGE": "Supply start_ms and end_ms together, with 0 <= start_ms < end_ms <= duration_ms.",
+    "CLIP_TOO_LONG": "Cloud clips may be at most 60,000 milliseconds. Choose a shorter range.",
 }
 _MAX_RESULT_BYTES = 131072
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
@@ -84,12 +87,18 @@ def create_mcp_app(service: McpRetrievalService, *, auth_mode: str) -> Starlette
     server = MCPServer(
         "seekino",
         instructions=(
-            "Search the local video library using retrieve. Results are indexed evidence, "
+            "Find source performances with retrieve. For editing techniques and shot changes, use find_edit_templates, "
+            "play its media.play_url and inspect the source frames. get_style_card returns a whole-film card "
+            "with an evidence_ref for every exemplar. Read those references with read_evidence. Results are indexed evidence, "
             "not proof of unrecorded visual details. Use read_evidence for current source "
             "context and media URLs. All video times are integer milliseconds; intervals "
             "include start_ms and exclude end_ms. For editing, collect different candidate shots, "
-            "try the character’s names and observable cues, and inspect nearby frames in the source before "
-            "choosing. Ranked results are only a shortlist. Use browse_events for every published event in "
+            "try the character’s names and observable cues, and watch the source before choosing. "
+            "When a gesture or expression change carries the scene, watch the lead-in and follow-through. "
+            "Call read_evidence with your chosen start_ms and end_ms and download media.clip_url. "
+            "Use the continuous footage as is, or keep its motion with your own local cutout tools. "
+            "A still can emphasize a chosen beat. Ranked results are only a shortlist. "
+            "Use browse_events for every published event in "
             "a series or every tagged appearance of a character. Follow next_cursor through the final page."
         ),
     )
@@ -106,18 +115,21 @@ def create_mcp_app(service: McpRetrievalService, *, auth_mode: str) -> Starlette
         except Exception:
             raise ToolError("RETRIEVAL_FAILED: Unable to complete this request.") from None
         result = dict(result)
-        if "media" in result:
-            media = dict(result["media"])
+        for item in ([result] if "media" in result else result.get("techniques", [])):
+            media = dict(item["media"])
             request = ctx.request_context.request
             base_url = request.state.mcp_base_url
-            for key in ("original_url", "playback_url"):
+            for key in ("original_url", "playback_url", "clip_url"):
                 value = media.get(key)
                 if value is not None:
                     parsed = urlsplit(value)
-                    if parsed.scheme or parsed.netloc or parsed.path != "/api/videos/content" or parsed.fragment:
+                    path = "/api/videos/clip" if key == "clip_url" else "/api/videos/content"
+                    if parsed.scheme or parsed.netloc or parsed.path != path or parsed.fragment:
                         raise ToolError("RETRIEVAL_FAILED: Invalid media reference.")
                     media[key] = base_url + value
-            result["media"] = media
+            if "segment_id" in item:
+                media["play_url"] = media["clip_url"] + "&inline=true" if media.get("clip_url") else None
+            item["media"] = media
         if len(json.dumps(result, ensure_ascii=False).encode("utf-8")) > _MAX_RESULT_BYTES:
             raise ToolError("RESULT_TOO_LARGE: Narrow the query or request fewer results.")
         return result
@@ -161,6 +173,23 @@ def create_mcp_app(service: McpRetrievalService, *, auth_mode: str) -> Starlette
         )
 
     @server.tool(annotations=annotations, structured_output=True)
+    async def find_edit_templates(
+        query: Annotated[str, Field(min_length=1, max_length=2000)], ctx: Context,
+        series_ids: Annotated[list[str] | None, Field(min_length=1, max_length=32)] = None,
+        top_k: Annotated[int, Field(ge=1, le=8, strict=True)] = 5,
+    ) -> dict[str, Any]:
+        """Find editing techniques by natural language. Each source-checked observation has original
+        start/end milliseconds, shot steps and media.play_url for that interval. Choose whether to
+        borrow it after watching the original. The optional series_ids narrow the local reference library."""
+        return await invoke(ctx, service.find_edit_templates, query=query, series_ids=series_ids, top_k=top_k)
+
+    @server.tool(annotations=annotations, structured_output=True)
+    async def get_style_card(video_id: Annotated[str, Field(min_length=1, max_length=64)], ctx: Context) -> dict[str, Any]:
+        """Read the current whole-video Refine card and every exemplar. Each exemplar has a source
+        range and an evidence_ref accepted by read_evidence for playback and download."""
+        return await invoke(ctx, service.get_style_card, video_id=video_id)
+
+    @server.tool(annotations=annotations, structured_output=True)
     async def browse_events(
         series_id: Annotated[str, Field(min_length=1, max_length=64, description="An accessible ID from list_series.")],
         ctx: Context,
@@ -185,14 +214,21 @@ def create_mcp_app(service: McpRetrievalService, *, auth_mode: str) -> Starlette
         evidence_ref: Annotated[str, Field(min_length=1, max_length=4096,
                                           description="Copy an evidence_ref or next_evidence_ref exactly; do not construct one.")],
         ctx: Context,
+        start_ms: Annotated[int | None, Field(ge=0, strict=True, description="Optional inclusive start on the source video, "
+                                             "in milliseconds. Supply both bounds to download a clip.")] = None,
+        end_ms: Annotated[int | None, Field(gt=0, strict=True, description="Exclusive source end in milliseconds. "
+                                           "May span adjacent events in the same video; Cloud limit: 60,000 ms per clip.")] = None,
     ) -> dict[str, Any]:
-        """Read current evidence and media for an opaque reference from retrieve or browse_events. Follow
+        """Read current evidence from retrieve, browse_events, find_edit_templates or get_style_card.
+        For an editing reference, omitting bounds returns the measured source clip, note and native-frame evidence. Follow
         next_evidence_ref to continue bounded context. A stale reference requires a new retrieval.
-        Media URLs serve source videos; use the returned millisecond boundaries when clipping.
+        Omit both bounds to review source context. Supply both to get a downloadable MP4 at media.clip_url
+        for your chosen source range, with its original motion and audio when present.
         For a matched camera_ref, camera_replay contains an editable ES module and params for supported
         continuous 2-D moves. Anchors are creative defaults; verify the observed framing in matched_event.
         """
-        return await invoke(ctx, service.read_evidence, evidence_ref=evidence_ref)
+        return await invoke(ctx, service.read_evidence, evidence_ref=evidence_ref,
+                            start_ms=start_ms, end_ms=end_ms, cloud=auth_mode == "cloud")
 
     app = server.streamable_http_app(
         streamable_http_path="/mcp", json_response=True, stateless_http=True,

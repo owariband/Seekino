@@ -51,7 +51,7 @@ def test_2025_client_handshake_discovers_generated_schemas_and_structured_result
         response = client.post("/mcp", json={"jsonrpc": "2.0", "method": "notifications/initialized"})
         assert response.status_code == 202
         tools = {tool["name"]: tool for tool in _rpc(client, "tools/list").json()["result"]["tools"]}
-        assert set(tools) == {"list_series", "retrieve", "read_evidence", "browse_events"}
+        assert set(tools) == {"list_series", "retrieve", "read_evidence", "browse_events", "find_edit_templates", "get_style_card"}
         assert all(tool["description"] and tool["outputSchema"] for tool in tools.values())
         schema = tools["retrieve"]["inputSchema"]
         assert schema["required"] == ["query"]
@@ -161,3 +161,20 @@ def test_media_absolute_url_cannot_be_supplied_by_service_result():
         result = _call(client, "read_evidence", {"evidence_ref": "ref"})
         assert result["isError"] is True
         assert "evil.example" not in result["content"][0]["text"]
+
+
+def test_read_evidence_advertises_optional_source_clip_and_returns_only_same_origin_clip_urls():
+    def read(evidence_ref, *, start_ms, end_ms, cloud):
+        assert (evidence_ref, start_ms, end_ms, cloud) == ("ref", 9010, 9350, False)
+        return {"media": {"clip_url": "/api/videos/clip?evidenceRef=ref&startMs=9010&endMs=9350"}}
+
+    args = {"evidence_ref": "ref", "start_ms": 9010, "end_ms": 9350}
+    with _client(_service(read_evidence=read)) as client:
+        tool = next(t for t in _rpc(client, "tools/list").json()["result"]["tools"] if t["name"] == "read_evidence")
+        assert tool["inputSchema"]["required"] == ["evidence_ref"]
+        assert set(tool["inputSchema"]["properties"]) == set(args)
+        clip = _call(client, "read_evidence", args)["structuredContent"]["media"]
+        assert clip["clip_url"] == "http://127.0.0.1:9621/api/videos/clip?evidenceRef=ref&startMs=9010&endMs=9350"
+        assert _call(client, "read_evidence", {**args, "start_ms": 9.01})["isError"]
+    with _client(_service(read_evidence=lambda **_: {"media": {"clip_url": "/api/videos/content?variant=original"}})) as client:
+        assert _call(client, "read_evidence", args)["isError"]

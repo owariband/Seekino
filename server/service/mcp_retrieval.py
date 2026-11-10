@@ -2,14 +2,10 @@
 
 from __future__ import annotations
 
-import base64
-import binascii
 import json
 import unicodedata
-from typing import Any, Literal
+from typing import Any
 from urllib.parse import urlencode
-
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from engine.common.background import character_name_groups
 from engine.parsev2.camera import CameraReference, camera_replay
@@ -17,31 +13,22 @@ from engine.rag.contracts import VideoChunkEvidence, VideoChunkRetrievalIdentity
 from engine.rag.indexing.events import compute_event_id
 from engine.rag.retrieval.contracts import EventIndexNotReadyError, SeriesNotReadyError
 
+from ..constants.media import CLOUD_CLIP_MAX_MS
+from ..model.dto.parseContentDTO import PublishedReference
 from ..error.retrieval import SeriesScopeNotFoundError
 from .pagination import decode_cursor, encode_cursor
 from .library import LibraryService
-from .media import MediaMissingError, MediaNotReadyError, MediaService
+from .media import MediaMissingError, MediaNotReadyError, MediaService, validate_clip_range
 from .video_event_retrieval import VideoEventRetrievalService
-from .video_parse_errors import VideoParseConflictError
+from .mcp_evidence import (
+    REFERENCE_PREFIX, EvidenceRef, encode_reference_evidence, evidence_clip_url, evidence_identity,
+    published_chunk, resolve_reference_evidence,
+)
 from .video_parse_persistence import VideoParsePersistenceService
 
 
 _PAGE_BYTES = 48_000
 _BROWSE_CHUNKS_PER_PAGE = 8
-
-
-class _EvidenceRef(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True)
-
-    schema_version: Literal[1] = 1
-    identity: VideoChunkRetrievalIdentity
-    video_chunk_id: str = Field(min_length=1, max_length=64)
-    event_id: str = Field(pattern=r"^[0-9a-f]{64}$")
-    timeline_index: int = Field(ge=0)
-    offset: int = Field(default=0, ge=0)
-
-    def encode(self) -> str:
-        return base64.urlsafe_b64encode(self.model_dump_json().encode()).decode()
 
 
 class McpRetrievalService:
@@ -50,13 +37,60 @@ class McpRetrievalService:
     def __init__(
         self, *, library: LibraryService, media: MediaService,
         event_retrieval: VideoEventRetrievalService | None,
-        parse_persistence: VideoParsePersistenceService, local_tenant_id: str,
+        parse_persistence: VideoParsePersistenceService, local_tenant_id: str, reference_store=None,
     ) -> None:
         if not isinstance(local_tenant_id, str) or not local_tenant_id.strip():
             raise ValueError("local_tenant_id must be nonblank")
         self._library, self._media = library, media
         self._events, self._persistence = event_retrieval, parse_persistence
         self._tenant_id = local_tenant_id
+        self._reference_store = reference_store
+
+    def find_edit_templates(self, query, *, series_ids=None, top_k=5):
+        _integer(top_k, "top_k", 1, 8)
+        if not query.strip() or len(query) > 2000:
+            raise ValueError("INVALID_ARGUMENT: Enter a technique query")
+        if self._reference_store is None:
+            raise ValueError("REFERENCE_INDEX_UNAVAILABLE: Reference search is not configured")
+        scope = self._persistence.reference_scope(self._tenant_id, series_ids)
+        hits = self._reference_store.search(query.strip(), tenant_id=self._tenant_id, task_ids=scope, size=top_k * 3)
+        notes = self._persistence.reference_observations(hits, tenant_id=self._tenant_id, series_ids=series_ids,
+                                                        index_name=self._reference_store.index_name)
+        techniques = []
+        media_by_video = {}
+        for source in notes[:top_k]:
+            video_id = source.key.video_id
+            if video_id not in media_by_video:
+                media_by_video[video_id] = self._reference_original_url(video_id)
+            card = _reference_card(source)
+            card.update(steps=[s.model_dump() for s in source.observation.note.motion.steps],
+                        fine_starts_ms=source.observation.segment.fine_starts_ms)
+            card["media"] = _reference_media(media_by_video[video_id], card["evidence_ref"], card["start_ms"], card["end_ms"])
+            techniques.append(card)
+        return {"techniques": techniques, "templates": []}
+
+    def _reference_original_url(self, video_id):
+        try:
+            self._media.get_original(video_id, tenant_id=self._tenant_id)
+        except (MediaMissingError, MediaNotReadyError, OSError):
+            return None
+        return "/api/videos/content?" + urlencode({"tenantId": self._tenant_id, "videoId": video_id, "variant": "original"})
+
+    def get_style_card(self, video_id):
+        if self._reference_store is None:
+            raise ValueError("REFERENCE_INDEX_UNAVAILABLE: Reference search is not configured")
+        task_id, card, sources = self._persistence.reference_style_card(
+            tenant_id=self._tenant_id, video_id=video_id, index_name=self._reference_store.index_name,
+        )
+        exemplars = [_reference_card(source) for source in sources]
+        style = card.model_dump()
+        if "signals" in style:
+            refs = {item["segment_id"]: item["evidence_ref"] for item in exemplars}
+            for signal in style["signals"]:
+                for example in signal["examples"]:
+                    example["evidence_ref"] = refs[example["segment_id"]]
+        return {"video_id": video_id, "parse_task_id": task_id, "style_card": style, "exemplars": exemplars,
+                "style_card_format": "anchored_signals" if "signals" in style else "legacy_technique_groups"}
 
     def list_series(self, offset: int = 0, limit: int = 20) -> dict[str, Any]:
         _integer(offset, "offset", 0, 1_000_000)
@@ -112,7 +146,7 @@ class McpRetrievalService:
         offset = _page_offset(cursor, page_scope, len(found.matches))
         for match in found.matches[offset:]:
             evidence = by_chunk[match.video_chunk_id]
-            identity = self._identity(evidence)
+            identity = evidence_identity(evidence, self._tenant_id)
             if (identity.series_id not in series_ids or identity.parse_task_id != match.parse_task_id
                     or identity.content_version != match.version):
                 raise ValueError("EVIDENCE_SCOPE_MISMATCH: Retrieved evidence does not match the requested sources.")
@@ -186,7 +220,7 @@ class McpRetrievalService:
                 parse_task_id=chunk.parse_task_id, content_version=chunk.content_version,
                 index_generation=chunk.index_generation,
             )
-            evidence = self._published_chunk(chunk.video_chunk_id, identity)
+            evidence = published_chunk(self._persistence, chunk.video_chunk_id, identity, tenant_id=self._tenant_id)
             if len(evidence.all_time_events) != chunk.event_count:
                 raise ValueError("EVIDENCE_STALE: The Timeline changed during browsing.")
             scanned += 1
@@ -208,19 +242,29 @@ class McpRetrievalService:
                 "ambiguous_names": sorted(ambiguous),
                 "items": items, "next_cursor": encode_cursor(position, scope=scope) if position < total else None}
 
-    def read_evidence(self, evidence_ref: str) -> dict[str, Any]:
-        try:
-            if not isinstance(evidence_ref, str) or not 1 <= len(evidence_ref) <= 4096:
-                raise ValueError("invalid reference size")
-            raw = base64.b64decode(evidence_ref, altchars=b"-_", validate=True)
-            ref = _EvidenceRef.model_validate_json(raw)
-        except (ValueError, binascii.Error, ValidationError) as error:
-            raise ValueError("INVALID_EVIDENCE_REF: Use an evidence_ref returned by retrieve or read_evidence.") from error
-        evidence = self._published_chunk(ref.video_chunk_id, ref.identity)
-        _validate_event_ref(ref, evidence)
+    def read_evidence(
+        self, evidence_ref: str, *, start_ms: int | None = None, end_ms: int | None = None, cloud: bool = False,
+    ) -> dict[str, Any]:
+        if isinstance(evidence_ref, str) and evidence_ref.startswith(REFERENCE_PREFIX):
+            if cloud or self._reference_store is None:
+                raise ValueError("EVIDENCE_SCOPE_MISMATCH: Editing references are available in the local library")
+            source = resolve_reference_evidence(evidence_ref, self._persistence, tenant_id=self._tenant_id,
+                                                index_name=self._reference_store.index_name)
+            segment = source.observation.segment
+            if start_ms is None and end_ms is None:
+                start_ms, end_ms = segment.start_ms, segment.end_ms
+            validate_clip_range(start_ms, end_ms, duration_ms=source.duration_ms, cloud=False)
+            original_url = self._reference_original_url(source.key.video_id)
+            return {**_reference_card(source), "duration_ms": source.duration_ms, "kind": "edit_reference",
+                    "note": source.observation.note.model_dump(), "measured": segment.model_dump(),
+                    "media": _reference_media(original_url, evidence_ref, start_ms, end_ms),
+                    "warnings": [] if original_url else ["Original media is unavailable."]}
+        ref = EvidenceRef.decode(evidence_ref)
+        evidence = ref.resolve(self._persistence, tenant_id=self._tenant_id)
+        clip_requested = start_ms is not None or end_ms is not None
+        if clip_requested:
+            validate_clip_range(start_ms, end_ms, duration_ms=evidence.duration_seconds, cloud=cloud)
         timeline = evidence.all_time_events
-        if ref.offset >= len(timeline):
-            raise ValueError("INVALID_EVIDENCE_REF: Context offset is outside this Chunk.")
         source_event = timeline[ref.timeline_index]
         matched_event, truncated = _event(source_event)
         events, size, end = [], 0, ref.offset
@@ -239,17 +283,27 @@ class McpRetrievalService:
             warnings.append("Some source text was truncated; verify the original media before relying on omitted details.")
         if more:
             warnings.append("More Chunk context is available through next_evidence_ref.")
-        original_url = None
-        try:
-            self._media.get_original(evidence.video_id, tenant_id=self._tenant_id, video=evidence)
-            original_url = "/api/videos/content?" + urlencode({
-                "tenantId": self._tenant_id, "videoId": evidence.video_id, "variant": "original",
-            })
-        except (MediaMissingError, MediaNotReadyError, OSError):
-            warnings.append("Original media is unavailable; source text remains readable.")
-        playback = self._media.playback_view(evidence.video_id, tenant_id=self._tenant_id, video=evidence)
-        if playback.status != "READY":
-            warnings.append("Browser playback is unavailable; inspect original_url if present.")
+        url = None
+        if clip_requested or not cloud:
+            try:
+                self._media.get_original(evidence.video_id, tenant_id=self._tenant_id, video=evidence)
+                if clip_requested:
+                    url = evidence_clip_url(evidence_ref, start_ms, end_ms)
+                else:
+                    url = "/api/videos/content?" + urlencode({
+                        "tenantId": self._tenant_id, "videoId": evidence.video_id, "variant": "original",
+                    })
+            except (MediaMissingError, MediaNotReadyError, OSError):
+                warnings.append("Original media is unavailable; source text remains readable.")
+        if clip_requested:
+            media = {"clip_url": url, "start_ms": start_ms, "end_ms": end_ms, "mime_type": "video/mp4"}
+        elif cloud:
+            media = {"max_clip_ms": CLOUD_CLIP_MAX_MS}
+        else:
+            playback = self._media.playback_view(evidence.video_id, tenant_id=self._tenant_id, video=evidence)
+            if playback.status != "READY":
+                warnings.append("Browser playback is unavailable; inspect original_url if present.")
+            media = {"original_url": url, "playback_url": playback.url, "playback_status": playback.status}
         result = {
             "evidence_ref": evidence_ref, "series_id": evidence.series_id,
             "series_name": evidence.series_name[:255], "video_id": evidence.video_id,
@@ -261,8 +315,7 @@ class McpRetrievalService:
             "context_events": events, "context_offset": ref.offset, "context_event_count": len(timeline),
             "next_evidence_ref": ref.model_copy(update={"offset": end}).encode() if more else None,
             "truncated": truncated, "warnings": warnings,
-            "media": {"original_url": original_url, "playback_url": playback.url,
-                      "playback_status": playback.status},
+            "media": media,
         }
         if source_event["event_type"] == "SCENE" and source_event.get("camera_ref") is not None:
             observation = CameraReference.model_validate(source_event["camera_ref"])
@@ -270,32 +323,20 @@ class McpRetrievalService:
                                                     evidence.camera_hints)
         return result
 
-    def _published_chunk(self, chunk_id: str, identity: VideoChunkRetrievalIdentity) -> VideoChunkEvidence:
-        if identity.tenant_id != self._tenant_id:
-            raise ValueError("EVIDENCE_SCOPE_MISMATCH: Evidence is outside this local library.")
-        try:
-            hydrated = self._persistence.hydrate_retrieval_candidates([(chunk_id, identity)])
-        except (VideoParseConflictError, ValueError) as error:
-            raise ValueError("EVIDENCE_STALE: Source changed or is no longer available; retrieve again.") from error
-        if len(hydrated) != 1:
-            raise ValueError("EVIDENCE_STALE: Source is no longer available; retrieve again.")
-        evidence = hydrated[0].evidence
-        if self._identity(evidence) != identity or evidence.video_chunk_id != chunk_id:
-            raise ValueError("EVIDENCE_STALE: Source identity changed; retrieve again.")
-        return evidence
 
-    def _identity(self, evidence: VideoChunkEvidence) -> VideoChunkRetrievalIdentity:
-        if evidence.tenant_id != self._tenant_id:
-            raise ValueError("EVIDENCE_SCOPE_MISMATCH: Evidence is outside this local library.")
-        provenance = evidence.parse_provenance or {}
-        try:
-            return VideoChunkRetrievalIdentity(
-                tenant_id=self._tenant_id, series_id=evidence.series_id, video_id=evidence.video_id,
-                parse_task_id=provenance["parseTaskId"], content_version=provenance["contentVersion"],
-                index_generation=provenance["indexGeneration"],
-            )
-        except (KeyError, ValidationError) as error:
-            raise ValueError("EVIDENCE_STALE: Source lacks a formal version identity; retrieve again.") from error
+def _reference_card(source: PublishedReference) -> dict[str, Any]:
+    key, obs = source.key, source.observation
+    return {"evidence_ref": encode_reference_evidence(key), "series_id": key.series_id, "video_id": key.video_id,
+            "source_filename": source.source_filename, "parse_task_id": key.task_id, "video_chunk_id": key.chunk_id,
+            "content_version": key.version, "index_generation": key.generation, "segment_id": key.segment_id,
+            "start_ms": obs.segment.start_ms, "end_ms": obs.segment.end_ms, "technique_key": obs.technique_key,
+            "name": obs.note.name, "summary": obs.note.summary, "palette": [p.model_dump() for p in obs.segment.palette]}
+
+
+def _reference_media(original_url, evidence_ref, start_ms, end_ms):
+    return {"original_url": original_url,
+            "clip_url": evidence_clip_url(evidence_ref, start_ms, end_ms) if original_url else None,
+            "start_ms": start_ms, "end_ms": end_ms, "mime_type": "video/mp4"}
 
 
 def _normalized_name(name: str) -> str:
@@ -314,9 +355,9 @@ def _page_offset(cursor: str | None, scope: dict, total: int) -> int:
 
 def _event_card(evidence: VideoChunkEvidence, identity: VideoChunkRetrievalIdentity,
                 index: int, event_id: str) -> dict[str, Any]:
-    ref = _EvidenceRef(identity=identity, video_chunk_id=evidence.video_chunk_id,
+    ref = EvidenceRef(identity=identity, video_chunk_id=evidence.video_chunk_id,
                        event_id=event_id, timeline_index=index)
-    _validate_event_ref(ref, evidence)
+    ref.validate_event(evidence)
     event, clipped = _event(evidence.all_time_events[index])
     return {
         "evidence_ref": ref.encode(), "series_id": identity.series_id, "series_name": evidence.series_name[:255],
@@ -329,14 +370,6 @@ def _event_card(evidence: VideoChunkEvidence, identity: VideoChunkRetrievalIdent
 def _integer(value: int, name: str, minimum: int, maximum: int) -> None:
     if type(value) is not int or not minimum <= value <= maximum:
         raise ValueError(f"INVALID_ARGUMENT: {name} must be an integer between {minimum} and {maximum}.")
-
-
-def _validate_event_ref(ref: _EvidenceRef, evidence: VideoChunkEvidence) -> None:
-    identity = ref.identity
-    if (ref.timeline_index >= len(evidence.all_time_events)
-            or ref.event_id != compute_event_id(identity.parse_task_id, ref.video_chunk_id,
-                                               identity.content_version, ref.timeline_index)):
-        raise ValueError("INVALID_EVIDENCE_REF: Event identity does not match its source Timeline.")
 
 
 def _event(source: dict[str, Any]) -> tuple[dict[str, Any], bool]:
