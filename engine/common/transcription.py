@@ -213,8 +213,11 @@ def _normalize_words(words, start_ms: int, end_ms: int) -> list[TranscriptWord] 
         if not isinstance(word, dict):
             raise ValueError("ASR word must be an object")
         text = word.get("word")
-        if not isinstance(text, str) or not text.strip():
-            raise ValueError("ASR word must contain nonempty text")
+        if not isinstance(text, str):
+            raise ValueError("ASR word text must be a string")
+        if not text.strip():
+            # whisper.cpp emits zero-width whitespace words in Japanese audio; they carry no text.
+            continue
         start, end = word.get("start"), word.get("end")
         for value in (start, end):
             if value is not None and (isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value)):

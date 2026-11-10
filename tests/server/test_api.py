@@ -51,7 +51,7 @@ from server.schema import (
     VideoChunkSearchHit,
     VideoChunkSearchResult,
 )
-from server.service.agent_chat import AgentChatService
+from server.service.agent_chat import AgentChatService, ChatModelChoice
 from server.service.agent_attachments import AgentAttachmentService
 from server.service.job import ParseJobService
 from server.service.library import LibraryService
@@ -495,12 +495,18 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
         "/api/agent/conversations/list",
         "/api/agent/conversations/get",
         "/api/agent/conversations/delete",
+        "/api/agent/conversations/model",
         "/api/agent/attachments/upload",
         "/api/agent/attachments/content",
         "/api/agent/messages/list",
         "/api/agent/messages/get",
         "/api/agent/messages/options",
         "/api/agent/global-settings",
+        "/api/agent/model-connections",
+        "/api/agent/model-connections/default",
+        "/api/agent/model-connections/roles",
+        "/api/agent/model-connections/discover",
+        "/api/agent/model-connections/test",
         "/api/agent/messages/send",
         "/api/agent/messages/cancel",
         "/api/agent/messages/events",
@@ -1527,6 +1533,7 @@ def test_series_and_search_contract(tmp_path: Path) -> None:
         "searchedVideoIds": [],
         "partial": False,
         "warnings": [],
+        "coverageMessages": [],
         "agentReply": {
             "message": "这次没有找到符合当前检索范围的候选片段。",
             "resultCount": 0,
@@ -1884,6 +1891,7 @@ def test_upload_full_reparse_creates_new_v2_task_and_retains_previous_task(tmp_p
         params={**params, "tenantId": "other-workspace"},
     ).status_code == 404
     replacement_config = dict(old_config)
+    assert old_config["auto_content_kind"] is True
     replacement_config["batch_max_size"] = 4
     reparsed = client.post(
         "/api/uploads/reparse",
@@ -1898,7 +1906,8 @@ def test_upload_full_reparse_creates_new_v2_task_and_retains_previous_task(tmp_p
         "version": 2,
     }.items() <= reparsed.json().items()
     assert reparsed.json()["videoParseTaskId"] != old_task_id
-    assert reparsed.json()["parseConfig"] == replacement_config
+    expected_config = {key: value for key, value in replacement_config.items() if key != "auto_content_kind"}
+    assert reparsed.json()["parseConfig"] == expected_config
     for field in ("nextExecuteTime", "createTime", "updateTime"):
         assert type(reparsed.json()[field]) is int
     with jobs_repository._session_factory() as session:
@@ -1913,7 +1922,7 @@ def test_upload_full_reparse_creates_new_v2_task_and_retains_previous_task(tmp_p
         )
         assert old_task.parse_config == old_config
         assert new_task.version == 2
-        assert new_task.parse_config == replacement_config
+        assert new_task.parse_config == expected_config
     duplicate = client.post("/api/uploads/reparse", params=params)
     assert duplicate.status_code == 409
     with jobs_repository._session_factory() as session:
@@ -2329,22 +2338,19 @@ def test_reusing_message_key_with_different_series_conflicts_before_retrieval(tm
         client.app.state.services.agent.close()
 
 
-def test_explicit_non_ready_series_is_rejected_before_starting_message(tmp_path):
-    client, retrieval, _ = _client(tmp_path)
+def test_explicit_non_ready_series_allows_a_message_in_its_own_scope(tmp_path):
+    client, _, _ = _client(tmp_path)
     series_id = _create_series(client, ready=False)
     conversation_id = _create_agent_conversation(client)
     try:
         response = client.post(
             "/api/agent/messages/send", params={"tenantId": "local-default", "conversationId": conversation_id},
             headers={"Idempotency-Key": "non-ready-message"},
-            json={"tenantId": "local-default", "content": "找画面", "seriesIds": [series_id]},
+            json={"tenantId": "local-default", "content": "你好", "seriesIds": [series_id]},
         )
-        assert response.status_code == 409, response.text
-        assert response.json()["code"] == "SERIES_NOT_READY"
-        assert retrieval.calls == []
-        assert client.get(
-            "/api/agent/messages/list", params={"tenantId": "local-default", "conversationId": conversation_id},
-        ).json()["items"] == []
+        assert response.status_code == 200, response.text
+        assert response.json()["userMessage"]["seriesIds"] == [series_id]
+        assert response.json()["assistantMessage"]["status"] == "COMPLETED"
     finally:
         client.app.state.services.agent.close()
 
@@ -2397,6 +2403,33 @@ def test_agent_evidence_view_reads_legacy_single_query_without_trace():
     serialized = view.model_dump(mode="json", by_alias=True)
     assert "query" not in serialized
     assert serialized["retrievalTrace"] == []
+    assert serialized["hadCandidates"] is None
+
+
+@pytest.mark.parametrize(("trace", "expected"), [
+    ([{"resultCount": 2}], True),
+    ([{"result_count": 2, "status": "success"}], True),
+    ([{"resultCount": 0, "status": "success"}], False),
+    ([{"resultCount": 0}], False),
+    ([{"resultCount": 0, "status": "error"}], None),
+    ([{"resultCount": 0}, {"status": "error"}], None),
+    ([{"status": "error"}, {"result_count": 2}], True),
+    ([{"status": "success"}], None),
+    ([], None),
+])
+def test_guest_history_projects_candidate_outcome_and_only_public_coverage(trace, expected):
+    guest = SimpleNamespace(mode="cloud", tenant_id="guest-workspace", public_tenant_id="platform-public",
+                            role="user", auth_level="guest", is_guest=True)
+    stored = {
+        "seriesIds": ["course"], "searchedVideoIds": ["video"], "agentReply": {"message": "回答", "resultCount": 0},
+        "hits": [], "coverageMessages": ["已查第一集"], "warnings": ["private diagnostic"],
+        "retrieval_trace": [{**entry, "query": "private diagnostic"} for entry in trace],
+    }
+    media = SimpleNamespace(require_series_access=lambda *_args, **_kwargs: None)
+    view = _agent_search_evidence_view(stored, media, tenant_id="platform-public", identity=guest)
+    assert view.had_candidates is expected
+    assert view.retrieval_trace == [] and view.warnings == view.coverage_messages == ["已查第一集"]
+    assert "private diagnostic" not in view.model_dump_json()
 
 
 @pytest.mark.parametrize("accept", ["application/json", "text/event-stream"])
@@ -2889,18 +2922,16 @@ def test_send_respects_accept_quality(tmp_path, accept, expected):
 
 
 @pytest.mark.parametrize("failure,expected_status,expected_code", [
-    ("not-ready", 409, "SERIES_NOT_READY"),
     ("missing-scope", 404, "NOT_FOUND"),
     ("index-inconsistent", 409, "CONFLICT"),
 ])
 def test_retrieval_domain_errors_keep_http_mapping_through_harness(tmp_path, failure, expected_status, expected_code):
-    from server.error.retrieval import SeriesNotReadyError, SeriesScopeNotFoundError
+    from server.error.retrieval import SeriesScopeNotFoundError
     from server.service.video_retrieval import RetrievalIndexConsistencyError
     client, _, _ = _client(tmp_path)
     _create_series(client)
     conversation_id = _create_agent_conversation(client)
     error_type = {
-        "not-ready": SeriesNotReadyError,
         "missing-scope": SeriesScopeNotFoundError,
         "index-inconsistent": RetrievalIndexConsistencyError,
     }[failure]
@@ -3046,6 +3077,30 @@ def test_upload_list_has_precise_total_and_cursor_bound_to_workspace(tmp_path):
         client.app.state.services.agent.close()
 
 
+def test_conversation_model_http_round_trip_leaves_other_conversations_unchanged(tmp_path):
+    client, _, _ = _client(tmp_path)
+    service = client.app.state.services.agent
+    try:
+        service._model_choices["alternate"] = ChatModelChoice("Alternate", lambda _: service._runtime)
+        tenant = {"tenantId": "local-default"}
+        first = client.post("/api/agent/conversations/create", json={**tenant, "modelId": "alternate"},
+                            headers={"Idempotency-Key": "first-model"})
+        other = client.post("/api/agent/conversations/create", json=tenant,
+                            headers={"Idempotency-Key": "second-model"})
+        assert first.json()["modelId"] == "alternate" and other.json()["modelId"] == "default"
+        target = {**tenant, "conversationId": other.json()["conversationId"]}
+        path = "/api/agent/conversations/model"
+        assert client.patch(path, params=target, json={"modelId": "unknown"}).status_code == 400
+        assert client.patch(path, params=target, json={"modelId": "alternate"}).json()["modelId"] == "alternate"
+        assert client.get("/api/agent/conversations/get", params=target).json()["modelId"] == "alternate"
+        assert client.patch(path, params=target, json={"modelId": "default"}).json()["modelId"] == "default"
+        models = {row["conversationId"]: row["modelId"] for row in
+                  client.get("/api/agent/conversations/list", params=tenant).json()["items"]}
+        assert models == {first.json()["conversationId"]: "alternate", other.json()["conversationId"]: "default"}
+    finally:
+        service.close()
+
+
 def test_agent_message_options_and_openapi_come_from_service_configuration(tmp_path):
     from dataclasses import replace
 
@@ -3064,6 +3119,8 @@ def test_agent_message_options_and_openapi_come_from_service_configuration(tmp_p
         response = client.get("/api/agent/messages/options")
         assert response.status_code == 200
         assert response.json() == {
+            "chatModels": [],
+            "newChatModelId": "default",
             "topK": {"defaultValue": 5, "minimum": 1, "maximum": 7},
             "maxModelCallsPerTurn": {
                 "defaultValue": 8,
@@ -3218,3 +3275,36 @@ def test_ui_cors_allows_stream_and_media_headers(tmp_path, monkeypatch):
         }
     finally:
         service.close()
+
+
+def test_model_settings_api_updates_active_yaml(tmp_path, yaml_model_settings, monkeypatch):
+    import yaml
+    client, _, _ = _client(tmp_path)
+    services = client.app.state.services
+    services.model_settings = services.agent._model_settings = yaml_model_settings
+    path = "/api/agent/model-connections"
+    cid = str(uuid4())
+    endpoint = f"{path}?connectionId={cid}"
+    try:
+        initial = client.get(path).json()
+        assert initial["connections"] and all(c["origin"] == "yaml" for c in initial["connections"])
+        body = {"name": "Any service", "protocol": "openai_responses", "baseUrl": "https://example.org/own/v1",
+                "modelIds": ["team/arbitrary"], "revision": 0, "apiKey": "synthetic-secret"}
+        saved = client.put(endpoint, json=body)
+        assert saved.status_code == 200 and "synthetic-secret" not in saved.text
+        ref = next(c for c in saved.json()["connections"] if c["connectionId"] == cid)["models"][0]["id"]
+        assert client.put(endpoint, json=body).status_code == 409
+        default = client.patch(path + "/default", json={"modelId": ref, "revision": saved.json()["revision"]})
+        assert default.json()["defaultModelId"] == ref
+        document = yaml.safe_load(yaml_model_settings.path.read_bytes())
+        assert document["models"][document["chat_default_model"]]["model"] == "team/arbitrary"
+        assert client.get("/api/agent/messages/options").json()["newChatModelId"] == ref
+        def fail_probe(*args, **kwargs):
+            raise RuntimeError("synthetic-secret")
+        monkeypatch.setattr("gateway.personal_models.probe_personal_model", fail_probe)
+        failed = client.post(path + "/test", params={"connectionId": cid}, json={"modelId": ref})
+        assert failed.status_code == 502 and "synthetic-secret" not in failed.text
+        assert client.delete(f"{endpoint}&revision={default.json()['revision']}").status_code == 200
+        assert cid not in yaml_model_settings.catalog().connections
+    finally:
+        services.agent.close()

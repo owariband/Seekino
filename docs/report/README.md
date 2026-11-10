@@ -23,6 +23,8 @@
 
 ## Agent / video_parse_v2
 
+剪辑素材的镜头方向、起止构图与回放误差，见[四段控制样例及 10 秒灯塔片实测](agent/video_parse_v2/clip-camera-reference-20261110.md)。
+
 最新实验：[2026-10-29 精简字段与 SHOT 的 JSON/XML 对照](agent/video_parse_v2/parse-compact-shot-20261029.md)。复用本地 Whisper、关闭独立 OCR，同字段 8 次未显示 XML 性能优势；最终选择精简 JSON，不换 XML，不再追求单 Chunk 30 秒，质量优先并沿用既有并行策略。此前的[首轮完整 JSON/XML 对照](agent/video_parse_v2/parse-protocol-20261029.md)独立保留，均未接入生产。
 
 质量复核：[豆包 2.1 Pro non-thinking 的业务问题清单](agent/video_parse_v2/doubao-nonthinking-quality-review-20261029.md)。逐份核对两轮八份原文，区分身份/分段/时间/构图错误、文字遗漏、合同失败与已改善项；无新增模型调用。
@@ -72,6 +74,8 @@ API 并发：[2026-10-30 Kimi Code 10 路并发实测](gateway/kimi-concurrency-
 - [agent-bridge-stages.svg](gateway/bridge/agent-bridge-stages.svg)
 
 ## Server
+
+[2026-11-07 Parse 输出草稿与 SSE 续租解耦](server/service/parse-output-drafts-20261107.md)：1,024 字节或退出保存；模拟接收路径额外持久检查 69→0，941 项回归通过；真实并发与整集用时未测。
 
 [PR #18 范围收口与现有任务交接](server/pr18-scope-handoff-20261103.md)：已验证的解析修复收口，后端查询与 Consumer 转 PR #30；保留同一 v11 任务、音频与 Chunk 成果。
 

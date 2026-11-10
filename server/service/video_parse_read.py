@@ -11,7 +11,7 @@ from engine.parsev2.schemas import DialogueEvent, VideoParseResult
 from engine.parsev2.validation import validate_result_time_range
 from engine.rag.contracts import TranscriptCueView, VideoChunkEvidence, VideoChunkRetrievalIdentity
 from engine.rag.indexing.projection import project_chunk_index
-from engine.rag.retrieval.contracts import ChunkRetrievalFacts
+from engine.rag.retrieval.contracts import ChunkRetrievalFacts, EpisodeNotFoundError, EventIndexNotReadyError
 
 from ..constants.parse import RUNTIME_DETAIL_KEY
 from ..model.task import ChunkTaskPhase, ChunkParseTaskStatus, VideoParseTaskStatus
@@ -39,8 +39,9 @@ from ..model.dto.searchDTO import (
 )
 from .video_parse_errors import VideoParseTaskNotFoundError, VideoParseConflictError
 from ..utils.time import datetime_to_unix_time_ms
+from ..utils.validation import canonical_uuid
 from .video_parse_task import _video_failure_status, _latest_video_task_id
-from .video_parse_content import _index_receipt, _require_event_publication, EVENT_INDEX_TARGET_DETAIL_KEY
+from .video_parse_content import EVENT_INDEX_TARGET_DETAIL_KEY, _index_receipt, _require_event_publication
 
 
 def _require_matching_retrieval_identity(
@@ -123,6 +124,7 @@ def _video_parse_evidence(
     events = [event.model_dump(mode="json") for event in result.timeline]
     event_text = "\n".join(event.description for event in result.timeline).strip()
     detail = content.detail if isinstance(content.detail, Mapping) else {}
+    retained = detail.get("evidence")
     compact = detail.get("compact")
     video_compact = compact.strip() if isinstance(compact, str) else ""
     summary = (
@@ -170,6 +172,7 @@ def _video_parse_evidence(
         baseline_visual_caption=chunk.baseline_visual_caption,
         keyframe_uris=chunk.keyframe_uris,
         all_time_events=events,
+        camera_hints=retained.get("camera_hints", []) if isinstance(retained, Mapping) else [],
         all_time_event_text=event_text,
         retrieval_text=retrieval_text,
         video_compact=video_compact,
@@ -191,20 +194,33 @@ def _video_parse_evidence(
     )
 
 
+def _episode_ranges(episodes: Sequence[int]) -> str:
+    ranges: list[tuple[int, int]] = []
+    for episode in episodes:
+        if ranges and episode == ranges[-1][1] + 1:
+            ranges[-1] = (ranges[-1][0], episode)
+        else:
+            ranges.append((episode, episode))
+    return "、".join(f"E{a:02}–E{b:02}" if a != b else f"E{a:02}" for a, b in ranges)
+
+
 def resolve_retrieval_scope(
     session,
     *,
     require_sparse: bool,
     ordered_series_ids: tuple[str, ...],
     workspace: str,
+    episode_order: int | None = None,
+    event_index: tuple[str, str] | None = None,
+    video_chunk_ids: Sequence[str] | None = None,
 ) -> VideoParseRetrievalScope:
-    existing_series_ids = set(read_store.list_series_ids(
+    series_names = read_store.series_names(
         session, series_ids=ordered_series_ids, workspace=workspace,
-    ))
+    )
     missing = [
         series_id
         for series_id in ordered_series_ids
-        if series_id not in existing_series_ids
+        if series_id not in series_names
     ]
     if missing:
         raise SeriesScopeNotFoundError(
@@ -212,7 +228,13 @@ def resolve_retrieval_scope(
             + ", ".join(missing)
         )
 
-    videos = read_store.list_series_videos(session, series_ids=ordered_series_ids)
+    videos = read_store.list_series_videos(session, series_ids=ordered_series_ids, episode_order=episode_order)
+    if episode_order is not None and not videos:
+        raise EpisodeNotFoundError()
+    requested = event_chunk_owners(session, video_chunk_ids, [video.id for video in videos])
+    if requested is not None:
+        owner_ids = set(requested.values())
+        videos = [video for video in videos if video.id in owner_ids]
     if not videos:
         raise SeriesNotReadyError(
             "selected Series have no COMPLETE Video Parse V2 task"
@@ -231,9 +253,29 @@ def resolve_retrieval_scope(
         == VideoParseTaskStatus.COMPLETE.value
     ]
     if not selected:
+        processing = any(not task.status.endswith("_FAILED") for task in latest_by_video.values())
+        message = "课程正在解析，暂时没有可检索的集数" if processing else "所选课程暂时没有可检索的集数"
+        if episode_order is not None or (requested is not None and len(videos) == 1):
+            task = latest_by_video.get(videos[0].id)
+            message = "该集正在解析，暂时无法检索" if task and not task.status.endswith("_FAILED") else "该集暂时无法检索"
         raise SeriesNotReadyError(
-            "selected Series have no COMPLETE Video Parse V2 task"
+            "selected Series have no COMPLETE Video Parse V2 task", public_message=message,
         )
+
+    event_sources = ()
+    if event_index is not None:
+        complete = {video.id: task.id for video, task in selected}
+        selected_chunks = None if requested is None else {
+            chunk_id: video_id for chunk_id, video_id in requested.items() if video_id in complete
+        }
+        event_sources = tuple(sorted(validate_event_coverage(
+            session, parse_tasks_by_video_id=complete, index_name=event_index[0], contract_id=event_index[1],
+            requested=selected_chunks, allow_partial=True,
+        )))
+        published = {task_id for task_id, _, _ in event_sources}
+        selected = [(video, task) for video, task in selected if task.id in published]
+        if not selected:
+            raise EventIndexNotReadyError("Event index has not covered the selected videos")
 
     task_ids = [task.id for _video, task in selected]
     rows_by_task: dict[str, list[VideoParseRetrievalChunkData]] = {}
@@ -243,8 +285,9 @@ def resolve_retrieval_scope(
     ):
         rows_by_task.setdefault(row.video_task_id, []).append(row)
 
-    shared_contract: tuple[int, str, str, int, float, int] | None = None
+    shared_contract = None
     selected_config: ParseConfig | None = None
+    event_generations = {}
     for video, task in selected:
         rows = rows_by_task.get(task.id, [])
         if (
@@ -276,10 +319,12 @@ def resolve_retrieval_scope(
                 embedding.query_instruction,
                 config.visual_input.max_height,
             )
+            if event_index is not None:
+                event_generations[task.id] = contract[0]
             if shared_contract is None:
                 shared_contract = contract
                 selected_config = config
-            elif shared_contract != contract:
+            elif event_index is None and shared_contract != contract:
                 raise VideoParseConflictError(
                     "selected Video Parse V2 tasks use different index contracts"
                 )
@@ -289,10 +334,41 @@ def resolve_retrieval_scope(
             "selected Video Parse V2 tasks have no published Chunks"
         )
     assert selected_config is not None
-    incomplete_scope = (
-        len(selected) != len(videos)
-        or {video.series_id for video in videos} != existing_series_ids
-    )
+    complete_ids = {video.id for video, _ in selected}
+    coverage_messages = []
+    grouped: dict[str, list[VideoData]] = {}
+    for video in videos:
+        grouped.setdefault(video.series_id, []).append(video)
+    partial = len(selected) != len(videos) or (requested is None and grouped.keys() != series_names.keys())
+    for series_id in ordered_series_ids:
+        members = grouped.get(series_id, [])
+        if requested is not None and not members:
+            continue
+        covered, processing, unavailable, no_events = [], [], [], []
+        for video in members:
+            task = latest_by_video.get(video.id)
+            if video.id in complete_ids:
+                covered.append(video.episode_order)
+            elif event_index is not None and task and task.status == VideoParseTaskStatus.COMPLETE.value:
+                no_events.append(video.episode_order)
+            elif task and not task.status.endswith("_FAILED"):
+                processing.append(video.episode_order)
+            else:
+                unavailable.append(video.episode_order)
+        name = f"《{series_names[series_id]}》" if len(ordered_series_ids) > 1 else ""
+        coverage = _episode_ranges(covered) if covered else "0 集"
+        if requested is not None and covered:
+            coverage += " 的指定片段"
+        parts = [f"本次检索覆盖 {name}{coverage}"]
+        if not members:
+            parts.append("课程中还没有视频")
+        if no_events:
+            parts.append(f"{_episode_ranges(no_events)} 暂无可检索的事件索引")
+        if processing:
+            parts.append(f"{_episode_ranges(processing)} 正在处理")
+        if unavailable:
+            parts.append(f"{_episode_ranges(unavailable)} 暂不可检索")
+        coverage_messages.append("，".join(parts))
     return VideoParseRetrievalScope(
         series_ids=ordered_series_ids,
         searched_video_ids=tuple(video.id for video, _task in selected),
@@ -304,14 +380,9 @@ def resolve_retrieval_scope(
         },
         parse_config=selected_config,
         index_generation=shared_contract[0],
-        partial=incomplete_scope,
-        warnings=(
-            (
-                "部分所选 Series 没有视频，或部分视频的最新 Video Parse V2 "
-                "任务尚未完成，"
-                "本次结果只覆盖当前可检索视频。"
-            ),
-        ) if incomplete_scope else (),
+        partial=partial,
+        warnings=tuple(coverage_messages),
+        event_source_generations={source: event_generations[source[0]] for source in event_sources},
     )
 
 
@@ -504,51 +575,89 @@ def load_chunk_evidence_identity(
     return identity
 
 
+def event_chunk_owners(
+    session, chunk_ids: Sequence[str] | None, video_ids: Sequence[str],
+) -> dict[str, str] | None:
+    if chunk_ids is None:
+        return None
+    if isinstance(chunk_ids, (str, bytes)) or not chunk_ids:
+        raise ValueError("video_chunk_ids must be a nonempty sequence")
+    requested = {canonical_uuid(value, "video_chunk_id") for value in chunk_ids}
+    owners = read_store.chunk_video_ids(session, chunk_ids=requested, video_ids=video_ids)
+    if owners.keys() != requested:
+        raise VideoParseConflictError("Event Chunk sub-scope is outside the authorized publication")
+    return owners
+
+
 def validate_event_coverage(
     session,
     *,
-    scope: VideoParseRetrievalScope,
+    parse_tasks_by_video_id: Mapping[str, str],
     index_name: str,
     contract_id: str,
-    requested: set[str] | None,
+    requested: Mapping[str, str] | None,
+    allow_partial: bool = False,
 ) -> list[tuple[str, str, int]]:
-    sources = []
     tasks = {task.id: task for task in read_store.list_tasks(
-        session, task_ids=tuple(scope.parse_tasks_by_video_id.values()),
+        session, task_ids=tuple(parse_tasks_by_video_id.values()),
     )}
-    if len(tasks) != len(scope.parse_tasks_by_video_id):
+    if {task.video_id: task.id for task in tasks.values()} != parse_tasks_by_video_id:
         raise VideoParseConflictError("Event retrieval scope changed")
-    for parent in tasks.values():
-        if (parent.status != VideoParseTaskStatus.COMPLETE.value
-                or _latest_video_task_id(session, parent.video_id) != parent.id):
-            raise VideoParseConflictError("Event source is no longer a COMPLETE publication")
-    rows = read_store.load_event_source_rows(session, task_ids=tuple(tasks))
-    seen = set()
-    counts = {task_id: 0 for task_id in tasks}
-    for child, content, chunk in rows:
-        if requested is not None and child.chunk_id not in requested:
+    latest = {}
+    for task in read_store.list_video_tasks(session, video_ids=tuple(parse_tasks_by_video_id)):
+        latest.setdefault(task.video_id, task.id)
+    if latest != parse_tasks_by_video_id or any(t.status != VideoParseTaskStatus.COMPLETE.value for t in tasks.values()):
+        raise VideoParseConflictError("Event source is no longer a COMPLETE publication")
+
+    requested_by_task: dict[str, set[str]] = {}
+    for chunk_id, video_id in (requested or {}).items():
+        requested_by_task.setdefault(parse_tasks_by_video_id[video_id], set()).add(chunk_id)
+    task_ids = set(tasks) if requested is None else set(requested_by_task)
+    if allow_partial:
+        task_ids = {key for key in task_ids if (tasks[key].detail or {}).get(EVENT_INDEX_TARGET_DETAIL_KEY) is not None}
+    rows_by_task = {}
+    for row in read_store.load_event_source_rows(session, task_ids=tuple(task_ids)):
+        rows_by_task.setdefault(row[0].video_task_id, []).append(row)
+    sources = []
+    for task_id in task_ids:
+        try:
+            video_sources = _published_video_events(tasks[task_id], rows_by_task.get(task_id, []), index_name, contract_id)
+        except (VideoParseConflictError, ValueError):
+            if not allow_partial:
+                raise
             continue
-        seen.add(child.chunk_id)
-        counts[child.video_task_id] += 1
-        parent = tasks[child.video_task_id]
-        if (child.phase != ChunkTaskPhase.INDEX
-                or child.status != ChunkParseTaskStatus.COMPLETE.value
-                or child.indexed_content_version != content.version):
-            raise VideoParseConflictError("Event source is no longer a COMPLETE publication")
-        target = (parent.detail or {}).get(EVENT_INDEX_TARGET_DETAIL_KEY)
-        if (not isinstance(target, Mapping) or target.get("index_name") != index_name
-                or target.get("contract_id") != contract_id):
-            raise VideoParseConflictError("Event index has not covered the selected Chunk scope")
-        receipt = _index_receipt(content, parent.id, child.chunk_id)
-        _require_event_publication(parent, child, content, receipt, target, chunk=chunk)
-        sources.append((parent.id, child.chunk_id, content.version))
-    if requested is not None and seen != requested:
-        raise VideoParseConflictError("Event Chunk sub-scope is outside the authorized publication")
-    if requested is None and any(counts[task_id] != task.chunk_count for task_id, task in tasks.items()):
-        raise VideoParseConflictError("Event publication scope has missing Chunk content")
-    if not sources:
+        if requested is not None:
+            chunks = requested_by_task[task_id]
+            video_sources = [source for source in video_sources if source[1] in chunks]
+            if len(video_sources) != len(chunks):
+                raise VideoParseConflictError("Event Chunk sub-scope is outside the authorized publication")
+        sources.extend(video_sources)
+    if not sources and not allow_partial:
         raise VideoParseConflictError("Event index has no covered Chunk sources")
 
+    return sources
+
+
+def _published_video_events(
+    parent: VideoParseTaskData, rows: Sequence[tuple[ChunkParseTaskData, ChunkParseContentData, VideoChunkData]],
+    index_name: str, contract_id: str,
+) -> list[tuple[str, str, int]]:
+    target = (parent.detail or {}).get(EVENT_INDEX_TARGET_DETAIL_KEY)
+    if (not isinstance(target, Mapping) or target.get("index_name") != index_name
+            or target.get("contract_id") != contract_id):
+        raise VideoParseConflictError("Event index has not covered the selected Chunk scope")
+    if len(rows) != parent.chunk_count or {chunk.sequence_no for _, _, chunk in rows} != set(range(parent.chunk_count)):
+        raise VideoParseConflictError("Event publication scope has missing Chunk content")
+    sources = []
+    for child, content, chunk in rows:
+        if (chunk.video_id != parent.video_id or child.phase != ChunkTaskPhase.INDEX
+                or child.status != ChunkParseTaskStatus.COMPLETE.value or child.indexed_content_version != content.version):
+            raise VideoParseConflictError("Event source is no longer a COMPLETE publication")
+        receipt = _index_receipt(content, parent.id, child.chunk_id)
+        if receipt["index_generation"] != parent.parse_config.get("indexing", {}).get("index_generation"):
+            raise VideoParseConflictError("Event source Chunk generation differs from its frozen task")
+        _require_event_publication(parent, child, content, receipt, target, chunk=chunk)
+        sources.append((parent.id, child.chunk_id, content.version))
     return sources
 
 

@@ -1,293 +1,415 @@
-import { Check, Database, Moon, Server, ShieldCheck, Sun } from "lucide-react";
-import { type FormEvent, useEffect, useState } from "react";
+import {
+  ArrowLeft,
+  ArrowUpRight,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Clapperboard,
+  Database,
+  Moon,
+  Palette,
+  Server,
+  ShieldCheck,
+  Workflow,
+  SlidersHorizontal,
+  Sparkles,
+  Sun,
+  X,
+  type LucideIcon,
+} from "lucide-react";
+import { type ReactNode, useEffect, useId, useRef, useState } from "react";
+import { useLocation, useNavigate, useSearchParams } from "react-router";
 
-import { ApiClientError, errorMessage, getAgentGlobalSettings, updateAgentGlobalSettings } from "../../api/client";
-import type { AgentGlobalSettings, AgentGlobalSettingsValues, AgentReasoningEffort } from "../../api/contracts";
+import type { ThemeMode } from "../../api/contracts";
 import { useI18n } from "../../app/i18n";
-import type { MessageParams } from "../../shared/messages";
 import { useTheme } from "../../app/theme";
 import { useWorkspace } from "../../app/workspace";
 import { useAuth } from "../auth/AuthProvider";
+import { useWatchPreferences } from "../player/watchPreferences";
+import { AnswerModelSettings } from "./AnswerModelSettings";
+import { GlobalAgentSettings } from "./GlobalAgentSettings";
 import styles from "./settings.module.css";
 
-type ReasoningSettingKey = "query_reasoning_effort" | "supervisor_reasoning_effort";
-type NumericSettingKey = Exclude<keyof AgentGlobalSettingsValues, "limits_enabled" | ReasoningSettingKey>;
-type SettingField = readonly [NumericSettingKey, string, string];
-type SettingsError = { message: string; params?: MessageParams; failure?: unknown };
-
-const reasoningFields: ReadonlyArray<readonly [ReasoningSettingKey, string]> = [
-  ["query_reasoning_effort", "Query 检索"],
-  ["supervisor_reasoning_effort", "Supervisor 回答"],
-];
-const reasoningOptions: ReadonlyArray<readonly [AgentReasoningEffort, string]> = [
-  ["none", "关闭推理"], ["low", "低"], ["high", "高"], ["max", "最大"],
-];
-
-const settingGroups: ReadonlyArray<{ title: string; fields: ReadonlyArray<SettingField> }> = [
-  { title: "回答与检索", fields: [
-    ["history_message_limit", "历史消息数量", "条"],
-    ["max_model_calls_per_turn", "每轮默认模型调用", "次"],
-    ["maximum_model_calls_per_turn", "每轮模型调用上限", "次"],
-    ["max_tool_calls_per_turn", "每轮默认工具调用", "次"],
-    ["maximum_tool_calls_per_turn", "每轮工具调用上限", "次"],
-  ] },
-  { title: "超时与并发", fields: [
-    ["stage_timeout_seconds", "常规阶段超时", "秒"],
-    ["supervisor_timeout_seconds", "Supervisor 超时", "秒"],
-    ["execution_timeout_seconds", "整次执行超时", "秒"],
-    ["maximum_concurrent_kicks", "并行任务上限", "个"],
-    ["maximum_parallel_queries", "Query 并发上限", "个"],
-  ] },
-  { title: "模型上下文", fields: [
-    ["max_output_tokens", "模型输出上限", "Token"],
-    ["max_prompt_chars", "提示词字符上限", "字符"],
-    ["context_window_tokens", "上下文窗口", "Token"],
-    ["context_safety_margin_tokens", "上下文安全余量", "Token"],
-    ["auto_compact_tokens", "自动压缩阈值", "Token"],
-    ["compact_target_tokens", "压缩后目标", "Token"],
-  ] },
-  { title: "工具输出", fields: [
-    ["max_tool_result_bytes", "单次工具结果上限", "字节"],
-    ["max_read_chars_per_call", "read 单次最多读取字符数", "字符"],
-    ["max_catalog_items_per_page", "每页候选目录上限", "条"],
-  ] },
+type SettingsSection = "appearance" | "watch" | "models" | "model-roles" | "connection" | "agent";
+type SettingsSectionDefinition = {
+  id: SettingsSection;
+  label: string;
+  summary: string;
+  description: string;
+  icon: LucideIcon;
+};
+const settingsSections: ReadonlyArray<SettingsSectionDefinition> = [
+  { id: "appearance", label: "外观与语言", summary: "主题与界面语言", description: "主题与界面语言会立即生效，并保存在此浏览器。", icon: Palette },
+  { id: "watch", label: "观看与 Kino", summary: "Kino 与播放偏好", description: "调整 Kino 侧栏的自动淡化与发送消息时的播放行为。", icon: Clapperboard },
+  { id: "models", label: "模型服务", summary: "连接、凭据与模型", description: "添加服务连接，登记该连接可用的模型。", icon: Sparkles },
+  { id: "model-roles", label: "模型用途", summary: "聊天、解析与检索", description: "为每个用途选择已注册的模型。", icon: Workflow },
+  { id: "connection", label: "账号与连接", summary: "资料来源、账号与状态", description: "账号登录与资料来源分别管理，登录不会移动本机资料。", icon: Server },
+  { id: "agent", label: "Agent 运行", summary: "全局默认与运行参数", description: "保存到服务端 config.yaml，供所有工作区后续新请求使用。", icon: SlidersHorizontal },
 ];
 
-function GlobalAgentSettings({ mode }: { mode: string }) {
-  const { t, locale } = useI18n();
-  const [settings, setSettings] = useState<AgentGlobalSettings | null>(null);
-  const [reload, setReload] = useState(0);
-  const [formVersion, setFormVersion] = useState(0);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [dirty, setDirty] = useState(false);
-  const [error, setError] = useState<SettingsError | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-  const restartPending = Boolean(
-    settings?.restartRequiredFields.includes("maximum_concurrent_kicks")
-    && settings.values.maximum_concurrent_kicks !== settings.activeValues.maximum_concurrent_kicks,
-  );
+const themeOptions = [
+  { value: "light", label: "白天模式", icon: Sun },
+  { value: "dark", label: "黑夜模式", icon: Moon },
+] as const satisfies ReadonlyArray<{ value: ThemeMode; label: string; icon: LucideIcon }>;
+const localeOptions = [
+  { value: "zh", code: "ZH", label: "中文", lang: "zh-CN" },
+  { value: "en", code: "EN", label: "English", lang: "en" },
+] as const;
 
-  useEffect(() => {
-    let active = true;
-    if (mode !== "live") {
-      setLoading(false);
-      return () => { active = false; };
-    }
-    setLoading(true);
-    void getAgentGlobalSettings().then((result) => {
-      if (!active) return;
-      setSettings(result);
-      setFormVersion((current) => current + 1);
-      setDirty(false);
-      setError(null);
-    }).catch((failure) => {
-      if (active) setError({ message: "读取全局配置失败：{error}", failure });
-    }).finally(() => {
-      if (active) setLoading(false);
-    });
-    return () => { active = false; };
-  }, [reload, mode]);
+function isSettingsSection(value: string | null): value is SettingsSection {
+  return settingsSections.some((section) => section.id === value);
+}
 
-  useEffect(() => {
-    if (dirty || saving || mode !== "live") return;
-    const refresh = () => setReload((current) => current + 1);
-    window.addEventListener("focus", refresh);
-    return () => window.removeEventListener("focus", refresh);
-  }, [dirty, saving, mode]);
-
-  const save = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!settings || saving || loading || mode !== "live") return;
-    const form = new FormData(event.currentTarget);
-    const changes: Record<string, number | boolean | AgentReasoningEffort> = {};
-    for (const group of settingGroups) {
-      for (const [key] of group.fields) {
-        const raw = form.get(key);
-        const value = Number(raw);
-        if (typeof raw !== "string" || !raw.trim() || !Number.isFinite(value)) {
-          setError({ message: "请为 {key} 输入有效数字。", params: { key } });
-          return;
-        }
-        if (value !== settings.values[key]) changes[key] = value;
-      }
-    }
-    const limitsEnabled = form.has("limits_enabled");
-    if (limitsEnabled !== settings.values.limits_enabled) changes.limits_enabled = limitsEnabled;
-    for (const [key] of reasoningFields) {
-      const value = form.get(key);
-      if (value !== "none" && value !== "low" && value !== "high" && value !== "max") {
-        setError({ message: "请为 {key} 选择有效的思考模式。", params: { key } });
-        return;
-      }
-      if (value !== settings.values[key]) changes[key] = value;
-    }
-    if (!Object.keys(changes).length) {
-      setDirty(false);
-      setNotice("配置没有变化。");
-      return;
-    }
-    setSaving(true);
-    setError(null);
-    setNotice(null);
-    try {
-      const result = await updateAgentGlobalSettings(changes as Partial<AgentGlobalSettingsValues>, settings.revision);
-      setSettings(result);
-      setFormVersion((current) => current + 1);
-      setDirty(false);
-      const pending = result.restartRequiredFields.includes("maximum_concurrent_kicks")
-        && result.values.maximum_concurrent_kicks !== result.activeValues.maximum_concurrent_kicks;
-      setNotice(pending
-        ? "已保存。除并行任务上限外，新请求会使用更新后的配置；并行任务上限重启服务后生效。"
-        : "已保存。新的请求会使用更新后的全局配置。");
-    } catch (failure) {
-      setError(failure instanceof ApiClientError && failure.status === 409
-        ? { message: "配置文件已在其他地方修改。请重新读取后再保存，避免覆盖新设置。" }
-        : { message: "保存全局配置失败：{error}", failure });
-    } finally {
-      setSaving(false);
-    }
-  };
-
+function SectionShell({
+  definition,
+  hidden,
+  headingRef,
+  action,
+  children,
+}: {
+  definition: SettingsSectionDefinition;
+  hidden: boolean;
+  headingRef: (node: HTMLHeadingElement | null) => void;
+  action?: ReactNode;
+  children: ReactNode;
+}) {
+  const { t } = useI18n();
   return (
-    <section className={styles.settingsSection}>
-      <div className={styles.sectionIntro}><span>04</span><div><h2>{t("全局 Agent 配置")}</h2><p>{t("保存到服务端 config.yaml，供所有工作区后续新请求使用。")}</p></div></div>
-      <div className={styles.globalSettings}>
-        <p className={styles.globalSettingsNote}>{t("这里修改的是全局默认值。除并行任务上限需要重启外，新参数用于后续新请求；正在生成的回答沿用原参数。Chat 页明确调整的本次回答设置优先。直接编辑 config.yaml 后，重新打开页面或点击“重新读取”即可查看最新值。")}</p>
-        {restartPending && settings ? (
-          <p className={styles.restartNotice} role="status">
-            {t("并行任务上限已保存为 {saved}，当前服务仍使用 {active}；重启服务后生效。", { saved: settings.values.maximum_concurrent_kicks, active: settings.activeValues.maximum_concurrent_kicks })}
-          </p>
-        ) : null}
-        <div className={styles.globalSettingsToolbar}>
-          <strong>{t("运行参数")}</strong>
-          <button className="button-quiet" type="button" disabled={loading || saving} onClick={() => { setNotice(null); setReload((current) => current + 1); }}>{t(dirty ? "重新读取（放弃未保存更改）" : "重新读取")}</button>
+    <section className={styles.panel} hidden={hidden} aria-labelledby={`settings-${definition.id}-heading`}>
+      <header className={styles.panelHeader}>
+        <div className={styles.panelHeadingText}>
+          <h2 id={`settings-${definition.id}-heading`} className={styles.panelHeading} tabIndex={-1} ref={headingRef}>
+            {t(definition.label)}
+          </h2>
+          <p className={styles.panelDescription}>{t(definition.description)}</p>
         </div>
-        {loading && !settings ? <p role="status">{t("正在读取全局配置…")}</p> : null}
-        {settings ? (
-          <form key={formVersion} onSubmit={(event) => void save(event)} onInput={() => { setDirty(true); setNotice(null); }} onChange={() => { setDirty(true); setNotice(null); }}>
-            <label className={styles.globalSettingToggle}>
-              <span><strong>{t("启用调用次数限制")}</strong><small>{t("开启后，限制模型和工具调用次数；Chat 页的本次回答设置优先。")}</small></span>
-              <input name="limits_enabled" type="checkbox" defaultChecked={settings.values.limits_enabled} disabled={saving || loading || mode !== "live"} />
-            </label>
-            {settingGroups.map((group, index) => (
-              <details className={styles.globalSettingGroup} key={group.title} open={index === 0}>
-                <summary>{t(group.title)}<span>{t("{count} 项", { count: group.fields.length })}</span></summary>
-                {group.title === "超时与并发" ? <p className={styles.globalSettingsNote}>{t("单次模型请求另有启动时确定的超时上限。提高阶段超时不会自动提高该上限；修改模型请求配置后需重启服务。")}</p> : null}
-                {group.title === "模型上下文" ? <p className={styles.globalSettingsNote}>{t("模型配置中的输出上限仍是最终上限；若要提高该上限，修改模型配置后需重启服务。")}</p> : null}
-                {group.title === "工具输出" ? <p className={styles.globalSettingsNote}>{t("read 工具按片段内容的字符范围读取，不按行读取；工具结果还受上面的字节上限约束。上限调得过小会增加工具调用次数和回答耗时。")}</p> : null}
-                <div className={styles.globalSettingFields}>
-                  {group.fields.map(([key, label, unit]) => (
-                    <label className={styles.globalSettingField} key={key}>
-                      <span><strong>{t(label)}</strong>{key === "maximum_concurrent_kicks" ? <em className={styles.restartBadge}>{t("重启后生效")}</em> : null}<small>{key}</small></span>
-                      <span className={styles.globalSettingInput}><input className="field" name={key} type="number" required min={key === "max_tool_result_bytes" ? 512 : 1} max={key === "maximum_parallel_queries" ? 8 : key === "max_catalog_items_per_page" ? 100 : undefined} step={key.endsWith("seconds") ? "any" : 1} defaultValue={settings.values[key]} disabled={saving || loading || mode !== "live"} /><small>{t(unit)}</small></span>
-                    </label>
-                  ))}
-                </div>
-              </details>
-            ))}
-            <details className={styles.globalSettingGroup}>
-              <summary>{t("模型思考")}<span>{t("{count} 项", { count: reasoningFields.length })}</span></summary>
-              <p className={styles.globalSettingsNote}>{t("分别设置 Query 和 Supervisor 的思考强度；关闭时不使用思考模式。保存后用于新的请求。")}</p>
-              <div className={styles.globalSettingFields}>
-                {reasoningFields.map(([key, label]) => (
-                  <label className={styles.globalSettingField} key={key}>
-                    <span><strong>{t(label)}</strong><small>{key}</small></span>
-                    <span className={styles.globalSettingInput}>
-                      <select className="field" name={key} defaultValue={settings.values[key]} disabled={saving || loading || mode !== "live"} style={{ width: 110 }}>
-                        {reasoningOptions.map(([value, text]) => <option key={value} value={value}>{t(text)}</option>)}
-                      </select>
-                    </span>
-                  </label>
-                ))}
-              </div>
-            </details>
-            <p className={styles.globalSettingsNote}>{t("相关参数之间的约束由服务端检查；保存失败时当前输入会保留，便于修改。")}</p>
-            <div className={styles.globalSettingsActions}><button className="button-primary" type="submit" disabled={saving || loading || !dirty || mode !== "live"}>{t(saving ? "正在保存…" : "保存全局配置")}</button></div>
-          </form>
-        ) : null}
-        {error ? <p className={styles.settingsError} role="alert">{t(error.message, { ...error.params, error: errorMessage(error.failure, locale) })}</p> : null}
-        {notice ? <p className={styles.settingsSuccess} role="status">{t(notice)}</p> : null}
-      </div>
+        {action}
+      </header>
+      {children}
     </section>
   );
 }
 
-export function SettingsPage() {
+function AppearanceContent() {
   const { t, locale, setLocale } = useI18n();
   const { theme, setTheme } = useTheme();
-  const { mode, displayMode } = useWorkspace();
-  const isDebug = displayMode === "debug";
-  const { activeSource, activeTenantId, accountIdentity, accountConnection, accountStatus, accountError, retryAccount, canConfigure } = useAuth();
-  const showDebugSettings = canConfigure && isDebug;
+  const themeGroupName = useId();
+  const localeGroupName = useId();
+
+  return (
+    <div className={styles.group}>
+      <div className={`${styles.row} ${styles.rowStackNarrow}`}>
+        <div className={styles.rowText}>
+          <span className={styles.rowLabel}>{t("主题模式")}</span>
+        </div>
+        <div className={styles.segmented} role="radiogroup" aria-label={t("主题模式")}>
+          {themeOptions.map((option) => {
+            const Icon = option.icon;
+            const checked = theme === option.value;
+            return <label className={styles.segment} key={option.value}>
+              <input className={styles.segmentInput} type="radio" name={themeGroupName} value={option.value}
+                checked={checked} aria-label={t(option.label)} onChange={() => setTheme(option.value)} />
+              <Icon size={15} aria-hidden="true" />
+              <span>{t(option.label)}</span>
+              {checked ? <Check className={styles.segmentCheck} size={14} aria-hidden="true" /> : null}
+            </label>;
+          })}
+        </div>
+      </div>
+      <div className={`${styles.row} ${styles.rowStackNarrow}`}>
+        <div className={styles.rowText}>
+          <span className={styles.rowLabel}>{t("界面语言")}</span>
+        </div>
+        <div className={styles.segmented} role="radiogroup" aria-label={t("界面语言")}>
+          {localeOptions.map((option) => {
+            const checked = locale === option.value;
+            return <label className={styles.segment} key={option.value}>
+              <input className={styles.segmentInput} type="radio" name={localeGroupName} value={option.value}
+                checked={checked} aria-label={`${option.code} ${option.label}`} onChange={() => setLocale(option.value)} />
+              <strong aria-hidden="true">{option.code}</strong>
+              <span lang={option.lang}>{option.label}</span>
+              {checked ? <Check className={styles.segmentCheck} size={14} aria-hidden="true" /> : null}
+            </label>;
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function WatchContent() {
+  const { t } = useI18n();
+  const { pauseOnSend, setPauseOnSend, fadeDelay, setFadeDelay } = useWatchPreferences();
+  const fadeInputId = useId();
+  const fadeErrorId = useId();
+  const fadeInputRef = useRef<HTMLInputElement>(null);
+  const [fadeDraft, setFadeDraft] = useState(() => String(fadeDelay));
+  const [fadeInvalid, setFadeInvalid] = useState(false);
+
+  useEffect(() => {
+    if (document.activeElement === fadeInputRef.current) return;
+    setFadeDraft(String(fadeDelay));
+    setFadeInvalid(false);
+  }, [fadeDelay]);
+
+  const commitFadeDelay = () => {
+    const value = Number(fadeDraft);
+    if (!fadeDraft.trim() || !Number.isFinite(value) || value < 1) {
+      setFadeInvalid(true);
+      return;
+    }
+    setFadeInvalid(false);
+    setFadeDraft(String(value));
+    setFadeDelay(value);
+  };
+
+  return (
+    <>
+      <div className={styles.group}>
+        <label className={styles.row}>
+          <span className={styles.rowText}>
+            <span className={styles.rowLabel}>{t("发送问题时暂停视频")}</span>
+            <span className={styles.rowDescription}>{t("发送消息时先暂停播放，回到播放器后继续。")}</span>
+          </span>
+          <input className={styles.switch} type="checkbox" role="switch" checked={pauseOnSend}
+            aria-label={t("发送问题时暂停视频")} onChange={(event) => setPauseOnSend(event.currentTarget.checked)} />
+        </label>
+        <div className={`${styles.row} ${styles.rowStackNarrow}`}>
+          <label className={styles.rowText} htmlFor={fadeInputId}>
+            <span className={styles.rowLabel}>{t("自动淡化时间（秒）")}</span>
+            <span className={styles.rowDescription}>{t("Kino 面板空闲后等待多久才淡化。")}</span>
+          </label>
+          <div className={styles.rowControl}>
+            <input ref={fadeInputRef} id={fadeInputId} className={styles.numberInput} type="number" inputMode="decimal"
+              min={1} step="any" value={fadeDraft} aria-label={t("自动淡化时间（秒）")}
+              aria-invalid={fadeInvalid} aria-describedby={fadeInvalid ? fadeErrorId : undefined}
+              onChange={(event) => { setFadeDraft(event.currentTarget.value); setFadeInvalid(false); }}
+              onBlur={commitFadeDelay}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") { event.preventDefault(); commitFadeDelay(); }
+                else if (event.key === "Escape") {
+                  event.preventDefault();
+                  setFadeDraft(String(fadeDelay));
+                  setFadeInvalid(false);
+                  event.currentTarget.blur();
+                }
+              }} />
+          </div>
+        </div>
+      </div>
+      {fadeInvalid ? <p id={fadeErrorId} className={styles.fieldError} role="alert">{t("请输入不小于 1 秒的有效时长。")}</p> : null}
+    </>
+  );
+}
+
+function ConnectionContent({ showDebug }: { showDebug: boolean }) {
+  const { t } = useI18n();
+  const { mode } = useWorkspace();
+  const { activeSource, activeTenantId, accountIdentity, accountConnection, accountStatus, accountError, retryAccount } = useAuth();
   const shownApiUrl = new URL(activeSource.connection.baseUrl || "/", window.location.origin).href.replace(/\/$/, "");
   const accountLabel = accountStatus === "unconfigured" ? t("未连接账号服务")
     : accountStatus === "checking" ? t("正在连接")
     : accountStatus === "unavailable" ? t("连接不可用")
-    : accountIdentity && !accountIdentity.isGuest ? accountIdentity.email : t("未登录");
+    : accountIdentity && !accountIdentity.isGuest ? accountIdentity.email || t("已登录")
+    : t(accountIdentity?.emailLoginEnabled === false ? "游客模式" : "未登录");
 
   return (
-    <main className="page">
-      <header>
-        <h1 className="page-title">{t("设置")}</h1>
-      </header>
+    <>
+      <h3 className={styles.groupTitle}>{t("连接")}</h3>
+      <dl className={styles.connectionList}>
+        <div className={styles.connectionRow}>
+          <dt><Database size={15} aria-hidden="true" />{t("资料来源")}</dt>
+          <dd>{t(activeSource.kind === "local" ? "本机资料" : activeSource.kind === "public" ? "公开资料" : "我的资料")}</dd>
+        </div>
+        <div className={styles.connectionRow}>
+          <dt><Server size={15} aria-hidden="true" />{t("资料连接")}</dt>
+          <dd className={styles.statusValue} data-mode={mode}><i aria-hidden="true" />{t(mode === "live" ? "已连接" : mode === "offline" ? "不可用" : "正在检查")}</dd>
+        </div>
+        <div className={styles.connectionRow}>
+          <dt><ShieldCheck size={15} aria-hidden="true" />{t("账号")}</dt>
+          <dd>{accountLabel}</dd>
+        </div>
+        {showDebug ? <div className={styles.connectionRow}>
+          <dt><Database size={15} aria-hidden="true" />{t("资料地址")}</dt>
+          <dd className={styles.codeValue}>{shownApiUrl}</dd>
+        </div> : null}
+        {showDebug ? <div className={styles.connectionRow}>
+          <dt><ShieldCheck size={15} aria-hidden="true" />{t("资料空间")}</dt>
+          <dd className={styles.codeValue}>{activeTenantId}</dd>
+        </div> : null}
+        {showDebug && accountConnection ? <div className={styles.connectionRow}>
+          <dt><Server size={15} aria-hidden="true" />{t("账号地址")}</dt>
+          <dd className={styles.codeValue}>{new URL(accountConnection.baseUrl || "/", window.location.origin).href.replace(/\/$/, "")}</dd>
+        </div> : null}
+      </dl>
 
-      <div className={styles.layout}>
-        <section className={styles.settingsSection}>
-          <div className={styles.sectionIntro}><span>01</span><div><h2>{t("外观")}</h2><p>{t("白天清透，夜里安静；两套主题使用同一组青绿色语义。")}</p></div></div>
-          <div className={styles.themeChoices} role="radiogroup" aria-label={t("主题模式")}>
-            <button type="button" role="radio" aria-checked={theme === "light"} className={theme === "light" ? styles.themeActive : undefined} onClick={() => setTheme("light")}>
-              <div className={styles.themePreviewLight}><i /><i /><i /></div>
-              <span><Sun size={15} />{t("白天模式")}</span>
-              {theme === "light" ? <Check size={15} /> : null}
-            </button>
-            <button type="button" role="radio" aria-checked={theme === "dark"} className={theme === "dark" ? styles.themeActive : undefined} onClick={() => setTheme("dark")}>
-              <div className={styles.themePreviewDark}><i /><i /><i /></div>
-              <span><Moon size={15} />{t("黑夜模式")}</span>
-              {theme === "dark" ? <Check size={15} /> : null}
-            </button>
+      {accountStatus === "unavailable" ? <div className={styles.modeNote}>
+        <span>{accountError || t("账号服务暂时不可用。")}</span>
+        <button className="button-secondary" type="button" onClick={retryAccount}>{t("重新连接")}</button>
+      </div> : null}
+      {mode === "offline" ? <p className={styles.modeNote}>{t("当前资料连接不可用。请检查服务和网络；恢复连接后会重新读取资料和任务状态。")}</p> : null}
+
+      {showDebug ? <details className={styles.disclosure}>
+        <summary className={styles.disclosureSummary}>
+          <ShieldCheck size={15} aria-hidden="true" />
+          <span>{t("数据边界")}</span>
+          <ChevronDown className={styles.disclosureChevron} size={15} aria-hidden="true" />
+        </summary>
+        <div className={styles.disclosureBody}>
+          <p>{t("前端只通过公开 HTTP 接口访问媒体，不尝试读取内部 artifact URI。")}</p>
+          <div className={styles.factList}>
+            <div><strong>{t("上传确认")}</strong><p>{t("分片经过 SHA-256 校验，并由服务端确认后才进入已上传进度。")}</p></div>
+            <div><strong>{t("检索理由")}</strong><p>{t("只根据 Evidence、召回通道与排名生成可核验摘要，不展示或伪造私有思维链。")}</p></div>
+            <div><strong>{t("断线恢复")}</strong><p>{t("SSE 只负责通知；恢复后重新获取 MySQL 快照，并以服务端状态为准。")}</p></div>
           </div>
-        </section>
+        </div>
+      </details> : null}
+    </>
+  );
+}
 
-        <section className={styles.settingsSection}>
-          <div className={styles.sectionIntro}><span>02</span><div><h2>{t("语言")}</h2><p>{t("选择界面语言，立即生效并保存在此浏览器。")}</p></div></div>
-          <div className={styles.languageChoices} role="radiogroup" aria-label={t("界面语言")}>
-            <button type="button" role="radio" aria-checked={locale === "zh"} className={locale === "zh" ? styles.languageActive : undefined} onClick={() => setLocale("zh")}>
-              <strong>ZH</strong>{" "}<span lang="zh-CN">中文</span>{locale === "zh" ? <Check size={16} aria-hidden="true" /> : null}
+export function SettingsPage({ onClose }: { onClose?: () => void } = {}) {
+  const { t } = useI18n();
+  const { mode, displayMode } = useWorkspace();
+  const { canConfigure } = useAuth();
+  const [searchParams] = useSearchParams();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const [compact, setCompact] = useState(() => window.matchMedia("(max-width: 760px)").matches);
+  const [agentVisited, setAgentVisited] = useState(() =>
+    searchParams.get("section") === "agent" && displayMode === "debug" && canConfigure,
+  );
+  const pendingFocusRef = useRef<"section" | "directory" | null>(null);
+  const directoryHeadingRef = useRef<HTMLHeadingElement>(null);
+  const headingRefs = useRef(new Map<SettingsSection, HTMLHeadingElement>());
+  const showAgent = displayMode === "debug" && canConfigure;
+
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 760px)");
+    const sync = () => setCompact(media.matches);
+    media.addEventListener("change", sync);
+    window.addEventListener("resize", sync);
+    return () => {
+      media.removeEventListener("change", sync);
+      window.removeEventListener("resize", sync);
+    };
+  }, []);
+
+  const rawSection = searchParams.get("section");
+  const requestedSection = isSettingsSection(rawSection) ? rawSection : null;
+  const showModels = canConfigure === true;
+  const sectionAvailable = requestedSection !== null
+    && (requestedSection !== "agent" || showAgent)
+    && ((requestedSection !== "models" && requestedSection !== "model-roles") || showModels);
+  const section: SettingsSection | null = sectionAvailable ? requestedSection : compact ? null : "appearance";
+
+  useEffect(() => {
+    if (section === "agent" && showAgent) setAgentVisited(true);
+  }, [section, showAgent]);
+
+  useEffect(() => {
+    const pending = pendingFocusRef.current;
+    if (!pending) return;
+    pendingFocusRef.current = null;
+    if (!compact) return;
+    if (pending === "directory") directoryHeadingRef.current?.focus();
+    else if (section) headingRefs.current.get(section)?.focus();
+  }, [compact, section]);
+
+  const writeSection = (next: SettingsSection | null) => {
+    const params = new URLSearchParams(searchParams);
+    if (next) params.set("section", next);
+    else params.delete("section");
+    const search = params.toString();
+    navigate({ pathname: location.pathname, search: search ? `?${search}` : "", hash: location.hash }, {
+      replace: true,
+      state: location.state,
+    });
+  };
+
+  const openSection = (next: SettingsSection) => {
+    if (requestedSection === next) return;
+    if (next === "agent") setAgentVisited(true);
+    if (compact) pendingFocusRef.current = "section";
+    writeSection(next);
+  };
+
+  const showDirectory = () => {
+    if (requestedSection === null) return;
+    if (compact) pendingFocusRef.current = "directory";
+    writeSection(null);
+  };
+
+  const visibleSections = settingsSections.filter((definition) =>
+    (definition.id !== "agent" || showAgent) && ((definition.id !== "models" && definition.id !== "model-roles") || showModels));
+  const agentMounted = showAgent && (agentVisited || section === "agent");
+  const definitionFor = (id: SettingsSection) => settingsSections.find((definition) => definition.id === id)!;
+  const headingRef = (id: SettingsSection) => (node: HTMLHeadingElement | null) => {
+    if (node) headingRefs.current.set(id, node);
+    else headingRefs.current.delete(id);
+  };
+
+  const Root = onClose ? "div" : "main";
+  return (
+    <Root className={`page ${styles.page}`}>
+      {onClose ? <button className={styles.closeButton} type="button" onClick={onClose} aria-label={t("关闭设置")} title={t("关闭设置")}>
+        <X size={20} aria-hidden="true" />
+      </button> : null}
+
+      <div className={styles.workspace} data-mobile-view={section ? "detail" : "directory"}>
+        <div className={styles.rail}>
+          <h1 className={styles.title}>{t("设置")}</h1>
+          <nav className={styles.navigation} aria-label={t("设置分类")} hidden={compact && section !== null}>
+            <h2 className={styles.navHeading} ref={directoryHeadingRef} tabIndex={-1}>{t("设置分类")}</h2>
+            <div className={styles.navList}>
+              {visibleSections.map((definition) => {
+                const Icon = definition.icon;
+                const active = section === definition.id;
+                return <button className={styles.navItem} key={definition.id} type="button"
+                  aria-label={t(definition.label)} aria-current={active ? "page" : undefined}
+                  onClick={() => openSection(definition.id)}>
+                  <Icon className={styles.navIcon} size={18} aria-hidden="true" />
+                  <span className={styles.navText}>
+                    <span className={styles.navLabel}>{t(definition.label)}</span>
+                    <span className={styles.navSummary}>{t(definition.summary)}</span>
+                  </span>
+                  <ChevronRight className={styles.navChevron} size={16} aria-hidden="true" />
+                </button>;
+              })}
+            </div>
+          </nav>
+        </div>
+
+        <div className={styles.detail} hidden={compact && section === null}>
+          {compact && section ? <div className={styles.backRow}>
+            <button className={styles.backButton} type="button" onClick={showDirectory} aria-label={t("返回设置分类")}>
+              <ArrowLeft size={17} aria-hidden="true" />{t("设置分类")}
             </button>
-            <button type="button" role="radio" aria-checked={locale === "en"} className={locale === "en" ? styles.languageActive : undefined} onClick={() => setLocale("en")}>
-              <strong>EN</strong>{" "}<span lang="en">English</span>{locale === "en" ? <Check size={16} aria-hidden="true" /> : null}
-            </button>
-          </div>
-        </section>
+          </div> : null}
 
-        <section className={styles.settingsSection}>
-          <div className={styles.sectionIntro}><span>03</span><div><h2>{t("连接")}</h2><p>{t("账号登录和资料来源分别管理，登录不会移动本机资料。")}</p></div></div>
-          <dl className={styles.connectionList}>
-            <div><dt><Database size={16} />{t("资料来源")}</dt><dd>{t(activeSource.kind === "local" ? "本机资料" : activeSource.kind === "public" ? "公开资料" : "我的资料")}</dd></div>
-            <div><dt><Server size={16} />{t("资料连接")}</dt><dd data-mode={mode}><i />{t(mode === "live" ? "已连接" : mode === "offline" ? "不可用" : "正在检查")}</dd></div>
-            {showDebugSettings ? <div><dt><Database size={16} />{t("资料地址")}</dt><dd>{shownApiUrl}</dd></div> : null}
-            {showDebugSettings ? <div><dt><ShieldCheck size={16} />{t("资料空间")}</dt><dd>{activeTenantId}</dd></div> : null}
-            <div><dt><ShieldCheck size={16} />{t("账号")}</dt><dd>{accountLabel}</dd></div>
-            {showDebugSettings && accountConnection ? <div><dt><Server size={16} />{t("账号地址")}</dt><dd>{new URL(accountConnection.baseUrl || "/", window.location.origin).href.replace(/\/$/, "")}</dd></div> : null}
-          </dl>
-          {accountStatus === "unavailable" ? <p className={styles.modeNote}>{accountError || t("账号服务暂时不可用。")} <button className="button-secondary" type="button" onClick={retryAccount}>{t("重新连接")}</button></p> : null}
-          {mode === "offline" ? (
-            <p className={styles.modeNote}>{t("当前资料连接不可用。请检查服务和网络；恢复连接后会重新读取资料和任务状态。")}</p>
-          ) : null}
-        </section>
-
-        {showDebugSettings ? <GlobalAgentSettings mode={mode} /> : null}
-
-        {showDebugSettings ? <section className={styles.settingsSection}>
-          <div className={styles.sectionIntro}><span>05</span><div><h2>{t("数据边界")}</h2><p>{t("前端只通过公开 HTTP 接口访问媒体，不尝试读取内部 artifact URI。")}</p></div></div>
-          <div className={styles.boundaries}>
-            <article><strong>{t("上传确认")}</strong><p>{t("分片经过 SHA-256 校验，并由服务端确认后才进入已上传进度。")}</p></article>
-            <article><strong>{t("检索理由")}</strong><p>{t("只根据 Evidence、召回通道与排名生成可核验摘要，不展示或伪造私有思维链。")}</p></article>
-            <article><strong>{t("断线恢复")}</strong><p>{t("SSE 只负责通知；恢复后重新获取 MySQL 快照，并以服务端状态为准。")}</p></article>
-          </div>
-        </section> : null}
+          <SectionShell definition={definitionFor("appearance")} hidden={section !== "appearance"} headingRef={headingRef("appearance")}>
+            <AppearanceContent />
+          </SectionShell>
+          <SectionShell definition={definitionFor("watch")} hidden={section !== "watch"} headingRef={headingRef("watch")}>
+            <WatchContent />
+          </SectionShell>
+          {showModels ? <SectionShell definition={definitionFor("models")} hidden={section !== "models"} headingRef={headingRef("models")}>
+            <AnswerModelSettings active={section === "models"} />
+          </SectionShell> : null}
+          {showModels ? <SectionShell definition={definitionFor("model-roles")} hidden={section !== "model-roles"} headingRef={headingRef("model-roles")}
+            action={<button type="button" className={styles.sectionLink} onClick={() => openSection("models")}>
+              {t("管理模型服务")}<ArrowUpRight size={15} aria-hidden="true" />
+            </button>}>
+            <AnswerModelSettings active={section === "model-roles"} section="roles" />
+          </SectionShell> : null}
+          <SectionShell definition={definitionFor("connection")} hidden={section !== "connection"} headingRef={headingRef("connection")}>
+            <ConnectionContent showDebug={showAgent} />
+          </SectionShell>
+          {agentMounted ? <SectionShell definition={definitionFor("agent")} hidden={section !== "agent"} headingRef={headingRef("agent")}>
+            <GlobalAgentSettings mode={mode} />
+          </SectionShell> : null}
+        </div>
       </div>
-    </main>
+    </Root>
   );
 }

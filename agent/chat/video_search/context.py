@@ -59,6 +59,7 @@ def project_inputs(
         "tenant_id": inputs["tenant_id"],
         "series_ids": list(inputs["series_ids"]),
         "series_context": list(inputs["series_context"]),
+        **({"episode": inputs["retrieval_episode"]} if inputs.get("retrieval_episode") is not None else {}),
         "user_message": inputs["user_message"],
         "history": [_project_history_message(item) for item in inputs["history"]],
         "reference_context": _project_reference(

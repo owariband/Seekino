@@ -17,6 +17,10 @@ class VideoSearchFailureCode(StrEnum):
     CONTEXT_BUDGET_EXCEEDED = "VIDEO_CONTEXT_BUDGET_EXCEEDED"
     LOOP_LIMIT_EXCEEDED = "VIDEO_LOOP_LIMIT_EXCEEDED"
     RETRIEVAL_FAILED = "VIDEO_RETRIEVAL_FAILED"
+    SCOPE_NOT_READY = "SERIES_NOT_READY"
+    EPISODE_NOT_FOUND = "EPISODE_NOT_FOUND"
+    EVENT_INDEX_NOT_READY = "EVENT_INDEX_NOT_READY"
+    SERVICE_UNAVAILABLE = "RETRIEVAL_UNAVAILABLE"
 
 
 class VideoSearchFailurePhase(StrEnum):
@@ -38,10 +42,12 @@ class VideoSearchFailure(AgentToolInvocationError):
         phase: VideoSearchFailurePhase,
         *,
         retryable: bool,
+        public_message: str | None = None,
     ) -> None:
         self.code = code
         self.phase = phase
         self.retryable = retryable
+        self.public_message = public_message
         super().__init__(code.value)
 
 

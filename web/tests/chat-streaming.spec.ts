@@ -1,3 +1,4 @@
+import { configuredModels } from "../src/test/personalModelFixtures";
 import { expect, test } from "@playwright/test";
 import { writeFile } from "node:fs/promises";
 
@@ -25,14 +26,18 @@ test("renders growing snapshots before model completion and records distinct rec
     };
   });
   const conversation = { conversationId: "stream-conv", tenantId: "local-default", title: "流式验收",
-    messageCount: 0, lastMessagePreview: null, lastMessageAt: null, createdAt: 0, updatedAt: 0 };
+    modelId: configuredModels.defaultModelId, messageCount: 0, lastMessagePreview: null, lastMessageAt: null, createdAt: 0, updatedAt: 0 };
   await page.route("**/healthz", (route) => route.fulfill({ json: { status: "ok" } }));
+  let creations = 0;
   await page.route("**/api/**", (route) => {
+    if (new URL(route.request().url()).pathname === "/api/agent/conversations/create") creations++;
     const path = new URL(route.request().url()).pathname;
+    if (!path.startsWith("/api/")) return route.continue();
     if (path === "/api/auth/me") return route.fulfill({ json: { userId: "local", email: null, isGuest: false,
       tenantId: "local-default", publicTenantId: "public", mode: "local", csrfToken: "",
       permissions: { canUpload: true, canManage: true, canConfigure: true } } });
     if (path === "/api/system/runtime-config") return route.fulfill({ json: { displayMode: "release" } });
+    if (path === "/api/agent/model-connections") return route.fulfill({ json: configuredModels });
     if (path === "/api/agent/messages/options") return route.fulfill({ json: Object.fromEntries(
       ["topK", "maxLoopTurns", "maxModelCallsPerTurn", "maxToolCallsPerTurn"].map((name) => [name, { defaultValue: 3, minimum: 1, maximum: 30 }]),
     ) });
@@ -41,8 +46,12 @@ test("renders growing snapshots before model completion and records distinct rec
     return route.fulfill({ json: { items: [], total: 0, hasMore: false, nextCursor: null } });
   });
   await page.goto("/search");
-  await page.getByPlaceholder("提问视频内容，或聊聊其他问题…").fill("请逐步解释矩阵");
-  await page.getByRole("button", { name: "发送问题", exact: true }).click();
+  const composer = page.getByRole("textbox", { name: "向 Seekino 助手提问" });
+  await expect(page.getByRole("button", { name: "戳一戳 Kino" })).toBeVisible();
+  expect(creations).toBe(0);
+  const originalComposer = await composer.elementHandle();
+  await composer.fill("请逐步解释矩阵");
+  await composer.press("Enter");
   await expect.poll(() => page.evaluate(() => Boolean(window.chatEmit))).toBe(true);
   const base = { conversationId: "stream-conv", messageId: "assistant", occurredAt: 1 };
   const message = { ...base, sequenceNo: 1, role: "ASSISTANT", status: "PROCESSING", version: 1,
@@ -50,23 +59,40 @@ test("renders growing snapshots before model completion and records distinct rec
     searchResult: null, renderBlocks: [], timing: null, lastError: null, createdAt: 1, updatedAt: 1 };
   const pair = { assistantMessage: message, userMessage: { ...message, messageId: "user", role: "USER", status: "COMPLETED", content: "请逐步解释矩阵" } };
   await page.evaluate((event) => window.chatEmit!(event), { ...base, ...pair, sequence: 1, type: "answer.started" });
+  await expect(page.locator("main[data-draft]")).toHaveAttribute("data-draft", "false");
+  expect(await originalComposer!.evaluate((node) => node === document.querySelector('textarea[aria-label="向 Seekino 助手提问"]'))).toBe(true);
+  await expect(composer).toBeFocused();
+  expect(creations).toBe(1);
+  await page.evaluate((event) => window.chatEmit!(event), { ...base, ...pair, sequence: 2, type: "answer.snapshot",
+    assistantMessage: { ...message, phase: "RESPONDING", modelRetry: { attempt: 1, maximum: 3 }, version: 2 } });
+  await expect(page.getByText("reconnecting 1/3", { exact: true })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("model-reconnect.png") });
+  await page.evaluate((event) => window.chatEmit!(event), { ...base, ...pair, sequence: 3, type: "answer.snapshot",
+    assistantMessage: { ...message, phase: "RESPONDING", modelRetry: { attempt: 2, maximum: 3 }, version: 3 } });
+  await expect(page.getByText("reconnecting 2/3", { exact: true })).toBeVisible();
+  await expect(page.getByText("reconnecting 1/3", { exact: true })).toHaveCount(0);
   const source = { origin: "provider_delta", callId: "mock-call", deltaSequence: 1, modelFirstTextMs: 20,
     modelElapsedMs: 20, providerReceivedMonotonicMs: 100, serverPublishedMonotonicMs: 101, beforeModelCompleted: true };
   for (const [index, content] of ["矩阵把多个数按行列组织。", "矩阵把多个数按行列组织。向量可以看作只有一列的矩阵。"].entries()) {
-    await page.evaluate((event) => window.chatEmit!(event), { ...base, ...pair, sequence: index + 2, type: "answer.snapshot",
-      assistantMessage: { ...message, content, version: index + 2, renderBlocks: [{ type: "markdown", markdown: content }] },
+    await page.evaluate((event) => window.chatEmit!(event), { ...base, ...pair, sequence: index + 4, type: "answer.snapshot",
+      assistantMessage: { ...message, content, version: index + 4, renderBlocks: [{ type: "markdown", markdown: content }] },
       textStream: { ...source, deltaSequence: index + 1 } });
+    await expect(page.getByText("reconnecting 2/3", { exact: true })).toHaveCount(0);
     await expect(page.getByText(content, { exact: true })).toBeVisible();
     await expect.poll(() => page.evaluate(() => window.chatEvidence.filter((e) => e.stage === "text.rendered").length)).toBe(index + 1);
   }
   await page.screenshot({ path: testInfo.outputPath("before-model-completion.png") });
-  await page.evaluate((event) => window.chatEmit!(event), { ...base, sequence: 4, type: "answer.model.completed", callId: "mock-call" });
+  await page.evaluate((event) => window.chatEmit!(event), { ...base, sequence: 6, type: "answer.model.completed", callId: "mock-call" });
   await page.evaluate((event) => { window.chatEmit!(event); window.chatEmit!(null); }, { ...base, ...pair,
-    sequence: 5, type: "answer.completed", assistantMessage: { ...message, status: "COMPLETED", version: 4,
+    sequence: 7, type: "answer.completed", assistantMessage: { ...message, status: "COMPLETED", version: 6,
       content: "矩阵把多个数按行列组织。向量可以看作只有一列的矩阵。" } });
   const evidence = await page.evaluate(() => window.chatEvidence);
   expect(evidence.at(-1)).toMatchObject({ status: "completed", fttMs: null, fttValidity: "requires_trace" });
   expect(evidence.filter((e) => e.stage === "text.rendered")).toHaveLength(2);
   await writeFile(testInfo.outputPath("browser-simulated.json"), JSON.stringify(evidence, null, 2));
+  await page.getByRole("button", { name: "新建对话", exact: true }).click();
+  await page.getByRole("button", { name: "新建对话", exact: true }).click();
+  await expect(page.getByRole("button", { name: "戳一戳 Kino" })).toBeVisible();
+  expect(creations).toBe(1);
   await testInfo.attach("simulated-browser-delivery", { body: JSON.stringify(evidence, null, 2), contentType: "application/json" });
 });

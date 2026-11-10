@@ -4,6 +4,21 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#e4eae5" />
+    <script>
+      // Set the theme before styles paint, including when restoring a dark tab.
+      {
+        let stored;
+        try {
+          stored = localStorage.getItem("seekino-theme");
+        } catch {
+          // Storage can be unavailable in a restricted browser.
+        }
+        const theme = stored === "light" || stored === "dark" ? stored
+          : window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+        document.documentElement.dataset.theme = theme;
+        document.documentElement.style.colorScheme = theme;
+      }
+    </script>
     <meta
       name="description"
       content="Seekino — 边看边问，用一句话找回视频片段。"

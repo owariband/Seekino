@@ -59,6 +59,10 @@ def voiceprint_preparation_min_chunks(chunk_count: int) -> int:
     return ceil(chunk_count * 3 / 4)
 
 
+def batch_open_threshold(batch_length: int) -> int:
+    return ceil(batch_length * 0.9)
+
+
 def claimable_chunk_sequences(
     tasks: Sequence[tuple[int, int, str, bool]], batch_max_size: int,
     *, terminal_failures_ready: bool = False,
@@ -78,7 +82,7 @@ def claimable_chunk_sequences(
         ready = sum(committed or terminal_failures_ready and phase == ChunkTaskPhase.PARSE
                     and status == ChunkTaskStatus.FAILED
                     for _sequence, phase, status, committed in previous)
-        if ready < ceil(len(previous) * 0.9):
+        if ready < batch_open_threshold(len(previous)):
             break
         previous_start = opened_end
         opened_end = min(opened_end + batch_max_size, len(ordered))

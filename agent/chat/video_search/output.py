@@ -107,8 +107,41 @@ def video_range_sources(
     return ordered
 
 
-def validate_result(result: VideoChunkSearchResult, inputs: RunInputs) -> None:
+def snap_video_range(
+    evidence_by_id: dict[str, dict],
+    source_ids: Sequence[str],
+    start_seconds: int,
+    end_seconds: int,
+) -> tuple[int, int]:
+    """Move a validated range onto the spoken or event boundaries it covers."""
+    candidates: list[tuple[int, int]] = []
+    for identifier in source_ids:
+        evidence = evidence_by_id[identifier]
+        chunk_start, chunk_end = evidence["startSeconds"], evidence["endSeconds"]
+        # Transcript cues are aliased views; timeline events stay raw parse dumps.
+        spans = [(item["startSeconds"], item["endSeconds"]) for item in evidence["transcript"]]
+        spans += [(item["start_seconds"], item["end_seconds"]) for item in evidence["allTimeEvents"]]
+        # Whole-chunk summary events would widen a precise card to the full chunk.
+        candidates += [span for span in spans if span[1] - span[0] < chunk_end - chunk_start]
+    starts = [
+        candidate_start for candidate_start, candidate_end in candidates
+        if candidate_start <= start_seconds < candidate_end
+    ]
+    ends = [
+        candidate_end for candidate_start, candidate_end in candidates
+        if candidate_start < end_seconds <= candidate_end
+    ]
+    start_seconds = max(starts, default=start_seconds)
+    end_seconds = min(ends, default=end_seconds)
+    return (
+        max(start_seconds, min(evidence_by_id[identifier]["startSeconds"] for identifier in source_ids)),
+        min(end_seconds, max(evidence_by_id[identifier]["endSeconds"] for identifier in source_ids)),
+    )
+
+
+def validate_result(result: VideoChunkSearchResult, inputs: RunInputs, *, episode_order: int | None = None) -> None:
     scope = set(inputs["series_ids"])
+    episode_order = inputs.get("retrieval_episode") if episode_order is None else episode_order
     if set(result.series_ids) != scope:
         raise AgentModelInvocationError("Retrieval changed the fixed Series scope")
     if result.agent_reply.result_count != len(result.hits):
@@ -116,6 +149,8 @@ def validate_result(result: VideoChunkSearchResult, inputs: RunInputs) -> None:
     seen: set[str] = set()
     for hit in result.hits:
         evidence = hit.evidence
+        if episode_order is not None and evidence.episode_order != episode_order:
+            raise AgentModelInvocationError("Retrieved Evidence is outside the requested episode")
         if (hit.candidate.video_chunk_id != evidence.video_chunk_id
             or not evidence.video_chunk_id or not evidence.video_id):
             raise AgentModelInvocationError("Retrieved Candidate and Evidence IDs do not match")
@@ -152,6 +187,7 @@ def merge_retrieval_calls(
     searched_video_ids: set[str] = set()
     scope_recorded = True
     warnings: list[str] = []
+    coverage_messages: list[str] = []
     partial = False
     for call in calls:
         if call.status == "error":
@@ -164,6 +200,7 @@ def merge_retrieval_calls(
         searched_video_ids.update(call.result.searched_video_ids or [])
         partial = partial or call.result.partial
         warnings.extend(call.result.warnings)
+        coverage_messages.extend(call.result.coverage_messages)
         for hit in call.result.hits:
             identifier = hit.candidate.video_chunk_id
             previous = by_id.get(identifier)
@@ -180,6 +217,7 @@ def merge_retrieval_calls(
         hits=list(by_id.values()),
         searched_video_ids=sorted(searched_video_ids) if scope_recorded else None,
         partial=partial, warnings=list(dict.fromkeys(warnings)),
+        coverage_messages=list(dict.fromkeys(coverage_messages)),
     )
 
 
@@ -256,6 +294,7 @@ def build_chat_snapshot(
         "hits": [hit.model_dump(mode="json", by_alias=True) for hit in hits],
         "searchedVideoIds": draft.searched_video_ids,
         "partial": draft.partial, "warnings": list(draft.warnings),
+        "coverageMessages": list(draft.coverage_messages),
         "renderBlocks": [
             block.model_dump(mode="json", by_alias=True)
             if not isinstance(block, ChatVideoBlock)

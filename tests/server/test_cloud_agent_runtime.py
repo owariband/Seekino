@@ -43,7 +43,7 @@ def _install_runtime(api, *, searches_per_round=1):
     main = _MainModel()
     runtime = SupervisorRuntime(
         AgentRuntime(query, retrieval.search, retrieval_channel="lexical", limits_enabled=True),
-        main, SimpleNamespace(), max_web_results=5, web_timeout_seconds=12,
+        main, SimpleNamespace(max_query_chars=500), max_web_results=5, web_timeout_seconds=12,
         execution_timeout_seconds=60, max_tool_result_bytes=16_384,
         max_prompt_chars=200_000, limits_enabled=True,
     )

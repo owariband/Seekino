@@ -10,6 +10,7 @@ export interface AuthIdentity {
   publicTenantId: string;
   mode: "local" | "cloud";
   csrfToken: string;
+  emailLoginEnabled: boolean;
   permissions: { canUpload: boolean; canManage: boolean; canConfigure: boolean };
 }
 
@@ -76,7 +77,7 @@ export interface VideoSummary {
   durationSeconds: number;
   uploadStatus: string;
   parseStatus: string;
-  uploadProgress: number;
+  uploadProgress: number | null;
   parseProgress: number | null;
   indexStatus: IndexStatus;
   playbackStatus: PlaybackStatus;
@@ -447,7 +448,7 @@ export interface VideoChunkEvidence {
   keyframes: Keyframe[];
   transcript: TranscriptCue[];
   baselineVisualCaption: string | null;
-  allTimeEvents: Array<{ description: string; startSeconds: number; endSeconds: number }>;
+  allTimeEvents: Array<{ description: string; startSeconds: number; endSeconds: number; cameraDescription?: string }>;
   allTimeEventText: string;
   videoCompact: string;
   contextBeforeCompact: string | null;
@@ -517,6 +518,7 @@ export interface VideoChunkSearchEvidence {
   searchedVideoIds: string[];
   partial: boolean;
   warnings: string[];
+  coverageMessages?: string[];
   hits: VideoChunkSearchHit[];
 }
 
@@ -541,6 +543,7 @@ export interface LexicalRetrievalChannelWeights {
 export type RetrievalChannelWeights = LegacyRetrievalChannelWeights | LexicalRetrievalChannelWeights;
 
 export interface RetrievalTraceEntry {
+  status?: "success" | "error";
   query: string;
   topK: number;
   strategyVersion: string;
@@ -551,6 +554,7 @@ export interface RetrievalTraceEntry {
 }
 
 export interface AgentSearchEvidence extends Omit<VideoChunkSearchEvidence, "query"> {
+  hadCandidates?: boolean | null;
   retrievalTrace?: RetrievalTraceEntry[];
 }
 
@@ -558,12 +562,15 @@ export interface VideoSearchRequest {
   tenantId: string;
   query: string;
   seriesIds: string[];
+  episodeOrder?: number;
   topK: number;
 }
 
 export interface AgentConversationView {
   conversationId: string;
   tenantId: string;
+  /** Legacy responses omit this; the backend then uses "default". */
+  modelId?: string;
   title: string;
   messageCount: number;
   lastMessagePreview: string | null;
@@ -606,6 +613,8 @@ export interface AgentMessageView {
   role: "USER" | "ASSISTANT";
   status: "PROCESSING" | "COMPLETED" | "FAILED";
   phase: AnswerPhase | null;
+  /** Set only while a PROCESSING answer waits for a provider retry. */
+  modelRetry?: { attempt: number; maximum: number } | null;
   version: number;
   reference: EvidenceReference | null;
   attachments: AgentAttachmentView[];
@@ -631,10 +640,13 @@ export interface AgentIntegerOption {
 }
 
 export interface AgentMessageOptions {
+  newChatModelId?: string;
   topK: AgentIntegerOption;
   maxLoopTurns: AgentIntegerOption;
   maxModelCallsPerTurn: AgentIntegerOption;
   maxToolCallsPerTurn: AgentIntegerOption;
+  /** Models from the current user’s saved connections. Empty until the user configures one. */
+  chatModels?: { id: string; label: string }[];
 }
 
 export type AgentReasoningEffort = "none" | "low" | "high" | "max";
@@ -728,9 +740,62 @@ export type AgentAnswerEvent =
   | (AgentAnswerEventBase & { type: "answer.block"; block: AgentRenderBlock })
   | (AgentAnswerEventBase & { type: "answer.progress"; phase: AnswerPhase; timing?: AgentMessageTiming | null })
   | (AgentAnswerEventBase & { type: "answer.delta"; delta: string; callId: string; newBlock: boolean; textStream?: AgentTextStream | null })
+  | (AgentAnswerEventBase & { type: "answer.reasoning.delta"; delta: string; callId: string })
   | (AgentAnswerEventBase & { type: "answer.model.completed"; callId: string })
   | (AgentAnswerEventBase & AgentMessageSendView & {
       type: "answer.failed";
       error: Failure;
     })
   | (AgentAnswerEventBase & { type: "answer.interrupted"; error: Failure });
+
+export type PersonalModelProtocol = "openai_chat" | "openai_responses" | "anthropic_messages" | "gemini" | "ark" | "openai_audio" | "ollama_embedding";
+export type ModelRole = "chat" | "vision" | "transcription" | "ocr" | "embedding" | "rerank";
+export type RegistryModelKind = "generative" | "transcription" | "embedding" | "rerank";
+
+export interface RegisteredModelInput {
+  modelId: string;
+  kind: RegistryModelKind;
+  supportsVision?: boolean;
+  dimensions?: number;
+}
+
+export interface ModelRoleSetting {
+  role: ModelRole;
+  modelId: string | null;
+  overridden: boolean;
+  activation: "immediate" | "restart" | "reindex";
+}
+
+export interface PersonalModelConnection {
+  origin?: "personal" | "yaml";
+  connectionId: string;
+  name: string;
+  protocol: PersonalModelProtocol | "codex" | "openai_vision" | "llama_cpp_embedding" | "whisperx" | "pyannote" | "campplus" | "claude_sdk";
+  editable?: boolean;
+  discoverable?: boolean;
+  modelKinds?: RegistryModelKind[];
+  baseUrl: string;
+  models: { id: string; modelId: string; label?: string | null; available?: boolean; aliases?: string[]; isYamlDefault?: boolean;
+    roles?: ModelRole[]; testable?: boolean; kind?: string; supportsVision?: boolean; dimensions?: number | null }[];
+  supportsVision: boolean;
+  hasApiKey: boolean;
+  revision: number;
+}
+
+export interface PersonalModelSettings {
+  connections: PersonalModelConnection[];
+  defaultModelId: string;
+  roles?: ModelRoleSetting[];
+  revision?: number;
+}
+
+export interface PersonalModelConnectionInput {
+  name: string;
+  protocol: PersonalModelConnection["protocol"];
+  baseUrl: string;
+  modelIds: string[];
+  models?: RegisteredModelInput[];
+  supportsVision: boolean;
+  revision: number;
+  apiKey?: string;
+}

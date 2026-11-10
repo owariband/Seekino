@@ -202,7 +202,7 @@ export function LibraryPage() {
                       <div><strong title={video.originalFilename ?? undefined}>{video.displayName?.trim() || video.originalFilename || episodeLabel(video.episodeOrder)}</strong><span>{video.totalBytes === null ? "—" : formatBytes(video.totalBytes)} · <Clock3 size={11} /> {formatTimecode(video.durationSeconds)}</span></div>
                     </div>
                     <div className={styles.progressCell}>
-                      <span>{t("上传")}</span><i><em style={{ width: `${video.uploadProgress}%` }} /></i><b>{video.uploadProgress}%</b>
+                      <span>{t("上传")}</span><i>{video.uploadProgress === null ? null : <em style={{ width: `${video.uploadProgress}%` }} />}</i><b>{video.uploadProgress === null ? "—" : `${video.uploadProgress}%`}</b>
                     </div>
                     <div className={styles.progressCell}>
                       <span>{t(parseStatusLabels[video.parseStatus] ?? "解析")}</span><i>{video.parseProgress === null ? null : <em style={{ width: `${video.parseProgress}%` }} />}</i><b>{video.parseProgress === null ? "—" : `${video.parseProgress}%`}</b>

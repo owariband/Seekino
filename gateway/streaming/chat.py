@@ -1,8 +1,6 @@
 """Forward optional display text while collecting verified results and tools."""
 from __future__ import annotations
 
-import socket
-
 from collections.abc import Callable, Iterator
 from contextlib import closing
 from time import monotonic
@@ -14,8 +12,9 @@ from openai.types.chat import ChatCompletion, ChatCompletionChunk
 
 from gateway.agent_model.errors import ModelFailureError, ModelFailureReason
 from gateway.model_diagnostics import capture_model_diagnostics, record_model_event
-from gateway.model_events import ModelTextDelta, emit_model_text
+from gateway.model_events import ModelReasoningDelta, ModelTextDelta, emit_model_reasoning, emit_model_text
 from gateway.usage import ModelCallTracker
+from gateway.streaming import cancel_http_stream
 from gateway.streaming.first_sse import FirstSSEDeadline
 
 
@@ -41,13 +40,15 @@ def request_chat_completion(
                 completions, usage_call=usage_call, check_control=check_control,
                 first_sse_deadline=first_sse_deadline, **request,
             )
-        record_model_event("chat_transport", {"stream": False, "started_monotonic": monotonic()})
+        started_at = monotonic()
+        record_model_event("chat_transport", {"stream": False, "started_monotonic": started_at})
         response = completions.create(**request)
         usage_call.capture_response(response)
         record_model_event("response", response)
         usage_call.raise_if_cancelled()
         if check_control is not None:
             check_control()
+        _emit_completed_chat_text(response, usage_call=usage_call, started_at=started_at)
         return response
 
 
@@ -102,6 +103,7 @@ def _iter_chat_chunks(
     started_at = monotonic()
     deadline = started_at + request["timeout"]
     text_sequence = 0
+    reasoning_sequence = 0
     first_text_ms = None
 
     def check() -> None:
@@ -130,7 +132,7 @@ def _iter_chat_chunks(
             if first_sse_deadline is not None:
                 first_sse_deadline.attach_response(stream.response)
             usage_call.capture_response(stream.response, include_usage=False)
-            unregister = usage_call.add_cancel_callback(lambda: _cancel_chat_stream(stream))
+            unregister = usage_call.add_cancel_callback(lambda: cancel_http_stream(stream))
             for chunk in stream:
                 received_at = monotonic()
                 check()
@@ -150,6 +152,16 @@ def _iter_chat_chunks(
                     received_choice = True
                     terminal = choice.finish_reason is not None
                     text = choice.delta.content
+                    reasoning = getattr(choice.delta, "reasoning_content", None)
+                    if isinstance(reasoning, str) and reasoning:
+                        reasoning_sequence += 1
+                        record_model_event("chat_reasoning_delta", {
+                            "sequence": reasoning_sequence, "chars": len(reasoning),
+                            "received_monotonic": received_at,
+                        })
+                        emit_model_reasoning(ModelReasoningDelta(
+                            reasoning, usage_call.call_id, reasoning_sequence, received_at,
+                        ))
                     if isinstance(text, str) and text:
                         elapsed_ms = (received_at - started_at) * 1000
                         if first_text_ms is None and text.strip():
@@ -185,7 +197,8 @@ def _iter_chat_chunks(
         unregister()
         record_model_event("chat_transport_end", {
             "finished_monotonic": monotonic(), "terminal": terminal,
-            "text_deltas": text_sequence, "first_text_ms": first_text_ms,
+            "text_deltas": text_sequence, "reasoning_deltas": reasoning_sequence,
+            "first_text_ms": first_text_ms,
         })
     if not received_choice or not terminal:
         raise ModelFailureError(
@@ -194,23 +207,18 @@ def _iter_chat_chunks(
         )
 
 
-def _cancel_chat_stream(stream: Any) -> None:
-    """Wake a blocked HTTP/1 read before closing the response and its client.
-
-    Closing a socket from another thread alone may leave recv blocked. HTTP/2
-    connections can be multiplexed, so never shut down their shared socket.
-    """
-    try:
-        response = getattr(stream, "response", None)
-        extensions = getattr(response, "extensions", {})
-        if (not getattr(response, "is_closed", False)
-                and extensions.get("http_version") in {b"HTTP/1.0", b"HTTP/1.1"}):
-            network = extensions.get("network_stream")
-            sock = network.get_extra_info("socket") if network is not None else None
-            if sock is not None:
-                sock.shutdown(socket.SHUT_RDWR)
-    except (AttributeError, OSError):
-        # SDK/test transports may not expose a socket, or it may already be closed.
-        pass
-    finally:
-        stream.close()
+def _emit_completed_chat_text(
+    response: Any, *, usage_call: ModelCallTracker, started_at: float,
+) -> None:
+    """Observe one non-streamed turn without pretending it arrived in real time."""
+    choices = getattr(response, "choices", None) or ()
+    if not choices:
+        return
+    text = getattr(getattr(choices[0], "message", None), "content", None)
+    if not isinstance(text, str) or not text:
+        return
+    received_at = monotonic()
+    emit_model_text(ModelTextDelta(
+        text, usage_call.call_id, 1, received_at,
+        (received_at - started_at) * 1000, None, False,
+    ))

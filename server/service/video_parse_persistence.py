@@ -41,11 +41,13 @@ from ..model.dto.taskDTO import (
     VideoSummarizeLease,
 )
 from ..model.dto.libraryDTO import VideoChunkState
+from ..error.retrieval import SeriesScopeNotFoundError
 from ..model.dto.searchDTO import (
+    PublishedTimelineChunk,
     VideoParseRetrievalScope,
     HydratedRetrievalCandidate,
 )
-from ..model.task import VideoParseTaskStatus
+from ..model.task import ChunkParseTaskStatus, ChunkTaskPhase, VideoParseTaskStatus
 from ..repository import video_parse_task as task_store
 from ..repository import video_parse_content as result_store
 from ..repository import video_parse_chunk as chunk_store
@@ -63,11 +65,13 @@ from .video_parse_errors import (
     ModelCallBudgetExhaustedError,
     ModelCallLeaseConflictError,
 )
+from .video_parse_routing import ContentRoute
 from .video_parse_task import (
+    _awaits_content_route,
     _task_input_state,
     _task_state,
     _locked_video_lease,
-    _locked_parent_intervals,
+    _locked_parent_task,
     _advance_ready_chunks,
     _aggregate_video_task,
     _interval_specs,
@@ -78,6 +82,7 @@ from .video_parse_task import (
     _requires_video_asr,
     _video_failure_status,
 )
+from .video_parse_dispatch import EpisodeReadyTasks, ParseDispatch
 from .video_parse_content import (
     _normalize_event_index_target,
     INDEX_EMBEDDINGS_DETAIL_KEY,
@@ -103,8 +108,9 @@ class VideoParsePersistenceService:
     explicitly persist their changes through SQL repositories in that Session.
     """
 
-    def __init__(self, session_factory: sessionmaker[Session]) -> None:
+    def __init__(self, session_factory: sessionmaker[Session], *, dispatch: ParseDispatch | None = None) -> None:
         self._session_factory = session_factory
+        self._dispatch = dispatch
 
     def load_export_snapshot(
         self,
@@ -277,12 +283,28 @@ class VideoParsePersistenceService:
             )
         return self.hydrate_retrieval_evidence([(chunk_id, identity)])[0]
 
+    def list_published_timeline_chunks(
+        self, *, series_id: str, tenant_id: str,
+    ) -> list[PublishedTimelineChunk]:
+        series_id = canonical_uuid(series_id, "series_id")
+        tenant_id = require_nonempty_text(tenant_id, "tenant_id")
+        with self._session_factory() as session:
+            if not read_store.series_names(session, series_ids=[series_id], workspace=tenant_id):
+                raise SeriesScopeNotFoundError("Series unavailable in this workspace")
+            return read_store.list_published_timeline_chunks(
+                session, workspace=tenant_id, series_id=series_id, task_status=VideoParseTaskStatus.COMPLETE.value,
+                phase=ChunkTaskPhase.INDEX, status=ChunkParseTaskStatus.COMPLETE.value,
+            )
+
     def resolve_retrieval_scope(
         self,
         series_ids: Sequence[str],
         *,
         tenant_id: str,
         require_sparse: bool = False,
+        episode_order: int | None = None,
+        event_index: tuple[str, str] | None = None,
+        video_chunk_ids: Sequence[str] | None = None,
     ) -> VideoParseRetrievalScope:
         """Select only Videos whose latest non-deleted V2 task is COMPLETE.
 
@@ -301,7 +323,13 @@ class VideoParsePersistenceService:
             raise ValueError("series_ids must be a sequence of IDs") from exc
         if not ordered_series_ids:
             raise ValueError("series_ids must not be empty")
+        if episode_order is not None and (
+            len(ordered_series_ids) != 1 or type(episode_order) is not int or episode_order <= 0
+        ):
+            raise ValueError("按集检索需要选择一门课程和有效集数")
         workspace = require_nonempty_text(tenant_id, "tenant_id")
+        if video_chunk_ids is not None and event_index is None:
+            raise ValueError("video_chunk_ids applies only to Event retrieval")
 
         with self._session_factory() as session:
             return retrieval_ops.resolve_retrieval_scope(
@@ -309,6 +337,9 @@ class VideoParsePersistenceService:
                 require_sparse=require_sparse,
                 ordered_series_ids=ordered_series_ids,
                 workspace=workspace,
+                episode_order=episode_order,
+                event_index=event_index,
+                video_chunk_ids=video_chunk_ids,
             )
 
     def validate_event_coverage(
@@ -317,20 +348,13 @@ class VideoParsePersistenceService:
     ) -> tuple[tuple[str, str, int], ...]:
         """Resolve paired, currently published Event sources within a trusted scope."""
 
-        requested = None
-        if video_chunk_ids is not None:
-            if isinstance(video_chunk_ids, (str, bytes)):
-                raise ValueError("video_chunk_ids must be a sequence")
-            requested = {canonical_uuid(value, "video_chunk_id") for value in video_chunk_ids}
-            if not requested:
-                raise ValueError("video_chunk_ids must not be empty")
         with self._session_factory() as session:
             sources = retrieval_ops.validate_event_coverage(
                 session,
-                scope=scope,
+                parse_tasks_by_video_id=scope.parse_tasks_by_video_id,
                 index_name=index_name,
                 contract_id=contract_id,
-                requested=requested,
+                requested=retrieval_ops.event_chunk_owners(session, video_chunk_ids, scope.searched_video_ids),
             )
         return tuple(sorted(sources))
 
@@ -539,6 +563,32 @@ class VideoParsePersistenceService:
                                  *, now: datetime | None = None) -> None:
         with self._session_factory.begin() as session:
             result_ops.commit_diarization(session, lease, identity, payload, now=now or now_utc())
+
+    def commit_content_route(self, lease: VideoParseLease, decision: ContentRoute,
+                             *, now: datetime | None = None) -> ParseConfig:
+        committed_at = now or now_utc()
+        with self._session_factory.begin() as session:
+            task = _locked_video_lease(session, lease, committed_at)
+            if (task.is_deleted or _latest_video_task_id(session, task.video_id) != task.id
+                    or _video_failure_status(task) is not None):
+                raise VideoParseLeaseLostError("Video content routing is no longer current")
+            config = ParseConfig.model_validate(task.parse_config)
+            if not _awaits_content_route(task):
+                return config
+            if task.status not in {"PREPARING", "PARSING"}:
+                raise VideoParseConflictError("Video content routing is not pending")
+            fps = 0.5 if decision.kind == "course" else 3.0
+            config = config.model_copy(update={
+                "content_kind": decision.kind, "visual_input": config.visual_input.model_copy(update={"fps": fps}),
+            })
+            task.parse_config = config.model_dump(mode="json")
+            task.detail = _ensure_runtime(task.detail)
+            task.detail[RUNTIME_DETAIL_KEY]["content_route"] = {
+                "kind": decision.kind, "basis": decision.basis, "model": decision.model, "fps": fps,
+            }
+            task.update_time = datetime_to_unix_time_ms(committed_at)
+            task_store.save_task(session, task)
+            return config
 
     def finish_video_asr_preparation(
         self, lease: VideoParseLease, *, now: datetime | None = None,
@@ -754,13 +804,16 @@ class VideoParsePersistenceService:
         if not payload:
             raise ValueError("content must not be empty")
         with self._session_factory.begin() as session:
-            return content_ops.commit_chunk_result(
+            touched = content_ops.commit_chunk_result(
                 session,
                 lease=lease,
                 detail=detail,
                 committed_at=committed_at,
                 payload=payload,
             )
+        if self._dispatch is not None:
+            self._dispatch.after_commit(lease, EpisodeReadyTasks.understood, committed_at, touched)
+        return touched
 
     def load_chunk_execution(
         self,
@@ -806,8 +859,12 @@ class VideoParsePersistenceService:
 
         committed_at = now if now is not None else now_utc()
         with self._session_factory.begin() as session:
-            locked_intervals = _locked_parent_intervals(
-                session, lease.video_parse_task_id
+            parent = _locked_parent_task(session, lease.video_parse_task_id)
+            size = _interval_size(parent.parse_config)
+            locked_intervals = interval_store.list_tasks(
+                session, parent.id, for_update=True,
+                start_range=(max(0, lease.start_sequence_no - size + 1),
+                             lease.start_sequence_no + lease.chunk_count - 1),
             )
             interval, changed_versions = content_ops.commit_interval_refinement(
                 session,
@@ -825,9 +882,11 @@ class VideoParsePersistenceService:
                 session, interval.video_task_id, interval.chunk_task_ids,
                 committed_at, locked_intervals=locked_intervals,
             )
-            summary_ops.mark_summary_ready(session, interval.video_task_id, now=committed_at)
+            if not interval_store.has_unfinished_window(session, interval.video_task_id):
+                summary_ops.mark_summary_ready(session, interval.video_task_id, now=committed_at)
             receipt = IntervalRefinementCommit(tuple(queued), changed_versions)
-        # No notification may escape a transaction that later rolls back.
+        if self._dispatch is not None:
+            self._dispatch.after_commit(lease, EpisodeReadyTasks.refined, receipt.ready_chunk_ids, committed_at)
         return receipt
 
     def bind_event_index_target(
@@ -869,7 +928,7 @@ class VideoParsePersistenceService:
             raise VideoParseConflictError("indexed Chunk versions must be positive integers")
         completed_at = now if now is not None else now_utc()
         with self._session_factory.begin() as session:
-            return content_ops.complete_chunk_indexing(
+            state = content_ops.complete_chunk_indexing(
                 session,
                 lease=lease,
                 content_version=content_version,
@@ -877,6 +936,9 @@ class VideoParsePersistenceService:
                 event_target=event_target,
                 completed_at=completed_at,
             )
+        if self._dispatch is not None:
+            self._dispatch.after_commit(lease, EpisodeReadyTasks.lease_state, indexed_version=content_version)
+        return state
 
     def save_index_embeddings(
         self,
@@ -917,12 +979,15 @@ class VideoParsePersistenceService:
         """Requeue released Chunks while preserving Parse and Refine results."""
         requested_at = now if now is not None else now_utc()
         with self._session_factory.begin() as session:
-            return content_ops.request_index_rebuild(
+            reset = content_ops.request_index_rebuild(
                 session,
                 video_parse_task_id=video_parse_task_id,
                 event_target=event_target,
                 requested_at=requested_at,
             )
+        if reset and self._dispatch is not None:
+            self._dispatch.refresh_indexes(video_parse_task_id, reset)
+        return reset
 
     def aggregate_task(
         self,
@@ -1143,7 +1208,7 @@ class VideoParsePersistenceService:
     ) -> tuple[str, ...]:
         committed_at = now if now is not None else now_utc()
         with self._session_factory.begin() as session:
-            return prefix_ops.commit_prefix(
+            reset = prefix_ops.commit_prefix(
                 session,
                 lease=lease,
                 content_updates=content_updates,
@@ -1153,6 +1218,9 @@ class VideoParsePersistenceService:
                 input_fingerprint=input_fingerprint,
                 committed_at=committed_at,
             )
+        if reset and self._dispatch is not None:
+            self._dispatch.refresh_indexes(lease.video_parse_task_id, reset)
+        return reset
 
     def retry_prefix(
         self,

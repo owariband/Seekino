@@ -50,7 +50,7 @@ def repository():
 @pytest.fixture
 def seed_video(tmp_path):
     """Seed current V2 facts for tests of the library, media and Chat boundaries."""
-    def seed(factory, *, tenant_id="local-default", series_id=None, series_name="Test Series", episode_order=7, upload_sequence=None):
+    def seed(factory, *, tenant_id="local-default", series_id=None, series_name="Test Series", episode_order=7, upload_sequence=None, content_hash="a" * 64):
         video_id, task_id = str(uuid4()), str(uuid4())
         source = tmp_path / f"{video_id}.mp4"
         source.write_bytes(b"source-video")
@@ -70,7 +70,7 @@ def seed_video(tmp_path):
                                    description="isolated fixture", status="INDEXING", character_bible=[]))
             session.add(Video(id=video_id, series_id=series_id, episode_order=episode_order,
                               upload_sequence=upload_sequence or episode_order, filename="episode.mp4",
-                              source_uri=source.as_uri(), hash="a" * 64, size_bytes=source.stat().st_size,
+                              source_uri=source.as_uri(), hash=content_hash, size_bytes=source.stat().st_size,
                               duration_ms=20_000, upload_status="COMPLETED", parse_status="COMPLETE",
                               upload_progress=100, parse_progress=100))
             session.add(VideoParseTask(id=task_id, video_id=video_id, pipeline_version="video-parse-v2",
@@ -115,3 +115,29 @@ def seed_video(tmp_path):
 @pytest.fixture
 def parsed_video(repository, seed_video):
     return seed_video(create_session_factory(repository[0]))
+
+
+@pytest.fixture
+def yaml_model_settings(tmp_path):
+    from pathlib import Path
+    import yaml
+    from server.service.model_settings import ModelSettings
+
+    data = yaml.safe_load((Path(__file__).parents[2] / "config.yaml").read_text())
+    data["supervisor_harness"] = "deepagents"
+    data["model_sources"]["my-endpoint"] = {
+        "adapter": "openai", "provider": "my-provider", "base_url": "https://chat.example.test/v1",
+        "api_key_env": "TEST_LOCAL_PROVIDER_KEY",
+    }
+    primary = {"source": "my-endpoint", "model": "team/home", "supports_vision_input": True}
+    data["models"].update({
+        "supervisor": primary,
+        "same-model-other-role": primary,
+        "my-alternative": {**primary, "model": "team/alternative"},
+        "custom-unlisted": {**primary, "model": "team/discovered"},
+        "ranking-only": {**primary, "model": "team/ranking-only", "kind": "rerank"},
+    })
+    data["supervisor_choices"] = {"my-alternative": "My alternative"}
+    path = tmp_path / "models.yaml"
+    path.write_text(yaml.safe_dump(data))
+    return ModelSettings(path, allow_local=True, environ={"TEST_LOCAL_PROVIDER_KEY": "synthetic-private-key"})

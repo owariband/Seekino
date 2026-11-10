@@ -50,6 +50,7 @@ import {
   videoParseTaskEventsUrl,
   updateSeries,
   updateAgentGlobalSettings,
+  updateAgentConversationModel,
   updateVideoEpisode,
   uploadAgentAttachment,
   uploadSeriesImage,
@@ -60,7 +61,7 @@ import type { ApiConnection, AuthIdentity, DataSource, UploadSessionView } from 
 
 const localIdentity: AuthIdentity = {
   userId: "local", email: null, isGuest: false, tenantId: "local-default", publicTenantId: "local-default",
-  mode: "local", csrfToken: "", permissions: { canUpload: true, canManage: true, canConfigure: true },
+  mode: "local", csrfToken: "", emailLoginEnabled: false, permissions: { canUpload: true, canManage: true, canConfigure: true },
 };
 afterEach(() => {
   clearDataSource();
@@ -702,6 +703,26 @@ describe("Agent Chat routes", () => {
     expect(JSON.parse(String(calls[7]![1]?.body)).seriesIds).toEqual([]);
     expect(agentMessagesEventsUrl("conversation/id")).toBe("/api/agent/messages/events?conversationId=conversation%2Fid&tenantId=local-default");
     expect(videoContentUrl("video/id", "workspace/id")).toBe("/api/videos/content?videoId=video%2Fid&tenantId=workspace%2Fid");
+  });
+
+  it("sends the conversation model on create and PATCH with the active tenant and CSRF token", async () => {
+    const member = { ...localIdentity, mode: "cloud" as const, tenantId: "personal-id", csrfToken: "model-csrf" };
+    configureApiIdentity(member, "personal-id");
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      new Response("{}", { headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    await createAgentConversation("default-key");
+    await createAgentConversation("alternate-key", "alternate");
+    await updateAgentConversationModel("conversation/id", "alternate");
+    await updateAgentConversationModel("conversation/id", "default");
+    const calls = fetchMock.mock.calls;
+    expect(JSON.parse(String(calls[0]![1]?.body))).toEqual({ tenantId: "personal-id" });
+    expect(JSON.parse(String(calls[1]![1]?.body))).toEqual({ tenantId: "personal-id", modelId: "alternate" });
+    expect(String(calls[2]![0])).toBe("/api/agent/conversations/model?conversationId=conversation%2Fid&tenantId=personal-id");
+    expect(calls[2]![1]?.method).toBe("PATCH");
+    expect(new Headers(calls[2]![1]?.headers).get("X-CSRF-Token")).toBe("model-csrf");
+    expect(JSON.parse(String(calls[2]![1]?.body))).toEqual({ modelId: "alternate" });
+    expect(JSON.parse(String(calls[3]![1]?.body))).toEqual({ modelId: "default" });
   });
 });
 

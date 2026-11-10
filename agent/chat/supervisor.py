@@ -16,10 +16,11 @@ from gateway.agent_model.contracts import SupervisorAgentModel, SupervisorSessio
 from gateway.agent_model.errors import ModelInputTooLargeError
 from gateway.web_search import WebSearchError, WebSearchHit, WebSearcher
 from gateway.media import ToolImageArtifact
-from gateway.model_events import ModelTextDelta
+from gateway.model_events import ModelReasoningDelta, ModelTextDelta
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, create_model, model_validator
 
 from engine.rag.contracts import AgentReply, VideoChunkEvidence, VideoChunkSearchHit, VideoChunkSearchResult
+from engine.rag.retrieval.contracts import EpisodeNotFoundError, EventIndexNotReadyError
 
 from agent.utils.tool import AgentTool
 from .common.state import AnswerPhase, ExecutionControl, RunInputs, context_json
@@ -37,7 +38,7 @@ from .video_search.errors import VideoSearchFailure, VideoSearchFailureCode, Vid
 from .video_search.runtime import AgentRuntime
 from .video_search.output import (
     build_chat_output, build_chat_snapshot, build_retrieval_trace, merge_retrieval_calls,
-    outline_evidence_hit, retrieval_hit, validate_result, video_range_sources,
+    outline_evidence_hit, retrieval_hit, snap_video_range, validate_result, video_range_sources,
 )
 from .video_search.state import (
     AgentFinalOutput, ChatRenderBlock, ChatRenderDraft, ChatVideoBlock,
@@ -71,6 +72,7 @@ class SearchArguments(BaseModel):
 
 
 class VideoSearchArguments(SearchArguments):
+    episode: int | None = Field(default=None, gt=0, le=2_147_483_647, strict=True)
     attachments: list[Annotated[str, StringConstraints(min_length=1)]] = Field(
         default_factory=list, strict=True,
         description="Copy mediaUri addresses from the provided attachments; omitted or [] sends no images.",
@@ -83,13 +85,14 @@ class QueryArguments(BaseModel):
     query: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)] | None = None
     attachments: list[Annotated[str, StringConstraints(min_length=1)]] = Field(default_factory=list, strict=True)
     queries: list[VideoSearchArguments] | None = Field(default=None, min_length=1, max_length=8)
+    episode: int | None = Field(default=None, gt=0, le=2_147_483_647, strict=True)
 
     @model_validator(mode="after")
     def single_or_parallel(self):
         if (self.query is None) == (self.queries is None):
             raise ValueError("Provide query or queries, exclusively")
-        if self.queries is not None and self.attachments:
-            raise ValueError("Put attachments on each independent query")
+        if self.queries is not None and (self.attachments or self.episode is not None):
+            raise ValueError("Put attachments and episode on each independent query")
         return self
 
 
@@ -442,6 +445,8 @@ class SupervisorRuntime:
 
         def accept_text_delta(delta: ModelTextDelta) -> None:
             nonlocal stream_call_id, stream_text, stream_prefix, stream_sent
+            if not delta.before_completion:
+                return  # Completed responses are published by accept_text after validation.
             with tool_lock:
                 control.check()
                 if stream_call_id is None:
@@ -499,6 +504,14 @@ class SupervisorRuntime:
                     "content": content, "renderBlocks": public,
                     "textStream": text_stream,
                 })
+
+        def accept_reasoning_delta(delta: ModelReasoningDelta) -> None:
+            # Reasoning is displayed above the answer, never merged into render blocks
+            # or persisted answer text; it shares no call-id ordering with the body.
+            control.publish(inputs, {
+                "type": "answer.reasoning.delta", "callId": delta.call_id,
+                "delta": delta.text,
+            })
 
         def accept_text(value: str) -> None:
             nonlocal stream_call_id, stream_text, stream_prefix, stream_sent
@@ -612,6 +625,7 @@ class SupervisorRuntime:
         def query_video(
             query: str | None = None, attachments: list[str] | None = None,
             queries: list[dict] | None = None,
+            episode: int | None = None,
         ) -> ToolResult:
             nonlocal query_number
             with tool_lock:
@@ -622,7 +636,7 @@ class SupervisorRuntime:
                         retryable=False, retry_hint="Explain that local video evidence is unavailable.",
                     ).as_dict()})
                 tasks = [VideoSearchArguments.model_validate(item) for item in queries] if queries else [
-                    VideoSearchArguments(query=query, attachments=attachments or [])
+                    VideoSearchArguments(query=query, attachments=attachments or [], episode=episode)
                 ]
                 if len(tasks) > self._maximum_parallel_queries:
                     raise AgentToolFeedbackError(
@@ -645,6 +659,7 @@ class SupervisorRuntime:
                 for task in tasks:
                     scoped = deepcopy(inputs)
                     scoped["user_message"] = task.query
+                    scoped["retrieval_episode"] = task.episode
                     scoped["original_user_message"] = inputs["user_message"]
                     scoped["attachments"] = [{"mediaUri": address} for address in task.attachments]
                     scoped["image_urls"] = [attachment_images[address] for address in task.attachments]
@@ -876,10 +891,12 @@ class SupervisorRuntime:
                 try:
                     # The tool accepts seconds; canonical evidence and playback storage use milliseconds.
                     start_ms, end_ms = round(start_seconds * 1000), round(end_seconds * 1000)
+                    evidence_by_id = {
+                        hit.candidate.video_chunk_id: hit.evidence.model_dump(by_alias=True)
+                        for hit in citable_result().hits
+                    }
                     source_ids = video_range_sources(
-                        {hit.candidate.video_chunk_id: hit.evidence.model_dump(by_alias=True)
-                         for hit in citable_result().hits},
-                        video_chunk_id, start_ms, end_ms, allow_adjacent=True,
+                        evidence_by_id, video_chunk_id, start_ms, end_ms, allow_adjacent=True,
                     )
                 except (ValueError, OverflowError) as exc:
                     raise AgentToolFeedbackError(
@@ -888,6 +905,9 @@ class SupervisorRuntime:
                         "of the same source video, without an uncovered gap. "
                         "Divide evidence timestamps in milliseconds by 1000 before submitting.",
                     ) from exc
+                start_ms, end_ms = snap_video_range(
+                    evidence_by_id, source_ids, start_ms, end_ms,
+                )
                 item = SelectedVideoRange(
                     video_chunk_id=video_chunk_id, start_seconds=start_ms,
                     end_seconds=end_ms,
@@ -1111,7 +1131,7 @@ class SupervisorRuntime:
             if isinstance(item, dict)
         }
         scope_description = (
-            "本次可检索的视频系列："
+            "本次选择的视频系列："
             + "、".join(
                 str(display_names.get(item["seriesId"]) or item["name"] or item["seriesId"])
                 for item in scope
@@ -1157,11 +1177,15 @@ class SupervisorRuntime:
             "对白证据已足够回答出处、原话或说话人时无需抽帧；只有具体视觉主张或证据缺口才看图。"
             "用 submit_video_item 提交最终片段，video_chunk_id 只能是本轮检索工具返回的值；其 start_seconds/end_seconds 使用原视频绝对秒数，允许小数，"
             "例如 00:50–01:00 传 50 和 60。检索证据与 Query 草稿仍使用毫秒，提交前除以 1000；"
-            "例如证据 54600–56000 毫秒，提交 54.6–56 秒。正文与 claim 使用秒或时间码。"
+            "例如证据 54600–56000 毫秒，提交 54.6–56 秒。正文提到未提交为视频卡的时间时使用时间码。"
             "范围须完整覆盖支持主张的必要内容并去掉无关部分，可跨同一视频两个相邻已检索 Chunk。"
+            "起止以证据中讲解句子或事件的起止为准，不要直接使用 Chunk 的整分钟边界；"
+            "需要一整段讲解时，从该段第一句开始、到最后一句结束。"
             "重复 ID 会原位更新，remove_video_item 可撤回；未提交的候选不会自动显示。"
-            "普通正文与选段按产生顺序展示；在需要插入视频卡的位置调用 submit_video_item，"
-            "可交替写正文和提交视频卡。"
+            "正文与视频卡按产生顺序实时展示：需要视频卡的要点，先写这一条的正文，紧接着调用 submit_video_item 提交它的视频卡，再写下一条；"
+            "同一处需要多张视频卡时可在一次回复中并行提交。"
+            "已提交为视频卡的片段，正文和小标题都不再写时间码或时间范围，视频卡会显示时间。"
+            "claim 是视频卡标题，约 30 字以内，说明这段讲了什么，不写时间码。"
             "证据不足或矛盾时说明缺口，必要时澄清或只对具体缺口补查，不把候选自检当独立事实证明。"
         )
         prompt = (
@@ -1188,6 +1212,8 @@ class SupervisorRuntime:
             "仅评价你的回答或纠正你的理解时，直接回应这项反馈即可。不要把反馈当作待查台词，"
             "也不要拿上一轮视频答案换一种说法来代替回应；本轮没有提出的剧情、出处和人物无需重说。"
             "根据已有文字解释或改写时，直接完成这个任务，只有当前任务存在具体证据缺口才补查。\n"
+            "明确只查某一集时，调用 retrieve、search_video_events 或 query_video 必须传 episode 集数；搜整课则省略。"
+            "按工具返回的覆盖范围标明哪些集已查、哪些还在处理。指定集未就绪或检索服务离线时，说明原因并继续对话，不能拿其他集作证。\n"
             "明确要求找台词、场景、出处或补证时，实际调用相应工具。查询参数保留台词原话、否定和限定，"
             "按历史补齐明确指代，不猜人物或剧情；无需先改写整条用户消息或输出意图标签。\n"
             "同一消息包含回应与检索时，本轮必须完成两项。用户要求先解释、先改写或先回应，"
@@ -1230,10 +1256,13 @@ class SupervisorRuntime:
             "向用户称呼视频一律用「系列显示名 第 N 集《标题》」，不得写出任何内部 id。"
             + video_delivery
             + "已经输出的正文会保留，结束时只写尚未表达的内容或收尾，不要重复整篇回答。"
-            "调用耗时的视频检索、网页搜索或当前视频理解工具前，先用一句简短自然的正文说明"
-            "准备核验什么，让用户及时知道任务已开始。工具状态由系统根据真实调用展示，"
-            "不要输出工具 JSON、模拟进度或反复播报工具操作。得到证据后，如仍需继续核验，"
-            "可简短说明已发现的内容和下一步核验目标；不泄露内部推理或未经核实的结论。"
+            "正文只写给用户的回答：不写「我先看一下」「已经拿到了」「我再核对」之类的过程说明或进度播报，"
+            "直接调用工具即可，界面会根据真实调用显示查找状态；不要输出工具 JSON 或模拟进度，"
+            "不泄露内部推理或未经核实的结论。"
+            "回答结构：先用一两句话直接回答问题；要点和步骤用 Markdown 列表，"
+            "不要用「→」把多个步骤串成一长句，单段不超过约 120 字；加粗小标题后空一行再写正文。"
+            "以视频证据为主，视频没有覆盖的内容用一两句说明并标明来自通用知识；"
+            "除非用户要求详细，不展开成教程，整条回答控制在约 800 字以内。"
             "工具报错、调用限制和内部字段名不写进给用户的回答，换用其他工具继续即可。"
             + "所有正文要与提交的 claim 和时间一致，整体不能只有完成确认。"
             +
@@ -1274,7 +1303,8 @@ class SupervisorRuntime:
                     max_model_calls_per_turn if self._limits_enabled else None
                 ),
                 handle_text=accept_text,
-                **({"handle_text_delta": accept_text_delta}
+                **({"handle_text_delta": accept_text_delta,
+                    "handle_reasoning_delta": accept_reasoning_delta}
                    if getattr(self._model, "supports_text_deltas", False) else {}),
                 request_timeout_seconds=control.remaining_seconds(),
                 check_control=control.check,
@@ -1340,6 +1370,18 @@ def _markdown_label(value: str) -> str:
 
 def _video_failure_tool_error(failure: VideoSearchFailure) -> ToolError:
     message, retry_hint = {
+        VideoSearchFailureCode.EPISODE_NOT_FOUND: (
+            failure.public_message or EpisodeNotFoundError.public_message, "请用户核对集号，保留本轮指定的范围。",
+        ),
+        VideoSearchFailureCode.EVENT_INDEX_NOT_READY: (
+            failure.public_message or EventIndexNotReadyError.public_message, "可在同一范围内检索 Chunk，或继续普通对话。",
+        ),
+        VideoSearchFailureCode.SCOPE_NOT_READY: (
+            failure.public_message or "所选范围暂时无法检索", "说明资料就绪情况，保留指定的范围并继续对话。",
+        ),
+        VideoSearchFailureCode.SERVICE_UNAVAILABLE: (
+            failure.public_message or "检索服务暂不可用，请稍后重试", "说明服务状态并继续对话。",
+        ),
         VideoSearchFailureCode.OUTPUT_TOKEN_LIMIT: (
             "Video analysis was truncated before a complete result was produced.",
             "Explain that video verification was interrupted and suggest retrying "

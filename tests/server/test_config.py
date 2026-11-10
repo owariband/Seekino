@@ -627,6 +627,25 @@ def test_embedding_resolution_shares_endpoint_identity_and_explicit_overrides(mo
     assert explicit.encoder_model is None and explicit.video_fps == 1
 
 
+def test_anime_content_kind_survives_api_profile_and_task_snapshots(monkeypatch):
+    from server.config.parse_profile import ParseConfig
+
+    _clean_seekino_environment(monkeypatch)
+    settings = ServerSettings.from_environment()
+    config = ParseConfig.from_defaults(
+        runtime=settings.parse, gateway=load_config(), upload=settings.upload, images=settings.images,
+        embedding_model=settings.video_embedding_model, embedding_dimensions=settings.text_vector_dimensions,
+        embedding_fps=settings.video_embedding_fps,
+    )
+    encoded = config.model_dump(mode="json", by_alias=True)
+    assert "contentKind" not in encoded
+    assert "content_kind" not in config.to_video_parse_v2().model_dump()
+    explicit = ParseConfig.model_validate({**encoded, "contentKind": "anime"})
+    assert explicit.model_dump(by_alias=True)["contentKind"] == "anime"
+    snapshot = explicit.to_video_parse_v2()
+    assert type(snapshot).model_validate_json(snapshot.model_dump_json()).content_kind == "anime"
+
+
 def test_parse_defaults_preserve_settings_snapshot_after_embedding_environment_changes(monkeypatch):
     _clean_seekino_environment(monkeypatch)
     settings = ServerSettings.from_environment()

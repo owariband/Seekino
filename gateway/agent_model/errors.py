@@ -18,6 +18,7 @@ class ModelFailureReason(StrEnum):
     MODEL_CONNECTION_ERROR = "model_connection_error"
     MODEL_GATEWAY_TIMEOUT = "model_gateway_timeout"
     MODEL_SERVICE_UNAVAILABLE = "model_service_unavailable"
+    MODEL_NETWORK_ERROR = "model_network_error"
 
 
 class ModelFailureError(RuntimeError):

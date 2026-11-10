@@ -5,7 +5,6 @@ import subprocess
 from collections.abc import Callable, Sequence
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
 from urllib.parse import urlencode
 
 from ..config.media import ImageUploadConfig
@@ -14,7 +13,7 @@ from ..utils.validation import canonical_uuid
 from ..constants.identity import LOCAL_USER_ID
 from ..model.dto.libraryDTO import SeriesState, VideoSummaryState
 from ..model.dto.authDTO import AuthIdentity
-from ..model.video import SeriesVisibility, VideoIndexStatus
+from ..model.video import COMPLETE_VIDEO_UPLOAD_STATUSES
 from ..model.dto.mediaDTO import (
     ImageReference,
     KeyframeImageReference,
@@ -104,32 +103,6 @@ class MediaService:
             record_count=len(lines), event_count=event_count, skipped_empty_chunks=skipped,
         )
 
-    def publication_ready(self, series: SeriesState, *, require_published: bool = True) -> bool:
-        if (
-            (require_published and series.visibility != SeriesVisibility.PUBLIC)
-            or series.status != "READY" or series.video_count == 0
-            or series.ready_video_count != series.video_count
-            or series.pending_upload_count > 0 or series.pending_uploads
-            or len(series.videos) != series.video_count
-        ):
-            return False
-        return all(
-            video.index_status == VideoIndexStatus.READY
-            and video.parse_status in {"SUCCEEDED", "COMPLETED", "COMPLETE"}
-            and self.playback_view(video.video_id, tenant_id=series.tenant_id, video=video).status == "READY"
-            for video in series.videos
-        )
-
-    def require_public_series(self, series: SeriesState) -> None:
-        if not series.publisher_active or not self.publication_ready(series):
-            raise SeriesNotFoundError("公开课程不存在或尚不可用")
-
-    def require_readable_series(self, identity: AuthIdentity, series: SeriesState) -> Literal["member", "public"]:
-        access = series_access(identity, series)
-        if access == "public":
-            self.require_public_series(series)
-        return access
-
     def require_series_access(self, identity: AuthIdentity, series_ids: list[str], *, tenant_id: str) -> None:
         if identity.mode == "local":
             return
@@ -138,7 +111,7 @@ class MediaService:
             require_tenant_read(identity, tenant_id)
         for series_id in dict.fromkeys(series_ids):
             series = self._library.get_series(series_id, tenant_id=tenant_id, owner_user_id=identity.user_id)
-            self.require_readable_series(identity, series)
+            series_access(identity, series)
 
     def image_series(
         self, image_id: str, *, tenant_id: str, owner_user_id: str = LOCAL_USER_ID,
@@ -200,6 +173,9 @@ class MediaService:
         video: VideoSummaryState | VideoChunkEvidence | None = None,
     ) -> PlaybackMedia:
         # File presence and codec facts are rechecked when a public VO is built.
+        video = video or self._library.get_video(video_id, tenant_id=tenant_id)
+        if video.upload_status not in COMPLETE_VIDEO_UPLOAD_STATUSES:
+            return PlaybackMedia("PREPARING", None)
         try:
             media = self.get_original(video_id, tenant_id=tenant_id, video=video)
         except MediaMissingError:

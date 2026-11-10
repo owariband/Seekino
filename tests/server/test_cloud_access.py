@@ -270,7 +270,7 @@ def _course(api, *, tenant_id=None):
             chunk_count=1, version=1, max_attempts=3, is_test=True,
         ))
     state = api.services.library.get_series(series.series_id, tenant_id=tenant_id)
-    assert api.services.media.publication_ready(state)
+    assert state.visibility == SeriesVisibility.PUBLIC and state.publisher_active
     return series.series_id, video_id
 
 
@@ -717,3 +717,66 @@ def test_withdrawn_historical_playback_series_is_checked_outside_selected_series
         assert viewer.get("/api/series/get", params={
             "tenantId": alice["tenantId"], "seriesId": selected_id,
         }).status_code == 200
+
+
+@pytest.mark.parametrize("role", ["guest", "member", "admin"])
+def test_cloud_yaml_settings_permissions_and_chat_projection(cloud_api, yaml_model_settings, role):
+    services = cloud_api.services
+    services.model_settings = yaml_model_settings
+    services.agent._model_settings = yaml_model_settings
+    services.auth.config = replace(services.auth.config, admin_emails=("admin@example.com",))
+    series_id, _ = _course(cloud_api)
+    path = "/api/agent/model-connections"
+    with TestClient(cloud_api.app) as client:
+        assert client.get(path).status_code == 401
+        identity = _guest(client) if role == "guest" else _login(cloud_api, client, role + "@example.com")
+        headers = {"X-CSRF-Token": identity["csrfToken"]}
+        catalog = yaml_model_settings.catalog()
+        row = next(c for c in catalog.connections.values() if c.name == "my-endpoint")
+        ref = row.models[0].id
+        endpoint = path + "?connectionId=" + row.connection_id
+        body = dict(name="renamed", protocol=row.protocol, baseUrl=row.base_url, modelIds=[m.model_id for m in row.models],
+                    supportsVision=row.supports_vision, revision=row.revision)
+        result = client.get(path)
+        options = client.get("/api/agent/messages/options")
+        schema = client.get("/openapi.json").json()
+        assert "/api/agent/model-connections" not in schema["paths"]
+        assert "PersonalModelConnectionSave" not in schema["components"]["schemas"]
+        assert path + "/roles" not in schema["paths"] and path + "/discover" not in schema["paths"]
+        if role == "admin":
+            assert result.status_code == 200 and row.base_url in result.text
+            assert ref in options.text and "synthetic-private-key" not in result.text
+            assert client.put(endpoint, json=body, headers=headers).status_code == 200
+            assert "renamed" in yaml_model_settings.path.read_text()
+            return
+        before = yaml_model_settings.path.read_bytes()
+        assert client.get("/api/agent/global-settings").status_code == 403
+        for r in (result, client.put(endpoint, json=body, headers=headers),
+                  client.delete(endpoint + "&revision=1", headers=headers),
+                  client.patch(path + "/default", json={"modelId": ref}, headers=headers),
+                  client.patch(path + "/roles", json={"role":"vision", "modelId":ref, "revision":row.revision}, headers=headers),
+                  client.post(path + "/discover", params={"connectionId":row.connection_id},
+                              json={"protocol":row.protocol,"baseUrl":row.base_url,"revision":row.revision}, headers=headers),
+                  client.post(endpoint.replace(path, path + "/test"), json={"modelId": ref}, headers=headers)):
+            assert r.status_code == 403 and all(value not in r.text for value in (ref, row.base_url, row.name))
+        assert yaml_model_settings.path.read_bytes() == before
+        assert options.json()["chatModels"] == [] and options.json()["newChatModelId"] == "default"
+        assert row.name not in options.text
+        assert client.post("/api/agent/conversations/create", json={"tenantId": "platform-public", "modelId": ref},
+                           headers={**headers, "Idempotency-Key": str(uuid4())}).status_code == 403
+        cid = _conversation(client, identity)
+        params = {"tenantId": "platform-public", "conversationId": cid}
+        assert client.patch("/api/agent/conversations/model", params=params, headers=headers, json={"modelId": ref}).status_code == 403
+        public = client.get("/api/agent/conversations/get", params=params)
+        assert public.json()["modelId"] == "default" and ref not in public.text
+        sent = client.post("/api/agent/messages/send", params={"conversationId": cid},
+                           json={"tenantId": "platform-public", "seriesIds": [series_id], "content": "hello"},
+                           headers={**headers, "Idempotency-Key": str(uuid4())})
+        assert sent.status_code == 200 and sent.json()["assistantMessage"]["modelName"] is None, sent.text
+        history = client.get("/api/agent/messages/list", params=params)
+        assert cloud_api.runtime.model_name not in sent.text + history.text
+        # A raw SSE request is another public projection of the same messages.
+        stream = client.post("/api/agent/messages/send", params={"conversationId": cid},
+                             json={"tenantId": "platform-public", "seriesIds": [series_id], "content": "again"},
+                             headers={**headers, "Idempotency-Key": str(uuid4()), "Accept": "text/event-stream"})
+        assert "event: answer.completed" in stream.text and cloud_api.runtime.model_name not in stream.text

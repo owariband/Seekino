@@ -2,29 +2,24 @@
 
 from __future__ import annotations
 
-import hashlib
 import math
 import os
-import stat
-import threading
-import tempfile
 from dataclasses import asdict
 from pathlib import Path
 from typing import Mapping
 
 import yaml
+from pydantic import ValidationError
 from yaml.nodes import MappingNode, ScalarNode
 
 from gateway.config import GatewayConfig, resolve_config_path
 
 from .agent import AgentServiceConfig
+from .yaml_document import (
+    GlobalAgentSettingsConflictError, document_lock, replace_document as _replace_document, revision as _revision,
+)
 
 
-class GlobalAgentSettingsConflictError(Exception):
-    """The YAML file changed since the caller last read it."""
-
-
-_WRITE_LOCK = threading.Lock()
 _DEFAULTS = AgentServiceConfig()
 _FIELD_NAMES = frozenset(asdict(_DEFAULTS))
 _RETIRED_FIELDS = frozenset({
@@ -70,7 +65,7 @@ def patch_global_agent_settings(
     if not isinstance(values, Mapping):
         raise ValueError("agent settings values must be a mapping")
     path = resolve_config_path(config_path)
-    with _WRITE_LOCK:
+    with document_lock(path):
         payload, current_revision, raw = _read_document(path)
         if revision != current_revision:
             raise GlobalAgentSettingsConflictError(
@@ -105,7 +100,10 @@ def _read_document(path: Path) -> tuple[dict[str, object], str, bytes]:
         raise ValueError(f"invalid YAML in gateway config: {path}") from exc
     if not isinstance(payload, dict):
         raise ValueError(f"gateway config must be a YAML mapping: {path}")
-    GatewayConfig.model_validate(payload)
+    try:
+        GatewayConfig.model_validate(payload)
+    except ValidationError:
+        raise ValueError("服务 YAML 配置无效，请检查模型和来源设置") from None
     runtime_values = payload.get("agent_runtime", {})
     if not isinstance(runtime_values, dict):
         raise ValueError("agent_runtime must be a YAML mapping")
@@ -207,30 +205,3 @@ def _validate_values(values: Mapping[str, object]) -> dict[str, object]:
             raise ValueError(f"agent_runtime.{name} has an invalid type")
         checked[name] = value
     return checked
-
-
-def _revision(raw: bytes) -> str:
-    return hashlib.sha256(raw).hexdigest()
-
-
-def _replace_document(path: Path, content: bytes, expected_revision: str) -> None:
-    temporary_path: Path | None = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="wb", prefix=f".{path.name}.", suffix=".tmp",
-            dir=path.parent, delete=False,
-        ) as temporary:
-            temporary_path = Path(temporary.name)
-            temporary.write(content)
-            temporary.flush()
-            os.fsync(temporary.fileno())
-        os.chmod(temporary_path, stat.S_IMODE(path.stat().st_mode))
-        if _revision(path.read_bytes()) != expected_revision:
-            raise GlobalAgentSettingsConflictError(
-                "config.yaml changed while saving; reload global settings"
-            )
-        os.replace(temporary_path, path)
-        temporary_path = None
-    finally:
-        if temporary_path is not None:
-            temporary_path.unlink(missing_ok=True)

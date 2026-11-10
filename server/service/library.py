@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from engine.common.background import extract_background_image_ids, prepare_background_text
 
-from typing import TYPE_CHECKING
 from datetime import datetime
 
 from sqlalchemy.exc import IntegrityError
@@ -19,10 +18,6 @@ from ..utils.validation import canonical_uuid, normalize_language_tag_hint, requ
 from ..utils.time import now_utc
 from .video_parse_errors import VideoParseConflictError, VideoParseSnapshotConflictError
 from .video_parse_prefix import invalidate_series_prefixes_from
-
-if TYPE_CHECKING:
-    from .media import MediaService
-
 
 def update_video_episode_order_in_session(
     repository: LibraryRepository, session: Session, *,
@@ -118,11 +113,6 @@ class LibraryService:
                 normalized["visibility"] = SeriesVisibility(normalized["visibility"])
             except (TypeError, ValueError) as exc:
                 raise ValueError("visibility must be private or public") from exc
-            if normalized["visibility"] == SeriesVisibility.PUBLIC and (
-                series.status != "READY" or series.video_count == 0
-                or series.ready_video_count != series.video_count or series.pending_upload_count > 0
-            ):
-                raise ValueError("only a complete, ready Series can be published")
         if "description" in normalized and normalized["description"] is not None:
             description = normalized["description"]
             if not isinstance(description, str):
@@ -224,7 +214,7 @@ class LibraryService:
         )
 
     def list_public_series_page(
-        self, *, tenant_id: str | None, media: MediaService, owner_user_id: str,
+        self, *, tenant_id: str | None, owner_user_id: str,
         status: str | None = None, query: str | None = None, offset: int = 0, limit: int = 50,
     ) -> tuple[list[SeriesState], int]:
         if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
@@ -238,13 +228,7 @@ class LibraryService:
             status=status, query=query.strip() if query else None,
             public_only=True, owner_user_id=owner_user_id,
         )
-        visible: list[SeriesState] = []
-        for candidate in candidates:
-            if not candidate.publisher_active:
-                continue
-            state = self.get_series(candidate.series_id, tenant_id=candidate.tenant_id, owner_user_id=owner_user_id)
-            if state.publisher_active and media.publication_ready(state):
-                visible.append(state)
+        visible = [state for state in candidates if state.publisher_active]
         return visible[offset:offset + limit], len(visible)
 
     def count_series(self, *, tenant_id: str, status: str | None = None, query: str | None = None) -> int:

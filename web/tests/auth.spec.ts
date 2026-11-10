@@ -5,6 +5,7 @@ import type { AuthIdentity, SeriesView } from "../src/api/contracts";
 const guest: AuthIdentity = {
   userId: "guest-a", email: null, isGuest: true, tenantId: null,
   publicTenantId: "platform-public", mode: "cloud", csrfToken: "csrf-guest-a",
+  emailLoginEnabled: true,
   permissions: { canUpload: false, canManage: false, canConfigure: false },
 };
 const member: AuthIdentity = {
@@ -73,7 +74,8 @@ async function mockCloud(page: Page, { empty = false } = {}) {
     }
     if (url.pathname === "/api/auth/email/verify") return replyIdentity(member);
     if (url.pathname === "/api/auth/logout") return replyIdentity(loggedOutGuest);
-    const tenantId = url.searchParams.get("tenantId");
+    if (url.pathname === "/api/system/runtime-config") return route.fulfill({ json: { displayMode: "release" } });
+    const tenantId = url.pathname === "/api/series/public" ? guest.publicTenantId : url.searchParams.get("tenantId");
     const publicCourse = course(guest.publicTenantId, "公开线性代数");
     const ownCourse = course(member.tenantId!, "我的私有课程");
     const selected = tenantId === guest.publicTenantId ? publicCourse : ownCourse;
@@ -84,7 +86,11 @@ async function mockCloud(page: Page, { empty = false } = {}) {
       await route.fulfill({ status: 404, json: { code: "NOT_FOUND", message: "Tenant denied", requestId: "test" } });
       return;
     }
-    if (url.pathname === "/api/series/list") {
+    if (url.pathname === "/api/videos/content" && identity
+      && (tenantId === identity.publicTenantId || (!identity.isGuest && tenantId === identity.tenantId))) {
+      return route.fulfill({ status: 204 });
+    }
+    if (url.pathname === "/api/series/list" || url.pathname === "/api/series/public") {
       await route.fulfill({ json: { items: empty ? [] : [selected], total: empty ? 0 : 1,
         hasMore: false, nextCursor: null } });
       return;
@@ -102,17 +108,18 @@ async function mockCloud(page: Page, { empty = false } = {}) {
 test("bootstraps an HttpOnly guest session and shows an empty public catalog", async ({ page, context }) => {
   const mock = await mockCloud(page, { empty: true });
   await page.goto("/");
-  await expect(page.getByText("公开课程暂未上线。")).toBeVisible();
-  await expect(page.getByLabel("选择资料来源", { exact: true })).toHaveValue(guest.publicTenantId);
+  await expect(page.getByText("公开资料里还没有视频。")).toBeVisible();
+  await page.getByRole("button", { name: "打开账号菜单" }).click();
+  await expect(page.getByText("公开资料", { exact: true })).toBeVisible();
   await expect(page.getByRole("link", { name: "资料库", exact: true })).toHaveCount(0);
-  await expect(page.getByRole("link", { name: "设置", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "回答模型", exact: true })).toHaveCount(0);
   await expect(page.getByRole("link", { name: "前往资料库上传视频" })).toHaveCount(0);
   const authCookie = (await context.cookies()).find((cookie) => cookie.name === "seekino_auth");
   expect(authCookie).toMatchObject({ value: guest.userId, httpOnly: true, sameSite: "Lax" });
   expect(await page.evaluate(() => document.cookie)).not.toContain("seekino_auth");
   expect(mock.requests.filter(({ path }) => path.startsWith("/api/auth/")).map(({ path }) => path))
     .toEqual(["/api/auth/me", "/api/auth/guest"]);
-  expect(mock.requests.find(({ path }) => path === "/api/series/list")?.cookie).toContain("seekino_auth=guest-a");
+  expect(mock.requests.find(({ path }) => path === "/api/series/public")?.cookie).toContain("seekino_auth=guest-a");
   expect(await page.locator("script[src]").first().getAttribute("src")).toMatch(/^\/assets\//);
   expect(mock.unexpected).toEqual([]);
   expect(mock.pageErrors).toEqual([]);
@@ -123,7 +130,12 @@ test("logs in by email, isolates public and personal data, then resets to a new 
   const source = page.getByLabel("选择资料来源", { exact: true });
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "公开线性代数", exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "邮箱登录", exact: true }).first().click();
+  const menu = page.getByRole("button", { name: "打开账号菜单" });
+  async function openAccount() {
+    if (await menu.getAttribute("aria-expanded") !== "true") await menu.click();
+  }
+  await openAccount();
+  await page.getByRole("button", { name: "登录", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "邮箱登录" });
   await expect(dialog.getByLabel("邮箱", { exact: true })).toBeFocused();
   await dialog.getByLabel("邮箱", { exact: true }).fill("Learner@Example.COM");
@@ -133,7 +145,8 @@ test("logs in by email, isolates public and personal data, then resets to a new 
   await dialog.getByLabel("验证码", { exact: true }).fill("123456");
   await dialog.getByRole("button", { name: "登录", exact: true }).click();
   await expect(dialog).toHaveCount(0);
-  await expect(source).toHaveValue(member.tenantId!);
+  await openAccount();
+  await source.selectOption({ label: "我的资料" });
   await expect(page.getByRole("heading", { name: "我的私有课程", exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "公开线性代数", exact: true })).toHaveCount(0);
   await expect(page.getByRole("link", { name: "资料库", exact: true })).toBeVisible();
@@ -143,18 +156,22 @@ test("logs in by email, isolates public and personal data, then resets to a new 
       body: path.endsWith("verify") ? { email: member.email, code: "123456" } : { email: member.email },
     });
   }
-  await source.selectOption(guest.publicTenantId);
+  await openAccount();
+  await source.selectOption({ label: "公开资料" });
   await expect(page.getByRole("heading", { name: "公开线性代数", exact: true })).toBeVisible();
   await expect(page.locator("main")).not.toContainText("我的私有课程");
   await expect(page.getByRole("link", { name: "资料库", exact: true })).toHaveCount(0);
-  await source.selectOption(member.tenantId!);
+  await openAccount();
+  await source.selectOption({ label: "我的资料" });
   await expect(page.getByRole("heading", { name: "我的私有课程", exact: true })).toBeVisible();
+  await openAccount();
   await page.getByRole("button", { name: "退出", exact: true }).first().click();
-  await expect(source).toHaveValue(guest.publicTenantId);
+  await expect(source).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "公开线性代数", exact: true })).toBeVisible();
   await expect(page.locator("main")).not.toContainText("我的私有课程");
   await expect(page.getByText(member.email!, { exact: true })).toHaveCount(0);
-  await expect(source.locator("option")).toHaveCount(1);
+  await openAccount();
+  await expect(page.getByText("公开资料", { exact: true })).toBeVisible();
   await expect(page.getByRole("link", { name: "资料库", exact: true })).toHaveCount(0);
   expect(mock.requests.find(({ path }) => path === "/api/auth/logout")).toMatchObject({
     method: "POST", cookie: "seekino_auth=member-a", csrf: member.csrfToken,
@@ -166,5 +183,17 @@ test("logs in by email, isolates public and personal data, then resets to a new 
   }).seekinoFetchCalls);
   expect(fetches.filter(({ path }) => path.startsWith("/api/")).every(({ credentials }) => credentials === "include")).toBe(true);
   expect(mock.unexpected).toEqual([]);
+  expect(mock.pageErrors).toEqual([]);
+});
+
+test("a cloud guest opening model settings sees no model controls or configuration requests", async ({ page }) => {
+  const mock = await mockCloud(page);
+  for (const section of ["models", "model-roles"]) {
+    await page.goto(`/settings?section=${section}`);
+    await expect(page.getByRole("heading", { name: "外观与语言", exact: true })).toBeVisible();
+    for (const name of ["模型服务", "模型用途"]) await expect(page.getByRole("heading", { name, exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "添加模型服务", exact: true })).toHaveCount(0);
+  }
+  expect(mock.requests.filter(({ path }) => path.includes("/model-connections") || path.endsWith("/global-settings"))).toEqual([]);
   expect(mock.pageErrors).toEqual([]);
 });

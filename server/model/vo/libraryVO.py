@@ -7,6 +7,7 @@ from pydantic import Field
 from ..dto.libraryDTO import Character
 from ..video import SeriesVisibility, VideoIndexStatus
 from ..task import VideoParseTaskStatus
+from ..upload import UploadSessionStatus
 from ...schema import ContractModel
 from .commonVO import Failure, ImageAsset, UnixTimeMs
 from .uploadVO import UploadSessionView
@@ -29,8 +30,8 @@ class VideoSummary(ContractModel):
     original_filename: str | None = None
     total_bytes: int | None = Field(default=None, ge=0)
     duration_seconds: int = Field(gt=0)
-    upload_status: Literal["COMPLETED"]
-    upload_progress: Literal[100]
+    upload_status: UploadSessionStatus | Literal["UPLOADED"]
+    upload_progress: int | None = Field(ge=0, le=100)
     parse_status: VideoParseTaskStatus
     parse_progress: int | None = Field(ge=0, le=100)
     index_status: VideoIndexStatus

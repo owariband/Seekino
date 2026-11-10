@@ -6,14 +6,15 @@ from copy import deepcopy
 from collections import deque
 from collections.abc import Callable, Mapping
 from concurrent.futures import Future, ThreadPoolExecutor
-from contextlib import nullcontext
-from dataclasses import asdict, replace
+from contextlib import AbstractContextManager, ExitStack, nullcontext
+from dataclasses import asdict, dataclass, replace
 from http import HTTPStatus
 from queue import Empty
 from threading import Condition, Event, Lock, RLock
 from time import monotonic, monotonic_ns
 from uuid import uuid4
 
+from httpx import RemoteProtocolError
 from openai import APIConnectionError, APITimeoutError
 
 from agent.chat.common.errors import (
@@ -26,7 +27,9 @@ from agent.chat.video_search.output import video_range_sources
 from engine.rag.contracts import VideoChunkEvidence
 from gateway.agent_model.contracts import SupervisorSessionContext
 from gateway.agent_model.errors import ModelFailureReason
+from gateway.model_events import observe_model_retry
 from gateway.model_diagnostics import model_diagnostic_scope
+from gateway.personal_endpoint import PersonalModelTarget
 from gateway.tracing import LangfuseTracing
 from gateway.usage import model_call_context
 
@@ -37,6 +40,7 @@ from ..model.dto.agentDTO import (
     AgentConversationState,
     AgentIntegerOptionState,
     AgentMessageOptionsState,
+    AgentModelOptionState,
     AgentMessageSendState,
     AgentMessageState,
     AgentMessageTimingState,
@@ -48,12 +52,14 @@ from ..repository.agent import (
     AgentConflictError, AgentConversationNotFoundError, AgentMessageInProgressError,
     AgentRepository, AgentReferenceInvalidError, AgentMessageNotFoundError,
 )
-from ..error.retrieval import SeriesNotReadyError
 from ..utils.time import now_unix_time_ms
 from ..utils.media import image_uri_to_data_url
 from ..utils.validation import canonical_uuid, require_nonempty_text
 from .library import LibraryService
 from .agent_attachments import AgentAttachmentService
+from .personal_models import LegacyPersonalModels
+from .model_settings import ModelSettings, PersonalModelNotFoundError
+from .yaml_chat_models import YamlChatBinding
 from .pagination import decode_cursor, encode_cursor
 from .parse_usage import ParseUsageService
 
@@ -209,6 +215,15 @@ class AgentMessageExecution:
             tail["sequence"] = payload["sequence"]
             tail["occurredAt"] = payload["occurredAt"]
             return True
+        if (
+            payload.get("type") == "answer.reasoning.delta"
+            and tail.get("type") == "answer.reasoning.delta"
+            and payload.get("callId") == tail.get("callId")
+        ):
+            tail["delta"] += payload["delta"]
+            tail["sequence"] = payload["sequence"]
+            tail["occurredAt"] = payload["occurredAt"]
+            return True
         return False
 
     def finish(self) -> None:
@@ -247,6 +262,12 @@ class AgentMessageExecution:
         return self.future.result()
 
 
+@dataclass(frozen=True, slots=True)
+class ChatModelChoice:
+    label: str
+    build_runtime: Callable[[AgentServiceConfig], SupervisorRuntime]
+
+
 class AgentChatService:
     """Own conversations, message transactions, and in-process execution tasks."""
 
@@ -260,6 +281,12 @@ class AgentChatService:
         config_loader: Callable[[], tuple[AgentServiceConfig, str]] | None = None,
         runtime_factory: Callable[[AgentServiceConfig], SupervisorRuntime] | None = None,
         config_revision: str | None = None,
+        model_choices: Mapping[str, ChatModelChoice] | None = None,
+        model_settings: ModelSettings | None = None,
+        configured_runtime: Callable[[YamlChatBinding, AgentServiceConfig], AbstractContextManager] | None = None,
+        legacy_personal_models: LegacyPersonalModels | None = None,
+        personal_runtime_factory: Callable[[PersonalModelTarget, AgentServiceConfig], SupervisorRuntime] | None = None,
+        delete_personal_thread: Callable[[str], None] | None = None,
         tracing: LangfuseTracing | None = None,
         parse_usage: ParseUsageService | None = None,
         attachments: AgentAttachmentService | None = None,
@@ -276,6 +303,13 @@ class AgentChatService:
         self._config_loader = config_loader
         self._runtime_factory = runtime_factory
         self._config_revision = config_revision
+        self._model_settings = model_settings
+        self._configured_runtime = configured_runtime
+        self._legacy_personal_models = legacy_personal_models
+        self._personal_runtime_factory = personal_runtime_factory
+        self._delete_personal_thread = delete_personal_thread
+        self._model_choices = dict(model_choices or {})
+        self._model_runtimes: dict[tuple[str, AgentServiceConfig], SupervisorRuntime] = {}
         self._runtimes = [runtime]
         self._active_maximum_concurrent_kicks = self._config.maximum_concurrent_kicks
         self._clock = clock
@@ -304,9 +338,14 @@ class AgentChatService:
     def active_maximum_concurrent_kicks(self) -> int:
         return self._active_maximum_concurrent_kicks
 
-    def message_options(self) -> AgentMessageOptionsState:
+    def message_options(self, *, owner_user_id: str | None = None) -> AgentMessageOptionsState:
         _, config, _ = self._current_config()
+        catalog = self._model_settings.catalog() if owner_user_id and self._model_settings else None
+        personal = catalog.settings() if catalog else None
         return AgentMessageOptionsState(
+            new_chat_model_id=catalog.new_chat_id() if catalog else "default",
+            chat_models=tuple(AgentModelOptionState(model.id, f"{connection.name} · {model.model_id}")
+                              for connection in (personal.connections if personal else ()) for model in connection.models if model.available and "chat" in model.roles),
             top_k=AgentIntegerOptionState(
                 default_value=config.default_top_k,
                 minimum=1,
@@ -360,12 +399,33 @@ class AgentChatService:
                     self._config_revision = revision
             return self._runtime, self._config, self._executor
 
+    def _model_choice(self, requested: str | None, owner: str) -> tuple[str, bool]:
+        if self._model_settings is not None:
+            catalog = self._model_settings.catalog()
+            selected = requested or catalog.new_chat_id()
+            return selected, catalog.find(selected) is not None
+        selected = requested or "default"
+        return selected, selected == "default" or selected in self._model_choices
+
+    def set_conversation_model(
+        self, conversation_id: str, *, tenant_id: str, owner_user_id: str, model_id: str,
+    ) -> AgentConversationState:
+        _, available = self._model_choice(model_id, owner_user_id)
+        if not available:
+            raise ValueError("该回答模型当前不可用，请在模型设置中配置并选择模型。")
+        return self._repository.set_conversation_model(
+            canonical_uuid(conversation_id, "conversation_id"),
+            require_nonempty_text(tenant_id, "tenant_id", maximum=64),
+            owner_user_id=owner_user_id, model_id=model_id,
+        )
+
     def create_conversation(
         self,
         *,
         tenant_id: str,
         title: str | None = None,
         idempotency_key: str,
+        model_id: str | None = None,
         owner_user_id: str = LOCAL_USER_ID,
     ) -> AgentConversationState:
         normalized_workspace = require_nonempty_text(
@@ -373,7 +433,9 @@ class AgentChatService:
             "tenant_id",
             maximum=64,
         )
+        selected, available = self._model_choice(model_id, owner_user_id)
         return self._repository.create_conversation(
+            model_id=selected, inherit_model=model_id is None, model_available=available,
             conversation_id=str(uuid4()),
             tenant_id=normalized_workspace,
             title="新对话" if title is None else require_nonempty_text(title, "title", maximum=255),
@@ -447,6 +509,8 @@ class AgentChatService:
             runtime = self._runtime
             try:
                 runtime.delete_thread(normalized_conversation_id)
+                if self._delete_personal_thread:
+                    self._delete_personal_thread(normalized_conversation_id)
             except Exception:
                 _logger.warning(
                     "Could not delete Supervisor thread conversation_id=%s",
@@ -627,10 +691,10 @@ class AgentChatService:
         normalized_key = require_nonempty_text(idempotency_key, "idempotency_key", maximum=128)
         timing_started_at: int | None = None
         timing_started_ns: int | None = None
-        with self._lock:
+        with self._lock, ExitStack() as personal_resources:
             if self._closed:
                 raise AgentMessageInProgressError("the Agent service is shutting down")
-            started = self._repository.find_idempotent_message(
+            started, model_id = self._repository.get_message_start_context(
                 conversation_id=normalized_conversation_id,
                 tenant_id=normalized_workspace, content=normalized_content,
                 requested_top_k=requested_top_k, idempotency_key=normalized_key,
@@ -643,6 +707,9 @@ class AgentChatService:
                 source_tenant_id=normalized_source if normalized_source != normalized_workspace else None,
             )
             if started is None:
+                yaml_model = self._model_settings.catalog().find(model_id) if self._model_settings else None
+                if self._model_settings and yaml_model is None and not model_id.startswith("personal:"):
+                    raise ValueError("已保存的回答模型当前不可用，请重新选择。")
                 if attachment_references:
                     if self._attachments is None:
                         raise AgentAttachmentInputUnavailableError("附件存储服务尚未配置。")
@@ -658,21 +725,37 @@ class AgentChatService:
                     raise AgentAttachmentInputUnavailableError(
                         "附件存储服务尚未配置。"
                     )
-                scope = self._resolve_scope(
-                    requested_scope, normalized_source,
-                    allow_empty=True,
-                    playback_series_id=playback_series_id,
-                )
+                scope = self._resolve_scope(requested_scope, normalized_source)
                 reference_context = self._load_reference(
                     normalized_reference, normalized_conversation_id, normalized_workspace, scope,
                     owner_user_id=owner_user_id,
                     source_tenant_id=normalized_source,
                 )
+                if yaml_model and self._configured_runtime:
+                    runtime = personal_resources.enter_context(self._configured_runtime(yaml_model, config))
+                elif model_id.startswith("personal:"):
+                    if not self._legacy_personal_models or not self._personal_runtime_factory:
+                        raise PersonalModelNotFoundError()
+                    target = self._legacy_personal_models.resolve(owner_user_id, model_id)
+                    runtime = self._personal_runtime_factory(target, config)
+                    personal_resources.callback(runtime.close)
+                else:
+                    runtime_ref = yaml_model.runtime_ref if yaml_model else model_id
+                    if runtime_ref != "default":
+                        if runtime_ref not in self._model_choices:
+                            raise ValueError("该回答模型当前不可用，请重新选择。")
+                        cache_key = (runtime_ref, config)
+                        if cache_key not in self._model_runtimes:
+                            alternative = self._model_choices[runtime_ref].build_runtime(config)
+                            self._model_runtimes[cache_key] = alternative
+                            self._runtimes.append(alternative)
+                        runtime = self._model_runtimes[cache_key]
                 timing_started_at = self._clock()
                 timing_started_ns = self._monotonic_clock()
                 started = self._repository.start_message(
                     conversation_id=normalized_conversation_id,
                     tenant_id=normalized_workspace, content=normalized_content,
+                    expected_model_id=model_id,
                     model_name=require_nonempty_text(runtime.model_name, "chat_model.model_name", maximum=255),
                     requested_top_k=requested_top_k, idempotency_key=normalized_key,
                     series_ids=scope, requested_series_ids=requested_scope,
@@ -714,6 +797,9 @@ class AgentChatService:
                     owner_user_id=owner_user_id, conversation_tenant_id=normalized_workspace,
                     playback_series_id=playback_series_id,
                 )
+                if self._model_settings or model_id.startswith("personal:"):
+                    resources = personal_resources.pop_all()
+                    execution.future.add_done_callback(lambda _: resources.close())
             except Exception:
                 self._executions.pop(started.assistant_message.message_id, None)
                 assert execution.timing is not None
@@ -817,25 +903,18 @@ class AgentChatService:
         except AgentMessageNotFoundError as exc:
             raise AgentReferenceInvalidError("引用的消息已失效。") from exc
 
-    def _resolve_scope(
-        self, requested: list[str], tenant_id: str, *, allow_empty: bool,
-        playback_series_id: str | None = None,
-    ) -> list[str]:
+    def _resolve_scope(self, requested: list[str], tenant_id: str) -> list[str]:
+        # Freeze the selected courses on the message so history can reauthorize them.
         if requested:
             series = [
                 self._library.get_series(series_id, tenant_id=tenant_id)
                 for series_id in requested
             ]
-            if any(item.status != "READY" and item.series_id != playback_series_id for item in series):
-                raise SeriesNotReadyError("selected Series must be READY before retrieval")
-            series = [item for item in series if item.status == "READY"]
         else:
             series = [
                 item for item in self._library.list_series(tenant_id=tenant_id)
                 if item.status == "READY"
             ]
-        if not series and not allow_empty:
-            raise SeriesNotReadyError("this workspace has no READY Series to retrieve")
         return sorted(item.series_id for item in series)
 
     def _execute(
@@ -929,6 +1008,31 @@ class AgentChatService:
             pending_text_blocks = None
             last_text_persist_ns = self._monotonic_clock()
 
+        retrying_calls: dict[str, dict[str, int]] = {}
+
+        def publish_retry(call_id: str, attempt: int, maximum: int) -> None:
+            with event_lock:
+                if execution.cancellation.is_set():
+                    return
+                previous = next(reversed(retrying_calls.values()), None)
+                retrying_calls.pop(call_id, None)
+                if attempt:
+                    retrying_calls[call_id] = {"attempt": attempt, "maximum": maximum}
+                current = next(reversed(retrying_calls.values()), None)
+                if previous == current:
+                    return
+                try:
+                    persist_pending_text()
+                    assistant = self._repository.checkpoint_assistant_message(
+                        assistant_id, now=self._clock(), model_retry=current or {},
+                    )
+                    execution.publish({
+                        "type": "answer.snapshot",
+                        **_message_pair(AgentMessageSendState(initial.user_message, assistant)),
+                    })
+                except Exception:
+                    _logger.exception("agent_retry_status_update_failed message_id=%s", assistant_id)
+
         def publish_runtime(event):
             # Intermediate message delivery observes execution; it does not own
             # the Tool result. Full snapshots and final commit can recover it.
@@ -937,6 +1041,13 @@ class AgentChatService:
                 with event_lock:
                     if execution.cancellation.is_set():
                         raise AgentModelInvocationError("Agent execution cancelled")
+                    if event["type"] == "answer.reasoning.delta":
+                        # Reasoning is display-only; never persisted into the answer.
+                        execution.publish({
+                            "type": "answer.reasoning.delta", "callId": event["callId"],
+                            "delta": event["delta"],
+                        })
+                        return
                     if event["type"] == "answer.delta":
                         partial_content = event["content"]
                         pending_text_blocks = event["renderBlocks"]
@@ -1054,7 +1165,7 @@ class AgentChatService:
                 "characterBible": item.character_bible,
                 "videos": [{
                     "episodeOrder": video.episode_order,
-                    "title": (video.display_name or "").strip() or video.original_filename,
+                    "title": video.chat_title,
                     "parseStatus": video.parse_status,
                     "hasOutline": video.has_outline,
                 } for video in item.videos],
@@ -1085,7 +1196,7 @@ class AgentChatService:
                             if current_series is not None else None
                         ),
                         "episode": video.episode_order,
-                        "title": (video.display_name or "").strip() or video.original_filename,
+                        "title": video.chat_title,
                         "positionSeconds": playback.get("positionSeconds"),
                     }
 
@@ -1144,7 +1255,7 @@ class AgentChatService:
                 )
                 usage = self._parse_usage.capture_chat(context) if self._parse_usage is not None else nullcontext()
                 # This scope belongs to the executor thread that invokes the models.
-                with model_call_context(context), tracing, usage, model_diagnostic_scope(
+                with model_call_context(context), observe_model_retry(publish_retry), tracing, usage, model_diagnostic_scope(
                     os.environ.get("SEEKINO_CHAT_TRACE_DIR"),
                 ):
                     final = runtime.kick(
@@ -1322,6 +1433,12 @@ def _agent_model_failure_message(error: BaseException) -> str:
             reason = str(status_code)
         detail = _provider_message(current)
         return f"模型暂时不可用，错误：{reason}" + (f"（{detail}）" if detail else "")
+    for current in chain:
+        if getattr(current, "reason", None) == ModelFailureReason.MODEL_NETWORK_ERROR:
+            return "模型暂时不可用，错误：网络错误（多次重连未收到模型响应）"
+    for current in chain:
+        if isinstance(current, RemoteProtocolError):
+            return "模型暂时不可用，错误：模型服务中途断开了响应"
     for current in chain:
         reason = getattr(current, "reason", None)
         name = type(current).__name__.lower()

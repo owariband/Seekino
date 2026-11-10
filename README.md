@@ -5,8 +5,8 @@
 <h1 align="center">Seekino</h1>
 
 <p align="center">
-  <strong>把散落的视频，变成能说清出处的素材库。</strong><br />
-  用一句自然语言找到画面、动作或台词，再回到原片核对每一个片段。
+  <strong>视频只解析一次，之后像读文字一样定位、跳转和追问。</strong><br />
+  个人视频素材库：自然语言与图片检索、片段级回答，每个结果都能回到原片时间点。
 </p>
 
 <p align="center">
@@ -14,11 +14,11 @@
 </p>
 
 <p align="center">
-  <a href="#为什么是-seekino">为什么是 Seekino</a> ·
-  <a href="#实机效果">实机效果</a> ·
-  <a href="#快速开始">快速开始</a> ·
-  <a href="#交给-ai-部署">交给 AI 部署</a> ·
-  <a href="#api-接入">API</a>
+  <a href="#1-我们-seekino-的亮点">亮点</a> ·
+  <a href="#2-技术架构">技术架构</a> ·
+  <a href="#3-部署">部署</a> ·
+  <a href="#api-接入">API 与 MCP</a> ·
+  <a href="#文档入口">文档</a>
 </p>
 
 <p align="center">
@@ -27,70 +27,214 @@
   <img src="https://img.shields.io/badge/Self--hosted-本地部署-6C5CE7" alt="Self-hosted" />
 </p>
 
-> 记得“那个镜头”，却想不起它在哪一集、哪一秒？Seekino 会解析视频的画面、对白与事件，把你描述的需求变成**可播放、可定位、可继续追问的片段结果**。
+## 1. 我们 Seekino 的亮点
 
-## 为什么是 Seekino
+> **看 PPT 看不进去？** 课程视频 116 min 望而却步，不知道里面哪些“知识”是自己想要的；想 3 倍速地找，总共也要 30+ min！
+>
+> **视频剪辑素材难以管理？** 每次都要让 Agent 重新解析同一个参考片段和动画来源，人物立绘大部分还得自己定位提供，解析参考过的动效和动画视频也留不下来。 🚧
 
-**🔎 找素材，不再靠文件名和记忆**<br />
-描述“雨夜里的争吵”“特别燃的演出”或一句台词，跨视频寻找相关片段。
+**一次视频解析，反复多次定位利用。** 视频也可以像文本阅读一样随意跳转，也能像文本阅读一样，随手把“当前看的”交给 Agent 询问。
 
-**⏱️ 每个结果，都能回到原片**<br />
-同时给出来源视频、时间范围和选择理由；点开片段核对上下文，不把答案当黑盒。
+- **课程定位：** 一句话，十几秒找到你想要的重点，无需传统倍速观看
+- **剪辑素材：** 一个素材，一次解析反复复用，搭建你个人的视频剪辑素材库
 
-**💬 找到之后，还能继续问**<br />
-引用片段追问，或在播放时围绕当前画面、人物和附近对白提问。
-
-**🔌 既能自己用，也能接进工具链**<br />
-通过 HTTP API 使用上传、解析、检索和 Agent 对话，让素材库进入自己的工作流。
-
-## 实机效果
+Seekino 提供灵活的视频定位能力，为你召回需要的片段，并带上来源视频与时间范围，随时回到原片核对。
 
 <p align="center">
-  <img src="assets/screenshots/search-results.jpg" width="960" alt="Seekino 自然语言检索：召回片段、选择理由与原片时间" />
+  <img src="docs/architecture/fig01.png" width="960" alt="从记得某个瞬间，到拿到可核对的片段" />
 </p>
 
-<p align="center"><sub>自然语言跨视频找素材，结果附带来源、时间范围与选择理由。</sub></p>
+### 1.1. 召回支持
 
-例如，在 MyGO 素材库中提问：
+| 你的问题 | Seekino 怎么做 |
+| --- | --- |
+| 动画名场面找不到了？ | 上传图片，或说出自己的模糊印象，秒级帮你定位 |
+| 想学习课程，但不想截图？ | 观看的同时支持问答，AI 懂你看到了哪里、有什么困惑 |
+| 需要专属的“视频课程速成路线”？ | 给出你的问题，AI “浏览”视频大纲结构，为你深度定制学习路线 |
+| 剪辑需要素材，懒得手动翻？ | 提供 MCP，你的 Claude Code 自动帮你找到目标片段；你只需给出模糊印象，再 review |
+| 剪辑需要参考，过去的参考结果却无法复用？🚧 | 深度存储历史动效解析结果，支持 MCP “更新自己的剪辑参考经验”，让剪辑经验简单地复利、复用 |
 
-> **有哪些特别燃的演出场面？推荐 3 段，说说为什么燃。**
+### 1.2. 解析支持
 
-Seekino 返回候选片段与推荐理由，再由你打开原片判断是否适合创作。演示使用动画素材；其他视频类型的效果需要结合自己的素材验证。
+| 你的问题 | Seekino 怎么做 |
+| --- | --- |
+| 长视频解析要守着等？ | 上传一次，整片转写后切块并行解析；进度在解析任务里一目了然，失败可重试，解析完就能搜 |
+| 长课程解析太贵？ | 每个阶段都能换模型（Kimi、豆包、DeepSeek……），每次调用都记录 token 和预计花费，花多少钱心里有数 |
+| 一句话被切成两半？ | 滑动窗口 Refine 把相邻 Chunk 放在一起复读，补漏句、去重复、接上跨块的句子 |
+| 分不清谁在说话？ | 整片说话人分组，结合系列背景资料和声纹认出说话人；证据不够就留空，不乱猜 |
+| 只想先知道这个视频讲了什么？ | 解析后自动生成视频大纲和系列概览，先看结构，再挑重点深入 |
+| 课程、影视剧、剪辑素材都按一种方式解析，太浪费？🚧 | 自动识别解析类型，按类型控制成本，也支持自定义 |
+
+<sub>🚧 表示尚未实现。</sub>
 
 <details>
-<summary><strong>查看更多界面：素材管理、观看问答与选集</strong></summary>
-<br />
+<summary>实机截图（2026-10-25，本机运行，真实素材）</summary>
 
-**整理自己的视频素材**<br />
-按系列管理视频，查看上传、解析与可检索状态，并补充人物和背景资料。
+![Seekino 素材库：视频系列、解析状态与管理操作](assets/screenshots/library.jpg)
 
-![Seekino 素材库](assets/screenshots/library.jpg)
+![Seekino 自然语言检索：召回片段、选择理由与原片时间](assets/screenshots/search-results.jpg)
 
-**回到原片，边看边核对**<br />
-播放器与问答侧栏并排展示，回答中的视频时间可以点击跳转。
-
-![Seekino 观看问答](assets/screenshots/watch-chat.jpg)
-
-**按系列浏览与选集**<br />
-从观看首页进入系列，或继续上次观看。
-
-![Seekino 观看首页](assets/screenshots/watch-home.jpg)
-
-![Seekino 系列选集](assets/screenshots/series.jpg)
+![Seekino 观看问答：原片播放器与对话面板](assets/screenshots/watch-chat.jpg)
 
 </details>
 
-## 使用流程
+## 2. 技术架构
 
-| 步骤 | 你要做什么 | Seekino 会做什么 |
+为了既能在云服务器上搭起轻量用户可体验的公开问答，又能让重度用户自建个人视频知识库，Seekino 从解析构建、召回和问答三个环节搭建了下述系统结构：
+
+<p align="center">
+  <img src="docs/architecture/fig03.png" width="960" alt="Seekino 宏观架构图" />
+</p>
+
+<sub>全部架构图可在 [docs/architecture/seekino-figures.drawio](docs/architecture/seekino-figures.drawio) 中编辑（12 个标签页）。🚧 表示尚未实现，“待测”表示尚未在当前版本实测。</sub>
+
+### 2.1. 解析
+
+#### 并行解析
+
+解析层默认使用 WhisperX 进行 ASR，也可以替换为 ASR API。
+
+为了兼容多种场景和多种模型 API，并让所有用户都负担得起，Seekino 把视频按固定 60s 分块并行解析（默认 10 路并发）。同时，一个自动识别解析类型的 hook 会路由到三类解析方式，分别控制成本（用户也可自定义）🚧：
+
+- **course**：课程
+- **script**：剧本类影视作品
+- **clip**：剪辑素材
+
+<p align="center">
+  <img src="docs/architecture/fig06.png" width="960" alt="固定 60s 分块并行解析" />
+</p>
+
+#### 补上分块的代价
+
+并行让单 Chunk 理解时缺少上下邻近的 context，固定分块也会切断句子和动作。我们用两步来解决：
+
+| 步骤 | 做什么 |
+| --- | --- |
+| 滑动窗口 Refine | 相邻 3 个 Chunk 为一个窗口一起复读，补漏句、去重复、接上跨块的对白 |
+| 尾 Summary | 解析完成后通读整条时间线，生成视频大纲与系列概览 |
+
+<p align="center">
+  <img src="docs/architecture/fig05.png" width="960" alt="Parse V2 各阶段" />
+</p>
+
+#### 效果
+
+课程 *Let's build GPT*（116 min，117 个 Chunk），3 FPS（最大高度 720）下单个 1 min Chunk 的 Understanding，取成功执行的中位数：
+
+| 模型 | FTT | TT | 输入 token / Chunk | 预计花费 / Chunk |
+| --- | ---: | ---: | ---: | ---: |
+| Kimi k3.1-pro | 43.4 s | 320.2 s | ≈244k | 待测 |
+| Kimi k3.1-pro（low） | 待测 | 105.5 s | ≈244k | 待测 |
+| 豆包 Seed 2.1 Pro | 待测 | 待测 | 待测 | 待测 |
+| DeepSeek Flash（non-thinking） | 待测 | 31.8 s | 待测 | ≈¥0.22 |
+
+<sub>FTT：首 token 时间；TT：单 Chunk 总耗时。DeepSeek 费用来自不完整的用量记录。来源：[Kimi trace](docs/report/server/kimi-parse-trace-20261101.md) · [DeepSeek Flash 审计](docs/report/gateway/deepseek-flash-chunk-audit-20261103.md) · [devlog](docs/dev/devlog.md)</sub>
+
+并行的好处是，不管用什么模型，一个长视频的时间消耗都能得到控制：耗时随“Chunk 数 ÷ 并发数”增长，而不是随整片串行增长。
+
+#### 挑战：Refine 的并发冲突
+
+相邻窗口共享 Chunk，难免同时修改同一段内容。我们从悲观的加锁、用 tool 强硬控制 Agent 的输出，转向乐观的不阻塞控制：最先一个重叠窗口提交后，立刻 interrupt 其他窗口，并 send 一轮新 msg：
+
+> 窗口 [12, 14] 共享的 Chunk 13 已更新，新版本的 window json 为：{…}
+
+Agent 从 tool 使用的无限失败重试 pipeline 中“自由”出来，耗时和 token 消耗都降了下来。同样 3 个 Chunk 的对照：
+
+| 方式 | 模型请求 | 耗时 | input tokens | 结果 |
+| --- | ---: | ---: | ---: | --- |
+| Canvas tool 逐步读写 | 8 次 | 593.7 s | 314,671 | 45 个事件、16 条对白 |
+| 直接返回完整 JSON | 1 次 | 247.0 s | 11,307 | 45 个事件、16 条对白 |
+
+改为乐观控制之前，一次整课运行有 49 次提交在生成完之后才因冲突被拒，失败尝试占全部 Refine 耗时的 57%；现在被 interrupt 的请求约 1 ms 就退出（本地 SSE 测试）。乐观控制在真实模型上的整课耗时与 token 节省待测。
+
+现在的模型能力足以支持乐观看待，目前只有 DS Flash non-thinking 出现过输出不可靠的情况。
+
+#### 门禁
+
+没有了 Canvas tool 的约束，Agent 也不能破坏 JSON 结构。为此我们引入 JSON gate，校验输出是否符合 JSON 与 Schema；不符合时返回 guide msg，并附上它自己上一版的完整输出，只让它改出错的地方：
+
+> `members.0.content` 字段错误：xxx，please fix it
+
+时间未排序这类能确定修复的问题由程序直接修，不再调用模型，保证最终结构正确、合法。
+
+<p align="center">
+  <img src="docs/architecture/fig09.png" width="960" alt="Refine 前后对比" />
+</p>
+
+### 2.2. 构建召回
+
+#### 为多模态输入设计向量
+
+为了支持 gif、jpg、text 等多模态内容输入，我们对存储的向量做了专门设计。召回单位从 1 min Chunk 改为 Event（一个动作、镜头或一句对白），避免一分钟压成一个向量后短台词被稀释。每个 Event 存在三个通道里：
+
+| 通道 | 存什么 | 擅长 |
 | --- | --- | --- |
-| **1. 建库** | 创建系列，按需补充简介、背景资料与参考图片 | 按系列组织你的素材 |
-| **2. 解析** | 上传视频，在「解析任务」中查看进度 | 分析画面、对白与事件，建立检索索引 |
-| **3. 使用** | 描述想找的素材，或播放视频并打开侧栏提问 | 返回片段、证据与时间定位，支持继续追问 |
+| 词法 | Event 文本与对白（BM25） | 原话、人名、术语 |
+| 语义 | 描述与对白的文本向量 | 换种说法、模糊描述 |
+| 视觉 | 画面帧向量 | 画面描述、图片查询 |
 
-分片上传支持暂停与续传；解析失败时可查看错误并执行可用的重试操作。
+目前支持文本和静态图片输入，gif 输入 🚧。
 
-## 快速开始
+#### 用 ‖L<sub>∞</sub>‖ 保住强命中 🚧
+
+普通的加权 RRF 融合使用固定权重，可能让某个通道本该命中的 hit 1 在加权后掉到前 10 开外。取各通道的最大值，可以防止这样的结果在最后被筛掉，保证召回的可靠性。当前实现仍是按查询自适应权重的加权 RRF，这一项必须补上。
+
+#### 命中不等于事实
+
+召回结果返回前，会按对应的解析任务和内容版本回源核对时间线：向量命中只是候选，核对过才是事实。
+
+<p align="center">
+  <img src="docs/architecture/fig10.png" width="960" alt="召回单位为什么从 Chunk 改为 Event" />
+</p>
+
+#### 从上而下与从下而上
+
+- **从上而下**（问整体、问路线）：先判断视频 outline，结合用户的模糊意图，例如“我想要做一个 GPT，哪些是我最应该关注掌握的点？”，从宏观上规划如何帮到用户，再通过 outline 选择性深入 Chunk，找具体 Event 作为佐证。
+- **从下而上**（找台词、找画面）：直接定位到 Event，再回到 Chunk 结合上下文，更充分地回答。
+
+Agent 会按问题自己选择方式。
+
+### 2.3. 召回问答
+
+#### 先分清要不要搜
+
+同样一句话，可能是要搜，也可能只是在回应上一轮。每轮问答进入 Supervisor 之前，会先经过一层 query router 和 rewriter：
+
+| 步骤 | 做什么 |
+| --- | --- |
+| 路由<br><sub>Jev-1.14 · 3 s</sub> | 判断当前消息是 respond（直接回应）、retrieve（检索）还是 mixed（两者都有） |
+| 改写<br><sub>DeepSeek Flash · 4 s</sub> | retrieve / mixed 时只写出要搜的那部分 `retrieval_query`；原话逐字保留，不猜人名、集数和剧情 |
+| 兜底<br><sub>总预算 8 s</sub> | 超时、报错或输出不合法都回退到原始消息，只会帮忙，不会挡路 |
+
+<p align="center">
+  <img src="docs/architecture/fig07.png" width="960" alt="Query router 与 rewrite" />
+</p>
+
+#### 用片段回答
+
+Supervisor 按需调用工具：
+
+- 委托视频检索 Agent 召回 Event
+- 阅读视频大纲和系列概览
+- 按当前播放位置理解正在看的画面
+- 联网补充背景
+
+最后，片段以可播放的卡片放在引用它的文字下方，对齐到句子和 Event 边界，点开就能回到原片核对。
+
+回答边生成边流式输出，推理过程折叠展示；首个 token 15 s 未到就自动退避重连，最多 3 次。router 前后的单轮耗时、通过率与 token 成本待测。
+
+<details>
+<summary>遇到的问题、效果与待测指标</summary>
+
+![问题与修复](docs/architecture/fig08.png)
+
+![效果对比](docs/architecture/fig11.png)
+
+![待测指标](docs/architecture/fig12.png)
+
+</details>
+
+## 3. 部署
 
 **当前可自托管，在线样例库尚未开放。** 首次安装推荐 **Docker 全栈 + API 模型**：Web、API、视频解析、MySQL 和 Elasticsearch 一起启动，默认使用 **DeepAgents**，不需要准备本地模型权重。
 
@@ -206,59 +350,11 @@ Web 界面与外部工具使用同一套服务接口：
 | 跟踪解析任务 | `GET /api/jobs/video-parse/get`、`GET /api/jobs/video-parse/events` |
 | 检索素材 | `POST /api/search`，返回片段来源、时间范围与证据 |
 | Agent 对话 | `/api/agent/conversations/*`、`/api/agent/messages/*`，支持持续对话与流式回答 |
+| 外部 Agent 取素材（MCP） | `/mcp`（Streamable HTTP，仅 local 身份模式），工具 `list_series`、`retrieve`、`browse_events`、`read_evidence` |
 
 启动后查看 [OpenAPI 文档](http://127.0.0.1:9621/docs)，接入说明见 [Server](server/README.md)。当前范围字段使用 `tenantId`；视频时间采用相对原片起点的整数毫秒，部分字段仍保留 `*Seconds` 旧名。
 
-## 当前状态
-
-**已可用：** 素材入库、解析、自然语言检索、片段回看、观看问答与 HTTP API。
-
-**继续建设中：**
-
-- Sandbox 创作工作流与参考剪辑
-- 面向 Codex、Claude Code 等外部 Agent 的 MCP 接口
-- 更高质量、更低成本的视频解析与检索
-- 更简单的模型配置和部署体验
-
-项目仍在迭代，解析、检索与回答可能存在偏差，请结合原片核对。欢迎反馈，也欢迎一起建设。已知问题见 [问题清单](docs/dev/problems.md)。
-
-<details>
-<summary><strong>技术架构：Context Canvas、检索与服务模块</strong></summary>
-<br />
-
-```mermaid
-flowchart LR
-    Web["Web：上传、观看、检索"] --> API["Server API"]
-    API --> SQL["MySQL：事实、任务、租约、Token"]
-    API --> Media["Artifact Store：视频与媒体"]
-    SQL --> Consumer["进程内 V2 Consumer"]
-    Consumer --> Parse["ASR / Understanding / Canvas Refine"]
-    Parse --> SQL
-    Parse --> ES["Elasticsearch：检索投影"]
-    API --> Supervisor["Chat Supervisor"]
-    Supervisor --> Search["视频检索：Query → Evaluator → Chat"]
-    Search --> ES
-    Supervisor --> Realtime["按当前播放位置理解"]
-    Realtime --> SQL
-    Realtime --> Media
-    Supervisor --> Answer["文字与时间片段证据 → 播放跳转"]
-```
-
-| 模块 | 职责 |
-| --- | --- |
-| `gateway/` | 模型协议、认证、调用控制与来源适配 |
-| `engine/` | 视频事件转换、时间与内容校验、索引投影与召回融合 |
-| `agent/` | Agent、Context Canvas、视频理解与 Supervisor 工具决策 |
-| `server/` | 身份权限、上传、持久化、任务恢复、媒体与 HTTP / CLI |
-| `web/` | React 前端，连接真实 API |
-
-完整解析使用固定 Chunk 进行基础理解，滑动 Interval 独立精修并推进索引。模型通过 **Context Canvas** 读取证据、修改局部内容，程序保留完整状态并组装提交结果；Refine 校验成员版本与内容指纹，避免局部修改丢弃未提及事件。
-
-Supervisor 可以直接回答、搜索网页、调用视频检索，或按冻结的播放位置理解当前及相邻 Chunk。检索结果直接带来源证据，需要更多上下文时可按片段 ID 和游标续读。
-
-正式服务使用 **V2 + MySQL + Elasticsearch**，Consumer 与 API 在同一 Server 进程运行；local 模式无需 Redis 或外部消息队列。更多设计见 [Parse V2 Agent](agent/video_parse_v2/README.md) 与 [Context Canvas](docs/design/02-agent-harness/context-canvas-design.md)。
-
-</details>
+## 进阶与开发
 
 <details>
 <summary><strong>进阶配置：模型、cloud 身份与已有数据库升级</strong></summary>

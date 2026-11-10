@@ -28,6 +28,9 @@ docs/ui-design/
 **/.DS_Store
 .env
 .env.*
+.env.cloud
+.seekino-secrets/
+*.seekino.lock
 !.env.example
 .venv/
 **/__pycache__/

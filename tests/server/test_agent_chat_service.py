@@ -24,7 +24,12 @@ from agent.chat.common.state import AnswerPhase
 from agent.chat.supervisor import SupervisorRuntime
 from agent.chat.video_search.context import _project_stored_search_result
 from agent.chat.video_search.runtime import AgentRuntime
-from gateway.agent_model.errors import ModelInputTooLargeError
+from gateway.agent_model.errors import (
+    ModelFailureError,
+    ModelFailureReason,
+    ModelInputTooLargeError,
+    OpenAIFunctionCallingError,
+)
 from gateway.web_search import WebSearchHit, WebSearcher
 from gateway.usage import capture_model_usage, model_call_context, track_model_call
 from server.api.agent import _agent_message_view
@@ -45,13 +50,12 @@ from server.repository.agent import (
     AgentRepository, AgentReferenceInvalidError, AgentMessageNotFoundError,
 )
 from server.repository.library import LibraryRepository, SeriesNotFoundError
-from server.error.retrieval import SeriesNotReadyError
 from server.service.video_parse_persistence import VideoParsePersistenceService
 from server.schema import (
     AgentReply, SelectionReason, VideoChunkCandidate, VideoChunkSearchHit, VideoChunkSearchResult,
 )
 from server.service.agent_chat import (
-    AgentAttachmentInputUnavailableError, AgentChatService, _validated_stored_video_range,
+    AgentAttachmentInputUnavailableError, AgentChatService, ChatModelChoice, _validated_stored_video_range,
 )
 from server.service.library import LibraryService
 
@@ -682,6 +686,40 @@ def test_server_deltas_before_tools_and_text_of_next_model_call(build_service):
     assert events[boundary + 1]["assistantMessage"]["content"] == "我先查一下。"
 
 
+def test_retry_snapshot_survives_reload_until_last_call_recovers(build_service):
+    from gateway.model_events import emit_model_retry
+
+    entered, release = Event(), Event()
+
+    class RetryingSupervisor(_DirectSupervisorModel):
+        def run_agent(self, prompt, **kwargs):
+            emit_model_retry("first", 1, 3)
+            emit_model_retry("second", 1, 3)
+            emit_model_retry("second", 2, 3)
+            emit_model_retry("first", 0, 3)
+            entered.set()
+            assert release.wait(5)
+            emit_model_retry("second", 0, 3)
+            return super().run_agent(prompt, **kwargs)
+
+    service, conversation, *_ = build_service(supervisor_model=RetryingSupervisor())
+    execution = service.start_message(
+        conversation.conversation_id, tenant_id="local-default", content="你好",
+        idempotency_key="retry-status", stream=True,
+    )
+    try:
+        assert entered.wait(5)
+        while (event := execution.next_event(timeout=2))["type"] != "answer.snapshot":
+            pass
+        assert event["assistantMessage"]["model_retry"] == {"attempt": 2, "maximum": 3}
+        assert service.list_all_messages(
+            conversation.conversation_id, tenant_id="local-default",
+        )[-1].model_retry == {"attempt": 2, "maximum": 3}
+    finally:
+        release.set()
+    assert not execution.result().assistant_message.model_retry
+
+
 def test_supervisor_prefix_is_readable_before_model_completion_and_survives_disconnect(build_service):
     entered, release = Event(), Event()
 
@@ -993,7 +1031,7 @@ def test_current_video_scope_is_trusted_without_making_unready_series_retrievabl
 
         def run_agent(self, _prompt, *, tools, handle_text, **_kwargs):
             context = json.loads(_prompt.rsplit("\n\n", 1)[1])
-            assert context["video_scope"] == []
+            assert [item["seriesId"] for item in context["video_scope"]] == [series_id]
             assert len(context["series_context"]) == 1
             current = context["series_context"][0]
             assert current["seriesId"] == series_id
@@ -1002,8 +1040,7 @@ def test_current_video_scope_is_trusted_without_making_unready_series_retrievabl
             assert current["importantExtraData"] == background
             assert current["characterBible"] == [{"name": "若叶睦", "aliases": ["睦"]}]
             by_name = {tool.name: tool for tool in tools}
-            graph = json.loads(by_name["query_video"].invoke({"query": "now"}))
-            assert graph["error"]["code"] == "NO_VIDEO_SCOPE"
+            assert "retrieve" in by_name
             handle_text("当前视频答疑可使用实时理解。")
 
     service, conversation, _, repository, *_ = build_service(
@@ -1049,11 +1086,11 @@ def test_current_video_scope_is_trusted_without_making_unready_series_retrievabl
     completed = _send(
         service, conversation, series_ids=[series_id], extra_context={"playback": playback},
     )
-    assert completed.user_message.series_ids == ()
+    assert completed.user_message.series_ids == (series_id,)
     assert completed.user_message.extra_context["playback"]["positionSeconds"] == 123_456
     assert completed.assistant_message.content == "当前视频答疑可使用实时理解。"
-    with pytest.raises(SeriesNotReadyError):
-        _send(service, conversation, key="without-playback", series_ids=[series_id])
+    followup = _send(service, conversation, key="without-playback", series_ids=[series_id])
+    assert followup.assistant_message.series_ids == (series_id,)
 
 
 def test_playback_uses_current_episode_without_changing_request_idempotency(build_service):
@@ -1141,7 +1178,7 @@ def test_series_context_videos_and_current_video_use_series_episode_addressing(b
 
 
 @pytest.mark.parametrize("include_other_unready", [False, True])
-def test_current_unready_video_exemption_keeps_other_retrieval_scope_rules(
+def test_message_preserves_all_selected_courses_until_tool_scope_resolution(
     build_service, include_other_unready,
 ):
     class CurrentVideoModel(_DirectSupervisorModel):
@@ -1149,8 +1186,8 @@ def test_current_unready_video_exemption_keeps_other_retrieval_scope_rules(
 
         def run_agent(self, _prompt, *, tools, handle_text, **_kwargs):
             context = json.loads(_prompt.rsplit("\n\n", 1)[1])
-            assert [item["seriesId"] for item in context["video_scope"]] == [ready.series_id]
-            assert {item["seriesId"] for item in context["series_context"]} == {current_id, ready.series_id}
+            assert {item["seriesId"] for item in context["video_scope"]} == set(scope)
+            assert {item["seriesId"] for item in context["series_context"]} == set(scope)
             by_name = {tool.name: tool for tool in tools}
             by_name["query_video"].invoke({"query": "what was explained"})
             handle_text("Answer from the available evidence.")
@@ -1180,17 +1217,11 @@ def test_current_unready_video_exemption_keeps_other_retrieval_scope_rules(
         "seriesId": current_id, "videoId": video_id, "episodeOrder": 1,
         "positionSeconds": 123_456,
     }})
-    if include_other_unready:
-        with pytest.raises(SeriesNotReadyError):
-            _send(service, conversation, **kwargs)
-        assert retrieval.calls == []
-        assert service.list_all_messages(conversation.conversation_id, tenant_id="local-default") == []
-    else:
-        result = _send(service, conversation, **kwargs)
-        assert result.user_message.series_ids == (ready.series_id,)
-        assert retrieval.calls and all(call[1] == [ready.series_id] for call in retrieval.calls)
-        query_context = json.loads(query.prompts[-1].rsplit("\n\n", 1)[1])["inputs"]
-        assert [item["seriesId"] for item in query_context["series_context"]] == [ready.series_id]
+    result = _send(service, conversation, **kwargs)
+    assert set(result.user_message.series_ids) == set(scope)
+    assert retrieval.calls and all(set(call[1]) == set(scope) for call in retrieval.calls)
+    query_context = json.loads(query.prompts[-1].rsplit("\n\n", 1)[1])["inputs"]
+    assert {item["seriesId"] for item in query_context["series_context"]} == set(scope)
 
 
 @pytest.mark.parametrize("with_playback", [False, True])
@@ -3031,6 +3062,37 @@ def test_codex_connection_error_fails_before_deadline_and_publishes_terminal_eve
     assert query.prompts == [] and chat.prompts == []
 
 
+def _network_failure() -> OpenAIFunctionCallingError:
+    """An exhausted Chat first-SSE reconnect, whose cause chain mixes timeouts and connections."""
+    connection = ModelFailureError(
+        "Chat completion stream read failed", reason=ModelFailureReason.MODEL_CONNECTION_ERROR,
+    )
+    connection.__cause__ = httpx.RemoteProtocolError(
+        "peer closed connection without sending complete message body",
+    )
+    timeout = ModelFailureError(
+        "No first SSE event within 15 seconds", reason=ModelFailureReason.MODEL_TIMEOUT,
+    )
+    timeout.__cause__ = connection
+    error = OpenAIFunctionCallingError(
+        "deepseek request failed for model deepseek-flash",
+        reason=ModelFailureReason.MODEL_NETWORK_ERROR,
+    )
+    error.__cause__ = timeout
+    return error
+
+
+def _stream_drop() -> OpenAIFunctionCallingError:
+    error = OpenAIFunctionCallingError(
+        "deepseek request failed for model deepseek-flash",
+        reason=ModelFailureReason.MODEL_CONNECTION_ERROR,
+    )
+    error.__cause__ = httpx.RemoteProtocolError(
+        "peer closed connection without sending complete message body",
+    )
+    return error
+
+
 @pytest.mark.parametrize(("kind", "expected"), [
     (
         "rate_limit",
@@ -3038,6 +3100,8 @@ def test_codex_connection_error_fails_before_deadline_and_publishes_terminal_eve
     ),
     ("timeout", "模型暂时不可用，错误：请求超时"),
     ("connection", "模型暂时不可用，错误：无法连接模型服务"),
+    ("network", "模型暂时不可用，错误：网络错误（多次重连未收到模型响应）"),
+    ("stream_drop", "模型暂时不可用，错误：模型服务中途断开了响应"),
     ("unknown", "模型调用失败，错误：RuntimeError"),
 ])
 def test_agent_model_error_exposes_provider_reason(
@@ -3052,6 +3116,8 @@ def test_agent_model_error_exposes_provider_reason(
         ),
         "timeout": lambda: APITimeoutError(request=request),
         "connection": lambda: APIConnectionError(request=request),
+        "network": lambda: _network_failure(),
+        "stream_drop": lambda: _stream_drop(),
         "unknown": lambda: RuntimeError("private upstream failure"),
     }[kind]()
     service, conversation, *_ = build_service()
@@ -3890,3 +3956,100 @@ def test_private_conversation_can_use_one_public_source_and_replay_checks_source
             private.conversation_id, tenant_id="personal-tenant", source_tenant_id="another-source",
             owner_user_id="user-A", content="public course question", idempotency_key="source-message",
         )
+
+
+def test_model_selection_is_owned_by_one_conversation_and_freezes_each_answer(build_service):
+    default = _DirectSupervisorModel()
+    alternate = _DirectSupervisorModel()
+    alternate.model_name = "alternate-model"
+
+    def alternative_runtime(config):
+        query = AgentRuntime(_QueryModel(), _RetrievalStub().search, retrieval_channel="lexical")
+        return _chat_runtime(query, alternate)
+
+    service, first, *_ = build_service(supervisor_model=default, service_kwargs={
+        "model_choices": {"fast": ChatModelChoice("Fast", alternative_runtime)},
+    })
+    create = dict(tenant_id=first.tenant_id, idempotency_key="second-chat", model_id="fast")
+    second = service.create_conversation(**create)
+    changes = dict(tenant_id=second.tenant_id, owner_user_id=second.owner_user_id)
+    assert second.model_id == "fast"
+    assert first.model_id == "default"
+    assert not service.message_options().chat_models
+    with pytest.raises(AgentConversationNotFoundError):
+        service.set_conversation_model(second.conversation_id, tenant_id=second.tenant_id,
+                                       owner_user_id="another-owner", model_id="default")
+    with pytest.raises(ValueError, match="回答模型"):
+        service.set_conversation_model(second.conversation_id, **changes, model_id="unknown")
+    assert _send(service, first).assistant_message.model_name == default.model_name
+    before = _send(service, second)
+    assert before.assistant_message.model_name == alternate.model_name
+    assert alternate.turns[0][0] == second.conversation_id
+    service.set_conversation_model(second.conversation_id, **changes, model_id="default")
+    assert service.get_conversation(second.conversation_id, **changes).model_id == "default"
+    assert _send(service, second).assistant_message.message_id == before.assistant_message.message_id
+    assert _send(service, second, key="next").assistant_message.model_name == default.model_name
+    assert len(alternate.turns) == 1
+    assert len(default.turns) == 2
+    assert service.create_conversation(**create).model_id == "default"
+    with pytest.raises(AgentConflictError):
+        service.create_conversation(**{**create, "model_id": "default"})
+
+
+def test_model_change_between_resolving_and_recording_rejects_the_unstarted_turn(build_service, monkeypatch):
+    default = _DirectSupervisorModel()
+    service, chat, *_ = build_service(supervisor_model=default, service_kwargs={
+        "model_choices": {"alternate": ChatModelChoice("Alternate", lambda _: pytest.fail("unexpected execution"))},
+    })
+    start = service._repository.start_message
+
+    def change_before_insert(**kwargs):
+        service.set_conversation_model(chat.conversation_id, tenant_id=chat.tenant_id,
+                                       owner_user_id=chat.owner_user_id, model_id="alternate")
+        return start(**kwargs)
+
+    monkeypatch.setattr(service._repository, "start_message", change_before_insert)
+    with pytest.raises(AgentConflictError, match="model changed"):
+        _send(service, chat)
+    assert service.get_conversation(chat.conversation_id, tenant_id=chat.tenant_id).message_count == 0
+    assert not default.turns
+
+
+def test_yaml_default_and_next_turn_observe_saved_config_without_changing_other_chats(build_service, yaml_model_settings):
+    from contextlib import contextmanager
+    from server.model.dto.personal_model import PersonalModelConnectionSave
+    store = yaml_model_settings
+    targets = []
+    @contextmanager
+    def build(selection, config):
+        target = selection.target(environ=store.environ)
+        targets.append((target.model_id, target.api_key.get_secret_value()))
+        supervisor = _DirectSupervisorModel()
+        supervisor.model_name = target.model_id
+        runtime = _chat_runtime(AgentRuntime(_QueryModel(), _RetrievalStub().search, retrieval_channel="lexical"), supervisor)
+        try:
+            yield runtime
+        finally:
+            runtime.close()
+
+    service, first, *_ = build_service(service_kwargs={"model_settings": store, "configured_runtime": build})
+    owner = first.owner_user_id
+    initial = store.catalog().new_chat_id()
+    alternate = store.catalog().find("my-alternative")
+    assert service.message_options(owner_user_id=owner).new_chat_model_id == initial
+    store.set_default(alternate.option.id)
+    args = dict(tenant_id=first.tenant_id, idempotency_key="new-inherited")
+    second = service.create_conversation(**args)
+    assert first.model_id == initial and second.model_id == alternate.option.id
+    assert _send(service, first).assistant_message.model_name == "team/home"
+    answered = _send(service, second)
+    assert answered.assistant_message.model_name == "team/alternative"
+    row = store.catalog().connections[alternate.connection.connection_id]
+    store.save(row.connection_id, PersonalModelConnectionSave(name=row.name, protocol=row.protocol, base_url=row.base_url,
+               model_ids=[m.model_id for m in row.models], supports_vision=row.supports_vision, revision=row.revision, api_key="fresh-key"))
+    assert _send(service, second, key="after-save").assistant_message.model_name == "team/alternative"
+    assert targets == [("team/home", "synthetic-private-key"), ("team/alternative", "synthetic-private-key"), ("team/alternative", "fresh-key")]
+    service.set_conversation_model(second.conversation_id, tenant_id=first.tenant_id, owner_user_id=owner, model_id=initial)
+    assert _send(service, second).assistant_message.message_id == answered.assistant_message.message_id
+    assert service.create_conversation(**args).conversation_id == second.conversation_id
+    assert len(targets) == 3

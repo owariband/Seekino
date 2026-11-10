@@ -76,6 +76,62 @@ def test_event_unavailability_is_error_and_does_not_claim_no_match():
         service.retrieve("杯子")
 
 
+@pytest.mark.parametrize("measured", [False, True], ids=["editable-default", "sampled-curve"])
+def test_camera_reference_is_indexed_then_resolved_from_version_pinned_evidence(tmp_path, measured):
+    import subprocess
+
+    observation = dict(movement="PAN_RIGHT", timing="EASE_IN_OUT", start_framing="左岸灯塔",
+                       end_framing="右边的小船", visual_evidence="灯塔和岩石一起向左移出，船头从右侧入画")
+    scene = dict(event_type="SCENE", start_seconds=1, end_seconds=9, description="夕阳下的海面",
+                 participants=[], visible_persons=[], camera_ref=observation)
+    service, persistence, _, _, store, _, _ = _service([scene])
+    if measured:
+        persistence.evidence = persistence.evidence.model_copy(update={"camera_hints": [{
+            "first_sample_ms": 1, "last_sample_ms": 8, "if_background_is_fixed": "PAN_RIGHT",
+            "sampled_timing": "EASE_IN_OUT", "travel_in_frame_widths": .5,
+            "samples": [(1, 0), (2, .08), (4, .40), (6, .47), (8, .50)],
+        }]})
+    plan = store.plans[0]
+    search_text = plan.lexical_fields[0].raw_text
+    assert all(text in search_text for text in ("向右横移", "平滑", "左岸灯塔", "右边的小船"))
+    assert plan.semantic_requests[0].request.semantic_text == search_text
+    hit = service.retrieve("平滑向右横移")["items"][0]
+    assert hit["event"]["camera_ref"] == observation and "code" not in hit["event"]
+    evidence = service.read_evidence(hit["evidence_ref"])
+    assert evidence["matched_event"]["camera_ref"] == observation
+    replay = evidence["camera_replay"]
+    assert replay["params"]["duration_ms"] == 8 and replay["template_id"] == "canvas2d/viewport@1"
+    assert replay["easing_basis"] == ("sampled_background" if measured else "observed_category")
+    assert replay["anchor_basis"] == "editable_composition_defaults"
+    (tmp_path / replay["filename"]).write_text(replay["code"])
+    js = """
+      import assert from 'node:assert/strict';
+      import { cameraAt } from './viewport-v1.mjs';
+      const params=JSON.parse(process.argv[1]), world={width:2000,height:1000}, view={width:1000,height:1000};
+      const at=t=>cameraAt(t,params,world,view);
+      const d=params.duration_ms;
+      assert.equal(at(0).x,0); assert.equal(at(d+1).y,0);
+      assert.equal(at(d).width,1000); assert.equal(at(0).height,1000);
+      if (params.progress_samples) {
+        assert.equal(at(d).x,500);
+        for (const [t,x] of [[1,80],[3,400],[5,470],[7,500],[7.5,500]]) {
+          assert.ok(Math.abs(at(t).x-x)<1e-6);
+        }
+        const positions=Array.from({length:121},(_,i)=>at(d*i/120).x);
+        assert.ok(positions.slice(1).every((x,i)=>x>=positions[i]));
+      } else {
+        assert.equal(at(d).x,1000); assert.ok(Math.abs(at(d/2).x-500)<1e-6);
+        assert.ok(at(d/2).x-at(d/2-1).x > at(1).x-at(0).x);
+      }
+    """
+    subprocess.run(["node", "--input-type=module", "-e", js, json.dumps(replay["params"])],
+                   cwd=tmp_path, check=True)
+    persistence.evidence = persistence.evidence.model_copy(update={"parse_provenance": {
+        **persistence.evidence.parse_provenance, "contentVersion": 2}})
+    with pytest.raises(ValueError, match="EVIDENCE_STALE"):
+        service.read_evidence(hit["evidence_ref"])
+
+
 def test_stale_reference_rehydrates_before_media_access():
     service, persistence, _, media, _, _, _ = _service()
     ref = service.retrieve("杯子")["items"][0]["evidence_ref"]
@@ -136,6 +192,67 @@ def test_truncation_is_explicit_and_result_does_not_expose_unbounded_source():
     read = service.read_evidence(result["items"][0]["evidence_ref"])
     assert read["truncated"] and read["warnings"]
     assert len(json.dumps(read, ensure_ascii=False).encode()) < 48_000
+
+
+def test_ranked_page_can_be_read_to_the_last_hit():
+    events = [{"event_type": "ACTION", "start_seconds": 1, "end_seconds": 4,
+               "description": "走" * 1500 + str(i), "participants": [], "visible_persons": []} for i in range(17)]
+    service, *_ = _service(events)
+    first = service.retrieve("走")
+    assert first["next_cursor"] and first["returned_event_count"] < len(events)
+    pages = [first]
+    while pages[-1]["next_cursor"]:
+        pages.append(service.retrieve("走", cursor=pages[-1]["next_cursor"]))
+    ids = [r["event_id"] for page in pages for r in page["items"]]
+    assert len(set(ids)) == len(ids) == len(events)
+    assert pages[-1]["next_cursor"] is None
+    with pytest.raises(ValueError, match="INVALID_CURSOR"):
+        service.retrieve("different", cursor=first["next_cursor"])
+
+
+def test_browse_pages_every_published_event_and_invalidates_stale_cursors(repository, parsed_video):
+    from sqlalchemy import select
+    from server.database import create_session_factory
+    from server.model.parse_content import ChunkParseContent
+    from server.model.task import ChunkParseTask
+
+    engine, persistence = repository
+    library = Mock()
+    library.get_series.return_value = SimpleNamespace(character_bible=[], important_extra_data={
+        "format": "markdown", "content": "| 标准名 | 别名 |\n| --- | --- |\n| 廉 | Ren |"})
+    service = McpRetrievalService(library=library, media=Mock(), event_retrieval=None,
+                                 parse_persistence=persistence, local_tenant_id=parsed_video.tenant_id)
+    series = parsed_video.series_id
+    with create_session_factory(engine).begin() as session:
+        for i, chunk_id in enumerate(parsed_video.video_chunk_ids):
+            child = session.scalar(select(ChunkParseTask).where(ChunkParseTask.chunk_id == chunk_id))
+            content = session.scalar(select(ChunkParseContent).where(ChunkParseContent.chunk_task_id == child.id))
+            event = {**content.content["timeline"][0], "participants": ["廉"], "visible_persons": ["廉"] if i == 0 else []}
+            content.content = {"persons": ["廉"], "timeline": [event]}
+    first = service.browse_events(series, limit=1)
+    assert first["next_cursor"] and first["published_event_count"] > 1
+    pages = [first]
+    while pages[-1]["next_cursor"]:
+        pages.append(service.browse_events(series, limit=1, cursor=pages[-1]["next_cursor"]))
+    cards = [item for page in pages for item in page["items"]]
+    assert len(cards) == len({card["event_id"] for card in cards}) == first["published_event_count"]
+    assert cards[0]["video_chunk_id"] == parsed_video.video_chunk_ids[0]
+    assert not service.browse_events(series, ["absent"])["items"]
+    by_alias = service.browse_events(series, ["Ren"])
+    assert by_alias["resolved_visible_names"] == ["Ren", "廉"]
+    assert [item["event_id"] for item in by_alias["items"]] == [cards[0]["event_id"]]
+    with pytest.raises(ValueError, match="INVALID_CURSOR"):
+        service.browse_events(series, ["absent"], cursor=first["next_cursor"])
+    other = McpRetrievalService(library=Mock(), media=Mock(), event_retrieval=None,
+                               parse_persistence=persistence, local_tenant_id="another-tenant")
+    with pytest.raises(ValueError, match="INVALID_ARGUMENT"):
+        other.browse_events(series, cursor=first["next_cursor"])
+    with create_session_factory(engine).begin() as session:
+        child = session.scalar(select(ChunkParseTask).where(ChunkParseTask.chunk_id == cards[0]["video_chunk_id"]))
+        content = session.scalar(select(ChunkParseContent).where(ChunkParseContent.chunk_task_id == child.id))
+        child.indexed_content_version = content.version = content.version + 1
+    with pytest.raises(ValueError, match="INVALID_CURSOR"):
+        service.browse_events(series, cursor=first["next_cursor"])
 
 
 def test_missing_media_preserves_readable_source_and_reports_unavailability():

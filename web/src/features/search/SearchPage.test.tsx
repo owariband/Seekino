@@ -1,15 +1,17 @@
-import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { AgentMessageView, AgentRenderBlock, RetrievalChannelWeights, SeriesSummary, VideoChunkSearchHit } from "../../api/contracts";
+import type { AgentMessageOptions, AgentMessageView, AgentRenderBlock, RetrievalChannelWeights, SeriesSummary, VideoChunkSearchHit } from "../../api/contracts";
+import { configuredModels, firstModel, secondModel } from "../../test/personalModelFixtures";
 import * as api from "../../api/client";
 import { SearchPage, type SearchPageHandle } from "./SearchPage";
 
 const mocks = vi.hoisted(() => ({
   send: vi.fn(),
   stop: vi.fn(),
+  selectModel: vi.fn(),
   useAgentConversation: vi.fn(),
   useWorkspace: vi.fn(),
   useAuth: vi.fn(),
@@ -20,6 +22,12 @@ vi.mock("./useAgentConversation", () => ({ useAgentConversation: mocks.useAgentC
 vi.mock("../auth/AuthProvider", () => ({ useAuth: mocks.useAuth }));
 
 const now = Date.parse("2026-09-17T00:00:00Z");
+const baseMessageOptions: AgentMessageOptions = {
+  topK: { defaultValue: 10, minimum: 1, maximum: 20 },
+  maxLoopTurns: { defaultValue: 100, minimum: 1, maximum: 100 },
+  maxModelCallsPerTurn: { defaultValue: 6, minimum: 1, maximum: 12 },
+  maxToolCallsPerTurn: { defaultValue: 24, minimum: 1, maximum: 48 },
+};
 const series: SeriesSummary = {
   visibility: "private", access: "member", publisher: null,
   seriesId: "series-1",
@@ -155,10 +163,15 @@ function renderPage(
     conversationId: "conversation-1",
     messages: [message],
     progress: {},
+    reasoning: {},
     loading: false,
     searching: false,
     cancelling: false,
     error: null,
+    modelId: firstModel,
+    modelSaving: false,
+    modelError: null,
+    selectModel: mocks.selectModel,
     send: mocks.send,
     stop: mocks.stop,
   });
@@ -166,10 +179,13 @@ function renderPage(
 }
 
 beforeEach(() => {
-  mocks.useAuth.mockReturnValue({ canManage: true, activeSource: { kind: "local" } });
+  mocks.useAuth.mockReturnValue({ canManage: true, canConfigure: true, activeSource: { kind: "local" }, scopeKey: "local" });
   mocks.send.mockReset();
   mocks.send.mockImplementation((_content, _scope, _reference, _options, _context, submission) => submission?.onAccepted?.());
   mocks.stop.mockReset();
+  mocks.selectModel.mockReset();
+  vi.spyOn(api, "getAgentMessageOptions").mockResolvedValue(baseMessageOptions);
+  vi.spyOn(api, "getPersonalModelSettings").mockResolvedValue(configuredModels);
   Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:chat-image") });
   Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
   vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
@@ -214,13 +230,34 @@ describe("Search assistant presentation", () => {
       expect.objectContaining({ sourceTenantId: "tenant-alice" }));
   });
 
-  it("keeps an empty public source from sending an unbounded search", async () => {
+  it("shows an empty public catalog beside its control", async () => {
     mocks.useAuth.mockReturnValue({ canManage: false, activeSource: { kind: "public" } });
     renderPage(assistantMessage("可以提问"), []);
     await userEvent.setup().type(screen.getByRole("textbox", { name: "向 Seekino 助手提问" }), "查找这段");
     expect(screen.getByRole("button", { name: "发送问题" })).toBeDisabled();
-    expect(screen.getByText("暂无可体验的公开系列")).toHaveAttribute("role", "alert");
+    const picker = screen.getByLabelText("选择检索视频系列");
+    const notice = screen.getByText("暂无可体验的公开系列");
+    expect(picker).toHaveAccessibleDescription(notice.textContent!);
+    expect(picker.closest("details")?.nextElementSibling).toBe(notice);
+    expect(notice).toHaveAttribute("role", "status");
     expect(mocks.send).not.toHaveBeenCalled();
+  });
+
+  it("distinguishes a loading or failed public catalog from a successful empty result", () => {
+    mocks.useAuth.mockReturnValue({ canManage: false, activeSource: { kind: "public" } });
+    const view = renderPage(assistantMessage("可以提问"), []);
+    const workspace = mocks.useWorkspace.mock.results.at(-1)!.value;
+    mocks.useWorkspace.mockReturnValue({ ...workspace, isLoading: true });
+    view.rerender(<SearchPage />);
+    expect(screen.queryByText("暂无可体验的公开系列")).not.toBeInTheDocument();
+    mocks.useWorkspace.mockReturnValue({ ...workspace, error: new Error("catalog unavailable") });
+    view.rerender(<SearchPage />);
+    expect(screen.getByRole("alert")).toHaveTextContent("catalog unavailable");
+    expect(screen.queryByText("暂无可体验的公开系列")).not.toBeInTheDocument();
+    mocks.useWorkspace.mockReturnValue({ ...workspace, series: [series] });
+    view.rerender(<SearchPage />);
+    expect(screen.getByLabelText("选择检索视频系列")).toHaveTextContent(series.name);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it.each([true, false])("keeps a historical reference on its actual publisher (available=%s)", async (available) => {
@@ -243,7 +280,7 @@ describe("Search assistant presentation", () => {
         expect.objectContaining({ sourceTenantId: "tenant-bob" }));
     } else {
       expect(screen.getByRole("button", { name: "发送问题" })).toBeDisabled();
-      expect(screen.getByText("所选视频系列暂不可检索，请重新选择范围。")).toHaveAttribute("role", "alert");
+      expect(screen.getByText("所选课程暂不可访问，请重新选择范围。")).toHaveAttribute("role", "alert");
       expect(mocks.send).not.toHaveBeenCalled();
     }
   });
@@ -291,7 +328,7 @@ describe("Search assistant presentation", () => {
     localStorage.setItem(key, JSON.stringify(storageFormat === "overrides"
       ? { overrides: { topK: 3, ...overrides } }
       : { serverOptions, selection: { topK: 3, ...overrides } }));
-    vi.spyOn(api, "getAgentMessageOptions").mockResolvedValue(serverOptions);
+    vi.mocked(api.getAgentMessageOptions).mockResolvedValue(serverOptions);
     try {
       const view = renderPage(assistantMessage("可以提问"), [series], {}, "debug");
       expect(await screen.findByText("最多 9 轮")).toBeInTheDocument();
@@ -311,6 +348,124 @@ describe("Search assistant presentation", () => {
     } finally {
       localStorage.removeItem(key);
     }
+  });
+
+  it("shows the active conversation's answer model and changes it explicitly", async () => {
+    const view = renderPage(assistantMessage("可以提问"));
+    const user = userEvent.setup();
+    const select = await screen.findByRole("combobox", { name: "回答模型" });
+    expect(select).toHaveValue(firstModel);
+    const active = mocks.useAgentConversation.mock.results.at(-1)!.value;
+    mocks.useAgentConversation.mockReturnValue({ ...active, modelId: secondModel });
+    view.rerender(<SearchPage />);
+    expect(screen.getByRole("combobox", { name: "回答模型" })).toHaveValue(secondModel);
+    await user.selectOptions(screen.getByRole("combobox", { name: "回答模型" }), firstModel);
+    expect(mocks.selectModel).toHaveBeenCalledWith(firstModel);
+    await user.type(screen.getByRole("textbox", { name: "向 Seekino 助手提问" }), "继续");
+    await user.click(screen.getByRole("button", { name: "发送问题" }));
+    expect(mocks.send).toHaveBeenLastCalledWith("继续", [], null, {}, null, expect.objectContaining({ attachments: [], onAccepted: expect.any(Function) }));
+  });
+
+  it("lets a cloud guest send through the default without fetching or showing model settings", async () => {
+    mocks.useAuth.mockReturnValue({ canManage: false, canConfigure: false, activeSource: { kind: "public" }, scopeKey: "guest" });
+    renderPage(assistantMessage("可以提问"));
+    const user = userEvent.setup();
+    await user.type(screen.getByRole("textbox", { name: "向 Seekino 助手提问" }), "继续{Enter}");
+    expect(mocks.send).toHaveBeenCalledOnce();
+    expect(api.getPersonalModelSettings).not.toHaveBeenCalled();
+    expect(screen.queryByRole("link", { name: /配置模型|回答模型设置/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "回答模型" })).not.toBeInTheDocument();
+  });
+
+  it("offers setup with no personal models and retains the question without sending", async () => {
+    vi.mocked(api.getPersonalModelSettings).mockResolvedValue({ connections: [], defaultModelId: "default" });
+    vi.mocked(api.getAgentMessageOptions).mockResolvedValue({ ...baseMessageOptions, chatModels: [
+      { id: "default", label: "部署默认" }, { id: "chat_kimi", label: "Kimi" },
+    ] });
+    renderPage(assistantMessage("可以提问"));
+    const user = userEvent.setup();
+    expect(await screen.findByRole("link", { name: "配置模型" })).toHaveAttribute("href", "/settings?section=models");
+    expect(screen.queryByRole("combobox", { name: "回答模型" })).not.toBeInTheDocument();
+    const input = screen.getByRole("textbox", { name: "向 Seekino 助手提问" });
+    await user.type(input, "继续{Enter}");
+    expect(screen.getByRole("button", { name: "发送问题" })).toBeDisabled();
+    expect(input).toHaveValue("继续");
+    expect(mocks.send).not.toHaveBeenCalled();
+  });
+
+  it("keeps an unbound or deleted provider out of choices even if the deployment publishes it", async () => {
+    vi.mocked(api.getAgentMessageOptions).mockResolvedValue({
+      ...baseMessageOptions, chatModels: [{ id: "default", label: "部署默认" }, { id: "chat_kimi", label: "Kimi" }],
+    });
+    const first = configuredModels.connections[0]!;
+    vi.mocked(api.getPersonalModelSettings).mockResolvedValue({ defaultModelId: "default", connections: [
+      first, { ...first, connectionId: "other", name: "Second API", models: [{ id: "personal:elsewhere", modelId: "team/first" }] },
+    ] });
+    renderPage(assistantMessage("可以提问"), [series], {}, "debug");
+    const select = await screen.findByRole("combobox", { name: "回答模型" });
+    expect(within(select).getAllByRole("group").map((group) => group.getAttribute("label"))).toEqual(["My API", "Second API"]);
+    expect(within(select).getAllByRole("option").map((option) => (option as HTMLOptionElement).value)).toEqual([firstModel, secondModel, "personal:elsewhere"]);
+    await userEvent.selectOptions(select, "personal:elsewhere");
+    expect(mocks.selectModel).toHaveBeenCalledWith("personal:elsewhere");
+  });
+
+  it("allows resetting a saved model that is no longer offered", async () => {
+    const view = renderPage(assistantMessage("可以提问"));
+    const active = mocks.useAgentConversation.mock.results.at(-1)!.value;
+    mocks.useAgentConversation.mockReturnValue({ ...active, modelId: "retired" });
+    view.rerender(<SearchPage />);
+    const user = userEvent.setup();
+    const select = await screen.findByRole("combobox", { name: "回答模型" });
+    expect(select).toHaveValue("");
+    expect(screen.queryByRole("option", { name: "retired" })).not.toBeInTheDocument();
+    expect(screen.getByText("已保存的模型当前不可用，请重新选择。")).toHaveAttribute("role", "alert");
+    await user.type(screen.getByRole("textbox", { name: "向 Seekino 助手提问" }), "继续");
+    expect(screen.getByRole("button", { name: "发送问题" })).toBeDisabled();
+    await user.selectOptions(select, firstModel);
+    expect(mocks.selectModel).toHaveBeenCalledWith(firstModel);
+    expect(mocks.send).not.toHaveBeenCalled();
+  });
+
+  it("blocks sending while the conversation's model is being saved and reports a failed change", async () => {
+    const view = renderPage(assistantMessage("可以提问"));
+    const active = mocks.useAgentConversation.mock.results.at(-1)!.value;
+    mocks.useAgentConversation.mockReturnValue({ ...active, modelId: secondModel, modelSaving: true });
+    view.rerender(<SearchPage />);
+    const user = userEvent.setup();
+    await user.type(screen.getByRole("textbox", { name: "向 Seekino 助手提问" }), "继续");
+    expect(await screen.findByRole("combobox", { name: "回答模型" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "发送问题" })).toBeDisabled();
+    mocks.useAgentConversation.mockReturnValue({ ...active, modelId: secondModel, modelError: "模型切换失败" });
+    view.rerender(<SearchPage />);
+    expect(screen.getByText("模型切换失败")).toHaveAttribute("role", "alert");
+    expect(screen.getByRole("combobox", { name: "回答模型" })).toHaveValue(secondModel);
+    expect(screen.getByRole("button", { name: "发送问题" })).toBeEnabled();
+  });
+
+  it("exposes the same personal models in embedded chat and keeps message payload scoped", async () => {
+    renderPage(assistantMessage("可以提问"), [series], { embedded: true, initialSeriesId: series.seriesId });
+    const user = userEvent.setup();
+    expect(await screen.findByRole("combobox", { name: "回答模型", hidden: true })).toHaveValue(firstModel);
+    await user.type(screen.getByRole("textbox", { name: "向 Seekino 助手提问" }), "刚才发生了什么");
+    await user.click(screen.getByRole("button", { name: "发送问题" }));
+    expect(mocks.send).toHaveBeenLastCalledWith("刚才发生了什么", [series.seriesId], null, {}, null, expect.objectContaining({ attachments: [], onAccepted: expect.any(Function) }));
+  });
+
+  it("resizes the desktop conversation sidebar and restores its width after reopening", async () => {
+    localStorage.removeItem("seekino-search-sidebar-width");
+    renderPage(assistantMessage("可以提问"));
+    const user = userEvent.setup();
+    const separator = screen.getByRole("separator", { name: "调整对话侧栏宽度" });
+    expect(separator).toHaveAttribute("aria-valuenow", "248");
+    fireEvent.keyDown(separator, { key: "ArrowRight" });
+    expect(separator).toHaveAttribute("aria-valuenow", "272");
+    await waitFor(() => expect(localStorage.getItem("seekino-search-sidebar-width")).toBe("272"));
+
+    await user.click(screen.getByRole("button", { name: "收起对话记录" }));
+    expect(screen.queryByRole("separator", { name: "调整对话侧栏宽度" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "打开对话记录" }));
+    expect(screen.getByRole("separator", { name: "调整对话侧栏宽度" })).toHaveAttribute("aria-valuenow", "272");
+    localStorage.removeItem("seekino-search-sidebar-width");
   });
 
   it("uses the current ready series for an embedded conversation and opens evidence in the whole-video player", async () => {
@@ -382,56 +537,28 @@ describe("Search assistant presentation", () => {
     );
   });
 
-  it("allows retrying the same question when playback context becomes available", async () => {
-    const extraContext = {
-      playback: { seriesId: series.seriesId, videoId: "video-1", episodeOrder: 1, positionSeconds: 0 },
-    };
-    const captureExtraContext = vi.fn()
-      .mockReturnValueOnce(null)
-      .mockReturnValueOnce(extraContext);
-    renderPage(assistantMessage("可以提问"), [series], {
-      embedded: true,
-      initialSeriesId: series.seriesId,
-      captureExtraContext,
-    });
-    const textbox = screen.getByRole("textbox", { name: "向 Seekino 助手提问" });
-    textbox.focus();
-    const user = userEvent.setup();
-    await user.type(textbox, "开头讲了什么？", { skipClick: true });
-    await user.click(screen.getByRole("button", { name: "发送问题" }));
-
-    expect(mocks.send).not.toHaveBeenCalled();
-    expect(textbox).toHaveValue("开头讲了什么？");
-
-    await user.click(screen.getByRole("button", { name: "发送问题" }));
-    expect(captureExtraContext).toHaveBeenCalledTimes(2);
-    expect(mocks.send).toHaveBeenCalledWith("开头讲了什么？", [series.seriesId], null, {}, extraContext, expect.objectContaining({ attachments: [], onAccepted: expect.any(Function) }));
-  });
-
-  it("keeps the question and does not send when playback context is unavailable on submit", async () => {
-    const captureExtraContext = vi.fn(() => null);
-    renderPage(assistantMessage("可以提问"), [series], {
-      embedded: true,
-      initialSeriesId: series.seriesId,
-      captureExtraContext,
-    });
+  it("keeps a public watch conversation usable before and after a playback time is available", async () => {
+    mocks.useAuth.mockReturnValue({ canManage: false, activeSource: { kind: "public" } });
+    const pending = { ...series, tenantId: "platform-public", status: "INDEXING" as const, readyVideoCount: 0 };
+    const context = { playback: { seriesId: series.seriesId, videoId: "e08", episodeOrder: 8, positionSeconds: 8000 } };
+    const captureExtraContext = vi.fn().mockReturnValueOnce(null).mockReturnValueOnce(context);
+    renderPage(assistantMessage("可以提问"), [], { embedded: true, initialSeries: pending, initialSeriesId: pending.seriesId, captureExtraContext });
     const user = userEvent.setup();
     const textbox = screen.getByRole("textbox", { name: "向 Seekino 助手提问" });
-    textbox.focus();
-    await user.type(textbox, "这里讲了什么？", { skipClick: true });
-    await user.click(screen.getByRole("button", { name: "发送问题" }));
-
-    expect(captureExtraContext).toHaveBeenCalledOnce();
-    expect(mocks.send).not.toHaveBeenCalled();
-    expect(textbox).toHaveValue("这里讲了什么？");
-    expect(screen.getByText("当前播放位置尚未就绪，请稍后重试")).toHaveAttribute("role", "alert");
+    for (const question of ["你好", "这里讲了什么？"]) {
+      await user.type(textbox, question);
+      await user.click(screen.getByRole("button", { name: "发送问题" }));
+    }
+    const source = expect.objectContaining({ sourceTenantId: "platform-public" });
+    expect(mocks.send).toHaveBeenNthCalledWith(1, "你好", [pending.seriesId], null, {}, null, source);
+    expect(mocks.send).toHaveBeenNthCalledWith(2, "这里讲了什么？", [pending.seriesId], null, {}, context, source);
   });
 
   it("sends an example question with one click from the empty conversation", async () => {
     renderPage(assistantMessage("占位"));
     cleanup();
     mocks.useAgentConversation.mockReturnValue({
-      conversationId: "conversation-1", messages: [], progress: {}, loading: false, searching: false, error: null, send: mocks.send,
+      conversationId: "conversation-1", modelId: firstModel, messages: [], progress: {}, reasoning: {}, loading: false, searching: false, error: null, send: mocks.send,
     });
     render(<SearchPage />);
     const user = userEvent.setup();
@@ -520,12 +647,12 @@ describe("Search assistant presentation", () => {
     });
     const user = userEvent.setup();
 
-    expect(screen.getByText("检索范围：全部系列")).toBeVisible();
+    expect(screen.getByText(`检索范围：${series.name}`)).toBeVisible();
     expect(screen.getByText("本系列未完成解析")).toBeVisible();
-    expect(screen.getByLabelText("选择检索视频系列")).toHaveTextContent("全部视频系列");
+    expect(screen.getByLabelText("选择检索视频系列")).toHaveTextContent(series.name);
     await user.type(screen.getByRole("textbox", { name: "向 Seekino 助手提问" }), "你好");
     await user.click(screen.getByRole("button", { name: "发送问题" }));
-    expect(mocks.send).toHaveBeenCalledWith("你好", [], null, {}, null, expect.objectContaining({ attachments: [], onAccepted: expect.any(Function) }));
+    expect(mocks.send).toHaveBeenCalledWith("你好", [series.seriesId], null, {}, null, expect.objectContaining({ sourceTenantId: series.tenantId }));
   });
 
   it("allows a conversation without ready videos and displays a web source link", async () => {
@@ -544,6 +671,23 @@ describe("Search assistant presentation", () => {
 
     expect(mocks.send).toHaveBeenCalledWith("你好", [], null, {}, null, expect.objectContaining({ attachments: [], onAccepted: expect.any(Function) }));
     expect(screen.getByText("问题已发送，正在处理")).toBeInTheDocument();
+  });
+
+  it.each([
+    [true, "检索到了候选片段，但本次回答未附带可播放视频，请重试。"],
+    [false, "没有检索到可展示的视频片段，试试换个描述。"],
+    [null, "本次回答未附带视频片段。"],
+  ] as const)("shows the public candidate outcome %s with the private trace hidden", (hadCandidates, expected) => {
+    const message = assistantMessage("只生成了文字");
+    message.searchResult = {
+      seriesIds: [series.seriesId], searchedVideoIds: ["video-1"], partial: true, hits: [],
+      hadCandidates, retrievalTrace: [], warnings: ["本次检索覆盖 private-diagnostic"],
+      coverageMessages: ["已查第一集"],
+    };
+    renderPage(message);
+    expect(screen.getByText(expected)).toBeInTheDocument();
+    expect(screen.getByText("已查第一集")).toBeInTheDocument();
+    expect(screen.queryByText(/private-diagnostic/)).not.toBeInTheDocument();
   });
 
   const traceCases: Array<{ label: string; weights: RetrievalChannelWeights }> = [
@@ -628,6 +772,14 @@ describe("Search assistant presentation", () => {
     expect(screen.getByText("危险链接").closest("a")).toBeNull();
   });
 
+  it("renders single newlines in answers as line breaks", () => {
+    renderPage(assistantMessage("**标题**\n正文"));
+    const title = screen.getByText("标题");
+    expect(title.tagName).toBe("STRONG");
+    expect(title.nextSibling?.nodeName).toBe("BR");
+    expect(title.parentElement?.textContent?.replace(/\s/g, "")).toBe("标题正文");
+  });
+
   it("renders a live tool between Markdown and video parts in the message body", () => {
     const hit = searchHit("chunk-1", 1, "演出画面");
     renderPage({
@@ -651,6 +803,74 @@ describe("Search assistant presentation", () => {
     expect(tool).toHaveAttribute("data-active", "true");
     expect(tool.closest("details")).toBeNull();
     expect(screen.queryByText("兼容正文")).not.toBeInTheDocument();
+  });
+
+  it("hides a completed answer's tool rows in release and keeps them in debug", () => {
+    const view = renderPage({
+      ...assistantMessage("回答正文"),
+      renderBlocks: [
+        { type: "markdown", markdown: "回答正文" },
+        { type: "tool", callId: "video-lookup", tool: "search_video_graph", status: "completed" },
+      ],
+    });
+    expect(screen.getByText("回答正文")).toBeInTheDocument();
+    expect(screen.queryByRole("status", { name: "查找视频资料" })).not.toBeInTheDocument();
+
+    mocks.useWorkspace.mockReturnValue({ mode: "live", displayMode: "debug", series: [series], isLoading: false });
+    view.rerender(<SearchPage />);
+    expect(screen.getByRole("status", { name: "查找视频资料" })).toHaveTextContent("已完成");
+  });
+
+  it("keeps an in-progress tool row visible in release mode", () => {
+    renderPage({
+      ...assistantMessage(""),
+      status: "PROCESSING",
+      renderBlocks: [{ type: "tool", callId: "video-lookup", tool: "search_video_graph", status: "inProgress" }],
+    });
+    expect(screen.getByRole("status", { name: "查找视频资料" })).toHaveTextContent("进行中");
+  });
+
+  it("shows an active model retry row after the answer blocks and updates it in place", () => {
+    const message: AgentMessageView = {
+      ...assistantMessage("先说明。"),
+      status: "PROCESSING",
+      modelRetry: { attempt: 1, maximum: 3 },
+      renderBlocks: [
+        { type: "markdown", markdown: "先说明。" },
+        { type: "tool", callId: "video-lookup", tool: "search_video_graph", status: "completed" },
+      ],
+    };
+    const view = renderPage(message);
+    const row = screen.getByRole("status", { name: "reconnecting 1/3" });
+    expect(row).toHaveAttribute("data-active", "true");
+    expect(row).toHaveTextContent("reconnecting 1/3");
+    expect(screen.getByRole("status", { name: "查找视频资料" }).compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    const conversation = mocks.useAgentConversation.mock.results.at(-1)!.value;
+    mocks.useAgentConversation.mockReturnValue({
+      ...conversation,
+      messages: [{ ...message, modelRetry: { attempt: 2, maximum: 3 } }],
+    });
+    view.rerender(<SearchPage />);
+    expect(screen.getByRole("status", { name: "reconnecting 2/3" })).toBe(row);
+    expect(row).toHaveTextContent("reconnecting 2/3");
+    expect(row).not.toHaveTextContent("reconnecting 1/3");
+
+    // A recovery snapshot clears the row without waiting for the answer to finish.
+    mocks.useAgentConversation.mockReturnValue({
+      ...conversation,
+      messages: [{ ...message, modelRetry: null }],
+    });
+    view.rerender(<SearchPage />);
+    expect(screen.queryByText(/reconnecting/)).not.toBeInTheDocument();
+
+    // Terminal states also drop a retry value that survived in the snapshot.
+    mocks.useAgentConversation.mockReturnValue({
+      ...conversation,
+      messages: [{ ...message, status: "COMPLETED", phase: null, modelRetry: { attempt: 2, maximum: 3 } }],
+    });
+    view.rerender(<SearchPage />);
+    expect(screen.queryByText(/reconnecting/)).not.toBeInTheDocument();
   });
 
   it.each(["completed", "failed"] as const)("updates a web tool to %s in place without video evidence", (status) => {
@@ -716,7 +936,7 @@ describe("Search assistant presentation", () => {
         { type: "markdown", markdown: "已保留的说明" },
         { type: "tool", callId: "current-video", tool: "understand_current_video", status: "inProgress" },
       ],
-    });
+    }, [series], {}, "debug");
     const tool = screen.getByRole("status", { name: "查看当前视频" });
     expect(tool).toHaveAttribute("data-status", "inProgress");
     expect(tool).toHaveAttribute("data-active", "false");
@@ -825,7 +1045,7 @@ describe("Search assistant presentation", () => {
     expect(screen.queryByLabelText("片段详情")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("视频证据")).not.toBeInTheDocument();
     expect(screen.getByRole("img", { name: /00:12–00:18 视频片段预览/ })).toBeInTheDocument();
-    expect(screen.getByText("1 段")).toBeInTheDocument();
+    expect(screen.getAllByLabelText("检索助手提交的视频片段")).toHaveLength(1);
   });
 
   it("renders two source chunks as one final clip with the full playback and reference range", async () => {
@@ -843,8 +1063,6 @@ describe("Search assistant presentation", () => {
     const user = userEvent.setup();
 
     expect(screen.getAllByLabelText("检索助手提交的视频片段")).toHaveLength(1);
-    expect(screen.getByText("1 段")).toBeInTheDocument();
-    expect(within(screen.getByLabelText("检索助手提交的视频片段")).getByText("1")).toBeInTheDocument();
     expect(screen.getByText("09:24–10:56")).toBeInTheDocument();
     expect(screen.getAllByRole("img")).toHaveLength(1);
     await user.click(screen.getByRole("img", { name: /09:24–10:56 视频片段预览/ }));
@@ -908,7 +1126,6 @@ describe("Search assistant presentation", () => {
     renderPage(assistantMessage("找到两个候选片段。", hits));
     const user = userEvent.setup();
 
-    expect(screen.getByRole("heading", { name: "视频片段" })).toBeInTheDocument();
     expect(screen.getAllByRole("img")).toHaveLength(2);
     expect(screen.queryByLabelText("视频证据")).not.toBeInTheDocument();
     expect(screen.getByRole("img", { name: /00:12–00:15 视频片段预览/ }).querySelector("video")).not.toHaveAttribute("autoplay");
@@ -1006,6 +1223,7 @@ describe("Chat image attachments", () => {
     expect(screen.getByRole("button", { name: "添加图片" }).closest("form")).toBe(textbox.closest("form"));
     expect(screen.getByRole("button", { name: "发送问题" }).closest("form")).toBe(textbox.closest("form"));
     const file = new File(["image bytes"], "表情.png", { type: "image/png" });
+    await waitFor(() => expect(screen.getByLabelText("选择聊天图片")).toBeEnabled());
     await user.upload(screen.getByLabelText("选择聊天图片"), file);
     expect(upload).toHaveBeenCalledWith("conversation-1", file, expect.any(AbortSignal));
     expect(screen.getByText("已上传")).toBeInTheDocument();
@@ -1025,6 +1243,7 @@ describe("Chat image attachments", () => {
     const view = renderPage(assistantMessage("可以提问"));
     const user = userEvent.setup();
     const textbox = screen.getByRole("textbox", { name: "向 Seekino 助手提问" });
+    await waitFor(() => expect(screen.getByLabelText("选择聊天图片")).toBeEnabled());
     await user.upload(screen.getByLabelText("选择聊天图片"), new File(["bytes"], "图.png", { type: "image/png" }));
     await user.type(textbox, "找到这张图");
     await user.click(screen.getByRole("button", { name: "发送问题" }));
@@ -1049,6 +1268,7 @@ describe("Chat image attachments", () => {
     const user = userEvent.setup();
     const file = new File(["bytes"], "图.png", { type: "image/png" });
     await user.type(screen.getByRole("textbox", { name: "向 Seekino 助手提问" }), "找出处");
+    await waitFor(() => expect(screen.getByLabelText("选择聊天图片")).toBeEnabled());
     await user.upload(screen.getByLabelText("选择聊天图片"), file);
     expect(screen.getByText("上传中")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "发送问题" })).toBeDisabled();
@@ -1068,12 +1288,14 @@ describe("Chat image attachments", () => {
     renderPage(assistantMessage("可以提问"));
     const user = userEvent.setup();
     const textbox = screen.getByRole("textbox", { name: "向 Seekino 助手提问" });
+    await waitFor(() => expect(screen.getByLabelText("选择聊天图片")).toBeEnabled());
     await user.upload(screen.getByLabelText("选择聊天图片"), new File(["first"], "第一张.png", { type: "image/png" }));
     await user.type(textbox, "找第一张");
     await user.click(screen.getByRole("button", { name: "发送问题" }));
     expect(textbox).toHaveValue("找第一张");
     await user.clear(textbox);
     await user.type(textbox, "下一条问题");
+    await waitFor(() => expect(screen.getByLabelText("选择聊天图片")).toBeEnabled());
     await user.upload(screen.getByLabelText("选择聊天图片"), new File(["next"], "第二张.png", { type: "image/png" }));
     act(() => accept());
     expect(textbox).toHaveValue("下一条问题");
@@ -1114,5 +1336,159 @@ describe("Chat image attachments", () => {
     fireEvent.error(screen.getByRole("img", { name: "图片 1" }));
     expect(screen.getByRole("img", { name: "图片 1：附件暂不可用" })).toBeInTheDocument();
     expect(screen.getByText("这张图出自哪里？")).toBeInTheDocument();
+  });
+});
+
+
+describe("Lazy conversation lifecycle", () => {
+  const saved = { modelId: firstModel, conversationId: "conversation-1", tenantId: "local-default", title: "Saved", messageCount: 1, lastMessagePreview: null, lastMessageAt: null, createdAt: now, updatedAt: now };
+  beforeEach(async () => {
+    localStorage.clear();
+    mocks.useWorkspace.mockReturnValue({ mode: "live", displayMode: "release", series: [series], isLoading: false });
+    const actual = await vi.importActual<typeof import("./useAgentConversation")>("./useAgentConversation");
+    mocks.useAgentConversation.mockImplementation(actual.useAgentConversation);
+    vi.spyOn(api, "getAgentConversation").mockResolvedValue(saved);
+    vi.spyOn(api, "createAgentConversation").mockResolvedValue({ ...saved, conversationId: "conversation-2", messageCount: 0 });
+    vi.spyOn(api, "listAgentConversations").mockResolvedValue({ items: [saved], total: 1, hasMore: false, nextCursor: null });
+    vi.spyOn(api, "listAgentMessages").mockResolvedValue({ items: [assistantMessage("Saved answer")], total: 1, hasMore: false, nextCursor: null });
+    vi.spyOn(api, "subscribeAgentMessages").mockReturnValue(() => {});
+    vi.spyOn(api, "streamAgentMessage").mockImplementation(async (id, content, _key, emit) => {
+      const assistant = { ...assistantMessage("Answer"), conversationId: id };
+      emit({ type: "answer.started", conversationId: id, messageId: assistant.messageId, sequence: 1, occurredAt: now,
+        assistantMessage: assistant, userMessage: { ...assistant, messageId: "user", role: "USER", sequenceNo: 0, content } });
+    });
+  });
+
+  it("opens a fresh draft without creating and creates with a new key on send", async () => {
+    localStorage.setItem("seekino-agent-conversation:local-default", JSON.stringify({ key: "saved-key", id: saved.conversationId }));
+    render(<SearchPage />);
+    const user = userEvent.setup();
+    await screen.findByText("Saved answer");
+    await user.click(screen.getByRole("button", { name: "新建对话" }));
+    expect(api.createAgentConversation).not.toHaveBeenCalled();
+    expect(JSON.parse(localStorage.getItem("seekino-agent-conversation:local-default")!).id).toBe(saved.conversationId);
+    expect(screen.queryByText("Saved answer")).not.toBeInTheDocument();
+    await user.type(screen.getByRole("textbox", { name: "向 Seekino 助手提问" }), "First question");
+    await user.click(screen.getByRole("button", { name: "发送问题" }));
+    await waitFor(() => expect(api.streamAgentMessage).toHaveBeenCalledOnce());
+    expect(api.createAgentConversation).toHaveBeenCalledOnce();
+    expect(vi.mocked(api.createAgentConversation).mock.calls[0]![0]).not.toBe("saved-key");
+    expect(vi.mocked(api.streamAgentMessage).mock.calls[0]![0]).toBe("conversation-2");
+    expect(screen.getByRole("textbox", { name: "向 Seekino 助手提问" })).toHaveValue("");
+  });
+
+  it("keeps the answer model per conversation and PATCHes only the active conversation", async () => {
+    const alternate = { ...saved, modelId: secondModel };
+    const another = { ...saved, conversationId: "conversation-2", title: "Another", modelId: firstModel };
+    vi.mocked(api.getAgentConversation).mockImplementation(async (id) => id === alternate.conversationId ? alternate : another);
+    vi.mocked(api.listAgentConversations).mockResolvedValue({ items: [alternate, another], total: 2, hasMore: false, nextCursor: null });
+    vi.mocked(api.listAgentMessages).mockImplementation(async (id) => ({
+      items: [{ ...assistantMessage(id === alternate.conversationId ? "Saved answer" : "Another answer"), conversationId: id }], total: 1, hasMore: false, nextCursor: null,
+    }));
+    const patch = vi.spyOn(api, "updateAgentConversationModel").mockImplementation(async (id, modelId) => ({
+      ...(id === alternate.conversationId ? alternate : another), modelId,
+    }));
+    localStorage.setItem("seekino-agent-conversation:local-default", JSON.stringify({ key: "saved-key", id: saved.conversationId }));
+    render(<SearchPage />);
+    const user = userEvent.setup();
+    await screen.findByText("Saved answer");
+    expect(await screen.findByRole("combobox", { name: "回答模型" })).toHaveValue(secondModel);
+    await user.click(screen.getByRole("button", { name: /^打开对话 .*编号 conversation-2/ }));
+    await screen.findByText("Another answer");
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "回答模型" })).toHaveValue(firstModel));
+    await user.selectOptions(screen.getByRole("combobox", { name: "回答模型" }), secondModel);
+    await waitFor(() => expect(patch).toHaveBeenCalledWith("conversation-2", secondModel));
+    expect(patch).toHaveBeenCalledOnce();
+    await user.type(screen.getByRole("textbox", { name: "向 Seekino 助手提问" }), "继续");
+    await waitFor(() => expect(screen.getByRole("button", { name: "发送问题" })).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: "发送问题" }));
+    await waitFor(() => expect(api.streamAgentMessage).toHaveBeenCalledOnce());
+    expect(vi.mocked(api.streamAgentMessage).mock.calls[0]![7]).toEqual({});
+  });
+
+  it("reuses an already-empty default conversation without creating", async () => {
+    const empty = { ...saved, messageCount: 0 };
+    vi.mocked(api.getAgentConversation).mockResolvedValue(empty);
+    vi.mocked(api.listAgentConversations).mockResolvedValue({ items: [empty], total: 1, hasMore: false, nextCursor: null });
+    vi.mocked(api.listAgentMessages).mockResolvedValue({ items: [], total: 0, hasMore: false, nextCursor: null });
+    localStorage.setItem("seekino-agent-conversation:local-default", JSON.stringify({ key: "saved-key", id: saved.conversationId }));
+    render(<SearchPage />);
+    const user = userEvent.setup();
+    await waitFor(() => expect(screen.getByRole("button", { name: "新建对话" })).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: "新建对话" }));
+    expect(api.createAgentConversation).not.toHaveBeenCalled();
+    await user.type(screen.getByRole("textbox", { name: "向 Seekino 助手提问" }), "继续");
+    await user.click(screen.getByRole("button", { name: "发送问题" }));
+    await waitFor(() => expect(api.streamAgentMessage).toHaveBeenCalledOnce());
+    expect(vi.mocked(api.streamAgentMessage).mock.calls[0]![0]).toBe("conversation-1");
+    expect(api.createAgentConversation).not.toHaveBeenCalled();
+  });
+
+  it("opens a local new draft without rewriting the empty conversation’s existing model", async () => {
+    const emptyAlternate = { ...saved, messageCount: 0, modelId: secondModel };
+    vi.mocked(api.getAgentConversation).mockResolvedValue(emptyAlternate);
+    vi.mocked(api.listAgentConversations).mockResolvedValue({ items: [emptyAlternate], total: 1, hasMore: false, nextCursor: null });
+    vi.mocked(api.listAgentMessages).mockResolvedValue({ items: [], total: 0, hasMore: false, nextCursor: null });
+    const patch = vi.spyOn(api, "updateAgentConversationModel").mockResolvedValue({ ...emptyAlternate, modelId: firstModel });
+    localStorage.setItem("seekino-agent-conversation:local-default", JSON.stringify({ key: "saved-key", id: saved.conversationId }));
+    render(<SearchPage />);
+    const user = userEvent.setup();
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "回答模型" })).toHaveValue(secondModel));
+    await user.click(screen.getByRole("button", { name: "新建对话" }));
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "回答模型" })).toHaveValue(firstModel));
+    expect(patch).not.toHaveBeenCalled();
+    expect(api.createAgentConversation).not.toHaveBeenCalled();
+  });
+
+  it("deletes the only conversation into a draft without creating", async () => {
+    localStorage.setItem("seekino-agent-conversation:local-default", JSON.stringify({ key: "saved-key", id: saved.conversationId }));
+    vi.spyOn(api, "deleteAgentConversation").mockResolvedValue(saved);
+    render(<SearchPage />);
+    const user = userEvent.setup();
+    await screen.findByText("Saved answer");
+    await user.click(await screen.findByRole("button", { name: /^删除对话 Saved，/ }));
+    await user.click(screen.getByRole("button", { name: /^确认删除对话 Saved，/ }));
+    await waitFor(() => expect(screen.queryByText("Saved answer")).not.toBeInTheDocument());
+    expect(api.createAgentConversation).not.toHaveBeenCalled();
+    expect(screen.getByRole("textbox", { name: "向 Seekino 助手提问" })).toBeEnabled();
+  });
+
+  it("enables example questions in a draft and sends the selected question", async () => {
+    render(<SearchPage />);
+    const user = userEvent.setup();
+    const example = await screen.findByRole("button", { name: "下雨天有人在门口等待的画面" });
+    await waitFor(() => expect(example).toBeEnabled());
+    expect(api.createAgentConversation).not.toHaveBeenCalled();
+    await user.click(example);
+    await waitFor(() => expect(api.streamAgentMessage).toHaveBeenCalledOnce());
+    expect(vi.mocked(api.streamAgentMessage).mock.calls[0]![1]).toBe("下雨天有人在门口等待的画面");
+  });
+
+  it("creates once with the selected draft model before uploading the first attachment", async () => {
+    vi.mocked(api.createAgentConversation).mockResolvedValue({ ...saved, conversationId: "conversation-2", messageCount: 0, modelId: secondModel });
+    vi.spyOn(api, "uploadAgentAttachment").mockRejectedValue(new Error("upload unavailable"));
+    render(<SearchPage />);
+    const user = userEvent.setup();
+    const select = await screen.findByRole("combobox", { name: "回答模型" });
+    await user.selectOptions(select, secondModel);
+    expect(api.createAgentConversation).not.toHaveBeenCalled();
+    const file = new File(["image"], "image.png", { type: "image/png" });
+    await waitFor(() => expect(screen.getByLabelText("选择聊天图片")).toBeEnabled());
+    fireEvent.change(screen.getByLabelText("选择聊天图片"), { target: { files: [file] } });
+    await waitFor(() => expect(api.uploadAgentAttachment).toHaveBeenCalledOnce());
+    expect(api.createAgentConversation).toHaveBeenCalledOnce();
+    expect(vi.mocked(api.createAgentConversation).mock.calls[0]![1]).toBe(secondModel);
+    expect(api.uploadAgentAttachment).toHaveBeenCalledWith("conversation-2", file, expect.any(AbortSignal));
+  });
+
+  it("retains the typed question when draft creation fails", async () => {
+    vi.mocked(api.createAgentConversation).mockRejectedValue(new Error("creation unavailable"));
+    render(<SearchPage />);
+    const user = userEvent.setup();
+    await user.type(screen.getByRole("textbox", { name: "向 Seekino 助手提问" }), "Keep this question");
+    await user.click(screen.getByRole("button", { name: "发送问题" }));
+    await screen.findByText("creation unavailable");
+    expect(screen.getByRole("textbox", { name: "向 Seekino 助手提问" })).toHaveValue("Keep this question");
+    expect(api.streamAgentMessage).not.toHaveBeenCalled();
   });
 });

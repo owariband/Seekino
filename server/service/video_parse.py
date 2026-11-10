@@ -24,6 +24,7 @@ from langchain_core.tools import BaseTool
 from pydantic import BaseModel
 
 from agent.video_parse_v2 import ParseAgent
+from agent.video_parse_v2.content_route import routing_evidence
 from agent.utils.context_canvas_tools import build_context_canvas_tools
 from agent.utils.context_canvas import ContextCanvas
 from agent.utils.errors import AgentToolFeedbackError
@@ -39,8 +40,8 @@ from agent.video_parse_v2.input import (
 )
 from agent.video_parse_v2.prefix.context import PrefixContext
 from agent.video_parse_v2.refine.input import RefineInput, RefineInputChanged
-from agent.video_parse_v2.refine.response import RefineModelResponse
-from agent.video_parse_v2.understanding.response import UnderstandingModelResponse
+from agent.video_parse_v2.refine.response import ClipRefineModelResponse, RefineModelResponse
+from agent.video_parse_v2.understanding.response import ClipUnderstandingModelResponse, UnderstandingModelResponse
 from agent.video_parse_v2.voiceprint import (
     VoiceprintInput, build_tools as build_voiceprint_tools,
 )
@@ -57,7 +58,10 @@ from agent.video_parse_v2.state import (
 )
 from engine.common.transcription import TranscriptAnalysis, VideoASRAgent, normalize_transcription
 from .video_parse_results import build_asr_identity, build_diarization_identity
+from .video_parse_routing import classify_video, preview_times
 from engine.parsev2.diarization import normalize_diarization, assign_video_speakers
+from engine.parsev2.camera import SampledPan
+from engine.parsev2.camera_evidence import camera_motion_hints
 from engine.parsev2.observations import ASRResult, OCRResult, select_asr_window
 from engine.parsev2.planning import ChunkPlan, IntervalPlan
 from engine.parsev2.schemas import VideoParseResult
@@ -115,6 +119,7 @@ from ..utils.execution import (
     BlockingCallCancelled, ExecutionCalls, cleanup_execution, execution_calls, run_blocking,
 )
 from .parse_usage import ParseUsageService
+from .video_parse_content import EVENT_INDEX_TARGET_DETAIL_KEY
 from .video_parse_index_coordinator import (
     VideoParseIndexCoordinator,
 )
@@ -144,6 +149,8 @@ class _ChunkBinding:
 class VideoParseRuntimeService:
     """Run Parse with its transactional service, media and Gateway dependencies."""
 
+    _dispatch = None
+
     def __init__(
         self,
         persistence: VideoParsePersistenceService,
@@ -172,6 +179,7 @@ class VideoParseRuntimeService:
             raise ValueError("Event indexing requires both a store and its configured contract")
         self._persistence = persistence
         self._queue = queue
+        self._dispatch = getattr(queue, "dispatch", None)
         self._artifact_store = artifact_store
         self._media_service = media_service
         self._gateway_config = gateway_config
@@ -225,6 +233,8 @@ class VideoParseRuntimeService:
                         and task_input.task.status in {"PENDING", "PREPARING", "PARSING"}):
                     video_asr = True
                     await self._prepare_video_asr(lease, task_input, config.models.asr, config.models.diarization)
+                if config.auto_content_kind and config.content_kind is None:
+                    config = await self._route_video_content(lease, task_input, config)
                 visual = config.visual_input
                 video_required = visual.mode == "video"
                 if not video_required and not video_asr and config.models.asr.mode != "none":
@@ -242,6 +252,7 @@ class VideoParseRuntimeService:
                     ocr_enabled=config.ocr_enabled,
                     overlap_ms=visual.context_overlap_seconds * 1000 if config.understanding_enabled else 0,
                     visual_fallback_enabled=config.models.understanding.fallback is not None,
+                    camera_frames_required=config.content_kind == "clip" and config.understanding_enabled,
                     chunk_video_required=video_required,
                     check_active=lambda: self._require_video_active(lease),
                 )
@@ -265,6 +276,31 @@ class VideoParseRuntimeService:
                     self._video_transcripts.pop((lease.video_parse_task_id, lease.lease_version), None)
                 self._video_lease.reset(token)
                 execution_calls.reset(calls_token)
+
+    async def _route_video_content(self, lease, task_input, config):
+        transcript = self._video_transcripts.get((lease.video_parse_task_id, lease.lease_version), {})
+        evidence = routing_evidence(task_input.original_filename, task_input.duration_seconds,
+                                    task_input.background, transcript.get("transcript", []), series_name=task_input.series_name)
+
+        def check_active():
+            self._require_video_active(lease)
+
+        def prepare_frames():
+            # Seek by source time rather than decoding the whole video at a provisional FPS.
+            return self._media_service.prepare_event_frames(
+                MediaLeaseIdentity(lease.video_parse_task_id, lease.video_parse_task_id,
+                                   lease.lease_version, execution_kind="video"),
+                source_video=self._artifact_store.resolve(task_input.inference_proxy_uri or task_input.original_source_uri),
+                timestamps_ms=preview_times(task_input.duration_seconds),
+                max_height=min(config.visual_input.max_height, 360), check_active=check_active,
+            )
+
+        async with self._model_stage(lease, task_input, sequence_no=None, category="parse",
+                                     stage="content_route", check_active=check_active):
+            decision = await self._run_blocking(classify_video, evidence, gateway=self._gateway,
+                                                visual_model=config.models.understanding,
+                                                prepare_frames=prepare_frames, check_active=check_active)
+        return await asyncio.to_thread(self._persistence.commit_content_route, lease, decision)
 
     async def _prepare_video_asr(self, lease, task_input, model, diarization_model=None) -> None:
         """Recover each audio stage before publishing media to Chunk consumers."""
@@ -381,7 +417,8 @@ class VideoParseRuntimeService:
                     inputs,
                     check_active=manager.check_active,
                     index_generation=task_input.task.target_index_generation,
-                    **({"lease": lease} if self._event_store is not None else {}),
+                    **({"lease": lease, "frozen_target": task_input.task.detail.get(EVENT_INDEX_TARGET_DETAIL_KEY)}
+                       if self._event_store is not None else {}),
                 )
                 try:
                     await self._run_blocking(coordinator.index_chunk, lease)
@@ -580,7 +617,13 @@ class VideoParseRuntimeService:
         self, video_parse_task_id: str, lease: LeaseToken
     ) -> VideoTaskStatus:
         current = self._require_video_token(video_parse_task_id, lease)
+        if self._dispatch is not None:
+            active = await asyncio.to_thread(self._dispatch.active_status, current)
+            if active is not None:
+                return VideoTaskStatus(active)
         state = await asyncio.to_thread(self._persistence.aggregate_task, current)
+        if self._dispatch is not None:
+            self._dispatch.invalidate(video_parse_task_id)
         return VideoTaskStatus(state.status)
 
     # Agent runtime: Voiceprint preparation -------------------------------
@@ -999,10 +1042,10 @@ class VideoParseRuntimeService:
         binding = self._require_chunk_binding()
         if binding.lease.chunk_parse_task_id != chunk_parse_task_id:
             raise VideoParseLeaseLostError("Chunk lease targets another task")
-        state = await asyncio.to_thread(
-            self._persistence.load_chunk_execution, binding.lease
-        )
-        binding.state = state
+        state = binding.state
+        if state is None:
+            state = await asyncio.to_thread(self._persistence.load_chunk_execution, binding.lease)
+            binding.state = state
         inputs = self._parse_input(state.task_input)
         asr = inputs.parse_config.models.asr
         return ChunkExecution(
@@ -1021,8 +1064,14 @@ class VideoParseRuntimeService:
                              if asr.mode != "none" and asr.scope == "video" else None),
         )
 
-    async def prepare_chunk_visual(self, execution: ChunkExecution) -> None:
-        await self._ensure_chunk_media(execution)
+    async def prepare_chunk_visual(self, execution: ChunkExecution) -> list[SampledPan] | None:
+        media = await self._ensure_chunk_media(execution)
+        config = execution.inputs.parse_config
+        if config.content_kind == "clip" and config.understanding_enabled:
+            frames = [(at, path) for at, path in media.frames
+                      if execution.allowed_start_seconds <= at < execution.allowed_end_seconds]
+            return await self._run_blocking(camera_motion_hints, frames)
+        return None
 
     async def transcribe_chunk(self, execution: ChunkExecution) -> ASRResult:
         media = await self._ensure_chunk_media(execution)
@@ -1134,7 +1183,8 @@ class VideoParseRuntimeService:
             media_inputs,
             fallback_inputs=fallback_inputs,
             schema_name="video_parse_v2_chunk",
-            result_type=UnderstandingModelResponse,
+            result_type=(ClipUnderstandingModelResponse if execution.inputs.parse_config.content_kind == "clip"
+                         else UnderstandingModelResponse),
         )
 
     async def repair_chunk_understanding(
@@ -1153,7 +1203,8 @@ class VideoParseRuntimeService:
             "fallback": fallback,
         })
         return await self._generate_text_structured(
-            binding, prompt, tools=(), result_type=UnderstandingModelResponse,
+            binding, prompt, tools=(), result_type=(ClipUnderstandingModelResponse
+                if execution.inputs.parse_config.content_kind == "clip" else UnderstandingModelResponse),
             schema_name="video_parse_v2_chunk_repair",
         )
 
@@ -1308,7 +1359,8 @@ class VideoParseRuntimeService:
         scope = ModelCallRequestScope(manager)
         with scope.capture(), model_call_context({"refine_generation": subscription.generation}):
             request = asyncio.create_task(self._generate_text_structured(
-                binding, prompt, tools=(), result_type=RefineModelResponse,
+                binding, prompt, tools=(), result_type=(ClipRefineModelResponse
+                    if snapshot["inputs"].parse_config.content_kind == "clip" else RefineModelResponse),
                 schema_name="IntervalRefinementResult",
             ))
         changed = asyncio.create_task(subscription.wait(versions))
@@ -2006,7 +2058,7 @@ class VideoParseRuntimeService:
                 schema_name=schema_name, result_type=result_type,
                 tools=tools,
                 context_checkpoint=canvas.checkpoint if canvas is not None else None,
-                check_control=manager.check_active if manager is not None else None,
+                check_control=manager.raise_if_cancelled if manager is not None else None,
                 fallback_inputs=fallback_inputs,
                 tool_harness=tool_harness,
             )
@@ -2014,7 +2066,7 @@ class VideoParseRuntimeService:
             self._invoke_multimodal, binding, inputs,
             schema_name=schema_name, result_type=result_type,
             fallback_inputs=fallback_inputs,
-            check_control=manager.check_active if manager is not None else None,
+            check_control=manager.raise_if_cancelled if manager is not None else None,
         )
 
     async def _generate_text_structured(
@@ -2087,6 +2139,7 @@ class VideoParseRuntimeService:
         check_active: Callable[[], None],
         index_generation: int,
         lease: ChunkParseLease | None = None,
+        frozen_target: dict[str, object] | None = None,
     ) -> tuple[VideoParseIndexCoordinator, EmbeddingModel]:
         embedding = inputs.parse_config.models.embedding
         definition = EmbeddingModelBinding.model_validate(embedding.model_dump(exclude_none=True))
@@ -2119,12 +2172,14 @@ class VideoParseRuntimeService:
                     raise ValueError("task encoder differs from the configured Event index")
                 configured = {"index_name": self._event_store.index_name,
                               "contract_id": event_contract.contract_id, "contract": event_contract.as_dict()}
-                frozen = self._persistence.bind_event_index_target(lease, configured)
+                frozen = (frozen_target if frozen_target is not None
+                          else self._persistence.bind_event_index_target(lease, configured))
                 accepted = EventIndexingContract.model_validate(frozen["contract"])
                 if (accepted.semantic_encoder != event_contract.semantic_encoder
                         or accepted.vision_encoder != event_contract.vision_encoder):
                     raise ValueError("Event encoder differs from the frozen task target")
                 event_options = {"event_store": self._event_store, "event_target": frozen}
+            manager = self._model_manager.get()
             coordinator = VideoParseIndexCoordinator(
                 self._persistence,
                 self._elasticsearch_store,
@@ -2132,6 +2187,7 @@ class VideoParseRuntimeService:
                 media_resolver=self._artifact_store.resolve,
                 media_service=self._media_service,
                 check_active=check_active,
+                check_cancelled=manager.raise_if_cancelled if manager is not None else check_active,
                 **event_options,
                 contract=ChunkIndexingContract(
                     retrieval_contract_id=PARSE_RETRIEVAL_CONTRACT,

@@ -30,6 +30,7 @@ class LlamaCppEmbeddingError(RuntimeError):
 
 class LlamaCppTextEmbedder:
     provider_name = "llama_cpp"
+    protocol_label = "llama.cpp"
 
     def __init__(
         self, model: str, *, base_url: str, dimensions: int,
@@ -69,23 +70,20 @@ class LlamaCppTextEmbedder:
             unregister = call.add_cancel_callback(self._client.close)
             try:
                 call.raise_if_cancelled()
-                response = self._client.post(f"{self.base_url}/v1/embeddings", json={
-                    "model": self.model_name, "input": [text],
-                    "encoding_format": "float", "truncate": False,
-                })
+                response = self._request_embedding(text)
                 response.raise_for_status()
                 call.raise_if_cancelled()
                 try:
                     payload = response.json()
                 except ValueError as error:
-                    raise LlamaCppEmbeddingError("llama.cpp returned invalid embedding JSON") from error
+                    raise LlamaCppEmbeddingError(f"{self.protocol_label} returned invalid embedding JSON") from error
                 if not isinstance(payload, dict):
-                    raise LlamaCppEmbeddingError("llama.cpp returned an invalid embedding envelope")
+                    raise LlamaCppEmbeddingError(f"{self.protocol_label} returned an invalid embedding envelope")
                 model = payload.get("model")
                 # Preserve the actual identity; an unrelated model must not populate this index.
                 call.capture_response({"model": model, "headers": response.headers})
                 if model != self.model_name:
-                    raise LlamaCppEmbeddingError("llama.cpp response model differs from the configured model")
+                    raise LlamaCppEmbeddingError(f"{self.protocol_label} response model differs from the configured model")
                 usage = payload.get("usage")
                 tokens = usage.get("prompt_tokens") if isinstance(usage, dict) else None
                 if type(tokens) is int and tokens >= 0:
@@ -94,23 +92,28 @@ class LlamaCppTextEmbedder:
                     }})
                 embeddings = payload.get("data")
                 if not isinstance(embeddings, list) or len(embeddings) != 1:
-                    raise LlamaCppEmbeddingError("llama.cpp must return exactly one embedding")
+                    raise LlamaCppEmbeddingError(f"{self.protocol_label} must return exactly one embedding")
                 item = embeddings[0]
                 if not isinstance(item, dict) or item.get("index") != 0:
-                    raise LlamaCppEmbeddingError("llama.cpp returned an invalid embedding index")
+                    raise LlamaCppEmbeddingError(f"{self.protocol_label} returned an invalid embedding index")
                 vector = item.get("embedding")
                 if not isinstance(vector, list) or len(vector) != self.dimensions:
-                    raise LlamaCppEmbeddingError("llama.cpp embedding dimensions differ from the configured dimensions")
+                    raise LlamaCppEmbeddingError(f"{self.protocol_label} embedding dimensions differ from the configured dimensions")
                 if any(type(value) not in (int, float) or not math.isfinite(value) for value in vector):
-                    raise LlamaCppEmbeddingError("llama.cpp embedding must contain finite numbers")
+                    raise LlamaCppEmbeddingError(f"{self.protocol_label} embedding must contain finite numbers")
                 norm = math.hypot(*vector)
                 if not math.isfinite(norm) or norm == 0:
-                    raise LlamaCppEmbeddingError("llama.cpp returned a zero or invalid embedding")
+                    raise LlamaCppEmbeddingError(f"{self.protocol_label} returned a zero or invalid embedding")
                 return EmbeddingResult(
                     model=model, modality="text", vector=[value / norm for value in vector],
                 )
             finally:
                 unregister()
+
+    def _request_embedding(self, text: str) -> httpx.Response:
+        return self._client.post(f"{self.base_url}/v1/embeddings", json={
+            "model": self.model_name, "input": [text], "encoding_format": "float", "truncate": False,
+        })
 
     def embed_image(self, image_path: str | Path) -> EmbeddingResult:
         raise ValueError("llama_cpp_embedding only supports text; image embedding is disabled")
@@ -123,3 +126,13 @@ class LlamaCppTextEmbedder:
 
     def close(self) -> None:
         self._client.close()
+
+class OpenAITextEmbedder(LlamaCppTextEmbedder):
+    """OpenAI Embeddings wire format with the same index vector validation."""
+    provider_name = "openai"
+    protocol_label = "OpenAI embeddings"
+
+    def _request_embedding(self, text: str) -> httpx.Response:
+        return self._client.post(f"{self.base_url}/embeddings", json={
+            "model": self.model_name, "input": [text], "encoding_format": "float", "dimensions": self.dimensions,
+        })

@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-04T13:50:00+08:00",
+ "updatedAt": "2026-11-10T15:51:31+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 8,
+ "revision": 33,
  "categories": [
   {
    "id": "parse",
@@ -3437,12 +3437,12 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "title": "课程视频动态抽帧与解析成本优化",
    "category": "parse",
    "type": "requirement",
-   "status": "todo",
+   "status": "progressing",
    "priority": "P1",
    "description": "116 分钟《Let's build GPT》使用 DeepSeek Flash 的成本接近 ¥40，7 集约为 ¥280，当前难以负担。现阶段假设是课程画面变化程度和频率较低，3 fps 的图片输入占据主要成本；目标是将单集成本降至约 ¥40/3（约 ¥13.3）。11-03 已有部分实测，见 LOOP-03：Understand 同费率节省 50.7%，未达 2/3，原因是推理输出增加；Refine 沿用 medium 时成本 +139%。",
-   "next": "评审并设计 ASR 完成后的视频类型识别：结合 Series 背景介绍与 Jev 区分课程静态画面和动画、演出等复杂内容；用户未显式配置时，课程默认 0.5 fps、动画默认 3 fps。对照全量低成本 OCR + ASR、低帧率 VLM 摘要及按画面变化补帧；用户显式配置始终优先。",
-   "verification": "分别记录图片数量、输入 token、模型费用、OCR/ASR 成本、耗时与内容质量，验证 3 fps 降至 0.5 fps 是否能实际节省约 2/3，并单独 A/B 验证推理档位（chunk 53 已测 low / medium / high，medium 最优但只有一块样本）。不预设低推理档能够减少错误，也不预设 Jev 无法联网会影响分类；使用代表性课程与动画样本验收。分类依据和最终 fps 应写入任务快照，保证重试可复现。",
-   "updatedAt": "2026-11-03",
+   "next": "在实际发布后核对 CPU 默认上传的任务类型和有效帧率，继续按原口径对照整集费用与课程质量。",
+   "verification": "分别记录图片数量、输入 token、模型费用、OCR/ASR 成本、耗时与内容质量，验证 3 fps 降至 0.5 fps 是否能实际节省约 2/3，并单独 A/B 验证推理档位（chunk 53 已测 low / medium / high，medium 最优但只有一块样本）。不预设低推理档能够减少错误，也不预设 Jev 无法联网会影响分类；使用代表性课程与动画样本验收。分类依据和最终 fps 应写入任务快照，保证重试可复现。 2026-11-09 普通上传路由已实测，14 条真实输入取得 13 个正确结果和 1 次供应端断线，详见 #82。",
+   "updatedAt": "2026-11-09",
    "tags": [
     "成本优化",
     "待评审",
@@ -3455,7 +3455,7 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
     "MOD-PARSE",
     "MOD-LOOP"
    ],
-   "branch": "",
+   "branch": "feat/parse-pre-hook-router",
    "links": [
     {
      "label": "性能 TRD",
@@ -3466,6 +3466,11 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "label": "成本记录",
      "url": "https://github.com/owariband/Seekino/blob/99e27b04/docs/report/gateway/deepseek-flash-parse-20261103.md",
      "kind": "evidence"
+    },
+    {
+     "label": "默认上传解析路由 #82",
+     "kind": "pr",
+     "url": "https://github.com/owariband/Seekino/pull/82"
     }
    ],
    "source": {
@@ -4484,6 +4489,643 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    ],
    "branch": "",
    "links": []
+  },
+  {
+   "id": "DEPLOY-01",
+   "title": "Docker 发布资源完整性与 CPU main 源码对齐",
+   "category": "platform",
+   "type": "requirement",
+   "status": "done",
+   "priority": "P0",
+   "description": "Docker 发布资源及可选 Debian 镜像构建修复已发布；CPU 正式源码为远端 main 0282fcb0，工作树干净，旧目录和镜像保留回退。",
+   "next": "本需求已验收。正式业务启动仍需私有 .env.cloud、TLS 和模型配置；公网及业务链路另行验收。",
+   "verification": "main 0282fcb0：API/Web 构建退出码 0；首页与两 Logo HTTP 200、哈希一致；媒体排除、无网络依赖导入和占位生产 Compose 检查通过；初始化回归 6 passed；CPU HEAD 与远端 main 一致。",
+   "updatedAt": "2026-11-06",
+   "tags": [
+    "发布",
+    "Docker"
+   ],
+   "related": [
+    "MOD-PLATFORM"
+   ],
+   "branch": "fix/docker-web-assets",
+   "links": [
+    {
+     "label": "TRD",
+     "url": "https://github.com/owariband/Seekino/blob/fix/docker-web-assets/docs/design/03-product-reassessment/docker-web-assets-trd.md",
+     "kind": "trd"
+    },
+    {
+     "label": "PR #58",
+     "url": "https://github.com/owariband/Seekino/pull/58",
+     "kind": "pr"
+    },
+    {
+     "label": "main 发布 #59",
+     "url": "https://github.com/owariband/Seekino/pull/59",
+     "kind": "pr"
+    },
+    {
+     "label": "部署 main 提交",
+     "url": "https://github.com/owariband/Seekino/commit/0282fcb0da58a4292007732c931823dc11720a22",
+     "kind": "source"
+    }
+   ]
+  },
+  {
+   "id": "DEPLOY-02",
+   "title": "无 SMTP 的 cloud 游客启动",
+   "category": "platform",
+   "type": "requirement",
+   "status": "verifying",
+   "priority": "P0",
+   "description": "邮件配置缺失阻断整个身份服务；现已分离可选邮件能力，候选已实机健康。",
+   "next": "完成 main 发布 #63 并核对正式运行提交。",
+   "verification": "相关回归 99 passed、7 skipped；8 项 Agent 夹具错误在基线复现。CPU 五服务 healthy，HTTPS/游客通过，管理和 CSRF 403、未配置邮件 503。",
+   "updatedAt": "2026-11-07",
+   "tags": [
+    "cloud",
+    "身份"
+   ],
+   "related": [
+    "MOD-PLATFORM"
+   ],
+   "branch": "fix/cloud-guest-without-smtp",
+   "links": [
+    {
+     "label": "TRD",
+     "url": "https://github.com/owariband/Seekino/blob/fix/cloud-guest-without-smtp/docs/design/03-product-reassessment/cloud-guest-without-smtp-trd.md",
+     "kind": "trd"
+    },
+    {
+     "label": "修复 #62",
+     "url": "https://github.com/owariband/Seekino/pull/62",
+     "kind": "pr"
+    },
+    {
+     "label": "发布 #63",
+     "url": "https://github.com/owariband/Seekino/pull/63",
+     "kind": "pr"
+    }
+   ]
+  },
+  {
+   "id": "DEPLOY-03",
+   "title": "CPU 私有云配置与空库启动验收",
+   "category": "platform",
+   "type": "task",
+   "status": "verifying",
+   "priority": "P0",
+   "description": "本地私有 env 已派生为生产配置并经 SSH 传输；CPU 五服务健康，候选镜像游客链路已验证。",
+   "next": "main 发布 #63 合并后切换正式镜像并核对提交。SMTP/管理员、GPU 依赖、可信 TLS 与样例迁移另行完成。",
+   "verification": "两端 env 权限 600 且被 Git 忽略；HTTPS 首页/健康/游客/空公开库通过；管理和 CSRF 403、邮箱禁用 503；公网域名/IP 健康 200；重启数 0。",
+   "updatedAt": "2026-11-07",
+   "tags": [
+    "cloud",
+    "运行配置"
+   ],
+   "related": [
+    "MOD-PLATFORM",
+    "DEPLOY-02"
+   ],
+   "branch": "chore/cloud-runtime-startup",
+   "links": [
+    {
+     "label": "云部署 TRD",
+     "url": "https://github.com/owariband/Seekino/blob/chore/cloud-runtime-startup/docs/design/03-product-reassessment/cloud-docker-deploy-trd.md",
+     "kind": "trd"
+    },
+    {
+     "label": "运行配置 #61",
+     "url": "https://github.com/owariband/Seekino/pull/61",
+     "kind": "pr"
+    },
+    {
+     "label": "main 发布 #63",
+     "url": "https://github.com/owariband/Seekino/pull/63",
+     "kind": "pr"
+    }
+   ]
+  },
+  {
+   "id": "DEPLOY-04",
+   "title": "SMTP 留空时提前说明登录注册未开放",
+   "category": "platform",
+   "type": "requirement",
+   "status": "verifying",
+   "priority": "P1",
+   "description": "账号服务提供 emailLoginEnabled；空配置展示游客模式和未开放说明，不收集邮箱；配置后保留原验证码流程。",
+   "next": "候选已通过实机验收，完成 main 发布 #63 后核对正式运行提交。",
+   "verification": "后端 94 passed、7 skipped；前端 181 passed、类型检查与构建通过。候选 f811903f 五服务 healthy；真实 HTTPS 能力/权限通过，Chrome 桌面/手机均显示未开放，零浏览器邮件请求与页面异常。首次权限失败已回退并修正后复验。",
+   "updatedAt": "2026-11-07",
+   "tags": [
+    "cloud",
+    "身份",
+    "前端"
+   ],
+   "related": [
+    "DEPLOY-02",
+    "DEPLOY-03",
+    "MOD-PLATFORM"
+   ],
+   "branch": "feat/email-login-availability",
+   "links": [
+    {
+     "label": "TRD",
+     "url": "https://github.com/owariband/Seekino/blob/feat/email-login-availability/docs/design/03-product-reassessment/smtp-login-availability-trd.md",
+     "kind": "trd"
+    },
+    {
+     "label": "PR #65",
+     "url": "https://github.com/owariband/Seekino/pull/65",
+     "kind": "pr"
+    },
+    {
+     "label": "main 发布 #63",
+     "url": "https://github.com/owariband/Seekino/pull/63",
+     "kind": "pr"
+    }
+   ]
+  },
+  {
+   "id": "DEPLOY-05",
+   "title": "云端 HTTP 链接自动跳转 HTTPS",
+   "category": "platform",
+   "type": "task",
+   "status": "done",
+   "priority": "P1",
+   "description": "当前 CPU 的 80 端口返回 308，目标为配置的公开域名并保留原始路径和查询参数。",
+   "next": "后续前端版本同步时带上 #69 的部署配置。HTTPS 公信证书按独立事项处理。",
+   "verification": "配置 a907e45e 在当前 Web 镜像隔离预检及 CPU 实机通过。公网直连/系统代理共六组请求均一次 308 到 HTTPS 200，Chrome 实测同一导航链。五服务健康，使用测试证书。",
+   "updatedAt": "2026-11-07",
+   "tags": [
+    "cloud",
+    "Nginx"
+   ],
+   "related": [
+    "MOD-PLATFORM",
+    "DEPLOY-03"
+   ],
+   "branch": "fix/cloud-http-redirect",
+   "links": [
+    {
+     "label": "云部署 TRD",
+     "url": "https://github.com/owariband/Seekino/blob/fix/cloud-http-redirect/docs/design/03-product-reassessment/cloud-docker-deploy-trd.md",
+     "kind": "trd"
+    },
+    {
+     "label": "修复 #69",
+     "url": "https://github.com/owariband/Seekino/pull/69",
+     "kind": "pr"
+    }
+   ]
+  },
+  {
+   "id": "PARSE-QUEUE-01",
+   "title": "按已提交块和窗口派发，缩短索引等待",
+   "category": "parse",
+   "type": "requirement",
+   "status": "verifying",
+   "priority": "P1",
+   "description": "按块和窗口的已提交状态领取，移除逐个 SSE 的 MySQL 续租并及时释放失效请求。",
+   "next": "用保留的任务核验剩余窗口的完成情况。20 分钟指标需要同条件从零到完成的计时，四集并发吞吐另测。",
+   "verification": "相同 9,071 个事件的流控制 SQL 降为 0。MyGO 第 3 集到达 10/10/1，但模型报错后最终失败，20 分钟指标未通过。 已备 198 帧及音频的交付中，整集和块行锁各从 200 次降到 2 次，最后一个文件链接后失租的交付被拦截。",
+   "updatedAt": "2026-11-07",
+   "tags": [
+    "解析调度",
+    "索引"
+   ],
+   "related": [
+    "MOD-PARSE"
+   ],
+   "branch": "perf/parse-ready-dispatch",
+   "links": [
+    {
+     "label": "PR #70",
+     "url": "https://github.com/owariband/Seekino/pull/70",
+     "kind": "pr"
+    },
+    {
+     "label": "TRD",
+     "url": "https://github.com/owariband/Seekino/blob/perf/parse-ready-dispatch/docs/design/03-product-reassessment/parse-ready-dispatch-trd.md",
+     "kind": "trd"
+    },
+    {
+     "label": "动画实跑",
+     "url": "https://github.com/owariband/Seekino/blob/perf/parse-ready-dispatch/docs/report/server/mq/parse-ready-dispatch/animation.md",
+     "kind": "report"
+    },
+    {
+     "label": "验证记录",
+     "url": "https://github.com/owariband/Seekino/blob/perf/parse-ready-dispatch/docs/report/server/mq/parse-ready-dispatch/README.md",
+     "kind": "source"
+    },
+    {
+     "label": "帧文件租约 #75",
+     "url": "https://github.com/owariband/Seekino/pull/75",
+     "kind": "pr"
+    }
+   ],
+   "source": {
+    "ref": "perf/parse-ready-dispatch",
+    "path": "docs/dev/problems.md",
+    "line": 2796
+   }
+  },
+  {
+   "id": "CHAT-RECONNECT",
+   "title": "Chat 在工具调用行显示 reconnecting 与重试次数",
+   "category": "chat",
+   "type": "task",
+   "status": "verifying",
+   "priority": "P1",
+   "description": "在回答内容中用工具调用行显示真实重试次数。",
+   "next": "合并后在 local 观看问答复验。",
+   "verification": "本机模拟 HTTP、服务快照、组件和 Chromium 模拟流已验证。",
+   "updatedAt": "2026-11-07",
+   "tags": [],
+   "related": [
+    "MOD-CHAT"
+   ],
+   "branch": "fix/chat-model-retry-status",
+   "links": [
+    {
+     "label": "PR #71",
+     "url": "https://github.com/owariband/Seekino/pull/71",
+     "kind": "pr"
+    }
+   ]
+  },
+  {
+   "id": "PARSE-DRAFT-01",
+   "title": "Parse 按正文大小保存草稿并解耦 SSE 续租",
+   "category": "parse",
+   "type": "task",
+   "status": "verifying",
+   "priority": "P1",
+   "description": "模型正文新增独立调用草稿，1024 UTF-8 字节或调用退出保存；移除逐 SSE 持久续租。",
+   "next": "部署时按现有 init-db 流程初始化草稿表。两项改动同时启用后的整集耗时与多集吞吐仍待实测。",
+   "verification": "初版 941 项隔离回归通过。与 #70 联合验证时，1,548 项相关回归和 31 项真实 MySQL 用例通过。9,071 个 SSE 事件产生 30 次中途草稿保存和 2 次结束保存，流回调父行加锁及续租更新均为 0。",
+   "updatedAt": "2026-11-07",
+   "tags": [
+    "草稿",
+    "租约",
+    "隔离验证"
+   ],
+   "related": [
+    "MOD-PARSE"
+   ],
+   "branch": "feat/parse-output-drafts",
+   "links": [
+    {
+     "label": "TRD",
+     "url": "https://github.com/owariband/Seekino/blob/dev/docs/design/03-product-reassessment/parse-output-drafts-trd.md",
+     "kind": "trd"
+    },
+    {
+     "label": "PR #64",
+     "url": "https://github.com/owariband/Seekino/pull/64",
+     "kind": "pr"
+    },
+    {
+     "label": "验证报告",
+     "url": "https://github.com/owariband/Seekino/blob/dev/docs/report/server/service/parse-output-drafts-20261107.md",
+     "kind": "evidence"
+    }
+   ]
+  },
+  {
+   "id": "CHAT-HEADER-01",
+   "title": "紧凑顶栏与公开系列空态",
+   "category": "chat",
+   "type": "task",
+   "status": "verifying",
+   "priority": "P2",
+   "description": "让游客在范围控件旁看到无可检索系列的原因，精简桌面和手机导航。",
+   "next": "通过发布 PR 进入 main 后，在 CPU 公网复验新顶栏和范围状态。",
+   "verification": "已在 CPU main 核对真实左侧栏与手机抽屉。微调构建在 1440、390、320px 通过，624 项单测、23 项浏览器用例通过。",
+   "updatedAt": "2026-11-08",
+   "tags": [
+    "UI"
+   ],
+   "related": [
+    "CHAT-LAYOUT-01"
+   ],
+   "branch": "fix/chat-header-scope",
+   "links": [
+    {
+     "label": "PR #78",
+     "url": "https://github.com/owariband/Seekino/pull/78",
+     "kind": "pr"
+    },
+    {
+     "label": "设计与验收",
+     "url": "https://github.com/owariband/Seekino/blob/fix/chat-header-scope/docs/design/03-product-reassessment/chat-header-scope-trd.md",
+     "kind": "trd"
+    }
+   ]
+  },
+  {
+   "id": "CHAT-LAYOUT-01",
+   "title": "独立对话页：左侧历史与居中草稿",
+   "category": "chat",
+   "type": "requirement",
+   "status": "done",
+   "priority": "P1",
+   "description": "历史浮层遮挡正文，欢迎区与输入框脱节；调整比例和对话过渡，保留延迟创建。",
+   "next": "随 #67 集成到 dev，生产发布由独立 PR 跟进。",
+   "verification": "593 项分支单测、3 项浏览器用例通过；Kino 联合版本 601 项单测、类型与构建通过，5188 真实历史与界面已接入。无操作 create=0；远端模型未测。",
+   "updatedAt": "2026-11-08",
+   "tags": [
+    "UI"
+   ],
+   "related": [
+    "MOD-CHAT"
+   ],
+   "branch": "feat/chat-sidebar-layout",
+   "links": [
+    {
+     "label": "TRD",
+     "url": "https://github.com/owariband/Seekino/blob/feat/chat-sidebar-layout/docs/design/03-product-reassessment/chat-sidebar-layout-trd.md",
+     "kind": "trd"
+    },
+    {
+     "label": "PR #67",
+     "url": "https://github.com/owariband/Seekino/pull/67",
+     "kind": "pr"
+    },
+    {
+     "label": "验收报告",
+     "url": "https://github.com/owariband/Seekino/blob/feat/chat-sidebar-layout/docs/report/web/chat-sidebar-layout-20261107.md",
+     "kind": "source"
+    }
+   ]
+  },
+  {
+   "id": "CHAT-COMPOSER-02",
+   "title": "会话级回答模型、附件输入与可调历史栏",
+   "category": "chat",
+   "type": "requirement",
+   "status": "done",
+   "priority": "P1",
+   "description": "在聊天框下方选择当前会话的回答模型；输入面板内添加图片，桌面历史栏可调宽。",
+   "next": "随 #68 集成到 dev，生产发布由独立 PR 跟进。",
+   "verification": "本机 5188 已验证三个模型选项、单行回复、桌面拖动与窄屏抽屉；草稿选择不创建会话。隔离执行验证两会话路由、幂等和并发改模。",
+   "updatedAt": "2026-11-08",
+   "tags": [
+    "UI"
+   ],
+   "related": [
+    "MOD-CHAT",
+    "CHAT-LAYOUT-01"
+   ],
+   "branch": "feat/chat-composer-models",
+   "links": [
+    {
+     "label": "TRD",
+     "url": "https://github.com/owariband/Seekino/blob/feat/chat-composer-models/docs/design/03-product-reassessment/chat-composer-models-trd.md",
+     "kind": "trd"
+    },
+    {
+     "label": "PR #68",
+     "url": "https://github.com/owariband/Seekino/pull/68",
+     "kind": "pr"
+    },
+    {
+     "label": "验收记录",
+     "url": "https://github.com/owariband/Seekino/blob/feat/chat-composer-models/docs/report/web/chat-composer-models-20261107.md",
+     "kind": "source"
+    }
+   ]
+  },
+  {
+   "id": "SETTINGS-UI-01",
+   "title": "分类设置、草稿返回与 Kino 偏好",
+   "category": "chat",
+   "type": "requirement",
+   "status": "done",
+   "priority": "P1",
+   "description": "将设备偏好、会话模型和管理员配置接到响应式设置页，保留正在输入的聊天。",
+   "next": "随 #72 集成到 dev，生产发布由独立 PR 跟进。",
+   "verification": "5188 核对模型、焦点、原选区、手机目录及观看偏好同步。619 项联合单测和 18 项相关浏览器用例通过。",
+   "updatedAt": "2026-11-08",
+   "tags": [
+    "UI"
+   ],
+   "related": [
+    "CHAT-COMPOSER-02",
+    "MOD-CHAT"
+   ],
+   "branch": "feat/settings-workspace",
+   "links": [
+    {
+     "label": "设计",
+     "url": "https://github.com/owariband/Seekino/blob/feat/settings-workspace/docs/design/03-product-reassessment/settings-workspace-trd.md",
+     "kind": "trd"
+    },
+    {
+     "label": "PR #72",
+     "url": "https://github.com/owariband/Seekino/pull/72",
+     "kind": "pr"
+    },
+    {
+     "label": "试验与验收",
+     "url": "https://github.com/owariband/Seekino/blob/feat/settings-workspace/docs/report/web/settings-workspace-20261107.md",
+     "kind": "source"
+    }
+   ]
+  },
+  {
+   "id": "MODEL-REGISTRY-ROLES-01",
+   "title": "模型服务注册与用途分配",
+   "category": "chat",
+   "type": "requirement",
+   "status": "done",
+   "priority": "P1",
+   "description": "复用模型服务及独立凭据，为聊天、解析和检索分配模型。",
+   "next": "随 #76 集成到 dev，生产发布由独立 PR 跟进。",
+   "verification": "已核对 8 个连接、6 个用途、独立凭据与 cloud 权限。设置展开栏通过日夜主题、320px / 360px 窄屏及聊天草稿返回验证。",
+   "updatedAt": "2026-11-08",
+   "tags": ["UI"],
+   "related": ["MOD-CHAT", "CHAT-PERSONAL-MODELS-01"],
+   "branch": "feat/model-registry-roles",
+   "links": [
+    {"label":"设计","url":"https://github.com/owariband/Seekino/blob/feat/model-registry-roles/docs/design/03-product-reassessment/model-registry-roles-trd.md","kind":"trd"},
+    {"label":"PR #76","url":"https://github.com/owariband/Seekino/pull/76","kind":"pr"}
+   ]
+  },
+  {
+   "id": "CHAT-PERSONAL-MODELS-01",
+   "title": "自定义个人模型协议、地址与模型 ID",
+   "category": "chat",
+   "type": "requirement",
+   "status": "done",
+   "priority": "P1",
+   "description": "从设置写回生效 YAML，当前会话独立选模，cloud 管理配置按身份隔离。",
+   "next": "随 #74 集成到 dev，生产发布由独立 PR 跟进。",
+   "verification": "四种协议完成本地 API 收发和工具合同测试。Chrome 核对服务编辑、选模、实际发送、删除和 320px 手机布局。 无配置账号首次发问前创建 0 个聊天。本机补验识别 3 个 YAML 回答模型与 3 个密钥掩码，默认及历史选择使用生效绑定。后续复验覆盖文件写回、密钥轮换及 cloud 游客禁止访问管理接口。",
+   "updatedAt": "2026-11-08",
+   "tags": [
+    "UI"
+   ],
+   "related": [
+    "MOD-CHAT",
+    "SETTINGS-UI-01"
+   ],
+   "branch": "feat/personal-model-connections",
+   "links": [
+    {
+     "label": "设计",
+     "url": "https://github.com/owariband/Seekino/blob/feat/personal-model-connections/docs/design/03-product-reassessment/personal-model-connections-trd.md",
+     "kind": "trd"
+    },
+    {
+     "label": "PR #74",
+     "url": "https://github.com/owariband/Seekino/pull/74",
+     "kind": "pr"
+    },
+    {
+     "label": "验收",
+     "url": "https://github.com/owariband/Seekino/blob/feat/personal-model-connections/docs/report/web/personal-model-connections-20261107.md",
+     "kind": "source"
+    }
+   ]
+  },
+  {
+   "id": "EDIT-ANIME-01",
+   "title": "按表情找动画素材并浏览角色全部已标注出镜",
+   "category": "search",
+   "type": "requirement",
+   "status": "verifying",
+   "priority": "P1",
+   "description": "动画任务记录可回看的表情、姿态与视觉转折。MCP 在常规排序外可翻完整个系列或一个角色的发布事件。",
+   "next": "新编辑从 MCP 自主选镜、搭配 P5R 范例的成片验收沿 #50 推进。",
+   "verification": "EP04 完整重解析 24 个分块与 22 个 Refine 窗口。原剪辑查询由未命中变为第 4，表情查询为第 3。五集 2,916 个发布事件及 Anon 的 1,211 个出镜事件均逐页与 MySQL 对账。",
+   "updatedAt": "2026-11-08",
+   "tags": [
+    "动画演示"
+   ],
+   "related": [
+    "PERSON-01",
+    "MOD-SEARCH"
+   ],
+   "branch": "feat/anime-material-recall",
+   "links": [
+    {
+     "label": "实现 PR #77",
+     "kind": "pr",
+     "url": "https://github.com/owariband/Seekino/pull/77"
+    },
+    {
+     "label": "主设计 #50",
+     "kind": "design",
+     "url": "https://github.com/owariband/Seekino/pull/50"
+    },
+    {
+     "label": "E4 实测",
+     "kind": "evidence",
+     "url": "https://github.com/owariband/Seekino/blob/feat/anime-material-recall/docs/report/agent/video_parse_v2/anime-material-recall-20261108.json"
+    }
+   ]
+  },
+  {
+   "id": "EDIT-CAMERA-01",
+   "title": "在素材解析和片段详情中描述镜头，保留连续运镜供剪辑复用",
+   "category": "parse",
+   "type": "requirement",
+   "status": "verifying",
+   "priority": "P1",
+   "description": "场景事件记录可见的镜头运动。剪辑素材保留方向、起落幅、节奏和画面依据，可在普通片段详情查看或从同一发布事件读取运镜参考。",
+   "next": "在实际部署按剪辑策略解析一段有手持或视差的素材，核对片段详情与原片。",
+   "verification": "四个原创控制样例与一条 10 秒 MP4 实模验证。灯塔片真实 Refine 保留连续横移，229 帧回放均方根误差 3.80 像素。另验隔离发布、检索、普通片段详情和 MCP 回读。",
+   "updatedAt": "2026-11-10",
+   "tags": ["剪辑素材", "运镜"],
+   "related": ["MOD-PARSE", "MOD-SEARCH", "EDIT-ANIME-01"],
+   "branch": "feat/clip-camera-reference",
+   "links": [
+    {
+     "label": "运镜解析与片段详情 PR #86",
+     "kind": "pr",
+     "url": "https://github.com/owariband/Seekino/pull/86"
+    },
+    {
+     "label": "上游普通上传判型 #82",
+     "kind": "pr",
+     "url": "https://github.com/owariband/Seekino/pull/82"
+    },
+    {
+     "label": "剪辑参考主设计 #50",
+     "kind": "design",
+     "url": "https://github.com/owariband/Seekino/pull/50"
+    }
+   ]
+  },
+  {
+   "id": "WATCH-THEME-01",
+   "title": "观看首页明暗切换时同步调整页面与视频封面",
+   "category": "library",
+   "type": "task",
+   "status": "verifying",
+   "priority": "unset",
+   "description": "让顶栏、页面和首页预览图一起渐变，正片保留原色。",
+   "next": "在 dev 预览确认 360 ms 时长及夜间封面亮度。",
+   "verification": "Chrome 桌面与 390px 视口已验证双向渐变、快速反向、设置、偏好恢复、减弱动态效果与播放器。视觉 review 待确认。",
+   "updatedAt": "2026-11-09",
+   "tags": [
+    "UI"
+   ],
+   "related": [
+    "MOD-LIBRARY",
+    "F09",
+    "SETTINGS-UI-01"
+   ],
+   "branch": "fix/theme-transition",
+   "links": [
+    {
+     "label": "设计与验收",
+     "url": "https://github.com/owariband/Seekino/blob/dev/docs/design/03-product-reassessment/theme-transition-trd.md",
+     "kind": "trd"
+    },
+    {
+     "label": "PR #80",
+     "url": "https://github.com/owariband/Seekino/pull/80",
+     "kind": "pr"
+    }
+   ]
+  },
+  {
+   "id": "PUBLIC-COURSE-01",
+   "title": "公开课程在解析期间继续播放、对话和逐集检索",
+   "category": "library",
+   "type": "requirement",
+   "status": "verifying",
+   "priority": "P1",
+   "description": "显式公开独立于索引，按每集的原片和最新完成任务确定可用能力。",
+   "next": "待 dev 集成和单独发布后，在 CPU 的 Karpathy 课程复核游客播放、追问和检索覆盖。",
+   "verification": "本地 Chrome 播放 E08 并跳至 6000 ms，完成八轮对话并刷新恢复历史。Chunk 实查七集，Event 实查六集，指定片段仅查一个来源。零索引、错集、撤回、访客隔离和依赖离线均有隔离回归。模型与 ES 使用替身。",
+   "updatedAt": "2026-11-10",
+   "tags": [
+    "公开课程",
+    "游客"
+   ],
+   "related": [
+    "MOD-LIBRARY",
+    "MOD-CHAT",
+    "MOD-SEARCH"
+   ],
+   "branch": "fix/public-course-readiness",
+   "links": [
+    {
+     "label": "修订与本地验收",
+     "url": "https://github.com/owariband/Seekino/blob/fix/public-course-readiness/docs/design/03-product-reassessment/public-course-readiness-trd.md",
+     "kind": "trd"
+    },
+    {
+     "label": "PR #87",
+     "url": "https://github.com/owariband/Seekino/pull/87",
+     "kind": "pr"
+    }
+   ]
   }
  ]
 }</script>

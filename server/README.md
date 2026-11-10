@@ -35,6 +35,14 @@ Deep Agents 的实时正文仍通过持久化后的累积 `answer.snapshot` 发�
 
 Server 可通过 `SEEKINO_CHAT_TRACE_DIR` 开启 Chat 诊断，在调用作用域内向 Gateway 注入目录；Gateway 不通过 Chat 消息身份选择采集策略。有效 FTT 需关联供应商 trace 与浏览器实际展示，不能用服务端快照耗时替代。设计与验收见 [Chat 流式 TRD](../docs/design/03-product-reassessment/chat-streaming-trd.md)。
 
+## Parse 模型正文草稿
+
+Server 在 Parse 调用作用域内观察 HTTP Chat Completions / Responses 正文，按调用 UUID 在内存累积；每新增至少 1,024 个 UTF-8 字节保存一次累计快照，调用退出时保存余量及终态。`parse_model_output_draft` 独立于父任务和正式解析结果，不包含指向父任务的外键；草稿读取以 tenant、Parse task 和 call ID 限定。非流式调用只在完整响应后保存，未暴露通用正文观察的 SDK/CLI 路径不提供中途草稿。
+
+`streaming` / `completed` / `failed` / `cancelled` 描述模型调用草稿；`completed` 不等于 Parse 业务结果通过校验或已提交。reasoning、工具参数和 prompt 不写入正文草稿。写库异常保留原模型处理路径并记录告警，本调用暂停中途重试、退出时最多再尝试一次。新增表通过显式 `init-db` 注册，运行库建表与服务加载单独验收；本次不会自动恢复暂停任务。设计、验证与运行边界见 [Parse 草稿 TRD](../docs/design/03-product-reassessment/parse-output-drafts-trd.md)。
+
+模型流中的 `check_control` 仅检查本地取消状态；租约仍由独立周期心跳续期，调用接纳、工具边界和正式提交继续保留持久检查。草稿保存不续租，也不作为任务恢复的已完成事实。
+
 ## 模型 Token 用量
 
 `GET /api/usage/overview?workspaceId=...` 从 `model_usage` 查询最近 30 天已记录调用。
@@ -87,8 +95,13 @@ Service 负责；Repository 保留事务内的状态与并发约束。
 | 工具 | 参数与结果 |
 |---|---|
 | `list_series` | `offset=0, limit=20`，分页列出本地系列与状态，`next_offset` 用于续页 |
-| `retrieve` | `query` 必填，可选 `series_ids`、`top_k=5`、`event_types`、`speaker`；返回 Event 证据及 `evidence_ref` |
+| `retrieve` | `query` 必填，可选 `series_ids`、`top_k=5`、`event_types`、`speaker`；返回 Event 证据及 `evidence_ref`。使用相同条件和 `next_cursor` 继续读取排序结果 |
+| `browse_events` | 指定 `series_id`，按集和时间翻完已发布事件。可用 `visible_names` 筛选出镜角色，自动展开明确的系列别名。单页 `limit` 为 1–50，传回 `next_cursor` 直到为空 |
 | `read_evidence` | 接收 `evidence_ref`，重验当前任务/内容版本，返回事件、分页 Chunk 上下文与媒体 URL |
+
+使用剪辑素材策略解析后，可以搜索“镜头向右横移，灯塔从左边出画，小船在右边入画”。命中的 `SCENE.camera_ref` 给出镜头方向、速度类别、起幅、落幅和画面依据。对这条事件调用 `read_evidence`，适合二维复现的运镜会附带 `camera_replay`，其中有版本化 ES 模块、入口 `cameraAt(elapsedMs, params, world, viewport)` 和原片时长。返回值是新画面中的裁取矩形，可直接用于 Canvas 的 `drawImage`。
+
+`params.progress_samples` 存在时，横移曲线使用带原片时间的背景位移采样。每对数字分别是镜头时长占比和行程占比，`travel_in_view_widths` 以一屏宽为单位。新画幅和起止锚点由剪辑端选择。未测得行程时，`travel_basis` 明示构图默认值。环绕等无法用此模板表达的动作仍能按描述检索。旧素材需按 `clip` 重新解析才能生成运镜记录。[设计与适用范围](../docs/design/03-product-reassessment/clip-camera-reference-trd.md)
 
 `top_k` 是不同 Chunk 的数量（最多 20），不是 Event 数量；同一 Chunk 可以包含多条命中事件。默认搜索本地 READY 系列，超过 50 个时先用 `list_series` 选择范围。Event 索引未覆盖会返回 `EVENT_INDEX_NOT_READY`，不会伪装成“没有匹配”。
 
@@ -328,6 +341,8 @@ Agent 对话中的既有回答和证据快照属于聊天历史，不在任务�
 `Idempotency-Key` 在 Workspace 内唯一。Conversation 详情直接返回 `workspaceId`，
 同一 Conversation 可以在后续消息选择不同动画。`messages/send` 的 JSON 可传 `seriesIds`，
 省略或空数组默认搜索当前 Workspace 全部 READY 动画；显式选择未 READY 动画返回 409。
+公开系列由管理者显式发布和撤回，原片和索引各自决定每集的播放与检索能力。普通聊天允许已授权的零索引课程。指定一门课时，`POST /api/search` 可用 `episodeOrder` 限定单集，Agent 的检索工具使用 `episode`。部分就绪的响应带实际 `searchedVideoIds`、`partial` 与集数提示。零就绪和服务离线分别返回 `SERIES_NOT_READY`（409）与 `RETRIEVAL_UNAVAILABLE`（503）。[设计和验收](../docs/design/03-product-reassessment/public-course-readiness-trd.md)
+
 每次 Kick 冻结实际 Scope，USER / ASSISTANT 消息均公开保存 `seriesIds`。前端复用
 `GET /api/series/list?workspaceId=...` 的 `seriesId/name/status` 实现多选；改变选择只影响
 下一次发送。消息幂等限定在 Conversation，并按原请求范围比较；原 Key 的“全部”重放

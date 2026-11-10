@@ -18,6 +18,7 @@ vi.mock("../../api/client", async (original) => ({
 const guest: AuthIdentity = {
   userId: "guest-a", email: null, isGuest: true, tenantId: null,
   publicTenantId: "public-courses", mode: "cloud", csrfToken: "guest-token",
+  emailLoginEnabled: true,
   permissions: { canUpload: false, canManage: false, canConfigure: false },
 };
 const member: AuthIdentity = {
@@ -62,6 +63,31 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe("cloud identity", () => {
+  it("explains unavailable login without email inputs or requests and restores focus", async () => {
+    api.get.mockResolvedValue({ ...guest, emailLoginEnabled: false });
+    mount();
+    const user = userEvent.setup();
+    const trigger = await screen.findByRole("button", { name: "邮箱登录" });
+    await user.click(trigger);
+    expect(screen.getByRole("dialog", { name: "登录与注册暂未开放" })).toBeInTheDocument();
+    expect(screen.getByText("你可以继续以游客身份使用 Seekino。")).toBeInTheDocument();
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "发送验证码" })).not.toBeInTheDocument();
+    const continueButton = screen.getByRole("button", { name: "继续体验" });
+    expect(continueButton).toHaveFocus();
+    await user.tab();
+    expect(screen.getByRole("button", { name: "关闭登录" })).toHaveFocus();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+    await user.click(trigger);
+    await user.click(screen.getByRole("button", { name: "继续体验" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByText("guest-a:public-courses")).toBeInTheDocument();
+    expect(api.send).not.toHaveBeenCalled();
+    expect(api.verify).not.toHaveBeenCalled();
+  });
+
   it("waits for the identity before rendering protected data and clears previous cached results", async () => {
     let finish!: (identity: AuthIdentity) => void;
     api.get.mockReturnValue(new Promise<AuthIdentity>((resolve) => { finish = resolve; }));
@@ -186,6 +212,7 @@ describe("cloud identity", () => {
 const local: AuthIdentity = {
   userId: "local-user", email: null, isGuest: false, tenantId: "local-default", publicTenantId: "public-courses",
   mode: "local", csrfToken: "", permissions: { canUpload: true, canManage: true, canConfigure: true },
+  emailLoginEnabled: false,
 };
 const remote: ApiConnection = { id: "remote:test", baseUrl: "/remote" };
 
@@ -202,6 +229,36 @@ async function logIn() {
 describe("local data with a remote account", () => {
   beforeEach(() => {
     api.get.mockImplementation((_signal: AbortSignal | undefined, connection: ApiConnection) => Promise.resolve(connection.id === remote.id ? guest : local));
+  });
+
+  it.each([false, true])("uses remote email availability while keeping local uploads (enabled=%s)", async (enabled) => {
+    api.get.mockImplementation((_signal: AbortSignal | undefined, connection: ApiConnection) => Promise.resolve(
+      connection.id === remote.id ? { ...guest, emailLoginEnabled: enabled } : { ...local, emailLoginEnabled: !enabled },
+    ));
+    mount(remote);
+    await screen.findByText("账号：guest-a");
+    await userEvent.setup().click(screen.getByRole("button", { name: "邮箱登录" }));
+    expect(screen.getByText("local-user:local-default")).toBeInTheDocument();
+    expect(screen.getByText("可以上传")).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: enabled ? "邮箱登录" : "登录与注册暂未开放" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("邮箱") !== null).toBe(enabled);
+    expect(api.send).not.toHaveBeenCalled();
+  });
+
+  it("restores the login form when refreshed account capabilities enable email", async () => {
+    api.get.mockImplementation((_signal: AbortSignal | undefined, connection: ApiConnection) => Promise.resolve(
+      connection.id === remote.id ? { ...guest, emailLoginEnabled: false } : local,
+    ));
+    mount(remote);
+    await screen.findByText("账号：guest-a");
+    await userEvent.setup().click(screen.getByRole("button", { name: "邮箱登录" }));
+    expect(screen.getByRole("dialog", { name: "登录与注册暂未开放" })).toBeInTheDocument();
+    api.get.mockResolvedValue(guest);
+    await act(async () => window.dispatchEvent(new Event("focus")));
+    expect(await screen.findByLabelText("邮箱")).toHaveFocus();
+    expect(screen.getByRole("button", { name: "发送验证码" })).toBeEnabled();
+    expect(screen.getByText("local-user:local-default")).toBeInTheDocument();
+    expect(api.send).not.toHaveBeenCalled();
   });
 
   it("keeps local capabilities when no account server is configured", async () => {

@@ -2756,3 +2756,108 @@ Chat Agent 已经维护一份结构化 Workspace／Canvas，并通过 Tool 逐�
 ## 迁移后新增问题分析
 
 2026-11-02 起的新问题在此按稳定编号记录完整分析，当前执行状态见 [管理工作台](workbench.html)。既有问题继续在原条目补充有日期的证据。
+
+### DEPLOY-01：Docker 构建遗漏 Logo 软链接目标，阻断 main 发布
+
+2026-11-06：CPU 镜像构建通过依赖安装后，Vite 报 `ENOENT /build/public/assets/seekino-logo.png`。
+main 的 `.dockerignore` 排除根 assets，Web 构建又把 web 平铺到 /build，PNG/SVG 两份软链接
+目标均无法保持原路径。服务器无 Git 元数据，另有临时 apt 修改，不能直接作为 main 验收。
+验收要求：正式 Dockerfile 构建成功，两份发布资源与源文件哈希一致且 HTTP 可访问，
+不引入本地媒体和密钥，最终 CPU HEAD 对齐 main。当前状态见工作台 DEPLOY-01；
+方案与证据见 [TRD](../design/03-product-reassessment/docker-web-assets-trd.md)。
+
+2026-11-06 实测补充：#58 修复和 #59 发布已合并，CPU HEAD 对齐 main `0282fcb0`，
+工作树干净；该提交的 API/Web 构建成功，两份资源 HTTP 200 且哈希一致，媒体排除探针通过。
+旧目录及旧 API 镜像保留回退。运行配置、业务容器启动与公网访问不在此次构建和源码验收结论内。
+
+
+### DEPLOY-02：SMTP 被误作整个 cloud 身份服务的启动前提
+
+2026-11-06/07：CPU main 0282fcb0 初始化成功后，AuthService 构造器因 SMTP 为空抛错，
+与云端模板允许游客启动的说明矛盾。修复将邮件能力与游客启动分离，在发送/验证邮箱前明确
+拒绝不可用能力，保留签名、Redis、CSRF 与权限约束。HTTP 回归和 CPU 候选实测通过，
+状态见工作台 DEPLOY-02；[TRD 与证据](../design/03-product-reassessment/cloud-guest-without-smtp-trd.md)。
+
+### DEPLOY-04：账号界面缺少邮件能力信息，游客填写后才发现登录尚未开放
+
+2026-11-07：无 SMTP 的候选已可提供游客服务，但身份响应未提供邮件能力，前端始终展示
+验证码表单和“登录后上传”提示。验收要求是在填写前显示未开放说明，打开/关闭不请求邮件，
+配置 SMTP 后恢复既有表单，本地资料上传不受远端邮件配置影响。HTTP、前端和两种视口
+回归通过；部署与发布范围见 [TRD](../design/03-product-reassessment/smtp-login-availability-trd.md)，
+当前状态统一维护在工作台 DEPLOY-04。
+
+### DEPLOY-05：云端 80 端口未监听，访客用 HTTP 打开链接得到 502
+
+2026-11-07 的客户端代理记录和公网复现均定位到 80 连接被拒绝。443 的站点已可通过测试
+证书访问，HTTP 缺少返回 HTTPS 地址的入口。验收以原域名、路径和查询参数经过一次 308
+抵达 HTTPS 页面为准。实机结果见[云部署 TRD](../design/03-product-reassessment/cloud-docker-deploy-trd.md)
+和[验收记录](devlog.md#devlog-cloud-http-redirect-20261107)。
+
+### PARSE-QUEUE-01：提交时已知就绪任务，重新锁读整集使索引难以填满并发
+
+micrograd v5 共 146 块，整集 90 分 04.884 秒。调度反复锁取候选和聚合含向量的详情。仅用内存找到候选时，短暂的父锁仍会使已知工作被跳过。验收需要分别核对定向领取数、实际索引吞吐、版本对应、ES 可见性与恢复，与整集模型耗时分开计量。见 [专项 TRD](../design/03-product-reassessment/parse-ready-dispatch-trd.md)、[验证记录](../report/server/mq/parse-ready-dispatch/README.md) 和 [工作台](workbench.html)。
+
+同日核对 MyGO。四集并跑时约 143 万次块与窗口续租放大了数据库负担。第 3 集另有失效流等待 TLS 读取、供应端错误与重试。验收追加相同 SSE 回放、真实连接取消耗时、24 块/22 窗的 3 FPS 整集检验，时长和失败证据见[第 3 集实跑](../report/server/mq/parse-ready-dispatch/animation.md)。
+
+合并版复测还发现，已抽取的 198 帧与一份音频在创建硬链接时会触发 200 次父行和 200 次子行加锁。五轮同输入比较中，在整批链接前和媒体交付前各校验一次，两种锁均降至 2 次，最后一个文件链接期间被暂停的任务在交付前被拦住。见[帧文件交付 TRD](../design/03-product-reassessment/parse-media-link-lease-trd.md)。
+
+### PARSE-DRAFT-01：SSE 控制检查逐事件续租，模型正文缺少中途草稿
+
+2026-11-07：核对实际调用链，正文由 Gateway 内存收集，完整校验后才进入正式结果；高频数据库写入来自 SSE `check_control → manager.check_active → _require_*_active → _heartbeat_child`，每次涉及父行锁及子任务续租。正文 buffer 与租约 heartbeat 是独立职责，不能靠新增 buffer 自动消除原回调的数据库访问。
+
+本次新增每调用独立草稿，以未保存的 UTF-8 正文字节数达到 1,024 或调用退出为保存条件。逐 SSE 回调只读取本地取消状态；周期续租、模型调用接纳和正式结果提交仍验证持久租约/版本。验收检查阈值前不写库、阈值及退出保存、失败/取消前缀、调用与租户隔离，以及模拟流中额外续租次数。真实并发和整集耗时另测，真实解析保持暂停。设计与证据见 [TRD](../design/03-product-reassessment/parse-output-drafts-trd.md)、[PR #64](https://github.com/owariband/Seekino/pull/64)；当前状态见 [工作台](workbench.html)。
+
+<a id="chat-layout-01"></a>
+## CHAT-LAYOUT-01：对话历史浮层遮挡正文，初次提问的欢迎区与输入框分离
+
+2026-11-07：独立 `/search` 将历史放在右上浮层，初次打开时欢迎区居中但输入框贴底，宽屏正文和输入框最大 880px。截图与 `db180245` 的 SearchPage/CSS 均可核对，影响历史切换和首次输入的视觉焦点。
+
+验收：桌面约 248px 左侧历史、约 760px 输入/正文；草稿欢迎语紧邻输入；首次发送不重挂载 textarea、不丢焦点；手机抽屉可关闭且焦点受限；继续遵守 #66 无操作不创建会话。当前状态统一见[工作台](workbench.html) CHAT-LAYOUT-01；设计见[TRD](../design/03-product-reassessment/chat-sidebar-layout-trd.md)，本轮证据见[验收报告](../report/web/chat-sidebar-layout-20261107.md)。
+
+### CHAT-HEADER-01 · 空范围提示远离选集控件，顶栏重复占用空间
+
+2026-11-08。游客看到的空目录说明被排在输入框底部，无法就近判断范围控件是否有可检索的系列。结合顶栏精简，用桌面与窄屏检查状态位置、发送限制和首页链接，并在 CPU 上核对历史栏实际位置。[设计与验收](../design/03-product-reassessment/chat-header-scope-trd.md)
+
+<a id="chat-composer-02"></a>
+## CHAT-COMPOSER-02　对话共用一个回答模型，历史宽度固定
+
+2026-11-07。独立页共用启动时的 Supervisor，图片入口位于输入面板外，桌面侧栏固定 248px。验收要求是两个对话能分别选择回答模型，回到原对话能继续使用其选择，打开草稿与切模型均不创建空对话。桌面历史需支持拖动和键盘，播放器要保留单行输入。见[设计与验证](../design/03-product-reassessment/chat-composer-models-trd.md)及[工作台](workbench.html)。
+
+<a id="settings-ui-01"></a>
+## SETTINGS-UI-01　设置长页混合多个作用范围，从聊天进入会丢失草稿上下文
+
+2026-11-07。外观与语言属于设备，回答模型属于会话，全局运行参数属于服务。原设置入口的页面跳转卸载聊天输入。验收要求是可按范围找到配置，从设置返回保留草稿和选区，且两个 Kino 入口互通。本机结果见[设置验收](../report/web/settings-workspace-20261107.md)，状态见[工作台](workbench.html)。
+
+### MODEL-REGISTRY-ROLES-01 · 模型服务页面只投影聊天绑定
+
+2026-11-08。视频理解、转写与检索已有各自的 Gateway 绑定，网页却只能登记聊天模型。验收要求同地址下两把凭据能独立配置，解析和聊天从各自连接发起请求，专属能力不会进入无关下拉框。参见[设计与验证](../design/03-product-reassessment/model-registry-roles-trd.md)。
+
+同日复查。原用途控件把来源放在模型名前，窄屏打开长 ID 时辨认困难。现按连接分组展示选项，在用途行分列模型和来源。[设置展开栏验收](../report/web/model-registry-roles-20261108.md#设置展开栏)
+
+### CHAT-PERSONAL-MODELS-01 · 回答模型设置只展示平台名单
+
+2026-11-07。设置页消费服务端 YAML 的选项，用户无法填写自己的 API 地址、协议及模型 ID。验收须从普通用户的设置入口创建连接，在指定会话发送后核对供应端收到的模型和结果，并确认另一个会话沿用原选择。见[设计与验证](../design/03-product-reassessment/personal-model-connections-trd.md)及[工作台](workbench.html)。
+
+2026-11-08。此前模型设置的读取与写入分属 YAML 和个人记录。本次改为可配置身份编辑生效文件，cloud 浏览者只能使用部署默认模型。复验覆盖云端直达权限、磁盘写回和独立对话执行。[验收](../report/web/personal-model-connections-20261107.md#yaml-写回与-cloud-权限)
+
+2026-11-07 本机来源补充。仅读取个人数据库连接会遗漏本机用户在 YAML 配置的回答模型。验收同时覆盖已配置机器（显示实际绑定和密钥掩码）与真正无配置的个人账号，见[本机 YAML 验收](../report/web/personal-model-connections-20261107.md#本机-yaml-连接的自动识别与凭据掩码)。
+
+## EDIT-ANIME-01 · 动画反应被概括成手势，剪辑原句漏掉正面特写
+
+2026-11-08。旧 EP04 的 198 张目标分块输入图里可见咬牙，但两条视觉事件把脸部信息省略，且提前描述笑容。验收使用同一五集库和原句，核对命中区间的原片，同时通过 MCP 翻完所有发布事件验证覆盖。状态见[管理工作台](workbench.html)，口径和边界见 [E4 专项 TRD](../design/03-product-reassessment/anime-material-recall-trd.md)。
+
+2026-11-09。普通上传自动选择剧情、课程或剪辑策略，显式配置优先。分流及恢复见[验收记录](../report/agent/video_parse_v2/content-routing-20261109.md)。
+
+### WATCH-THEME-01：明暗切换时首页封面与页面亮度脱节
+
+2026-11-09，在公开课程首页切换主题，画布和顶栏一步换色，推荐大图与系列缩略图维持原亮度。验收要求用同一封面看到渐变的中间状态，连点能改变方向，减弱动态效果时直接到达终点，正片保留原色。[专项 TRD](../design/03-product-reassessment/theme-transition-trd.md) · [工作台](workbench.html)
+
+## EDIT-CAMERA-01 · 剪辑素材缺少可检索和连续回放的镜头运动
+
+2026-11-10。单看构图和主体动作，解析会把向左移的镜头说成向右，也会把同一次横移按“灯亮”和“船入画”拆成两次起步。验收需要从原片取得同一镜头的方向、起落幅、节奏与证据，从已发布事件取回可运行的代码，再逐帧与已知镜头位置对照。固定机位下移动的小船与硬切是反例。[设计](../design/03-product-reassessment/clip-camera-reference-trd.md) · [实测](../report/agent/video_parse_v2/clip-camera-reference-20261110.md) · [工作台](workbench.html)
+
+## PUBLIC-COURSE-01 · 追加一集导致已公开的课程无法观看和提问
+
+2026-11-10，Karpathy 课程八集已上传，前七集可搜，E08 索引 114/134。游客打开首页后看不到课程，详情和搜索返回 404。首次发布与游客读取共用全量就绪要求，零索引课程另受前端选课和发送范围限制。验收要求是逐集播放、无索引时连续对话、检索如实给出覆盖范围，撤回后媒体与历史证据重新鉴权。[专项设计与现场基线](../design/03-product-reassessment/public-course-readiness-trd.md) · [工作台](workbench.html)
+
+同日复核还发现 Event 工具在缩小片段范围前生成了覆盖信息，并要求所有候选视频都具备事件索引。已授权课程中缺少某个集号也会终止对话。补充验收直接对照送给 ES 的来源集合、游客看到的提示，以及刷新后恢复的回答。[逐集对照与浏览器结果](../design/03-product-reassessment/public-course-readiness-trd.md#5-试点验证与方案取舍)

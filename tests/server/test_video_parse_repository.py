@@ -2726,7 +2726,7 @@ def test_v2_retrieval_scope_and_hydrate_are_pinned_to_latest_complete_task(
     )
     assert partial_scope.partial is True
     assert partial_scope.searched_video_ids == (video.id,)
-    assert "没有视频" in partial_scope.warnings[0]
+    assert any("《Empty Series》0 集，课程中还没有视频" in warning for warning in partial_scope.warnings)
 
     with factory.begin() as session:
         session.add(VideoParseTask(

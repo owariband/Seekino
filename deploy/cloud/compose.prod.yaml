@@ -1,0 +1,82 @@
+# Production overlay for the CPU server; see README.md for the topology.
+#   docker compose --env-file deploy/cloud/.env.cloud \
+#     -f compose.yaml -f deploy/cloud/compose.prod.yaml up -d --build
+# Paths resolve from the repository root. Do not enable the mock-email profile.
+x-production: &production
+  env_file:
+    - path: deploy/cloud/.env.cloud
+  environment:
+    SEEKINO_ENVIRONMENT: production
+    SEEKINO_AUTH_MODE: cloud
+    SEEKINO_DATABASE_URL: mysql+pymysql://seekino:${MYSQL_PASSWORD:?}@mysql:3306/seekino_production?charset=utf8mb4
+    SEEKINO_AUTH_REDIS_URL: redis://redis:6379/0
+    SEEKINO_MODEL_CONFIG: /etc/seekino/models.yaml
+    SEEKINO_ALLOWED_ORIGINS: https://${SEEKINO_PUBLIC_HOST:?}
+    # The API port is published on loopback only; the TLS proxy reaches it through Docker's gateway.
+    FORWARDED_ALLOW_IPS: "*"
+  volumes:
+    - app_data:/data
+    - type: bind
+      source: ${SEEKINO_MODEL_CONFIG:?}
+      target: /etc/seekino/models.yaml
+      read_only: true
+      bind:
+        create_host_path: false
+
+services:
+  initialize:
+    <<: *production
+
+  api:
+    <<: *production
+
+  web:
+    # TLS entry: renders the shared deploy/nginx template inside the web image.
+    network_mode: host
+    ports: !reset []
+    volumes:
+      - ./deploy/nginx/nginx.conf.template:/etc/seekino/nginx.conf.template:ro
+      - ${SEEKINO_TLS_CERT:?}:/etc/nginx/seekino-certs/site.pem:ro
+      - ${SEEKINO_TLS_KEY:?}:/etc/nginx/seekino-certs/site-key.pem:ro
+    command:
+      - sh
+      - -ec
+      - |
+        mkdir -p /etc/nginx/seekino-cloud.d
+        cat > /etc/nginx/seekino-cloud.d/http-redirect.conf <<'NGINX'
+        server {
+            listen 0.0.0.0:80;
+            server_name ${SEEKINO_PUBLIC_HOST:?};
+            return 308 https://$$server_name$$request_uri;
+        }
+        NGINX
+        sed -e 's|@BIND@|0.0.0.0|' -e 's|@PORT@|443|' -e "s|@API_PORT@|$${SEEKINO_HTTP_PORT}|" \
+          -e 's|@WEB_ROOT@|/usr/share/nginx/html|' /etc/seekino/nginx.conf.template > /etc/nginx/seekino.conf
+        exec nginx -p /etc/nginx/ -c seekino.conf -g 'daemon off;'
+    environment:
+      SEEKINO_HTTP_PORT: ${SEEKINO_HTTP_PORT:-9621}
+    healthcheck:
+      test: [CMD-SHELL, 'kill -0 "$$(cat /etc/nginx/nginx.pid)"']
+
+  redis:
+    profiles: !reset []
+    restart: unless-stopped
+    ports: !reset []
+
+  mysql:
+    restart: unless-stopped
+    environment: !override
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?}
+      MYSQL_DATABASE: seekino_production
+      MYSQL_USER: seekino
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?}
+    ports: !reset []
+    healthcheck:
+      test: [CMD-SHELL, 'MYSQL_PWD="$$MYSQL_ROOT_PASSWORD" mysql --protocol=TCP -h 127.0.0.1 -uroot -e "SELECT 1"']
+
+  elasticsearch:
+    restart: unless-stopped
+    environment:
+      # Security stays off only because no port is published outside the Compose network.
+      ES_JAVA_OPTS: "-Xms1g -Xmx1g"
+    ports: !reset []

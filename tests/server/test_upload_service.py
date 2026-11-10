@@ -840,7 +840,7 @@ def test_selected_parse_config_survives_upload_completion_and_job_claim(
     service._parse_defaults = selected
     replay = service.create_session(**default_request)
     assert replay.upload_session_id == default_upload.upload_session_id
-    assert replay.parse_config == defaults.to_video_parse_v2().model_dump(mode="json")
+    assert replay.parse_config == {**defaults.to_video_parse_v2().model_dump(mode="json"), "auto_content_kind": True}
 
     explicit_v2 = defaults.to_video_parse_v2().model_copy(
         update={"batch_max_size": defaults.to_video_parse_v2().batch_max_size + 1}
@@ -1206,6 +1206,8 @@ class _DeleteIndex(_VideoParseIndexStore):
 
 
 def test_delete_with_active_chunk_lease_defers_then_reconciles_after_expiry(repository, tmp_path):
+    from server.service.video_parse_routing import ContentRoute
+
     parse_index = _DeleteIndex()
     event_index = _DeleteIndex()
     now = unix_time_ms_to_datetime(1_789_560_000_000)
@@ -1225,6 +1227,7 @@ def test_delete_with_active_chunk_lease_defers_then_reconciles_after_expiry(repo
     video_lease = queue.claim_video("prepare", lease_duration=timedelta(minutes=1), now=now)
     assert video_lease is not None
     parse_repository = VideoParsePersistenceService(factory)
+    parse_repository.commit_content_route(video_lease, ContentRoute("script", "sampled_frames", "fixture"), now=now)
     chunks = parse_repository.ensure_video_chunks(video_lease, [(0, 0, 12_000)], now=now)
     prepared = parse_repository.ensure_parse_tasks(
         video_lease, [chunks[0].video_chunk_id], [(0, 1)], now=now,
@@ -2432,7 +2435,8 @@ def test_full_reparse_creates_new_v2_version_and_retains_history(
         "PENDING",
         2,
     )
-    assert reparsed.parse_config == replacement_config.model_dump(mode="json")
+    # An explicit replacement copied from an automatic task owns its selected parameters.
+    assert reparsed.parse_config == replacement_config.model_dump(mode="json", exclude={"auto_content_kind"})
     assert reparsed.next_execute_time == unix_time_ms_to_datetime(reparsed_at)
     assert reparsed.chunk_count == 1
     assert reparsed.max_attempts == replacement_config.execution.max_retry_count + 1
@@ -2443,7 +2447,7 @@ def test_full_reparse_creates_new_v2_version_and_retains_history(
     ]
     assert [task.version for task in tasks] == [1, 2]
     assert tasks[0].parse_config == original_config
-    assert tasks[1].parse_config == replacement_config.model_dump(mode="json")
+    assert tasks[1].parse_config == reparsed.parse_config
     assert jobs.latest_video_parse_task(completed.video_id) == reparsed
     with session_factory() as session:
         old_task = session.get(VideoParseTask, completed.video_parse_task_id)

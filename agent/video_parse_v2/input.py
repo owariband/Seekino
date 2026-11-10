@@ -196,9 +196,15 @@ class IndexingConfig(_InputModel):
         return values
 
 
+RoutedContentKind = Literal["script", "course", "clip"]
+ContentKind = Literal["anime", "script", "course", "clip"]
+
+
 class ParseConfig(_InputModel):
     """保存到 video_parse_task.parse_config 的有效配置快照。"""
 
+    content_kind: ContentKind | None = None
+    auto_content_kind: bool = False
     chunk_duration: int = Field(gt=0)
     interval_duration: int = Field(gt=0)
     batch_max_size: int = Field(gt=0)
@@ -225,6 +231,10 @@ class ParseConfig(_InputModel):
     @model_serializer(mode="wrap")
     def serialize_config(self, handler):
         values = handler(self)
+        if self.content_kind is None:
+            values.pop("content_kind", None)
+        if not self.auto_content_kind:
+            values.pop("auto_content_kind", None)
         if self.voiceprint is None:
             values.pop("voiceprint", None)
         if self.voiceprint_mode == "off":
