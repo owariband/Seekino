@@ -157,7 +157,7 @@ def scan_reference(source: Path, *, duration_ms: int, check_active, ffmpeg="ffmp
             threshold = max(8, 4 * median(diffs[left:right]))
             candidates.append({"hist": hist, "thumb": thumb, "score": score, "segment": {
                 "segment_id": f"seg-{edges[left]:07d}", "start_ms": edges[left], "end_ms": edges[right],
-                "first_frame": left, "frame_ms": times[left:right],
+                "first_frame": left, "frame_ms": times[left:right], "fps": 1000 / frame_ms,
                 "frame_delta": [round(x, 2) for x in diffs[left:right]], "fine_starts_ms": [times[j] for j in range(left+1, right) if diffs[j] > threshold],
                 "flashes_ms": [times[j] for j in sorted(flashes.intersection(span))], "palette": palette,
             }})

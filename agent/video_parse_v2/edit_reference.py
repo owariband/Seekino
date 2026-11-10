@@ -5,24 +5,19 @@ from __future__ import annotations
 import json
 import logging
 from bisect import bisect_right
-from functools import lru_cache
+from pathlib import Path
 
 from PIL import Image, ImageDraw
-from pydantic import BaseModel, ConfigDict, ValidationError, create_model
+from pydantic import ValidationError
 
 from engine.parsev2.edit_reference import (
-    Motion, Note, NoteDescription, ReferenceChunk, ShotView, Step, StyleCard, TechniqueGroup, TechniqueObservation, Text,
+    AnchoredStyleCard, PickNote, ReferenceChunk, ReferenceRefinement, TechniqueObservation,
 )
 from gateway.multimodal import ImageInput, TextInput
 
 
-@lru_cache(maxsize=90)
-def _observation_response(count):
-    # The model owns the visual judgment. Source intervals come from measured frames.
-    views = create_model(f"CandidateViews{count}", __config__=ConfigDict(extra="forbid"),
-                         **{f"B{i}": (ShotView, ...) for i in range(count)})
-    return create_model(f"SegmentNote{count}", __base__=NoteDescription, views=(views, ...),
-                        camera=(Text | None, ...), easing=(Text | None, ...))
+_PICK_PROMPT = Path(__file__).with_name("edit_reference_pick.txt").read_text(encoding="utf-8")
+_REFINE_PROMPT = Path(__file__).with_name("edit_reference_refine.txt").read_text(encoding="utf-8")
 
 
 def _frame_sheets(segment, frames, boundaries):
@@ -48,61 +43,29 @@ def _frame_sheets(segment, frames, boundaries):
 async def observe_segments(segments, frames, generate, attempts):
     observations = []
     for segment in segments:
-        facts = segment.model_dump(exclude={"first_frame", "frame_ms", "frame_delta"})
         boundaries = [segment.start_ms, *segment.fine_starts_ms, segment.end_ms]
-        # A run of held drawings with isolated jumps looks like a smooth zoom on a sparse storyboard.
-        if segment.frame_delta:
-            facts["native_runs"] = [
-                {"view": f"B{i}", "frames": [[t, delta] for t, delta in zip(segment.frame_ms, segment.frame_delta)
-                                             if start <= t < end]}
-                for i, (start, end) in enumerate(zip(boundaries, boundaries[1:]))
-            ]
-        schema = _observation_response(len(boundaries)-1)
-        prompt = (
-            "你在帮剪辑师决定是否回看这段原片。按图页顺序、每行从左到右读所有连续原生帧。"
-            "每格左下有 B 编号与原片毫秒。为每个 B 描述可见的具体部位、道具、构图及动作。"
-            "逐组比较。B0 的 enter 填 NONE。与上一组相比，景别或主体瞬间改变用 CUT，"
-            "同取景只变姿态用 HOLD，连续运动用 MOVEMENT，无法确定用 UNCERTAIN。"
-            "ECU=脸的一部分，CU=脸部，MCU=胸部以上，MS=腰部以上，FULL=完整人物，WIDE=人物在大环境中，"
-            "INSERT=局部物件，GRAPHIC=纯图形或文字。区分镜内运动与跨切换的构图变化。"
-            "native_runs 每项是[原片毫秒,与前一张原生帧的灰度平均绝对差，0–255]。所给区间内每帧都在图中。"
-            "独立判断相邻 B 的衔接。若取景在相邻两帧间突然换档，前后都是停留帧，中间没有过渡帧，"
-            "即使主体和背景相同，也写 CUT（跳切式换景别），不能因为几次跳变方向一致就写连续推拉。"
-            "即使两个画面都是 FULL，也可能有跳变，逐一比较同一面孔、服装、轮廓在画幅中所占大小。"
-            "差值大但仅换姿势、字卡或一帧闪光也很常见，单凭数值不足以断定换景。只在可指认中间过渡帧时写 MOVEMENT。"
-            "看完全段再命名，名字不能是 B 编号；在 summary 写出主要变化与片内停留依据。"
-            "用具体简体中文写 name、summary、signals、subject。说明先后变化，字卡可见时描述字形及入画方式。"
-            "记录画面依据，创作选择由编辑决定。测量资料如下。\n"
-            + json.dumps(facts, ensure_ascii=False)
-        )
-        inputs = [TextInput(prompt), *(ImageInput(p, detail="high") for p in _frame_sheets(segment, frames, boundaries))]
+        fps = segment.fps or len(segment.frame_ms) * 1000 / (segment.end_ms - segment.start_ms)
+        prompt = _PICK_PROMPT.format(start_ms=segment.start_ms, end_ms=segment.end_ms, fps=f"{fps:.6g}",
+                                    fine_starts_ms=segment.fine_starts_ms, flashes_ms=segment.flashes_ms)
+        inputs = [TextInput(prompt), *(ImageInput(path, detail="high")
+                                     for path in _frame_sheets(segment, frames, boundaries))]
         for attempt in range(attempts):
             try:
-                draft = await generate(inputs, schema)
-                steps = [Step(**getattr(draft.views, f"B{i}").model_dump(), start_ms=a, end_ms=b)
-                         for i, (a, b) in enumerate(zip(boundaries, boundaries[1:]))]
-                note = Note(**draft.model_dump(exclude={"views", "camera", "easing"}),
-                            motion=Motion(steps=steps, camera=draft.camera, easing=draft.easing))
+                note = await generate(inputs, PickNote)
                 observations.append(TechniqueObservation(segment=segment, note=note))
                 break
-            except ValidationError as error:
+            except ValueError as error:
                 if attempt + 1 == attempts:
                     raise
-                inputs.append(TextInput("请按原片边界修正 JSON。" + str(error.errors(include_input=False))[:1600]))
+                inputs = [*inputs, TextInput(str(error)[:600])]
     return ReferenceChunk(observations=observations)
-
-
-class _CardEntry(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    technique_key: Text
-    description: Text
 
 
 def _completed_card_response(schema, error):
     """Accept a complete set of entries when only the closing root brace was dropped."""
     issues = error.errors(include_url=False)
     raw = issues[0].get("input") if len(issues) == 1 and issues[0]["type"] == "json_invalid" else None
-    if not isinstance(raw, str) or not raw.rstrip().endswith("}}"):
+    if not isinstance(raw, str):
         raise error
     text = raw.rstrip()
     try:
@@ -115,39 +78,26 @@ def _completed_card_response(schema, error):
     raise error
 
 
-async def consolidate(members, generate, attempts):
-    notes = [o for chunk in members.values() for o in chunk.observations]
-    if not notes:
-        return StyleCard(summary="全片扫描没有选出代表片段。", techniques=[])
-    # Member ownership and source times never have to be regenerated by a model.
-    source = {f"S{i}": {"segment_id": o.segment.segment_id, "note": o.note.model_dump(),
-                        "palette": [p.model_dump() for p in o.segment.palette]} for i, o in enumerate(notes)}
-    entries = create_model("ExemplarKeys", __config__=ConfigDict(extra="forbid"),
-                           **{key: (_CardEntry, ...) for key in source})
-    schema = create_model("WholeVideoStyleCard", __config__=ConfigDict(extra="forbid"),
-                          summary=(Text, ...), exemplars=(entries, ...))
-    prompt = ("给编辑写全片手法风格卡，用简体中文。给每个 S 编号的片段写可检索的手法名称和依据。"
-              "使用同一手法时复用同一名称。基于 steps 核对名字中的景别方向。"
-              "不自行写时间，不向编辑指定素材、排版或节奏。观察数据如下。\n" + json.dumps(source, ensure_ascii=False))
+async def consolidate(members: dict[int, ReferenceChunk], generate, attempts) -> ReferenceRefinement:
+    sources = [
+        {"sequence_no": seq, "segment_id": obs.segment.segment_id,
+         "start_ms": obs.segment.start_ms, "end_ms": obs.segment.end_ms,
+         "fine_starts_ms": obs.segment.fine_starts_ms, "flashes_ms": obs.segment.flashes_ms,
+         "palette": [color.model_dump() for color in obs.segment.palette], "observation": obs.note.model_dump()}
+        for seq, chunk in sorted(members.items()) for obs in chunk.observations
+    ]
+    if not sources:
+        return ReferenceRefinement(members=[], style_card=AnchoredStyleCard(
+            scope="No representative segment was selected.", signals=[])).for_sources(members)
+    inputs = [TextInput(_REFINE_PROMPT), TextInput(json.dumps({"observations": sources}, ensure_ascii=False))]
     for attempt in range(attempts):
         try:
             try:
-                draft = await generate([TextInput(prompt)], schema)
+                draft = await generate(inputs, ReferenceRefinement)
             except ValidationError as error:
-                draft = _completed_card_response(schema, error)
-            groups = {}
-            for i, obs in enumerate(notes):
-                entry = getattr(draft.exemplars, f"S{i}")
-                group = groups.get(entry.technique_key)
-                if group is None:
-                    groups[entry.technique_key] = TechniqueGroup(technique_key=entry.technique_key,
-                        description=entry.description, segment_ids=[obs.segment.segment_id])
-                else:
-                    group.segment_ids.append(obs.segment.segment_id)
-            card = StyleCard(summary=draft.summary, techniques=list(groups.values()))
-            card.assignments(o.segment.segment_id for o in notes)
-            return card
+                draft = _completed_card_response(ReferenceRefinement, error)
+            return draft.for_sources(members)
         except ValueError as error:
             if attempt + 1 == attempts:
                 raise
-            prompt += "\n请修正段号/Schema 并重新输出完整风格卡。" + str(error)[:600]
+            inputs = [*inputs, TextInput(str(error)[:600])]
