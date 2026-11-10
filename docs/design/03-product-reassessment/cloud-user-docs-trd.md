@@ -1,6 +1,6 @@
 # 1. 问题与现状
 
-需求：Seekino Cloud 站内使用文档与 GitHub 推广入口。提出日期：2026-11-10（Asia/Shanghai）。分支：`feat/cloud-user-docs`；PR：待创建后回填。状态：实现完成、本地验证通过，待合并与 Cloud 发布；交流群链接仍为 `[xxx]` 占位。
+需求：Seekino Cloud 站内使用文档与 GitHub 推广入口。提出日期：2026-11-10（Asia/Shanghai）。分支：`feat/cloud-user-docs`；PR：[#89](https://github.com/owariband/Seekino/pull/89)。状态：实现完成、本地验证通过，待合并与 Cloud 发布；交流群链接仍为 `[xxx]` 占位。
 
 **背景与触发场景。** Cloud 首发只开放已解析、已发布的公共样例，游客与普通邮箱用户可以观看、检索和问答，上传与管理仅限管理员（[云端部署说明](../../../deploy/cloud/README.md)）。hypnos 参加的多项比赛要求项目具备真实用户，而目前 Cloud 没有外部用户。第一次打开 Cloud 的访客看不到 Seekino 能做什么、Cloud 与本地版的区别、如何自己部署，也找不到 GitHub 仓库与交流渠道，因此访问难以转化为 Star、部署或反馈。
 
