@@ -2,10 +2,6 @@
 .page[data-fullscreen="true"] { height: 100cqh; overflow: hidden; padding: 0; background: #090c0b; }
 .page[data-fullscreen="true"] .viewer { height: 100cqh; }
 .page[data-fullscreen="true"] .watchDetails { display: none; }
-.panelToggle { display: inline-flex; width: 42px; height: 42px; align-items: center; justify-content: center; color: var(--ink-soft); border-radius: 6px; background: transparent; cursor: pointer; }
-.panelToggle:hover, .panelToggle[aria-expanded="true"] { color: var(--teal-deep); background: var(--teal-wash); }
-.floatingTools { position: absolute; z-index: 10; top: 12px; left: 16px; }
-.floatingTools .panelToggle { color: #f7f8f7; background: rgb(0 0 0 / 75%); }
 .layout { position: relative; container: watch-player / inline-size; min-width: 0; scroll-margin-top: var(--app-header-height, 64px); background: var(--stage); }
 .viewer { width: 100%; min-width: 0; aspect-ratio: 16 / 9; }
 .resizeHandle { position: absolute; z-index: 46; top: 0; left: 0; bottom: 0; width: 8px; cursor: col-resize; touch-action: none; user-select: none; }
@@ -71,13 +67,25 @@
 .watchSettings { position: relative; flex-shrink: 0; }
 .watchSettings > summary { list-style: none; }
 .watchSettings > summary::-webkit-details-marker { display: none; }
-.watchSettingsPopover { position: absolute; z-index: 30; top: calc(100% + 6px); right: 0; width: 260px; max-width: calc(100vw - 48px); overflow: hidden; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-raised); box-shadow: var(--shadow-small); }
+.watchSettingsPopover { position: absolute; z-index: 30; top: calc(100% + 6px); right: 0; width: 248px; padding: 4px 12px; max-width: calc(100vw - 48px); overflow: hidden; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-raised); box-shadow: var(--shadow-small); }
 .chatPanel[hidden], .episodePanel[hidden] { display: none; }
+.kinoEntry { position: fixed; z-index: 55; display: flex; width: 64px; height: 64px; align-items: center; justify-content: center; padding: 0; border-radius: var(--radius-small); background: transparent; cursor: grab; touch-action: none; user-select: none; transition: left 320ms cubic-bezier(.34, 1.4, .64, 1), top 320ms cubic-bezier(.34, 1.4, .64, 1), transform 160ms ease, opacity 160ms ease; }
+.kinoEntry[data-dragging="true"] { cursor: grabbing; transition: none; }
+.kinoEntry > svg { flex-shrink: 0; margin: -20px 0 0 -6px; filter: drop-shadow(0 3px 6px rgb(0 0 0 / 35%)); pointer-events: none; }
+.kinoEntry:is(:hover, :focus-visible):not([data-dragging="true"]) { transform: translateY(-2px); }
+.kinoEntry:focus-visible { outline: 2px solid var(--teal); outline-offset: 3px; }
+.kinoEntry[data-hidden="true"] { opacity: 0; pointer-events: none; transform: scale(.9); }
+.sidePanel[data-mode="floating"] { position: fixed; z-index: 56; right: 24px; bottom: var(--kino-panel-bottom, 84px); width: min(clamp(320px, 25vw, 400px), calc(100vw - 48px)); height: var(--kino-panel-height, min(680px, calc(100dvh - 116px))); border: 1px solid var(--line); border-radius: var(--radius-medium); box-shadow: var(--shadow); transform-origin: bottom right; transition: opacity 160ms ease, transform 160ms ease; }
+.sidePanel[data-mode="floating"][data-idle="true"] { opacity: .12; transition: opacity 900ms ease; }
+.contextChip { display: flex; max-width: 100%; align-items: center; gap: 6px; width: fit-content; margin: 0 0 8px; padding: 4px 10px; overflow: hidden; color: var(--ink-faint); border: 1px solid var(--line); border-radius: 999px; background: var(--surface-raised); font-size: .68rem; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.contextChip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sidePanel[data-mode="floating"][data-side="left"] { right: auto; left: 24px; transform-origin: bottom left; }
+.sidePanel[data-mode="floating"][data-open="false"] { opacity: 0; transform: translateY(8px) scale(.97); transition: opacity 160ms ease, transform 160ms ease, visibility 0s 160ms; }
 .sideTabs { display: flex; min-width: 0; flex: 1; gap: 20px; padding: 0 12px; }
 .sideTabs button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 40px; padding: 0 3px; color: var(--ink-faint); border-bottom: 2px solid transparent; background: transparent; cursor: pointer; font-size: .76rem; }
 .sideTabs button:hover, .sideTabs button[aria-selected="true"] { color: var(--teal-deep); }
 .sideTabs button[aria-selected="true"] { border-bottom-color: var(--teal); }
-.pauseOnSend { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; padding: 10px 12px; color: var(--ink-soft); font-size: .75rem; cursor: pointer; }
+.pauseOnSend { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 46px; padding: 8px 0; color: var(--ink-soft); font-size: .75rem; cursor: pointer; }
 .pauseOnSend input { width: 32px; height: 18px; flex-shrink: 0; margin: 0; border: 1px solid var(--line-strong); border-radius: 9px; appearance: none; background: var(--surface-muted); cursor: pointer; }
 .pauseOnSend input::before { display: block; width: 12px; height: 12px; margin: 2px; border-radius: 50%; background: var(--ink-soft); content: ""; }
 .pauseOnSend input:checked { border-color: var(--teal-deep); background: var(--teal-deep); }
@@ -103,10 +111,9 @@
   .episodeList :is(a, [aria-disabled="true"]) { grid-template-columns: 46px minmax(0, 1fr); }
   .episodeList small { grid-column: 2; }
 }
-@media (max-width: 580px) { .watchSynopsis h1 { font-size: 1.15rem; } .panelToggle { width: 36px; flex-shrink: 0; } }
+@media (max-width: 580px) { .watchSynopsis h1 { font-size: 1.15rem; } }
 @container watch-player (max-width: 580px) { .videoPlayerControls { padding: 24px 8px 4px; } .videoPlayerControlRow { gap: 1px; } .videoPlayerControlRow .videoPlayerSkip { width: 34px; padding: 0; } .videoPlayerSkip small { display: none; } .videoPlayerControlRow time { margin-left: 2px; font-size: .58rem; } .videoPlayerVolume { display: none; } }
 
-@media (max-width: 360px) { .panelToggle { width: 32px; } }
 @container watch-player (max-width: 360px) { .videoPlayerControls { padding-inline: 6px; } .videoPlayerControlRow button, .videoPlayerControlRow .videoPlayerSkip { width: 30px; } .videoPlayerControlRow select { width: 48px; } .videoPlayerControlRow time { margin-left: 0; font-size: .55rem; } }
 
 /* Keep persistent touch controls below the picture so they do not cover subtitles. */
@@ -210,8 +217,16 @@
 @media (max-width: 580px) { .homeGrid { gap: 24px; } .seriesCards { grid-auto-columns: 76%; gap: 16px; } .seriesCards strong { font-size: .9rem; } .seriesCards small { font-size: .7rem; } .homeEpisode { grid-template-columns: 46px minmax(0, 1fr) auto; gap: 10px; padding-inline: 8px; } .homeEpisodeNumber { font-size: .68rem; } .coverFallback { padding: 15px; gap: 12px; } }
 @media (prefers-reduced-motion: reduce) { .seriesCover, .sidePanel[data-open="false"], .videoPlayerControls { transition: none; } }
 
-.fadePreference { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; padding: 8px 12px; color: var(--ink-soft); font-size: .75rem; }
-.fadePreference input { width: 5em; padding: 4px 6px; color: var(--ink); background: var(--canvas); border: 1px solid var(--line); border-radius: 6px; font: inherit; }
-.sidePanel[data-fade="true"]:not(:hover):not(:focus-within) { animation: watch-panel-fade 160ms var(--ease-out) var(--kino-fade-delay) forwards; }
-@keyframes watch-panel-fade { to { opacity: .4; } }
-@media (prefers-reduced-motion: reduce) { .sidePanel[data-fade="true"] { animation-duration: 1ms; } }
+.sidePanel[data-mode="floating"] .panelToolbar { cursor: grab; touch-action: none; }
+.sidePanel[data-mode="floating"] .panelToolbar:active { cursor: grabbing; }
+.fadeDelay { display: flex; min-height: 46px; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); color: var(--ink-soft); font-size: .75rem; }
+.fadeDelayControl { display: flex; align-items: center; gap: 5px; padding: 3px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--canvas); color: var(--ink-faint); font-size: .7rem; }
+.fadeDelayControl:focus-within { border-color: var(--teal-deep); box-shadow: 0 0 0 2px var(--teal-wash); }
+.fadeDelay input { width: 38px; padding: 2px 0; border: 0; outline: none; color: var(--ink); background: transparent; text-align: center; font-size: .8rem; font-variant-numeric: tabular-nums; }
+.pauseOnSend input { transition: background 160ms ease; }
+.pauseOnSend input::before { transition: transform 160ms ease; }
+.pauseOnSend input:focus-visible { outline: 2px solid var(--teal-deep); outline-offset: 3px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .kinoEntry, .sidePanel[data-mode="floating"], .sidePanel[data-mode="floating"][data-idle="true"], .sidePanel[data-mode="floating"][data-open="false"] { transition: none; }
+}

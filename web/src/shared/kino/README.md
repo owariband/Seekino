@@ -16,6 +16,7 @@ Kino is drawn from code, not from image files. `engine.ts` holds the pixel poses
 | `think` | Looks up at a floating question mark | Checking evidence; no clips found |
 | `loading` | Walks in place under three blinking dots | Writing the answer; connecting |
 | `run` | Sprints between the ends, skids at each turn | Searching for clips |
+| `dashLeft` / `dashRight` | Sprints in place facing that way while the ground scrolls past | Being dragged on the watch page |
 | `sleep` | Lies down, breathes, floats Zs | On the latest bubble once its answer is done; empty chat after 45 s idle |
 | `jump` | Crouches, jumps seven pixels high, lands with dust | Reaction: poking Kino |
 | `leap` | Gets up on the old perch, crouches, flies along an arc, lands with dust | Reaction: a new turn starts and Kino moves to the new bubble |

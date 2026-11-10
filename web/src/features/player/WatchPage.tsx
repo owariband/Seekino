@@ -1,5 +1,5 @@
-import { ChevronLeft, ChevronRight, Clapperboard, ListVideo, MessageCircle, Play, Settings2, X } from "lucide-react";
-import { type CSSProperties, type Dispatch, type KeyboardEvent, type PointerEvent, type ReactNode, type SetStateAction, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { ChevronLeft, ChevronRight, Clapperboard, ListVideo, Maximize2, MessageCircle, Minimize2, Play, Settings2, X } from "lucide-react";
+import { type CSSProperties, type Dispatch, type KeyboardEvent, type PointerEvent, type ReactNode, type SetStateAction, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useLocation, useNavigate, useOutletContext, useParams } from "react-router";
@@ -9,17 +9,63 @@ import type { VideoSummary } from "../../api/contracts";
 import type { WatchPanelLayout } from "../../app/AppShell";
 import { episodeLabel, videoTitle, formatTimecode, previewFramePosition, seriesTitle } from "../../shared/format";
 import { Mascot } from "../../shared/Mascot";
+import { Kino } from "../../shared/kino/Kino";
+import { useAssistantBusy } from "../../shared/assistantActivity";
 import { SearchPage, type SearchPageHandle } from "../search/SearchPage";
 import { VideoPlayer, type VideoPlayerHandle } from "./VideoPlayer";
 import { PlaybackFrame } from "./PlaybackFrame";
 import { useWatchPreferences } from "./watchPreferences";
-import { useAssistantBusy } from "../../shared/assistantActivity";
 import { useI18n } from "../../app/i18n";
 import { seriesPath, watchPath } from "../library/seriesLinks";
 import { useAuth } from "../auth/AuthProvider";
 import styles from "./watch.module.css";
 
 const PANEL_WIDTH_KEY = "seekino-watch-panel-width";
+const PANEL_MODE_KEY = "seekino-watch-panel-mode";
+const KINO_DOCK_KEY = "seekino-kino-entry-dock";
+const KINO_SIZE = 64;
+const HEADER_HEIGHT = 64;
+
+type KinoDock = { side: "left" | "right"; bottom: number };
+
+function savedKinoDock(): KinoDock {
+  try {
+    const value = JSON.parse(window.localStorage.getItem(KINO_DOCK_KEY) ?? "null") as Partial<KinoDock> | null;
+    if ((value?.side === "left" || value?.side === "right") && Number.isFinite(value.bottom)) return { side: value.side, bottom: value.bottom! };
+  } catch { /* Fall back to the default corner. */ }
+  return { side: "right", bottom: 84 };
+}
+
+/** Keeps Kino between the top bar and the bottom edge of the viewport. */
+function clampKinoBottom(bottom: number, viewportHeight: number, topInset = HEADER_HEIGHT): number {
+  return Math.round(Math.max(16, Math.min(bottom, viewportHeight - topInset - KINO_SIZE - 8)));
+}
+
+/** Playback position for the "can see" chip, published once per second so Chat itself does not re-render. */
+function createPositionStore() {
+  let position = 0;
+  const listeners = new Set<() => void>();
+  return {
+    get: () => position,
+    set(next: number) {
+      const changed = Math.floor(next / 1000) !== Math.floor(position / 1000);
+      position = next;
+      if (changed) listeners.forEach((listener) => listener());
+    },
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => { listeners.delete(listener); };
+    },
+  };
+}
+
+function PlaybackContextChip({ store, episodeOrder }: { store: ReturnType<typeof createPositionStore>; episodeOrder: number }) {
+  const { t } = useI18n();
+  const second = useSyncExternalStore(store.subscribe, () => Math.floor(store.get() / 1000));
+  return <p className={styles.contextChip}>
+    <span>{t("Kino 能看到 {episode} · {time}", { episode: episodeLabel(episodeOrder), time: formatTimecode(second * 1000) })}</span>
+  </p>;
+}
 const MIN_PANEL_WIDTH = 320;
 
 type PlaybackExtraContext = {
@@ -73,13 +119,32 @@ export function WatchPage() {
   const resumeAfterChatRef = useRef(false);
   const [panelOpen, setPanelOpen] = useState(false);
   const [panelTab, setPanelTab] = useState<"chat" | "episodes">("chat");
-  const { pauseOnSend, setPauseOnSend, fadeDelay, setFadeDelay } = useWatchPreferences();
+  const [panelMode, setPanelMode] = useState<"floating" | "docked">(() => {
+    try { return window.localStorage.getItem(PANEL_MODE_KEY) === "docked" ? "docked" : "floating"; }
+    catch { return "floating"; }
+  });
+  const [entryHovered, setEntryHovered] = useState(false);
+  const [kinoDock, setKinoDock] = useState(savedKinoDock);
+  const [kinoDrag, setKinoDrag] = useState<{ x: number; y: number; heading: "left" | "right" } | null>(null);
+  const [kinoLandings, setKinoLandings] = useState(0);
+  const kinoDragRef = useRef<{ pointerId: number; offsetX: number; offsetY: number; startX: number; startY: number; turnX: number; heading: "left" | "right"; moved: boolean } | null>(null);
+  const suppressEntryClickRef = useRef(false);
   const assistantBusy = useAssistantBusy();
+  const positionStore = useMemo(createPositionStore, [videoId]);
+  const [panelHovered, setPanelHovered] = useState(false);
+  const [panelActivity, setPanelActivity] = useState(0);
+  const { pauseOnSend, setPauseOnSend, fadeDelay, setFadeDelay } = useWatchPreferences();
+  const [panelPosition, setPanelPosition] = useState<{ x: number; y: number } | null>(null);
+  const panelDragRef = useRef<{ x: number; y: number } | null>(null);
+  const [panelIdle, setPanelIdle] = useState(false);
   const [panelWidth, setPanelWidth] = useState(savedPanelWidth);
   const [resizing, setResizing] = useState(false);
   const [viewportWidth, setViewportWidth] = useState(window.innerWidth);
+  const [viewportHeight, setViewportHeight] = useState(window.innerHeight);
   const maxPanelWidth = Math.min(850, Math.max(MIN_PANEL_WIDTH, viewportWidth - 420));
   const visiblePanelWidth = Math.min(panelWidth, maxPanelWidth);
+  const compactViewport = viewportWidth <= 800;
+  const effectiveMode = compactViewport ? "docked" : panelMode;
   const [pageFullscreen, setPageFullscreen] = useState(false);
   const seriesQuery = useQuery({
     queryKey: ["series-detail", seriesId, tenantId],
@@ -104,6 +169,7 @@ export function WatchPage() {
   const atSeconds = explicitAtSeconds ?? legacyAtSeconds;
 
   const updatePlaybackContext = useCallback((positionSeconds: number) => {
+    positionStore.set(positionSeconds);
     if (!selected) return;
     playbackContextRef.current = {
       playback: {
@@ -113,7 +179,7 @@ export function WatchPage() {
         positionSeconds,
       },
     };
-  }, [selected?.episodeOrder, selected?.seriesId, selected?.videoId]);
+  }, [positionStore, selected?.episodeOrder, selected?.seriesId, selected?.videoId]);
 
   const captureExtraContext = useCallback((): Record<string, unknown> | null => {
     if (!selected) return null;
@@ -154,7 +220,11 @@ export function WatchPage() {
     setResizing(false);
     setPanelOpen(false);
     if (settingsRef.current) settingsRef.current.open = false;
-    panelToggleRef.current?.focus();
+    requestAnimationFrame(() => panelToggleRef.current?.focus());
+  };
+
+  const togglePanelMode = () => {
+    setPanelMode(panelMode === "docked" ? "floating" : "docked");
   };
 
   const switchPaneOnTab = (event: KeyboardEvent<HTMLElement>, destination: "chat" | "player") => {
@@ -198,6 +268,26 @@ export function WatchPage() {
     try { window.localStorage.setItem(PANEL_WIDTH_KEY, String(panelWidth)); } catch { /* Resizing still works without storage. */ }
   }, [panelWidth]);
 
+
+  useEffect(() => { setPanelPosition(null); }, [viewportWidth, viewportHeight, effectiveMode]);
+
+  // A floating window that nobody is using fades away so the picture shows through; any touch brings it back.
+  useEffect(() => {
+    setPanelIdle(false);
+    if (!panelOpen || effectiveMode !== "floating" || panelHovered || assistantBusy) return;
+    const timer = window.setTimeout(() => setPanelIdle(true), fadeDelay * 1000);
+    return () => window.clearTimeout(timer);
+  }, [panelOpen, effectiveMode, panelHovered, assistantBusy, panelActivity, fadeDelay]);
+
+  useEffect(() => {
+    try { window.localStorage.setItem(KINO_DOCK_KEY, JSON.stringify(kinoDock)); } catch { /* Kino stays put for this visit. */ }
+  }, [kinoDock]);
+
+  useEffect(() => {
+    try { window.localStorage.setItem(PANEL_MODE_KEY, panelMode); } catch { /* The mode still applies for this visit. */ }
+  }, [panelMode]);
+
+
   useEffect(() => {
     const closeSettingsOutside = (event: globalThis.PointerEvent) => {
       const settings = settingsRef.current;
@@ -208,14 +298,14 @@ export function WatchPage() {
   }, []);
 
   useEffect(() => {
-    const sync = () => setViewportWidth(window.innerWidth);
+    const sync = () => { setViewportWidth(window.innerWidth); setViewportHeight(window.innerHeight); };
     window.addEventListener("resize", sync);
     return () => window.removeEventListener("resize", sync);
   }, []);
 
   useLayoutEffect(() => {
-    setWatchPanelLayout?.({ open: panelOpen, width: visiblePanelWidth, resizing });
-  }, [panelOpen, visiblePanelWidth, resizing, setWatchPanelLayout]);
+    setWatchPanelLayout?.({ open: panelOpen && effectiveMode === "docked", width: visiblePanelWidth, resizing });
+  }, [panelOpen, effectiveMode, visiblePanelWidth, resizing, setWatchPanelLayout]);
 
   useLayoutEffect(() => () => {
     setWatchPanelLayout?.((layout) => ({ ...layout, open: false, resizing: false }));
@@ -250,20 +340,66 @@ export function WatchPage() {
     if (event.currentTarget.hasPointerCapture?.(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
   };
 
+  const kinoGutter = viewportWidth <= 580 ? 16 : 24;
+  const topInset = pageFullscreen ? 0 : HEADER_HEIGHT;
+  const kinoBottom = clampKinoBottom(kinoDock.bottom, viewportHeight, topInset);
+  const kinoPosition = kinoDrag ?? {
+    x: kinoDock.side === "right" ? viewportWidth - kinoGutter - KINO_SIZE : kinoGutter,
+    y: viewportHeight - kinoBottom - KINO_SIZE,
+  };
+  // The floating window keeps its full height and lines up with Kino as far as the viewport allows.
+  const floatingHeight = Math.min(640, Math.round(viewportHeight * 0.62), viewportHeight - topInset - 40);
+  const floatingBottom = Math.max(16, Math.min(kinoBottom, viewportHeight - topInset - 24 - floatingHeight));
+
+  const startKinoDrag = (event: PointerEvent<HTMLButtonElement>) => {
+    if (event.button !== 0) return;
+    const bounds = event.currentTarget.getBoundingClientRect();
+    kinoDragRef.current = { pointerId: event.pointerId, offsetX: event.clientX - bounds.left, offsetY: event.clientY - bounds.top, startX: event.clientX, startY: event.clientY, turnX: event.clientX, heading: kinoDock.side === "right" ? "left" : "right", moved: false };
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+  };
+
+  const moveKino = (event: PointerEvent<HTMLButtonElement>) => {
+    const drag = kinoDragRef.current;
+    if (drag?.pointerId !== event.pointerId) return;
+    if (!drag.moved && Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) < 4) return;
+    drag.moved = true;
+    // Turn only after a few pixels the other way, so a shaky hand does not make Kino flicker.
+    if (Math.abs(event.clientX - drag.turnX) >= 6) {
+      drag.heading = event.clientX < drag.turnX ? "left" : "right";
+      drag.turnX = event.clientX;
+    } else if ((drag.heading === "left") === (event.clientX < drag.turnX)) drag.turnX = event.clientX;
+    setKinoDrag({
+      heading: drag.heading,
+      x: Math.max(0, Math.min(window.innerWidth - KINO_SIZE, event.clientX - drag.offsetX)),
+      y: Math.max(0, Math.min(window.innerHeight - KINO_SIZE, event.clientY - drag.offsetY)),
+    });
+  };
+
+  const dropKino = (event: PointerEvent<HTMLButtonElement>) => {
+    const drag = kinoDragRef.current;
+    if (drag?.pointerId !== event.pointerId) return;
+    kinoDragRef.current = null;
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    setKinoDrag(null);
+    if (!drag.moved || event.type === "pointercancel") return;
+    suppressEntryClickRef.current = true;
+    const left = event.clientX - drag.offsetX;
+    setKinoDock({
+      side: left + KINO_SIZE / 2 < window.innerWidth / 2 ? "left" : "right",
+      bottom: clampKinoBottom(window.innerHeight - (event.clientY - drag.offsetY) - KINO_SIZE, window.innerHeight, topInset),
+    });
+    setKinoLandings((count) => count + 1);
+  };
+
   if (!seriesId) return <main className={`page ${styles.page}`}><p role="alert">{t("视频地址无效。")}</p></main>;
   if (seriesQuery.isPending) return <main className={`page ${styles.page}`}><p className={styles.pageState} role="status"><Mascot mood="seek" size={64} delayed />{t("正在读取视频系列…")}</p></main>;
   if (seriesQuery.isError) return <main className={`page ${styles.page}`}><p className={styles.pageState} role="alert"><Mascot mood="oops" size={64} />{t("读取视频系列失败：{message}", { message: errorMessage(seriesQuery.error, locale) })}</p></main>;
   if (!series) return <main className={`page ${styles.page}`}><p className={styles.pageState} role="alert"><Mascot mood="puzzled" size={64} />{t("视频系列不存在。")}</p></main>;
 
-  const headerActions = !pageFullscreen ? document.getElementById("watch-header-actions") : null;
-  const panelToggle = <button ref={panelToggleRef} className={styles.panelToggle} type="button" onClick={() => { if (panelOpen) closePanel(); else focusChat(); }} aria-expanded={panelOpen} aria-controls="watch-side-panel" aria-label={panelOpen ? t("收起观看侧栏") : t("打开观看侧栏")} title={panelOpen ? t("收起对话") : t("与 Seekino 对话")}>
-    <MessageCircle size={21} aria-hidden="true" />
-  </button>;
 
   return (
     <main ref={pageRef} className={`page ${styles.page}`} data-panel-open={panelOpen} data-fullscreen={pageFullscreen} style={{ "--watch-panel-width": `${visiblePanelWidth}px` } as CSSProperties}>
       <div ref={layoutRef} className={styles.layout}>
-        {headerActions ? createPortal(panelToggle, headerActions) : <div className={styles.floatingTools}>{panelToggle}</div>}
         <section className={styles.viewer} aria-label={t("视频播放器")} onKeyDownCapture={(event) => switchPaneOnTab(event, "chat")}>
           {episodes.length === 0 ? <p className={styles.unavailable} role="status">{t("这个系列还没有视频。")}</p> : !selected ? (
             <p className={styles.unavailable} role="alert">{t("找不到这集视频，请在下方选集重新选择。")}</p>
@@ -272,9 +408,25 @@ export function WatchPage() {
       </div>
 
       <WatchPanelPortal>
-      <aside id="watch-side-panel" className={styles.sidePanel} data-fade={pageFullscreen && panelOpen && !assistantBusy}
-        style={{ "--kino-fade-delay": `${fadeDelay}s` } as CSSProperties} aria-label={t("观看侧栏")} data-open={panelOpen} aria-hidden={!panelOpen} inert={!panelOpen} onKeyDown={(event) => { if (event.key === "Escape" && !event.defaultPrevented) { event.stopPropagation(); closePanel(); } }}>
-        {panelOpen ? <div
+      <button ref={panelToggleRef} className={styles.kinoEntry} type="button" data-hidden={panelOpen} data-dragging={Boolean(kinoDrag)}
+        style={{ left: kinoPosition.x, top: kinoPosition.y }}
+        onClick={() => {
+          if (suppressEntryClickRef.current) { suppressEntryClickRef.current = false; return; }
+          focusChat();
+        }}
+        onPointerDown={startKinoDrag} onPointerMove={moveKino} onPointerUp={dropKino} onPointerCancel={dropKino}
+        aria-controls="watch-side-panel" aria-expanded={panelOpen} aria-hidden={panelOpen || undefined} tabIndex={panelOpen ? -1 : undefined}
+        aria-label={t("与 Kino 对话")} title={t("与 Kino 对话")}
+        onPointerEnter={() => setEntryHovered(true)} onPointerLeave={() => setEntryHovered(false)}
+        onFocus={() => setEntryHovered(true)} onBlur={() => setEntryHovered(false)}>
+        <Kino state={kinoDrag ? (kinoDrag.heading === "left" ? "dashLeft" : "dashRight") : assistantBusy ? "loading" : entryHovered ? "look" : "idle"} width={38} scale={3} ground={false} dozeAfterMs={45_000}
+          reaction={kinoLandings ? { name: "jump", key: kinoLandings } : null} />
+      </button>
+      <aside id="watch-side-panel" className={styles.sidePanel} aria-label={t("观看侧栏")} data-open={panelOpen} data-mode={effectiveMode} data-side={kinoDock.side} data-idle={panelIdle}
+        onPointerEnter={() => setPanelHovered(true)} onPointerLeave={() => setPanelHovered(false)}
+        onPointerDown={() => setPanelActivity((count) => count + 1)} onKeyDownCapture={() => setPanelActivity((count) => count + 1)}
+        style={{ ...(effectiveMode === "floating" && panelPosition ? { left: panelPosition.x, top: panelPosition.y, right: "auto", bottom: "auto" } : {}), "--kino-panel-bottom": `${floatingBottom}px`, "--kino-panel-height": `${floatingHeight}px` } as CSSProperties} aria-hidden={!panelOpen} inert={!panelOpen} onKeyDown={(event) => { if (event.key === "Escape" && !event.defaultPrevented) { event.stopPropagation(); closePanel(); } }}>
+        {panelOpen && effectiveMode === "docked" ? <div
           className={styles.resizeHandle}
           role="separator"
           tabIndex={0}
@@ -300,7 +452,30 @@ export function WatchPage() {
           }}
         /> : null}
 
-        <div className={styles.panelToolbar}>
+        <div className={styles.panelToolbar}
+          onPointerDown={(event) => {
+            if (effectiveMode !== "floating" || event.button !== 0 || (event.target as HTMLElement).closest("button, details")) return;
+            const bounds = event.currentTarget.parentElement!.getBoundingClientRect();
+            panelDragRef.current = { x: event.clientX - bounds.left, y: event.clientY - bounds.top };
+            event.currentTarget.setPointerCapture(event.pointerId);
+            event.preventDefault();
+          }}
+          onPointerMove={(event) => {
+            const drag = panelDragRef.current;
+            if (!drag) return;
+            const bounds = event.currentTarget.parentElement!.getBoundingClientRect();
+            setPanelPosition({
+              x: Math.max(8, Math.min(window.innerWidth - bounds.width - 8, event.clientX - drag.x)),
+              y: Math.max(8, Math.min(window.innerHeight - bounds.height - 8, event.clientY - drag.y)),
+            });
+          }}
+          onPointerUp={(event) => {
+            panelDragRef.current = null;
+            if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+          }}
+          onPointerCancel={() => { panelDragRef.current = null; }}
+          onLostPointerCapture={() => { panelDragRef.current = null; }}
+        >
           <div className={styles.sideTabs} role="tablist" aria-label={t("观看侧栏内容")}>
             <button type="button" role="tab" id="watch-chat-tab" aria-controls="watch-chat-panel" aria-selected={panelTab === "chat"} onClick={focusChat}><MessageCircle size={15} aria-hidden="true" />{t("聊天")}</button>
             <button type="button" role="tab" id="watch-episodes-tab" aria-controls="watch-episodes-panel" aria-selected={panelTab === "episodes"} onClick={() => setPanelTab("episodes")}><ListVideo size={15} aria-hidden="true" />{t("选集")}</button>
@@ -314,12 +489,17 @@ export function WatchPage() {
           }}>
             <summary role="button" aria-label={t("观看设置")} title={t("观看设置")}><Settings2 size={16} aria-hidden="true" /></summary>
             <div className={styles.watchSettingsPopover}>
-              <label className={styles.fadePreference}><span>{t("自动淡化时间（秒）")}</span>
-                <input type="number" min={1} step="any" defaultValue={fadeDelay} key={fadeDelay} onBlur={event => {
-                  const seconds = event.currentTarget.valueAsNumber;
-                  if (Number.isFinite(seconds) && seconds >= 1) setFadeDelay(seconds);
-                  else event.currentTarget.value = String(fadeDelay);
-                }} onKeyDown={event => { if (event.key === "Enter") event.currentTarget.blur(); }} />
+              <label className={styles.fadeDelay}>
+                <span>{t("自动淡化时间")}</span>
+                <span className={styles.fadeDelayControl}>
+                  <input type="number" min={1} step="any" defaultValue={fadeDelay} key={fadeDelay} onBlur={(event) => {
+                    const seconds = event.currentTarget.valueAsNumber;
+                    if (Number.isFinite(seconds) && seconds >= 1) setFadeDelay(seconds);
+                    else event.currentTarget.value = String(fadeDelay);
+                  }} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }}
+                    aria-label={t("自动淡化时间（秒）")} />
+                  <span>{t("秒")}</span>
+                </span>
               </label>
               <label className={styles.pauseOnSend}>
                 <span>{t("发送问题时暂停视频")}</span>
@@ -327,6 +507,10 @@ export function WatchPage() {
               </label>
             </div>
           </details>
+          {!compactViewport ? <button className={styles.panelClose} type="button" onClick={togglePanelMode}
+            aria-label={panelMode === "floating" ? t("停靠到侧栏") : t("改为悬浮窗")} title={panelMode === "floating" ? t("停靠到侧栏") : t("改为悬浮窗")}>
+            {panelMode === "floating" ? <Maximize2 size={16} aria-hidden="true" /> : <Minimize2 size={16} aria-hidden="true" />}
+          </button> : null}
           <button className={styles.panelClose} type="button" onClick={closePanel} aria-label={t("关闭对话面板")}><X size={18} aria-hidden="true" /></button>
         </div>
         <div
@@ -337,7 +521,8 @@ export function WatchPage() {
           hidden={panelTab !== "chat"}
           onKeyDownCapture={(event) => switchPaneOnTab(event, "player")}
         >
-          <SearchPage ref={chatRef} embedded initialSeriesId={seriesId} initialSeries={series} captureExtraContext={captureExtraContext} onOpenVideo={({ tenantId: targetTenantId, seriesId: targetSeriesId, videoId: targetVideoId, startSeconds }) => {
+          <SearchPage ref={chatRef} embedded initialSeriesId={seriesId} initialSeries={series} captureExtraContext={captureExtraContext}
+            composerContext={selected ? <PlaybackContextChip store={positionStore} episodeOrder={selected.episodeOrder} /> : null} onOpenVideo={({ tenantId: targetTenantId, seriesId: targetSeriesId, videoId: targetVideoId, startSeconds }) => {
             navigate(`${watchPath({ tenantId: targetTenantId, seriesId: targetSeriesId }, targetVideoId)}&atSeconds=${startSeconds}`);
           }} onSeekCurrent={selected ? (positionMs) => {
             navigate(`${watchPath(series, selected.videoId)}&atSeconds=${positionMs}`);

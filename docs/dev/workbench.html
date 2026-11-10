@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-10T15:51:31+08:00",
+ "updatedAt": "2026-11-10T23:40:27+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 33,
+ "revision": 34,
  "categories": [
   {
    "id": "parse",
@@ -5057,6 +5057,39 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "label": "剪辑参考主设计 #50",
      "kind": "design",
      "url": "https://github.com/owariband/Seekino/pull/50"
+    }
+   ]
+  },
+  {
+   "id": "WATCH-KINO-01",
+   "title": "观看页通过 Kino 打开浮窗并可停靠",
+   "category": "chat",
+   "type": "requirement",
+   "status": "done",
+   "priority": "P1",
+   "description": "桌面通过可拖动的 Kino 打开悬浮陪看，切换停靠并记住选择，窄屏沿用底部抽屉。",
+   "next": "发布记录跟随 main 的独立 PR。",
+   "verification": "1440 px 浮窗保持播放器宽度，刷新保留停靠，网页全屏和 390 px 抽屉通过真实 Chrome 回归。641 项单测和正式构建通过。",
+   "updatedAt": "2026-11-10",
+   "tags": [
+    "播放",
+    "对话"
+   ],
+   "related": [
+    "MOD-CHAT",
+    "SETTINGS-UI-01"
+   ],
+   "branch": "feat/watch-kino-panel",
+   "links": [
+    {
+     "label": "Kino 浮窗设计与验收",
+     "kind": "trd",
+     "url": "https://github.com/owariband/Seekino/blob/dev/docs/design/03-product-reassessment/watch-kino-entry-trd.md"
+    },
+    {
+     "label": "PR #96",
+     "kind": "pr",
+     "url": "https://github.com/owariband/Seekino/pull/96"
     }
    ]
   },

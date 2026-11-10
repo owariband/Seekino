@@ -115,6 +115,14 @@ describe("timelines", () => {
     expect(player.next().cue).toBe("skid");
   });
 
+  it("dashes in place facing the way it is carried", () => {
+    for (const [state, flip] of [["dashLeft", false], ["dashRight", true]] as const) {
+      const { loop } = buildTimeline(state, startCursor(state, WIDTH), WIDTH);
+      expect(new Set(loop.map(f => f.x)).size, state).toBe(1);
+      expect(loop.every(f => f.pose === "run" && f.flip === flip), state).toBe(true);
+    }
+  });
+
   it("floats Zs while sleeping and lights one loading dot at a time", () => {
     const sleep = buildTimeline("sleep", startCursor("sleep", WIDTH), WIDTH).loop;
     expect(sleep.every(f => (f.fx ?? []).length > 0)).toBe(true);

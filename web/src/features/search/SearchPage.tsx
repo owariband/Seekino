@@ -1,5 +1,5 @@
 import { markChatTextRendered } from "../../api/chatDelivery";
-import { ArrowUp, ChevronDown, History, PanelLeft, PanelLeftClose, LoaderCircle, Play, Plus, SlidersHorizontal, Square, Trash2, TriangleAlert, X } from "lucide-react";
+import { ArrowUp, ChevronDown, ChevronRight, History, PanelLeft, PanelLeftClose, LoaderCircle, Play, Plus, SlidersHorizontal, Square, Trash2, TriangleAlert, X } from "lucide-react";
 import { Children, createContext, forwardRef, type FormEvent, type ReactNode, useCallback, useEffect, useId, useContext, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
 import Markdown, { type Components, defaultUrlTransform } from "react-markdown";
@@ -72,6 +72,8 @@ type SearchPageProps = {
   onOpenVideo?: (target: { tenantId: string; seriesId: string; videoId: string; startSeconds: number }) => void;
   /** Seeks the episode being watched; enables clickable timestamps in answers. Milliseconds. */
   onSeekCurrent?: (positionMs: number) => void;
+  /** Shown just above the composer, e.g. what the watch page lets the assistant see. */
+  composerContext?: ReactNode;
 };
 
 export interface SearchPageHandle {
@@ -332,7 +334,7 @@ export function RoutedSearchPage() {
 }
 
 export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function SearchPage(
-  { embedded = false, initialSeriesId, initialSeries: suppliedSeries, captureExtraContext, onOpenVideo, onSeekCurrent, navigation, onNavigationConsumed },
+  { embedded = false, initialSeriesId, initialSeries: suppliedSeries, captureExtraContext, onOpenVideo, onSeekCurrent, composerContext, navigation, onNavigationConsumed },
   ref,
 ) {
   const { t, locale, formatLocale } = useI18n();
@@ -415,6 +417,16 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
     sidebarDragRef.current = null;
     setSidebarResizing(false);
   }, [compactLayout, sidebarOpen]);
+  const [composerToolsOpen, setComposerToolsOpen] = useState(false);
+  const composerToolsRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!composerToolsOpen) return;
+    const closeOutside = (event: globalThis.PointerEvent) => {
+      if (event.target instanceof Node && !composerToolsRef.current?.contains(event.target)) setComposerToolsOpen(false);
+    };
+    document.addEventListener("pointerdown", closeOutside);
+    return () => document.removeEventListener("pointerdown", closeOutside);
+  }, [composerToolsOpen]);
   const scopePickerRef = useRef<HTMLDetailsElement>(null);
   const scopeStatusId = useId();
   const answerSettingsRef = useRef<HTMLDetailsElement>(null);
@@ -1113,7 +1125,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
           }}>
             {showWelcome ? (
               <div className={styles.welcome}>
-                <Kino interactive perch dozeAfterMs={45_000} width={embedded ? 48 : 64} scale={embedded ? 2 : 3} title={t("戳一戳 Kino")} />
+                <Kino interactive perch dozeAfterMs={45_000} width={64} scale={3} title={t("戳一戳 Kino")} />
                 <p>{embedded ? t("看到哪里，问到哪里。回答里的时间点可以直接点击跳转。") : t("描述记得的画面、台词或人物关系，一起把那一刻找回来。")}</p>
                 <div className={styles.examples} aria-label={t("试试这样问")}>
                   {(embedded ? EMBEDDED_EXAMPLE_QUESTIONS : EXAMPLE_QUESTIONS).map((example) => <button key={example} type="button" disabled={mode !== "live" || loading} onClick={() => {
@@ -1165,6 +1177,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
           </div>
 
           <div className={styles.composerArea}>
+            {composerContext}
             <form className={styles.composer} onSubmit={submit}>
               {attachments.items.length || reference ? <div className={styles.draftContext}>
               {attachments.items.length ? <ul className={styles.draftAttachments} aria-label={t("待发送图片")}>
@@ -1201,15 +1214,27 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
                     event.currentTarget.form?.requestSubmit();
                   }
                 }}
-                placeholder={embedded ? t("提问视频内容，或聊聊其他问题…") : showWelcome ? t("从一个问题开始…") : t("继续提问…")}
+                placeholder={embedded ? undefined : showWelcome ? t("从一个问题开始…") : t("继续提问…")}
                 rows={1}
                 aria-label={t("向 Seekino 助手提问")}
               />
               <div className={styles.composerToolbar}>
-                <div className={styles.composerControls}>
-                  {attachmentControls}
-                  {embedded ? <>{scopePicker}{answerSettingsPicker}{modelChooser}</> : null}
-                </div>
+                {embedded ? (
+                  <div ref={composerToolsRef} className={styles.composerTools} onKeyDown={(event) => {
+                    if (event.key !== "Escape" || !composerToolsOpen) return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setComposerToolsOpen(false);
+                    composerToolsRef.current?.querySelector("button")?.focus();
+                  }}>
+                    <button type="button" className={styles.toolsToggle} aria-label={t("展开输入选项")} aria-expanded={composerToolsOpen} onClick={() => setComposerToolsOpen((open) => !open)}>
+                      <ChevronRight size={18} aria-hidden="true" />
+                    </button>
+                    <div className={styles.composerControls} hidden={!composerToolsOpen}>
+                      {attachmentControls}{scopePicker}{answerSettingsPicker}{modelChooser}
+                    </div>
+                  </div>
+                ) : <div className={styles.composerControls}>{attachmentControls}</div>}
                 {sendControl}
               </div>
             </form>
