@@ -306,6 +306,14 @@ def test_v2_media_reader_refreshes_historical_keyframes_and_rejects_newer_unread
 
 def test_nonempty_search_route_returns_public_projection(repository, parsed_video, tmp_path):
     raw = domain_result(repository, parsed_video)
+    hit = raw.hits[0]
+    camera_event = {
+        "event_type": "SCENE", "description": "灯塔照向海面", "start_seconds": 800, "end_seconds": 3200,
+        "camera_ref": {"movement": "PAN_RIGHT", "timing": "EASE_IN_OUT", "start_framing": "左边的灯塔",
+                       "end_framing": "右岸停靠的小船", "visual_evidence": "灯塔与礁石一起向左移出"},
+    }
+    evidence = hit.evidence.model_copy(update={"all_time_events": [*hit.evidence.all_time_events, camera_event]})
+    raw = raw.model_copy(update={"hits": [hit.model_copy(update={"evidence": evidence})]})
     service, _client, _source, _frame, _state, _probe = media_fixture(tmp_path)
     app = FastAPI()
     app.state.services = SimpleNamespace(
@@ -322,3 +330,6 @@ def test_nonempty_search_route_returns_public_projection(repository, parsed_vide
     assert payload["searchedVideoIds"] == raw.searched_video_ids
     assert payload["hits"][0]["candidate"]["rank"] == 1
     assert "originalSourceUri" not in payload["hits"][0]["evidence"]
+    event = payload["hits"][0]["evidence"]["allTimeEvents"][-1]
+    assert (event["startSeconds"], event["endSeconds"]) == (800, 3200)
+    assert all(term in event["cameraDescription"] for term in ("镜头向右横移", "平滑", "左边的灯塔", "右岸停靠的小船"))

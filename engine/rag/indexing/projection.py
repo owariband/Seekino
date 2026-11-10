@@ -9,7 +9,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from engine.parsev2.schemas import DialogueEvent, OnScreenTextEvent, VideoParseResult
+from engine.parsev2.schemas import DialogueEvent, OnScreenTextEvent, SceneEvent, VideoParseResult
 
 INDEX_PROJECTION_VERSION = "parse-v2-chunk-index-v1"
 
@@ -124,13 +124,18 @@ def project_chunk_index(
             "end_seconds": event.end_seconds,
             "timeline_index": timeline_index,
         }
+        description = event.description
+        if isinstance(event, SceneEvent) and event.camera_ref is not None:
+            motion = event.camera_ref.describe()
+            if motion != description:
+                description += "\n" + motion
         lexical_fields.append(LexicalField(
             field="event_description",
-            raw_text=event.description,
+            raw_text=description,
             language=description_language,
             **source,
         ))
-        event_parts = [f"[{event.start_seconds},{event.end_seconds}) {event.description}"]
+        event_parts = [f"[{event.start_seconds},{event.end_seconds}) {description}"]
 
         # Each name keeps its own event source, including an off-screen speaker.
         names = list(dict.fromkeys(

@@ -119,6 +119,7 @@ Event / Sub-Chunk 的实施入口是 [sub-chunk-trd.md](02-agent-harness/sub-chu
 | 剪辑参考解析 | [代表片段与全片风格卡](03-product-reassessment/edit-reference-profile-trd.md) | 参考档案使用原片帧与独立手法索引。 |
 | 解析结果用途 | [正片与剪辑参考档案](03-product-reassessment/parse-result-profile-trd.md) | 冻结任务用途，限定正片检索与导出范围。 |
 | 上传视频自动判型 | [解析前置路由](03-product-reassessment/parse-pre-hook-router-trd.md) | 普通上传在抽帧前判断剧情、课程或剪辑成片，并保存生效策略。 |
+| 剪辑素材的运镜参考 | [描述、检索与回放](03-product-reassessment/clip-camera-reference-trd.md) | 解析来源镜头的取景和节奏，通过同一条发布事件取回可运行的二维镜头与参数。 |
 | Agent Runtime | [agent-runtime-design.md](01-mvp/agent-runtime-design.md) | Runtime 结构与执行边界的设计记录，含旧 Session / 多 Agent 历史方案。 |
 | ContextCanvas | [context-canvas-design.md](02-agent-harness/context-canvas-design.md) | 专项设计：Parse / Chat 共用上下文工作区、工具协议、读取与修改边界。 |
 | 当前播放位置理解 | [realtime-parse-trd.md](02-agent-harness/realtime-parse-trd.md) | 专项 TRD：实时理解、临时解析与 Supervisor 接线；附执行流程图。 |

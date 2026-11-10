@@ -20,6 +20,7 @@ class VisualEventView(ContractModel):
     description: str
     start_seconds: int = Field(ge=0)
     end_seconds: int = Field(gt=0)
+    camera_description: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class VideoChunkEvidenceView(ContractModel):

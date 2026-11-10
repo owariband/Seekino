@@ -448,7 +448,7 @@ export interface VideoChunkEvidence {
   keyframes: Keyframe[];
   transcript: TranscriptCue[];
   baselineVisualCaption: string | null;
-  allTimeEvents: Array<{ description: string; startSeconds: number; endSeconds: number }>;
+  allTimeEvents: Array<{ description: string; startSeconds: number; endSeconds: number; cameraDescription?: string }>;
   allTimeEventText: string;
   videoCompact: string;
   contextBeforeCompact: string | null;

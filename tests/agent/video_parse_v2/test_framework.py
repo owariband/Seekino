@@ -270,6 +270,8 @@ def test_chunk_workflow_commits_before_notifying_and_cleans_media(offset_ms, con
             assert ("first observed frame of the new expression" in kwargs["prompt"]) == (content_kind in {"anime", "script"})
             assert ("concept being taught" in kwargs["prompt"]) == (content_kind == "course")
             assert ("observable shot transitions" in kwargs["prompt"]) == (content_kind == "clip")
+            assert ("PAN_RIGHT means" in kwargs["prompt"]) == (content_kind == "clip")
+            assert ("which way the view moved" in kwargs["prompt"]) == (content_kind != "clip")
             assert kwargs["ocr_result"].lines[0].text == "screen text"
             assert kwargs["asr_result"] is asr_result
             assert '"text": "screen text"' in kwargs["prompt"]

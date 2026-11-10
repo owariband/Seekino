@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from agent.utils.context_canvas import ContextCanvas
 from agent.utils.errors import AgentToolFeedbackError
-from engine.parsev2.schemas import DialogueTextVariant, TimelineEvent, VideoParseResult
+from engine.parsev2.schemas import DialogueTextVariant, SceneEvent, TimelineEvent, VideoParseResult
 from engine.parsev2.validation import (
     ChunkResultUpdate, ValidatedIntervalRefinement, ValidatedPrefixRefinement,
     validate_result_time_range, IntervalRefinementResult, RefinedMember,
@@ -502,10 +502,21 @@ class ParseContextCanvas(ContextCanvas):
         for member in result.members:
             ref = refs[member.sequence_no]
             prepared = self.result(ref)
+            cameras = {}
+            for old in prepared.timeline:
+                if isinstance(old, SceneEvent):
+                    bounds = old.start_seconds, old.end_seconds
+                    cameras[bounds] = old.camera_ref if bounds not in cameras else None
             events = []
             for event in member.timeline:
                 value = event.model_dump(mode="json")
                 value.pop("speaker_source", None)
+                if isinstance(event, SceneEvent) and "camera_ref" not in event.model_fields_set:
+                    # An unchanged shot may be echoed without its optional observation.
+                    # An explicit null, a new interval or an ambiguous anchor never inherits one.
+                    retained = cameras.get((event.start_seconds, event.end_seconds))
+                    if retained is not None:
+                        value["camera_ref"] = retained.model_dump(mode="json")
                 if event.event_type == "DIALOGUE" and self._tracks_speaker_source(ref):
                     matching = [old for old in prepared.timeline if old.event_type == "DIALOGUE"
                                 and (old.start_seconds, old.end_seconds, old.speaker)

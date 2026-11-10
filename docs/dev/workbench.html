@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-09T22:32:49+08:00",
+ "updatedAt": "2026-11-10T11:35:00+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 29,
+ "revision": 31,
  "categories": [
   {
    "id": "parse",
@@ -4743,6 +4743,7 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "next": "合并后在 local 观看问答复验。",
    "verification": "本机模拟 HTTP、服务快照、组件和 Chromium 模拟流已验证。",
    "updatedAt": "2026-11-07",
+   "tags": [],
    "related": [
     "MOD-CHAT"
    ],
@@ -4778,7 +4779,7 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "links": [
     {
      "label": "TRD",
-     "url": "../design/03-product-reassessment/parse-output-drafts-trd.md",
+     "url": "https://github.com/owariband/Seekino/blob/dev/docs/design/03-product-reassessment/parse-output-drafts-trd.md",
      "kind": "trd"
     },
     {
@@ -4788,7 +4789,7 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
     },
     {
      "label": "验证报告",
-     "url": "../report/server/service/parse-output-drafts-20261107.md",
+     "url": "https://github.com/owariband/Seekino/blob/dev/docs/report/server/service/parse-output-drafts-20261107.md",
      "kind": "evidence"
     }
    ]
@@ -5024,6 +5025,38 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "label": "E4 实测",
      "kind": "evidence",
      "url": "https://github.com/owariband/Seekino/blob/feat/anime-material-recall/docs/report/agent/video_parse_v2/anime-material-recall-20261108.json"
+    }
+   ]
+  },
+  {
+   "id": "EDIT-CAMERA-01",
+   "title": "在素材解析和片段详情中描述镜头，保留连续运镜供剪辑复用",
+   "category": "parse",
+   "type": "requirement",
+   "status": "verifying",
+   "priority": "P1",
+   "description": "场景事件记录可见的镜头运动。剪辑素材保留方向、起落幅、节奏和画面依据，可在普通片段详情查看或从同一发布事件读取运镜参考。",
+   "next": "在实际部署按剪辑策略解析一段有手持或视差的素材，核对片段详情与原片。",
+   "verification": "四个原创控制样例与一条 10 秒 MP4 实模验证。灯塔片真实 Refine 保留连续横移，229 帧回放均方根误差 3.80 像素。另验隔离发布、检索、普通片段详情和 MCP 回读。",
+   "updatedAt": "2026-11-10",
+   "tags": ["剪辑素材", "运镜"],
+   "related": ["MOD-PARSE", "MOD-SEARCH", "EDIT-ANIME-01"],
+   "branch": "feat/clip-camera-reference",
+   "links": [
+    {
+     "label": "运镜解析与片段详情 PR #86",
+     "kind": "pr",
+     "url": "https://github.com/owariband/Seekino/pull/86"
+    },
+    {
+     "label": "上游普通上传判型 #82",
+     "kind": "pr",
+     "url": "https://github.com/owariband/Seekino/pull/82"
+    },
+    {
+     "label": "剪辑参考主设计 #50",
+     "kind": "design",
+     "url": "https://github.com/owariband/Seekino/pull/50"
     }
    ]
   },

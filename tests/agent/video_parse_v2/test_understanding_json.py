@@ -142,7 +142,9 @@ def test_understanding_transport_preserves_invalid_value_and_canonical_schema():
     candidate = _invalid_candidate()
     response = UnderstandingModelResponse.model_validate_json(json.dumps(candidate))
     assert response.root == candidate
-    assert UnderstandingModelResponse.model_json_schema() == VideoParseResult.model_json_schema()
+    from agent.video_parse_v2.understanding.response import ClipUnderstandingModelResponse
+    assert ClipUnderstandingModelResponse.model_json_schema() == VideoParseResult.model_json_schema()
+    assert "camera_ref" not in json.dumps(UnderstandingModelResponse.model_json_schema())
     with pytest.raises(ValidationError):
         VideoParseResult.model_validate(response.root)
 

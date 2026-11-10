@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_serializer, model_validator
+
+from .camera import CameraReference
 
 _NonBlankString = Annotated[str, Field(min_length=1, pattern=r"\S")]
 
@@ -65,6 +67,17 @@ class TimelineEventBase(_ParseV2Model):
 
 class SceneEvent(TimelineEventBase):
     event_type: Literal["SCENE"]
+    camera_ref: CameraReference | None = Field(
+        default=None, exclude_if=lambda value: value is None,
+        description="Optional source-grounded camera observation for this single shot",
+    )
+
+    @field_validator("camera_ref")
+    @classmethod
+    def check_camera_profile(cls, value: CameraReference | None, info: ValidationInfo) -> CameraReference | None:
+        if info.context and info.context.get("clip_camera") is False:
+            raise ValueError("camera_ref is only accepted by the clip model profile")
+        return value
 
 
 class ActionEvent(TimelineEventBase):
@@ -132,6 +145,14 @@ class OnScreenTextEvent(TimelineEventBase):
 
 class OtherEvent(TimelineEventBase):
     event_type: Literal["OTHER"]
+
+
+def without_clip_camera(schema: dict) -> dict:
+    """Retain the pre-camera provider schema for ordinary content; storage reads both."""
+    definitions = schema["$defs"]
+    definitions[SceneEvent.__name__]["properties"].pop("camera_ref")
+    definitions.pop(CameraReference.__name__)
+    return schema
 
 
 TimelineEvent = Annotated[

@@ -91,6 +91,7 @@ class VideoParseMediaService:
         duration_ms: int, chunk_duration: int, visual_mode: str, frame_fps: float,
         max_height: int, ocr_enabled: bool, overlap_ms: int,
         visual_fallback_enabled: bool = False, chunk_video_required: bool = True,
+        camera_frames_required: bool = False,
         check_active: Callable[[], None],
     ) -> Iterator[Path]:
         """Publish all chunk media only after the episode's single frame decode."""
@@ -133,7 +134,7 @@ class VideoParseMediaService:
                     self._materialize_video(source, visual, start_seconds=visual_start,
                                             end_seconds=visual_end, max_height=max_height)
                 scopes = {}
-                if visual_mode == "ordered_frames" or visual_fallback_enabled:
+                if visual_mode == "ordered_frames" or visual_fallback_enabled or camera_frames_required:
                     scopes["frames"] = (visual, visual_start, visual_end)
                 if ocr_enabled:
                     scopes["ocr_frames"] = (core, start, end)
