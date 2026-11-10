@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { useState } from "react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { type ReactNode, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Outlet, Route, Routes, useLocation } from "react-router";
 
@@ -58,12 +58,13 @@ vi.mock("./VideoPlayer", async () => {
 vi.mock("../search/SearchPage", async () => {
   const { forwardRef, useImperativeHandle, useRef } = await import("react");
   return {
-    SearchPage: forwardRef(function MockSearchPage({ embedded, initialSeriesId, initialSeries, captureExtraContext, onOpenVideo }: {
+    SearchPage: forwardRef(function MockSearchPage({ embedded, initialSeriesId, initialSeries, captureExtraContext, onOpenVideo, composerContext }: {
       embedded?: boolean;
       initialSeriesId?: string;
       initialSeries?: SeriesSummary;
       captureExtraContext?: () => Record<string, unknown> | null;
       onOpenVideo?: (target: { tenantId: string; seriesId: string; videoId: string; startSeconds: number }) => void;
+      composerContext?: ReactNode;
     }, ref) {
       const composerRef = useRef<HTMLTextAreaElement>(null);
       useImperativeHandle(ref, () => ({
@@ -71,6 +72,7 @@ vi.mock("../search/SearchPage", async () => {
       }));
       return (
         <div data-testid="supervisor-chat" data-embedded={embedded} data-series-id={initialSeriesId} data-source-tenant={initialSeries?.tenantId}>
+          {composerContext}
           <textarea ref={composerRef} aria-label="向 Seekino 助手提问" />
           <button type="button" onClick={() => onOpenVideo?.({ tenantId: initialSeries?.tenantId ?? "local-default", seriesId: "series-1", videoId: "video-1", startSeconds: 4_000 })}>打开视频证据</button>
           <button type="button" onClick={() => mocks.receiveExtraContext(captureExtraContext?.())}>捕获播放上下文</button>
@@ -162,6 +164,7 @@ function openPauseSetting() {
 beforeEach(() => {
   mocks.useAuth.mockReturnValue({ canManage: true });
   localStorage.clear();
+  localStorage.setItem("seekino-watch-panel-mode", "docked");
   mocks.getSeries.mockResolvedValue(series);
   mocks.getSnapshot.mockReturnValue({ positionSeconds: 12_000, wasPlaying: false });
   mocks.pauseAndGetSnapshot.mockReturnValue({ positionSeconds: 12_000, wasPlaying: false });
@@ -193,7 +196,7 @@ describe("WatchPage", () => {
     mocks.useAuth.mockReturnValue({ canManage: false });
     renderPage();
     await screen.findByTestId("video-player");
-    fireEvent.click(screen.getByRole("button", { name: "打开观看侧栏" }));
+    fireEvent.click(screen.getByRole("button", { name: "与 Kino 对话" }));
     fireEvent.click(screen.getByRole("tab", { name: "选集" }));
     expect(screen.queryByRole("link", { name: "调整集数" })).not.toBeInTheDocument();
   });
@@ -206,7 +209,7 @@ describe("WatchPage", () => {
     await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("tenantId=tenant-alice&atSeconds=13250"));
     expect(screen.getByTestId("supervisor-chat")).toHaveAttribute("data-source-tenant", "tenant-alice");
     expect(screen.getByRole("link", { name: "测试课程" })).toHaveAttribute("href", "/series/series-1?tenantId=tenant-alice");
-    fireEvent.click(screen.getByRole("button", { name: "打开观看侧栏" }));
+    fireEvent.click(screen.getByRole("button", { name: "与 Kino 对话" }));
     fireEvent.click(screen.getByRole("button", { name: "打开视频证据" }));
     await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("/watch/series-1/video-1?tenantId=tenant-alice&atSeconds=4000"));
     fireEvent.click(screen.getByRole("tab", { name: "选集" }));
@@ -222,7 +225,7 @@ describe("WatchPage", () => {
     await screen.findByTestId("video-player");
     expect(document.getElementById("watch-side-panel")).toHaveAttribute("aria-hidden", "true");
     expect(document.getElementById("watch-side-panel")).toHaveAttribute("inert");
-    const toggle = screen.getByRole("button", { name: "打开观看侧栏" });
+    const toggle = screen.getByRole("button", { name: "与 Kino 对话" });
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     expect(mocks.pauseAndGetSnapshot).not.toHaveBeenCalled();
     fireEvent.click(toggle);
@@ -239,12 +242,12 @@ describe("WatchPage", () => {
     expect(player).toHaveTextContent("video-2 @ history");
     expect(chat).toHaveAttribute("data-embedded", "true");
     expect(chat).toHaveAttribute("data-series-id", "series-1");
-    fireEvent.click(screen.getByRole("button", { name: "打开观看侧栏" }));
-    fireEvent.click(screen.getByRole("button", { name: "收起观看侧栏" }));
+    fireEvent.click(screen.getByRole("button", { name: "与 Kino 对话" }));
+    fireEvent.click(screen.getByRole("button", { name: "关闭对话面板" }));
     expect(document.getElementById("watch-side-panel")).toHaveAttribute("aria-hidden", "true");
     expect(screen.getByTestId("supervisor-chat")).toBe(chat);
     expect(screen.getByTestId("video-player")).toBe(player);
-    fireEvent.click(screen.getByRole("button", { name: "打开观看侧栏" }));
+    fireEvent.click(screen.getByRole("button", { name: "与 Kino 对话" }));
     expect(screen.getByRole("tab", { name: "聊天" })).toHaveAttribute("aria-selected", "true");
   });
 
@@ -253,9 +256,9 @@ describe("WatchPage", () => {
     await screen.findByTestId("video-player");
 
     expect(mocks.pauseAndGetSnapshot).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "打开观看侧栏" }));
-    fireEvent.click(screen.getByRole("button", { name: "收起观看侧栏" }));
-    fireEvent.click(screen.getByRole("button", { name: "打开观看侧栏" }));
+    fireEvent.click(screen.getByRole("button", { name: "与 Kino 对话" }));
+    fireEvent.click(screen.getByRole("button", { name: "关闭对话面板" }));
+    fireEvent.click(screen.getByRole("button", { name: "与 Kino 对话" }));
 
     fireEvent.click(screen.getByRole("tab", { name: "选集" }));
     fireEvent.click(screen.getByRole("tab", { name: "聊天" }));
@@ -308,10 +311,10 @@ describe("WatchPage", () => {
       expect(scrollIntoView).toHaveBeenLastCalledWith({ block: "start", behavior: "instant" });
       expect(scrollIntoView.mock.contexts[0]).toBe(screen.getByRole("region", { name: "视频播放器" }).parentElement);
 
-      fireEvent.click(screen.getByRole("button", { name: "打开观看侧栏" }));
-      fireEvent.click(screen.getByRole("button", { name: "收起观看侧栏" }));
+      fireEvent.click(screen.getByRole("button", { name: "与 Kino 对话" }));
+      fireEvent.click(screen.getByRole("button", { name: "关闭对话面板" }));
       expect(scrollIntoView).toHaveBeenCalledOnce();
-      fireEvent.click(screen.getByRole("button", { name: "打开观看侧栏" }));
+      fireEvent.click(screen.getByRole("button", { name: "与 Kino 对话" }));
       fireEvent.click(screen.getByRole("button", { name: "打开视频证据" }));
       await waitFor(() => expect(screen.getByTestId("video-player")).toHaveTextContent("video-1 @ 4000"));
       expect(scrollIntoView).toHaveBeenCalledTimes(2);
@@ -328,13 +331,13 @@ describe("WatchPage", () => {
   it("closes Chat with Escape and restores focus to its toggle", async () => {
     renderPage();
     await screen.findByTestId("video-player");
-    fireEvent.click(screen.getByRole("button", { name: "打开观看侧栏" }));
+    fireEvent.click(screen.getByRole("button", { name: "与 Kino 对话" }));
     const composer = screen.getByRole("textbox", { name: "向 Seekino 助手提问" });
     expect(composer).toHaveFocus();
     fireEvent.keyDown(composer, { key: "Escape" });
     expect(document.getElementById("watch-side-panel")).toHaveAttribute("aria-hidden", "true");
     expect(document.getElementById("watch-side-panel")).toHaveAttribute("inert");
-    expect(screen.getByRole("button", { name: "打开观看侧栏" })).toHaveFocus();
+    await waitFor(() => expect(screen.getByRole("button", { name: "与 Kino 对话" })).toHaveFocus());
   });
 
   it("canonicalizes a legacy atMs URL, sorts episodes, and leaves the old seek time behind", async () => {
@@ -342,7 +345,7 @@ describe("WatchPage", () => {
     expect(await screen.findByTestId("video-player")).toHaveTextContent("video-2 @ 13250");
     await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("/watch/series-1/video-2?atSeconds=13250"));
     expect(screen.getByTestId("location")).not.toHaveTextContent("atMs");
-    fireEvent.click(screen.getByRole("button", { name: "打开观看侧栏" }));
+    fireEvent.click(screen.getByRole("button", { name: "与 Kino 对话" }));
     fireEvent.click(screen.getByRole("tab", { name: "选集" }));
     const panel = screen.getByRole("tabpanel", { name: "选集" });
     expect(within(panel).getByRole("link", { name: "调整集数" })).toHaveAttribute("href", "/library");
@@ -356,7 +359,7 @@ describe("WatchPage", () => {
   it("opens Chat video evidence at its exact timestamp", async () => {
     renderPage();
     await screen.findByTestId("supervisor-chat");
-    fireEvent.click(screen.getByRole("button", { name: "打开观看侧栏" }));
+    fireEvent.click(screen.getByRole("button", { name: "与 Kino 对话" }));
     fireEvent.click(screen.getByRole("button", { name: "打开视频证据" }));
     await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("/watch/series-1/video-1?tenantId=local-default&atSeconds=4000"));
     expect(screen.getByTestId("video-player")).toHaveTextContent("video-1 @ 4000");
@@ -365,7 +368,7 @@ describe("WatchPage", () => {
   it("provides the current episode and exact paused position as generic extra context", async () => {
     renderPage();
     await screen.findByTestId("supervisor-chat");
-    fireEvent.click(screen.getByRole("button", { name: "打开观看侧栏" }));
+    fireEvent.click(screen.getByRole("button", { name: "与 Kino 对话" }));
     expect(openPauseSetting()).toBeChecked();
     expect(mocks.pauseAndGetSnapshot).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "捕获播放上下文" }));
@@ -397,7 +400,7 @@ describe("WatchPage", () => {
   it("restores the pause preference and only pauses future sends while it is enabled", async () => {
     const view = renderPage();
     await screen.findByTestId("video-player");
-    fireEvent.click(screen.getByRole("button", { name: "打开观看侧栏" }));
+    fireEvent.click(screen.getByRole("button", { name: "与 Kino 对话" }));
     const settings = screen.getByRole("button", { name: "观看设置" });
     expect(settings.closest("details")).not.toHaveAttribute("open");
     expect(screen.queryByText("边看边聊")).not.toBeInTheDocument();
@@ -415,7 +418,7 @@ describe("WatchPage", () => {
 
     renderPage();
     const player = await screen.findByTestId("video-player");
-    fireEvent.click(screen.getByRole("button", { name: "打开观看侧栏" }));
+    fireEvent.click(screen.getByRole("button", { name: "与 Kino 对话" }));
     const pauseOnSend = openPauseSetting();
     const composer = screen.getByRole("textbox", { name: "向 Seekino 助手提问" });
     expect(pauseOnSend).not.toBeChecked();
@@ -448,7 +451,7 @@ describe("WatchPage", () => {
   it("keeps the latest reported playback context and does not reuse it after switching episodes", async () => {
     renderPage();
     await screen.findByTestId("video-player");
-    fireEvent.click(screen.getByRole("button", { name: "打开观看侧栏" }));
+    fireEvent.click(screen.getByRole("button", { name: "与 Kino 对话" }));
     mocks.pauseAndGetSnapshot.mockReturnValue(null);
 
     fireEvent.click(screen.getByRole("button", { name: "同步播放位置" }));
@@ -482,7 +485,7 @@ describe("WatchPage", () => {
   it("discards the old position when the same video opens at a new timestamp", async () => {
     renderPage("/watch/series-1/video-1");
     await screen.findByTestId("video-player");
-    fireEvent.click(screen.getByRole("button", { name: "打开观看侧栏" }));
+    fireEvent.click(screen.getByRole("button", { name: "与 Kino 对话" }));
     mocks.pauseAndGetSnapshot.mockReturnValue(null);
 
     fireEvent.click(screen.getByRole("button", { name: "同步播放位置" }));
@@ -516,10 +519,10 @@ describe("WatchPage", () => {
   it("switches focus with Tab without pausing and resumes only playback interrupted by a send", async () => {
     renderPage();
     const player = await screen.findByTestId("video-player");
-    fireEvent.click(screen.getByRole("button", { name: "打开观看侧栏" }));
+    fireEvent.click(screen.getByRole("button", { name: "与 Kino 对话" }));
     const composer = screen.getByRole("textbox", { name: "向 Seekino 助手提问" });
     fireEvent.click(screen.getByRole("tab", { name: "选集" }));
-    fireEvent.click(screen.getByRole("button", { name: "收起观看侧栏" }));
+    fireEvent.click(screen.getByRole("button", { name: "关闭对话面板" }));
     mocks.pauseAndGetSnapshot.mockClear();
     mocks.focusComposer.mockClear();
     mocks.pauseAndGetSnapshot.mockReturnValue({ positionSeconds: 18_000, wasPlaying: true });
@@ -559,7 +562,7 @@ describe("WatchPage", () => {
     expect(screen.getByRole("main")).not.toContainElement(panel);
     expect(shell).toHaveAttribute("data-watch-panel-open", "false");
 
-    fireEvent.click(screen.getByRole("button", { name: "打开观看侧栏" }));
+    fireEvent.click(screen.getByRole("button", { name: "与 Kino 对话" }));
     expect(shell).toHaveAttribute("data-watch-panel-open", "true");
     Object.defineProperty(shell, "getBoundingClientRect", { value: () => ({ left: 0, right: 1200, width: 1200 }) });
     const divider = screen.getByRole("separator", { name: "调整右侧栏宽度" });
@@ -573,7 +576,7 @@ describe("WatchPage", () => {
     expect(shell).toHaveAttribute("data-watch-panel-open", "false");
     expect(host).toContainElement(panel);
     expect(panel).toHaveAttribute("inert");
-    fireEvent.click(screen.getByRole("button", { name: "打开观看侧栏" }));
+    fireEvent.click(screen.getByRole("button", { name: "与 Kino 对话" }));
     fireEvent.click(screen.getByRole("tab", { name: "选集" }));
     fireEvent.pointerDown(screen.getByRole("separator", { name: "调整右侧栏宽度" }), { pointerId: 2, clientX: 700 });
     fireEvent.click(screen.getByRole("link", { name: "调整集数" }));
@@ -588,7 +591,7 @@ describe("WatchPage", () => {
     try {
       renderPage("/watch/series-1/video-2", withShell);
       await screen.findByTestId("video-player");
-      fireEvent.click(screen.getByRole("button", { name: "打开观看侧栏" }));
+      fireEvent.click(screen.getByRole("button", { name: "与 Kino 对话" }));
       const page = screen.getByRole("main");
       const target = withShell ? screen.getByTestId("watch-shell") : page;
       const requestFullscreen = vi.fn().mockResolvedValue(undefined);
@@ -607,33 +610,83 @@ describe("WatchPage", () => {
     }
   });
 
-  it("places the Chat toggle in the top bar and brings it into the fullscreen viewer", async () => {
-    const headerActions = document.createElement("div");
-    headerActions.id = "watch-header-actions";
-    document.body.append(headerActions);
-    const originalFullscreen = Object.getOwnPropertyDescriptor(document, "fullscreenElement");
+  it("opens Chat as a floating window by default without changing the shell layout", async () => {
+    localStorage.removeItem("seekino-watch-panel-mode");
+    renderPage("/watch/series-1/video-2", true);
+    await screen.findByTestId("video-player");
+    const shell = screen.getByTestId("watch-shell");
+    const panel = document.getElementById("watch-side-panel")!;
+    const host = document.getElementById("watch-side-panel-host")!;
+    expect(host).toContainElement(screen.getByRole("button", { name: "与 Kino 对话" }));
+    fireEvent.click(screen.getByRole("button", { name: "与 Kino 对话" }));
+    expect(panel).toHaveAttribute("data-mode", "floating");
+    expect(shell).toHaveAttribute("data-watch-panel-open", "false");
+    expect(screen.queryByRole("separator", { name: "调整右侧栏宽度" })).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "选集" })).toBeInTheDocument();
+  });
+
+  it("docks the floating window into the sidebar and remembers the mode", async () => {
+    localStorage.removeItem("seekino-watch-panel-mode");
+    const view = renderPage("/watch/series-1/video-2", true);
+    await screen.findByTestId("video-player");
+    fireEvent.click(screen.getByRole("button", { name: "与 Kino 对话" }));
+    fireEvent.click(screen.getByRole("button", { name: "停靠到侧栏" }));
+    expect(document.getElementById("watch-side-panel")).toHaveAttribute("data-mode", "docked");
+    expect(screen.getByTestId("watch-shell")).toHaveAttribute("data-watch-panel-open", "true");
+    expect(localStorage.getItem("seekino-watch-panel-mode")).toBe("docked");
+    view.unmount();
+
+    renderPage("/watch/series-1/video-2", true);
+    await screen.findByTestId("video-player");
+    fireEvent.click(screen.getByRole("button", { name: "与 Kino 对话" }));
+    expect(document.getElementById("watch-side-panel")).toHaveAttribute("data-mode", "docked");
+    fireEvent.click(screen.getByRole("button", { name: "改为悬浮窗" }));
+    expect(document.getElementById("watch-side-panel")).toHaveAttribute("data-mode", "floating");
+    expect(screen.getByTestId("watch-shell")).toHaveAttribute("data-watch-panel-open", "false");
+  });
+
+  it("drags Kino to the nearest side without opening Chat and remembers the spot", async () => {
+    renderPage();
+    await screen.findByTestId("video-player");
+    const kino = screen.getByRole("button", { name: "与 Kino 对话" });
+    fireEvent.pointerDown(kino, { pointerId: 1, button: 0, clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(kino, { pointerId: 1, clientX: 300, clientY: 400 });
+    expect(kino).toHaveAttribute("data-dragging", "true");
+    fireEvent.pointerUp(kino, { pointerId: 1, clientX: 300, clientY: 400 });
+    fireEvent.click(kino);
+    expect(document.getElementById("watch-side-panel")).toHaveAttribute("data-open", "false");
+    expect(document.getElementById("watch-side-panel")).toHaveAttribute("data-side", "left");
+    expect(JSON.parse(localStorage.getItem("seekino-kino-entry-dock")!)).toEqual({ side: "left", bottom: window.innerHeight - 400 - 64 });
+    fireEvent.click(kino);
+    expect(document.getElementById("watch-side-panel")).toHaveAttribute("data-open", "true");
+  });
+
+  it("shows what Kino can see and fades an idle floating window until it is touched", async () => {
+    localStorage.removeItem("seekino-watch-panel-mode");
+    renderPage();
+    await screen.findByTestId("video-player");
+    vi.useFakeTimers();
     try {
-      renderPage();
-      await screen.findByTestId("video-player");
-      expect(headerActions).toContainElement(screen.getByRole("button", { name: "打开观看侧栏" }));
-      const page = screen.getByRole("main");
-      Object.defineProperty(document, "fullscreenElement", { configurable: true, value: page });
-      fireEvent(document, new Event("fullscreenchange"));
-      expect(page).toContainElement(screen.getByRole("button", { name: "打开观看侧栏" }));
-      expect(headerActions).toBeEmptyDOMElement();
-      fireEvent.click(screen.getByRole("button", { name: "打开观看侧栏" }));
-      expect(page).toContainElement(screen.getByRole("complementary", { name: "观看侧栏" }));
+      fireEvent.click(screen.getByRole("button", { name: "与 Kino 对话" }));
+      expect(document.querySelector("[class*=contextChip] span")).toHaveTextContent(/^Kino 能看到 EP 02 · \d+:\d{2}$/);
+      const panel = document.getElementById("watch-side-panel")!;
+      expect(panel).toHaveAttribute("data-idle", "false");
+      act(() => { vi.advanceTimersByTime(8000); });
+      expect(panel).toHaveAttribute("data-idle", "true");
+      fireEvent.pointerEnter(panel);
+      expect(panel).toHaveAttribute("data-idle", "false");
+      fireEvent.pointerLeave(panel);
+      act(() => { vi.advanceTimersByTime(7000); });
+      expect(panel).toHaveAttribute("data-idle", "false");
     } finally {
-      if (originalFullscreen) Object.defineProperty(document, "fullscreenElement", originalFullscreen);
-      else Reflect.deleteProperty(document, "fullscreenElement");
-      headerActions.remove();
+      vi.useRealTimers();
     }
   });
 
   it("resizes the Chat panel with the divider and saves its width", async () => {
     renderPage();
     await screen.findByTestId("video-player");
-    fireEvent.click(screen.getByRole("button", { name: "打开观看侧栏" }));
+    fireEvent.click(screen.getByRole("button", { name: "与 Kino 对话" }));
     const divider = await screen.findByRole("separator", { name: "调整右侧栏宽度" });
     const page = screen.getByRole("main");
     Object.defineProperty(page, "getBoundingClientRect", { value: () => ({ left: 0, right: 1200, width: 1200 }) });
@@ -653,7 +706,7 @@ describe("WatchPage", () => {
     try {
       renderPage();
       await screen.findByTestId("video-player");
-      fireEvent.click(screen.getByRole("button", { name: "打开观看侧栏" }));
+      fireEvent.click(screen.getByRole("button", { name: "与 Kino 对话" }));
       const divider = screen.getByRole("separator", { name: "调整右侧栏宽度" });
       const page = screen.getByRole("main");
       expect(divider).toHaveAttribute("aria-valuenow", "850");
