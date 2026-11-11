@@ -75,10 +75,18 @@ Seekino recalls the clips you need, with the source video and time range, so you
 To offer public Q&A that casual users can try on a lightweight cloud server, and let heavy users self-host their own video knowledge base, Seekino builds the following system across three stages: parsing, retrieval and Q&A.
 
 <p align="center">
-  <img src="docs/architecture/fig03.png" width="960" alt="Seekino macro architecture" />
+  <img src="docs/architecture/fig-overview.png" width="960" alt="Seekino overview: parse, retrieve, chat and external services" />
 </p>
 
-<sub>Every figure is editable in [docs/architecture/seekino-figures.drawio](docs/architecture/seekino-figures.drawio) (12 tabs). 🚧 = not implemented yet; TBD = not yet measured on the current build.</sub>
+<sub>Figures 2–8 are editable: open the matching `.excalidraw` file in [docs/architecture](docs/architecture/) on [excalidraw.com](https://excalidraw.com). Older figures live in [seekino-figures.drawio](docs/architecture/seekino-figures.drawio). 🚧 = not implemented yet; TBD = not yet measured on the current build.</sub>
+
+### Data model
+
+MySQL holds business facts, tasks and versions. Elasticsearch holds one derived document per chunk, addressed by parse task and chunk, and can be rebuilt at any time.
+
+<p align="center">
+  <img src="docs/architecture/fig-er.png" width="960" alt="Data model: MySQL tables and the derived Elasticsearch document" />
+</p>
 
 ### 2.1. Parsing
 
@@ -106,7 +114,7 @@ In parallel, a single chunk loses the context of its neighbours, and fixed chunk
 | Tail Summary | After parsing, reads the whole timeline once more to write the video outline and the series overview |
 
 <p align="center">
-  <img src="docs/architecture/fig05.png" width="960" alt="Parse V2 stages" />
+  <img src="docs/architecture/fig-parse.png" width="960" alt="Parse V2: stages, persisted state, Refine and the JSON gate" />
 </p>
 
 #### Results
@@ -155,6 +163,10 @@ Problems the host can fix deterministically, such as unsorted times, are fixed d
 
 ### 2.2. Building retrieval
 
+<p align="center">
+  <img src="docs/architecture/fig-retrieve.png" width="960" alt="Retrieve: scope, channels, fusion, verification and rerank" />
+</p>
+
 #### Vectors designed for multimodal input
 
 To support gif, jpg, text and other input, the stored vectors are designed around it. The retrieval unit changed from the 1-min chunk to the Event (one action, shot or line), so a short line isn't diluted inside a one-minute vector. Each Event is stored on three channels:
@@ -199,7 +211,7 @@ The same words can be a new search or just a reply to the last answer. Before ea
 | Fallback<br><sub>8 s total budget</sub> | Any timeout, error or invalid output falls back to the raw message, so it can only help, never get in the way |
 
 <p align="center">
-  <img src="docs/architecture/fig07.png" width="960" alt="Query router and rewrite" />
+  <img src="docs/architecture/fig-chat.png" width="960" alt="Chat: query hook, Supervisor tools and delivery" />
 </p>
 
 #### Answer with clips
@@ -225,6 +237,20 @@ Answers stream as they're generated, with the reasoning folded away. If the firs
 ![Metrics to measure](docs/architecture/fig12.png)
 
 </details>
+
+### 2.4. Layers and deployment
+
+The repository is layered by folder. Calls only go downward, and each layer does only its own job:
+
+<p align="center">
+  <img src="docs/architecture/fig-layers.png" width="960" alt="Repository layers: web, server, agent, engine, gateway" />
+</p>
+
+Locally one Compose stack runs everything; the cloud sample library splits a CPU server from a GPU server:
+
+<p align="center">
+  <img src="docs/architecture/fig-deploy.png" width="960" alt="Deployment: self-hosted and cloud" />
+</p>
 
 ## API integration
 

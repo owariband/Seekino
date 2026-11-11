@@ -83,10 +83,18 @@ Seekino 为你召回需要的片段，并带上来源视频与时间范围，随
 为了既能在云服务器上搭起轻量用户可体验的公开问答，又能让重度用户自建个人视频知识库，Seekino 从解析构建、召回和问答三个环节搭建了下述系统结构：
 
 <p align="center">
-  <img src="docs/architecture/fig03.png" width="960" alt="Seekino 宏观架构图" />
+  <img src="docs/architecture/fig-overview.png" width="960" alt="Seekino 整体架构：解析、召回、问答与外部服务" />
 </p>
 
-<sub>全部架构图可在 [docs/architecture/seekino-figures.drawio](docs/architecture/seekino-figures.drawio) 中编辑（12 个标签页）。🚧 表示尚未实现，“待测”表示尚未在当前版本实测。</sub>
+<sub>图 2–8 的源文件是 [docs/architecture](docs/architecture/) 下同名的 `.excalidraw`，可直接拖进 [excalidraw.com](https://excalidraw.com) 编辑；其余旧图在 [seekino-figures.drawio](docs/architecture/seekino-figures.drawio)。🚧 表示尚未实现，“待测”表示尚未在当前版本实测。</sub>
+
+### 数据模型
+
+MySQL 保存业务事实、任务与版本；Elasticsearch 只保存每个 Chunk 一份的派生文档，按解析任务与 Chunk 定位，可随时重建。
+
+<p align="center">
+  <img src="docs/architecture/fig-er.png" width="960" alt="数据模型：MySQL 表与 Elasticsearch 派生文档" />
+</p>
 
 ### 2.1. 解析
 
@@ -114,7 +122,7 @@ Seekino 为你召回需要的片段，并带上来源视频与时间范围，随
 | 尾 Summary | 解析完成后通读整条时间线，生成视频大纲与系列概览 |
 
 <p align="center">
-  <img src="docs/architecture/fig05.png" width="960" alt="Parse V2 各阶段" />
+  <img src="docs/architecture/fig-parse.png" width="960" alt="Parse V2：阶段、持久化状态、Refine 与门禁" />
 </p>
 
 #### 效果
@@ -163,6 +171,10 @@ Agent 从 tool 使用的无限失败重试 pipeline 中“自由”出来，耗�
 
 ### 2.2. 构建召回
 
+<p align="center">
+  <img src="docs/architecture/fig-retrieve.png" width="960" alt="召回：范围、多通道召回、融合、核对与重排" />
+</p>
+
 #### 为多模态输入设计向量
 
 为了支持 gif、jpg、text 等多模态内容输入，我们对存储的向量做了专门设计。召回单位从 1 min Chunk 改为 Event（一个动作、镜头或一句对白），避免一分钟压成一个向量后短台词被稀释。每个 Event 存在三个通道里：
@@ -207,7 +219,7 @@ Agent 会按问题自己选择方式。
 | 兜底<br><sub>总预算 8 s</sub> | 超时、报错或输出不合法都回退到原始消息，只会帮忙，不会挡路 |
 
 <p align="center">
-  <img src="docs/architecture/fig07.png" width="960" alt="Query router 与 rewrite" />
+  <img src="docs/architecture/fig-chat.png" width="960" alt="问答：Query hook、Supervisor 工具与交付" />
 </p>
 
 #### 用片段回答
@@ -233,6 +245,20 @@ Supervisor 按需调用工具：
 ![待测指标](docs/architecture/fig12.png)
 
 </details>
+
+### 2.4. 分层与部署
+
+按目录分层，调用只向下走，每层只做自己负责的事：
+
+<p align="center">
+  <img src="docs/architecture/fig-layers.png" width="960" alt="仓库分层：web、server、agent、engine、gateway" />
+</p>
+
+本机用一套 Compose 起全栈；云端样例库拆成 CPU 服务器与 GPU 服务器：
+
+<p align="center">
+  <img src="docs/architecture/fig-deploy.png" width="960" alt="部署：本机自托管与云端样例库" />
+</p>
 
 ## 3. 部署
 
