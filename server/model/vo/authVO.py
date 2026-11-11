@@ -25,3 +25,8 @@ class AuthIdentityView(ContractModel):
 
 class EmailCodeSendView(ContractModel):
     retry_after_seconds: int
+
+
+class McpTokenView(ContractModel):
+    access_token: str
+    expires_at: int

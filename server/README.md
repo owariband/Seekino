@@ -4,7 +4,7 @@ API 为 Web 和外部工具提供上传、任务状态、检索和观看问答�
 
 ## 本机 MCP：供 Codex 等外部 Agent 调用
 
-`SEEKINO_AUTH_MODE=local` 时，正常 API 进程同时提供 Streamable HTTP MCP：`http://127.0.0.1:9621/mcp`。若 API 端口不同，使用实际端口。无需单独启动 MCP 进程；Cloud 模式不提供这个入口。
+`SEEKINO_AUTH_MODE=local` 时，正常 API 进程同时提供 Streamable HTTP MCP：`http://127.0.0.1:9621/mcp`。若 API 端口不同，使用实际端口。它随 API 进程启动。Cloud 部署提供同路径的 HTTPS 服务。
 
 | 工具 | 参数与结果 |
 |---|---|
@@ -32,7 +32,7 @@ codex -c 'mcp_servers.seekino.url="http://127.0.0.1:9621/mcp"' \
 
 MCP SDK 根据服务端函数签名、类型和说明生成工具 JSON Schema，通过 `tools/list` 提供给客户端；实际请求通过 `tools/call` 调用现有 Service。协议客户端测试不等于真实素材可用，正式演示还需要已解析并完成 Event 索引的视频和对应媒体。
 
-本版限定直接 loopback 连接，同时检查 Host/Origin 并拒绝转发头；请直接连接 API 端口，不经过 Vite、Nginx 或 Docker 代理。它没有提供 Cloud PAT/OAuth 接入，也不能把此本机端点直接暴露到公网。
+本机端点校验回环来源和 Host/Origin，拒绝转发头。连接本机 API 时直接使用其监听端口。
 
 ## 模型 Token 用量
 
@@ -60,3 +60,24 @@ V1 用量不并入新统计；本轮退役迁移删除旧 Job 用量，现行 V2
 升级前备份数据库和媒体，停止相关写入者。SQL 和操作步骤见[迁移目录](../deploy/migrations/)，包括[身份与归属](../deploy/migrations/20261010_user_tenant_identity.sql)、[毫秒时间单位](../deploy/migrations/20261008_video_timeline_milliseconds.sql)、[解析成果](../deploy/migrations/20261031_video_parse_content.md)和[展示元数据](../deploy/migrations/20261104_video_parse_display.md)。部分脚本要求旧表为空，执行前务必核对各自条件。
 
 服务端保存原片及其解析版本；ES 保存派生索引。媒体目录、停服和恢复步骤见[部署说明](../deploy/README.md#local-assets)。
+
+## Cloud MCP
+
+在 Cloud 网页的 `/docs/agents` 可复制带本站地址的命令。也可以在剪辑终端把下方示例的域名换成部署地址，取得游客只读凭据。已有网页登录身份可用相同接口和当前 CSRF 凭据换取令牌。令牌随该会话过期，身份失效时撤销。
+
+```sh
+SEEKINO_CLOUD='https://your-seekino-cloud.example'
+SEEKINO_MCP_TOKEN=$(curl -fsS -X POST "$SEEKINO_CLOUD/api/auth/mcp-token" | python3 -c 'import json,sys; print(json.load(sys.stdin)["accessToken"])') && export SEEKINO_MCP_TOKEN
+```
+
+在同一个终端为所用客户端添加服务，随后启动客户端。
+
+```sh
+claude mcp add --transport http seekino_cloud "$SEEKINO_CLOUD/mcp" --header 'Authorization: Bearer ${SEEKINO_MCP_TOKEN}'
+```
+
+```sh
+codex mcp add seekino_cloud --url "$SEEKINO_CLOUD/mcp" --bearer-token-env-var SEEKINO_MCP_TOKEN
+```
+
+`list_series` 返回平台公开租户已发布且 READY 的系列。`browse_events` 返回 Event 引用，`retrieve` 用自然语言检索。先 `read_evidence(evidence_ref)` 核对来源，再给出 `start_ms` 与 `end_ms` 获取 `media.clip_url`。区间使用整数毫秒、左闭右开，每段最多 60 秒。链接最长有效 5 分钟，下载器可直接获取该 MP4，下载时服务端重新核对发布状态、证据版本和用户身份。检索与转码共用既有云端请求和并发额度。以不同名称添加本机端点即可在同一剪辑会话调用两个库。

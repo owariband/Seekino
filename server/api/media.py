@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Literal
 
-from fastapi import Query, Request
+from fastapi import Depends, Query, Request
 from fastapi.responses import FileResponse, Response
 
 from .context import get_identity, get_services
 from .library import read_series
-from ..service.access import is_series_member, require_tenant_write, series_access
+from ..error.auth import AuthError
+from ..service.access import is_series_member, model_query, require_tenant_write, series_access
 from ..model.dto.mediaDTO import ParseExportOptions, ParseExportRequest, parse_export_event_types
 from ..repository.library import SeriesNotFoundError
 from ..model.vo.searchVO import VideoChunkEvidenceView
@@ -60,6 +64,35 @@ def get_video_content(
     )
     return FileResponse(media.path, media_type=media.media_type, content_disposition_type="inline",
                         headers={"Cache-Control": "private, no-store"} if identity.mode == "cloud" else None)
+
+
+def _clip_output() -> Iterator[Path]:
+    # The request-scoped dependency stays alive until FileResponse finishes sending.
+    with TemporaryDirectory(prefix="seekino-clip-") as directory:
+        yield Path(directory) / "clip.mp4"
+
+
+def get_video_clip(
+    request: Request, evidence_ref: str = Query(alias="evidenceRef", min_length=1, max_length=4096),
+    start_ms: int = Query(alias="startMs", ge=0), end_ms: int = Query(alias="endMs", gt=0),
+    ticket: str | None = Query(None, min_length=1, max_length=8192),
+    output: Path = Depends(_clip_output, scope="request"),
+) -> FileResponse:
+    services = get_services(request)
+    if ticket is not None:
+        if getattr(services, "auth", None) is None or services.auth.config.mode != "cloud":
+            raise AuthError("云端片段凭据须在签发服务使用")
+        identity = services.auth.authenticate_clip(ticket, evidence_ref, start_ms, end_ms)
+    else:
+        identity = get_identity(request)
+    with model_query(getattr(services, "auth", None), identity, request.client.host if request.client else "unknown",
+                     maximum_concurrent=getattr(getattr(services, "agent", None), "active_maximum_concurrent_kicks", None)):
+        services.media.write_evidence_clip(identity, evidence_ref, start_ms=start_ms, end_ms=end_ms,
+                                           destination=output, public_only=ticket is not None)
+    if ticket is not None:
+        services.auth.authenticate_clip(ticket, evidence_ref, start_ms, end_ms)
+    return FileResponse(output, media_type="video/mp4", filename=f"clip-{start_ms}-{end_ms}.mp4",
+                        headers={"Cache-Control": "private, no-store"})
 
 
 def get_image_content(
