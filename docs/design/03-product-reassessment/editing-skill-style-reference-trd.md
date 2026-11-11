@@ -311,6 +311,12 @@ For a character reaction, start with the visible action and the character’s na
 
 The November 11 delivery extends the original loopback write contract to each signed-in editor's private Cloud library. The existing guest and public-read credentials keep their original scope. A separate, explicitly requested personal MCP credential authorizes reads and writes in the active account's own library. The server resolves ownership and public reference visibility for each operation. Templates, notes and defaults belong to that owner independently of the public footage they cite. The same installable `seekino-editing-materials` guide describes selecting performances, viewing reference techniques and saving a revision or feedback. A new client should discover and read the guide through MCP and use it in Claude Code or Codex.
 
+### Guest editing on a Cloud with email login disabled
+
+A native editor needs to finish a complete cut without an email account. An explicit `scope=editing` credential opens a private guest template library using the existing rate-limited guest identity. Unscoped public tokens keep the published-media contract. The guest can run the three version/feedback/default writes and read them again on the same credential, independently of every other guest and signed-in account. The source footage still follows the published-series checks. A guest browser can issue the same capability using its current session and CSRF credentials. When that same browser identity signs in, preserve the template IDs, their immutable revision contents and attribution. A separately minted anonymous CLI identity can be revisited with the original bearer until it expires.
+
+Delivery branch `feat/guest-editing-mcp`. Verify anonymous opt-in, a cookie-free public editing loop, independent guests, the original read-only token, safe retries and transfer on login. Verify through the deployed HTTPS transport and read back a real guest revision. The package and documentation must make the no-email path the first editable connection.
+
 ## 3.6 Rejected options
 
 | Option | Why not |
