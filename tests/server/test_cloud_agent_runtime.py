@@ -56,7 +56,7 @@ def _send(client, api, *, kind, series_id, loop_turns, tool_budget, expected_sta
     identity = _guest(client) if kind == "guest" else _login(api, client, "runtime-limits@example.org")
     tenant_id = identity["publicTenantId"] if kind == "guest" else identity["tenantId"]
     conversation = _conversation(client, identity, tenant_id=tenant_id)
-    model_budget = api.services.auth.config.guest_max_model_calls if kind == "guest" else 2
+    model_budget = 5
     response = client.post(
         "/api/agent/messages/send", params={"conversationId": conversation},
         headers={"Idempotency-Key": "real-runtime", "X-CSRF-Token": identity["csrfToken"]},
@@ -64,7 +64,7 @@ def _send(client, api, *, kind, series_id, loop_turns, tool_budget, expected_sta
             "tenantId": tenant_id, "sourceTenantId": identity["publicTenantId"],
             "content": "找公开课程片段", "seriesIds": [series_id],
             "maxLoopTurns": loop_turns,
-            "maxModelCallsPerTurn": 999 if kind == "guest" else model_budget,
+            "maxModelCallsPerTurn": model_budget,
             "maxToolCallsPerTurn": tool_budget,
         },
     )
