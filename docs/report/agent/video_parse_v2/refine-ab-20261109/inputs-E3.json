@@ -1,0 +1,1317 @@
+{
+  "fps": 30.0,
+  "whole_scan_palette": [
+    {
+      "hex": "#c80808",
+      "share": 0.084
+    },
+    {
+      "hex": "#d80808",
+      "share": 0.076
+    },
+    {
+      "hex": "#080808",
+      "share": 0.043
+    },
+    {
+      "hex": "#b80808",
+      "share": 0.028
+    },
+    {
+      "hex": "#181818",
+      "share": 0.023
+    },
+    {
+      "hex": "#282828",
+      "share": 0.021
+    }
+  ],
+  "observations": [
+    {
+      "segment_id": "seg-0000167",
+      "start_ms": 167,
+      "end_ms": 1300,
+      "fine_starts_ms": [
+        400,
+        433,
+        467,
+        567,
+        633,
+        700,
+        767,
+        867,
+        900,
+        967,
+        1067
+      ],
+      "starts_ms": [
+        400,
+        633,
+        867,
+        1067
+      ],
+      "flashes_ms": [],
+      "palette": [
+        {
+          "hex": "#d80808",
+          "share": 0.329
+        },
+        {
+          "hex": "#080808",
+          "share": 0.262
+        },
+        {
+          "hex": "#c80808",
+          "share": 0.165
+        },
+        {
+          "hex": "#686868",
+          "share": 0.015
+        }
+      ],
+      "sequence_no": 0,
+      "observation": {
+        "name": "红黑闪电图形转场",
+        "summary": "纯红底上依次硬切出黑色斜条、红色闪电状折线图形，最后切到红天灰楼的城市仰视镜头并缓慢推近。",
+        "role": "INTRO",
+        "look": {
+          "ground": "纯正红底，后段转为红色天空",
+          "subject_treatment": "高对比红黑双色几何图形，硬边无渐变；后段为灰白单色建筑剪影，楼体屏幕内嵌红色圆形标志",
+          "texture": "无纹理，纯色平涂",
+          "type_treatment": null
+        },
+        "motion": {
+          "steps": [
+            {
+              "start_ms": 167,
+              "end_ms": 400,
+              "framing": "GRAPHIC",
+              "subject": "纯红画面",
+              "enter": "CUT"
+            },
+            {
+              "start_ms": 400,
+              "end_ms": 433,
+              "framing": "GRAPHIC",
+              "subject": "黑色斜条切入红底",
+              "enter": "WIPE"
+            },
+            {
+              "start_ms": 433,
+              "end_ms": 467,
+              "framing": "GRAPHIC",
+              "subject": "红色斜带压过黑底",
+              "enter": "WIPE"
+            },
+            {
+              "start_ms": 467,
+              "end_ms": 567,
+              "framing": "GRAPHIC",
+              "subject": "红色折角箭头形",
+              "enter": "CUT"
+            },
+            {
+              "start_ms": 567,
+              "end_ms": 633,
+              "framing": "GRAPHIC",
+              "subject": "红色尖角折线",
+              "enter": "CUT"
+            },
+            {
+              "start_ms": 633,
+              "end_ms": 700,
+              "framing": "GRAPHIC",
+              "subject": "红色闪电折线",
+              "enter": "CUT"
+            },
+            {
+              "start_ms": 700,
+              "end_ms": 767,
+              "framing": "GRAPHIC",
+              "subject": "红色箭头指向左下",
+              "enter": "CUT"
+            },
+            {
+              "start_ms": 767,
+              "end_ms": 867,
+              "framing": "GRAPHIC",
+              "subject": "红色倒三角",
+              "enter": "CUT"
+            },
+            {
+              "start_ms": 867,
+              "end_ms": 900,
+              "framing": "GRAPHIC",
+              "subject": "红色不规则块面",
+              "enter": "CUT"
+            },
+            {
+              "start_ms": 900,
+              "end_ms": 967,
+              "framing": "GRAPHIC",
+              "subject": "红色大斜块",
+              "enter": "CUT"
+            },
+            {
+              "start_ms": 967,
+              "end_ms": 1300,
+              "framing": "WIDE",
+              "subject": "红天灰楼城市仰视，楼体屏幕带红色圆形标志",
+              "enter": "CUT"
+            }
+          ],
+          "easing": "STEPPED",
+          "camera": "PUSH",
+          "accent": "红黑硬切节奏"
+        },
+        "slots": [
+          {
+            "name": "红黑几何图形序列",
+            "kind": "image",
+            "requirement": "一组红黑双色硬边几何图形帧，按节奏逐帧切换"
+          },
+          {
+            "name": "城市仰视背景",
+            "kind": "image",
+            "requirement": "灰白单色高楼仰视插画，楼体屏幕含红色圆形标志"
+          },
+          {
+            "name": "纯红底",
+            "kind": "image",
+            "requirement": "纯正红色背景板"
+          }
+        ],
+        "signals": [
+          "红黑双色高对比",
+          "硬边几何图形",
+          "逐帧硬切节奏",
+          "灰白单色建筑",
+          "红色圆形标志"
+        ]
+      }
+    },
+    {
+      "segment_id": "seg-0012200",
+      "start_ms": 12200,
+      "end_ms": 13133,
+      "fine_starts_ms": [
+        12767,
+        12800,
+        12833,
+        12867,
+        12900,
+        12967,
+        13000,
+        13033,
+        13067
+      ],
+      "starts_ms": [
+        12433,
+        12700,
+        12900
+      ],
+      "flashes_ms": [
+        12833
+      ],
+      "palette": [
+        {
+          "hex": "#c80808",
+          "share": 0.096
+        },
+        {
+          "hex": "#b80808",
+          "share": 0.082
+        },
+        {
+          "hex": "#080808",
+          "share": 0.068
+        },
+        {
+          "hex": "#d80808",
+          "share": 0.044
+        }
+      ],
+      "sequence_no": 0,
+      "observation": {
+        "name": "拍手爆闪星芒",
+        "summary": "两只戴手套的手在红底上合掌，随后爆出紫黄星芒与青色星星，画面切到黑紫放射星形并不断放大，最后中心浮现一双眼睛。",
+        "role": "ACCENT",
+        "look": {
+          "ground": "纯红平涂底，后段转为黑紫放射星形底",
+          "subject_treatment": "高对比平涂剪影，白手套与黑袖，青色手套点缀，硬边阴影",
+          "texture": "半调网点、放射速度线、星形闪光",
+          "type_treatment": null
+        },
+        "motion": {
+          "steps": [
+            {
+              "start_ms": 12200,
+              "end_ms": 12767,
+              "framing": "CU",
+              "subject": "两只戴手套的手合掌",
+              "enter": "CUT"
+            },
+            {
+              "start_ms": 12767,
+              "end_ms": 12900,
+              "framing": "GRAPHIC",
+              "subject": "黑紫放射星形",
+              "enter": "SMASH"
+            },
+            {
+              "start_ms": 12900,
+              "end_ms": 13067,
+              "framing": "GRAPHIC",
+              "subject": "放大的紫色星形",
+              "enter": "CUT"
+            },
+            {
+              "start_ms": 13067,
+              "end_ms": 13133,
+              "framing": "INSERT",
+              "subject": "星形中心的一双眼睛",
+              "enter": "CUT"
+            }
+          ],
+          "easing": "STEPPED",
+          "camera": "PUSH",
+          "accent": "闪光帧白闪"
+        },
+        "slots": [
+          {
+            "name": "合掌手部动画",
+            "kind": "video",
+            "requirement": "白手套与青色手套合掌的逐帧动画，透明底"
+          },
+          {
+            "name": "星芒爆闪素材",
+            "kind": "image",
+            "requirement": "紫黄星形与青色星星的爆闪图层，带半调网点"
+          },
+          {
+            "name": "放射星形背景",
+            "kind": "image",
+            "requirement": "黑紫放射星形图案，可缩放"
+          },
+          {
+            "name": "眼睛特写",
+            "kind": "image",
+            "requirement": "白色眼形配红色瞳孔的图形"
+          }
+        ],
+        "signals": [
+          "高饱和红紫黄撞色",
+          "半调网点漫画质感",
+          "硬边平涂阴影",
+          "星形爆闪与放射线",
+          "逐帧跳切的节奏"
+        ]
+      }
+    },
+    {
+      "segment_id": "seg-0013500",
+      "start_ms": 13500,
+      "end_ms": 14700,
+      "fine_starts_ms": [
+        13733,
+        13833,
+        13900,
+        14000,
+        14067,
+        14167,
+        14233,
+        14333,
+        14367,
+        14400,
+        14467,
+        14500,
+        14533,
+        14567,
+        14633,
+        14667
+      ],
+      "starts_ms": [
+        13733,
+        14000,
+        14233,
+        14467
+      ],
+      "flashes_ms": [],
+      "palette": [
+        {
+          "hex": "#e828c8",
+          "share": 0.106
+        },
+        {
+          "hex": "#d828b8",
+          "share": 0.101
+        },
+        {
+          "hex": "#d828c8",
+          "share": 0.097
+        },
+        {
+          "hex": "#e838c8",
+          "share": 0.034
+        }
+      ],
+      "sequence_no": 0,
+      "observation": {
+        "name": "面具特写拉远登场",
+        "summary": "先以洋红星空底上的白色面具双眼极特写开场，逐级拉远露出黑色礼帽与全身，人物抬手后弹出绿黄闪电文字框，最后定格在漫画式标语构图。",
+        "role": "INTRO",
+        "look": {
+          "ground": "高饱和洋红底铺满深紫五角星图案，后段叠加绿色与黄色锯齿闪电色块",
+          "subject_treatment": "扁平矢量卡通人物，白色尖角面具配红色瞳孔，黑色高领长外套与宽檐帽，红色手套，纯色块加硬边阴影",
+          "texture": "无颗粒，纯平涂；后段有锯齿状漫画爆炸框与手绘感粗描边",
+          "type_treatment": "白色手写粗体英文标语，黑色描边，倾斜排布于左右闪电框内"
+        },
+        "motion": {
+          "steps": [
+            {
+              "start_ms": 13500,
+              "end_ms": 13733,
+              "framing": "ECU",
+              "subject": "白色面具与红色双眼特写",
+              "enter": "CUT"
+            },
+            {
+              "start_ms": 13733,
+              "end_ms": 13833,
+              "framing": "CU",
+              "subject": "面具缩小，露出帽檐",
+              "enter": "CUT"
+            },
+            {
+              "start_ms": 13833,
+              "end_ms": 13900,
+              "framing": "MS",
+              "subject": "面具与黑色宽檐帽",
+              "enter": "CUT"
+            },
+            {
+              "start_ms": 13900,
+              "end_ms": 14000,
+              "framing": "MS",
+              "subject": "半身人物与高领",
+              "enter": "CUT"
+            },
+            {
+              "start_ms": 14000,
+              "end_ms": 14067,
+              "framing": "MS",
+              "subject": "人物抬手入画",
+              "enter": "CUT"
+            },
+            {
+              "start_ms": 14067,
+              "end_ms": 14167,
+              "framing": "MS",
+              "subject": "人物正面站立",
+              "enter": "CUT"
+            },
+            {
+              "start_ms": 14167,
+              "end_ms": 14233,
+              "framing": "MS",
+              "subject": "红手套抬起至胸前",
+              "enter": "CUT"
+            },
+            {
+              "start_ms": 14233,
+              "end_ms": 14333,
+              "framing": "MS",
+              "subject": "人物与两侧绿黄闪电",
+              "enter": "CUT"
+            },
+            {
+              "start_ms": 14333,
+              "end_ms": 14700,
+              "framing": "MS",
+              "subject": "人物居中，左右绿色与黄色闪电文字框",
+              "enter": "SMASH"
+            }
+          ],
+          "easing": "STEPPED",
+          "camera": "STATIC",
+          "accent": "每级拉远以硬切完成，末段闪电框以爆裂式弹入"
+        },
+        "slots": [
+          {
+            "name": "面具双眼特写",
+            "kind": "image",
+            "requirement": "白色尖角面具与红色瞳孔的透明PNG，可分层缩放"
+          },
+          {
+            "name": "人物半身立绘",
+            "kind": "image",
+            "requirement": "黑色高领长外套、宽檐帽、红手套的扁平矢量半身像，透明底"
+          },
+          {
+            "name": "星空底纹",
+            "kind": "image",
+            "requirement": "洋红底深紫五角星无缝平铺图案"
+          },
+          {
+            "name": "闪电文字框",
+            "kind": "image",
+            "requirement": "绿色与黄色锯齿爆炸框，带黑色粗描边"
+          },
+          {
+            "name": "标语文字",
+            "kind": "text",
+            "requirement": "白色手写粗体英文短句，黑色描边，可倾斜排版"
+          }
+        ],
+        "signals": [
+          "高饱和洋红配深紫星星平铺",
+          "白色尖角面具与红色瞳孔的强对比",
+          "黑色长外套配红色手套的极简配色",
+          "漫画式锯齿闪电框与手写粗体标语",
+          "硬切逐级拉远的阶梯式构图"
+        ]
+      }
+    },
+    {
+      "segment_id": "seg-0018200",
+      "start_ms": 18200,
+      "end_ms": 19400,
+      "fine_starts_ms": [
+        18933,
+        19000,
+        19033,
+        19067,
+        19100,
+        19167,
+        19200,
+        19233,
+        19333,
+        19367
+      ],
+      "starts_ms": [
+        18433,
+        18933,
+        19167
+      ],
+      "flashes_ms": [
+        19167
+      ],
+      "palette": [
+        {
+          "hex": "#181818",
+          "share": 0.065
+        },
+        {
+          "hex": "#282828",
+          "share": 0.045
+        },
+        {
+          "hex": "#686878",
+          "share": 0.033
+        },
+        {
+          "hex": "#586878",
+          "share": 0.03
+        }
+      ],
+      "sequence_no": 0,
+      "observation": {
+        "name": "剪影群像转红白闪切",
+        "summary": "黄色网点背景上的黑色剪影群像先静止，随后人物逐个消失、斜线划过，画面转暗后进入红底白色放射状闪切，以高频明暗交替收尾。",
+        "role": "TRANSITION",
+        "look": {
+          "ground": "前半为亮黄色半调网点底，顶部压深灰工业结构剪影；后半转为暗红底配白色放射线条",
+          "subject_treatment": "人物全部处理为纯黑剪影，带长投影，无内部细节",
+          "texture": "半调网点、斜向速度线、放射状白色闪光条纹",
+          "type_treatment": null
+        },
+        "motion": {
+          "steps": [
+            {
+              "start_ms": 18200,
+              "end_ms": 18933,
+              "framing": "WIDE",
+              "subject": "黄色网点背景前的一排黑色人物剪影与顶部钢架",
+              "enter": "CUT"
+            },
+            {
+              "start_ms": 18933,
+              "end_ms": 19000,
+              "framing": "GRAPHIC",
+              "subject": "暗红底上白色放射线条与星形闪光",
+              "enter": "FLASH"
+            },
+            {
+              "start_ms": 19000,
+              "end_ms": 19033,
+              "framing": "GRAPHIC",
+              "subject": "灰白模糊过渡帧",
+              "enter": "FLASH"
+            },
+            {
+              "start_ms": 19033,
+              "end_ms": 19067,
+              "framing": "GRAPHIC",
+              "subject": "红底白色放射线条扩散",
+              "enter": "FLASH"
+            },
+            {
+              "start_ms": 19067,
+              "end_ms": 19100,
+              "framing": "GRAPHIC",
+              "subject": "红底白色弧线与尖角图形",
+              "enter": "FLASH"
+            },
+            {
+              "start_ms": 19100,
+              "end_ms": 19167,
+              "framing": "GRAPHIC",
+              "subject": "灰白模糊空帧",
+              "enter": "FLASH"
+            },
+            {
+              "start_ms": 19167,
+              "end_ms": 19200,
+              "framing": "GRAPHIC",
+              "subject": "红底白色网格状放射线",
+              "enter": "FLASH"
+            },
+            {
+              "start_ms": 19200,
+              "end_ms": 19233,
+              "framing": "GRAPHIC",
+              "subject": "灰白模糊空帧",
+              "enter": "FLASH"
+            },
+            {
+              "start_ms": 19233,
+              "end_ms": 19333,
+              "framing": "GRAPHIC",
+              "subject": "红底白色放射线条与碎片",
+              "enter": "FLASH"
+            },
+            {
+              "start_ms": 19333,
+              "end_ms": 19367,
+              "framing": "GRAPHIC",
+              "subject": "灰白模糊空帧",
+              "enter": "FLASH"
+            },
+            {
+              "start_ms": 19367,
+              "end_ms": 19400,
+              "framing": "GRAPHIC",
+              "subject": "红底白色放射线条与碎片",
+              "enter": "FLASH"
+            }
+          ],
+          "easing": "STEPPED",
+          "camera": "STATIC",
+          "accent": "红白高频闪切"
+        },
+        "slots": [
+          {
+            "name": "黄色网点背景板",
+            "kind": "image",
+            "requirement": "亮黄色半调网点底图，可平铺"
+          },
+          {
+            "name": "工业钢架剪影",
+            "kind": "image",
+            "requirement": "顶部深灰钢架与梯子剪影，透明背景"
+          },
+          {
+            "name": "人物剪影组",
+            "kind": "image",
+            "requirement": "多个黑色人物剪影，带长投影，可分层"
+          },
+          {
+            "name": "红白放射闪光素材",
+            "kind": "video",
+            "requirement": "暗红底白色放射线条与碎片的逐帧动画序列"
+          }
+        ],
+        "signals": [
+          "高对比黄黑剪影",
+          "半调网点印刷质感",
+          "长投影斜向排布",
+          "红白放射状闪切",
+          "硬切无过渡的节奏"
+        ]
+      }
+    },
+    {
+      "segment_id": "seg-0028367",
+      "start_ms": 28367,
+      "end_ms": 29500,
+      "fine_starts_ms": [
+        28933,
+        29000,
+        29100,
+        29167
+      ],
+      "starts_ms": [
+        28600,
+        28800,
+        29000,
+        29267
+      ],
+      "flashes_ms": [],
+      "palette": [
+        {
+          "hex": "#080808",
+          "share": 0.104
+        },
+        {
+          "hex": "#280828",
+          "share": 0.051
+        },
+        {
+          "hex": "#180818",
+          "share": 0.046
+        },
+        {
+          "hex": "#581868",
+          "share": 0.044
+        }
+      ],
+      "sequence_no": 0,
+      "observation": {
+        "name": "紫幕斩击连段",
+        "summary": "角色在紫色网点背景前腾空挥刀，依次斩出蓝色、白色与粉色月牙形剑气，最后收势落地。",
+        "role": "ACCENT",
+        "look": {
+          "ground": "深紫色底配黑色放射状粗线与红色斜线，叠加半调网点",
+          "subject_treatment": "高对比平涂角色，白色面具与白色长尾，黑色外套，青色刀身",
+          "texture": "半调网点与放射速度线",
+          "type_treatment": null
+        },
+        "motion": {
+          "steps": [
+            {
+              "start_ms": 28367,
+              "end_ms": 28933,
+              "framing": "FULL",
+              "subject": "腾空持刀角色与漂浮的灰色箱体",
+              "enter": "CUT"
+            },
+            {
+              "start_ms": 28933,
+              "end_ms": 29000,
+              "framing": "FULL",
+              "subject": "白色十字闪光覆盖角色",
+              "enter": "FLASH"
+            },
+            {
+              "start_ms": 29000,
+              "end_ms": 29100,
+              "framing": "FULL",
+              "subject": "角色挥出白色月牙剑气",
+              "enter": "CUT"
+            },
+            {
+              "start_ms": 29100,
+              "end_ms": 29167,
+              "framing": "FULL",
+              "subject": "粉色心形能量团与角色",
+              "enter": "CUT"
+            },
+            {
+              "start_ms": 29167,
+              "end_ms": 29500,
+              "framing": "WIDE",
+              "subject": "角色背身收势，粉色心形飞向右侧",
+              "enter": "CUT"
+            }
+          ],
+          "easing": "STEPPED",
+          "camera": "STATIC",
+          "accent": "白色与粉色月牙形剑气"
+        },
+        "slots": [
+          {
+            "name": "角色全身立绘",
+            "kind": "image",
+            "requirement": "白面具黑外套持刀角色的多角度全身图"
+          },
+          {
+            "name": "紫色网点背景",
+            "kind": "image",
+            "requirement": "深紫底黑色放射线与红色斜线的网点背景板"
+          },
+          {
+            "name": "剑气特效",
+            "kind": "video",
+            "requirement": "蓝、白、粉三色月牙形剑气与心形能量团动画"
+          }
+        ],
+        "signals": [
+          "高对比平涂配色",
+          "半调网点背景",
+          "放射状速度线",
+          "月牙形发光剑气",
+          "心形能量团"
+        ]
+      }
+    },
+    {
+      "segment_id": "seg-0030833",
+      "start_ms": 30833,
+      "end_ms": 32467,
+      "fine_starts_ms": [
+        31133,
+        31233,
+        31300,
+        31400,
+        31500,
+        31600,
+        31667,
+        31767,
+        31833,
+        31933,
+        32000,
+        32100,
+        32167,
+        32300,
+        32400
+      ],
+      "starts_ms": [
+        31067,
+        31300,
+        31500,
+        31767,
+        32000,
+        32233
+      ],
+      "flashes_ms": [],
+      "palette": [
+        {
+          "hex": "#681878",
+          "share": 0.135
+        },
+        {
+          "hex": "#581868",
+          "share": 0.049
+        },
+        {
+          "hex": "#681868",
+          "share": 0.044
+        },
+        {
+          "hex": "#f8b8d8",
+          "share": 0.04
+        }
+      ],
+      "sequence_no": 0,
+      "observation": {
+        "name": "紫底摩托甩尾转场",
+        "summary": "紫底黑纹背景中骑手驾驶摩托从远景甩尾逼近，橙色星形速度带环绕，镜头连续推近至骑手特写，随后被粉红圆形图形擦除式转场，露出另一戴帽角色。",
+        "role": "TRANSITION",
+        "look": {
+          "ground": "高饱和紫色平涂背景，叠加黑色锯齿状抽象建筑剪影与斜向速度线",
+          "subject_treatment": "骑手与摩托为高对比平涂色块，白色车体配蓝色高光，人物深蓝服装，边缘硬朗无渐变",
+          "texture": "橙色星形速度带、黑色斜线速度线、轻微网点颗粒",
+          "type_treatment": null
+        },
+        "motion": {
+          "steps": [
+            {
+              "start_ms": 30833,
+              "end_ms": 31133,
+              "framing": "WIDE",
+              "subject": "紫底上骑手驾驶摩托斜向驶来",
+              "enter": "CUT"
+            },
+            {
+              "start_ms": 31133,
+              "end_ms": 31233,
+              "framing": "MS",
+              "subject": "摩托侧身甩尾，橙色星形速度带环绕",
+              "enter": "CUT"
+            },
+            {
+              "start_ms": 31233,
+              "end_ms": 31300,
+              "framing": "MS",
+              "subject": "骑手侧身压弯，速度带横贯画面",
+              "enter": "CUT"
+            },
+            {
+              "start_ms": 31300,
+              "end_ms": 31400,
+              "framing": "MS",
+              "subject": "摩托背面视角，橙色星形带爆发",
+              "enter": "CUT"
+            },
+            {
+              "start_ms": 31400,
+              "end_ms": 31500,
+              "framing": "MS",
+              "subject": "骑手俯身侧倾，星形带扫过前景",
+              "enter": "CUT"
+            },
+            {
+              "start_ms": 31500,
+              "end_ms": 31600,
+              "framing": "MS",
+              "subject": "摩托横向滑行，橙色速度带环绕",
+              "enter": "CUT"
+            },
+            {
+              "start_ms": 31600,
+              "end_ms": 31667,
+              "framing": "MCU",
+              "subject": "摩托正面逼近，蓝色挡风玻璃高光",
+              "enter": "CUT"
+            },
+            {
+              "start_ms": 31667,
+              "end_ms": 31767,
+              "framing": "MCU",
+              "subject": "骑手与摩托正面，星形带横穿",
+              "enter": "CUT"
+            },
+            {
+              "start_ms": 31767,
+              "end_ms": 31833,
+              "framing": "MCU",
+              "subject": "骑手侧脸与摩托前部",
+              "enter": "CUT"
+            },
+            {
+              "start_ms": 31833,
+              "end_ms": 31933,
+              "framing": "CU",
+              "subject": "骑手面部特写，张嘴呼喊",
+              "enter": "CUT"
+            },
+            {
+              "start_ms": 31933,
+              "end_ms": 32000,
+              "framing": "CU",
+              "subject": "骑手手部与粉红圆形图形入画",
+              "enter": "CUT"
+            },
+            {
+              "start_ms": 32000,
+              "end_ms": 32100,
+              "framing": "GRAPHIC",
+              "subject": "粉红与紫色圆形图形擦除画面",
+              "enter": "WIPE"
+            },
+            {
+              "start_ms": 32100,
+              "end_ms": 32167,
+              "framing": "GRAPHIC",
+              "subject": "粉红圆形图形继续扩张",
+              "enter": "WIPE"
+            },
+            {
+              "start_ms": 32167,
+              "end_ms": 32300,
+              "framing": "GRAPHIC",
+              "subject": "粉红底与弧形色块过渡",
+              "enter": "WIPE"
+            },
+            {
+              "start_ms": 32300,
+              "end_ms": 32400,
+              "framing": "CU",
+              "subject": "戴帽角色从粉红弧形后露出",
+              "enter": "WIPE"
+            },
+            {
+              "start_ms": 32400,
+              "end_ms": 32467,
+              "framing": "CU",
+              "subject": "戴帽角色张嘴呼喊，粉红弧形划过",
+              "enter": "WIPE"
+            }
+          ],
+          "easing": "STEPPED",
+          "camera": "PUSH",
+          "accent": "橙色星形速度带与粉红圆形擦除"
+        },
+        "slots": [
+          {
+            "name": "骑手与摩托平涂素材",
+            "kind": "image",
+            "requirement": "多角度骑手驾驶摩托的平涂色块图层，含正面、侧面、背面视角"
+          },
+          {
+            "name": "橙色星形速度带",
+            "kind": "image",
+            "requirement": "带黑色五角星的橙色弧形速度带，可旋转缩放"
+          },
+          {
+            "name": "紫色背景与黑色剪影",
+            "kind": "image",
+            "requirement": "紫色平涂底加黑色锯齿建筑剪影与斜线速度线"
+          },
+          {
+            "name": "粉红圆形擦除图形",
+            "kind": "image",
+            "requirement": "粉红、紫、洋红弧形色块组成的圆形转场遮罩"
+          },
+          {
+            "name": "戴帽角色特写",
+            "kind": "image",
+            "requirement": "戴帽戴眼罩角色张嘴呼喊的平涂特写图层"
+          }
+        ],
+        "signals": [
+          "高饱和紫底配黑色锯齿剪影",
+          "橙色星形速度带环绕主体",
+          "平涂硬边高对比色块",
+          "粉红圆形图形擦除转场",
+          "连续推近的镜头节奏"
+        ]
+      }
+    },
+    {
+      "segment_id": "seg-0033900",
+      "start_ms": 33900,
+      "end_ms": 35033,
+      "fine_starts_ms": [
+        34333,
+        34400,
+        34467,
+        34567,
+        34633,
+        34733,
+        34800,
+        34900,
+        34967
+      ],
+      "starts_ms": [
+        34133,
+        34333,
+        34567,
+        34800
+      ],
+      "flashes_ms": [],
+      "palette": [
+        {
+          "hex": "#882828",
+          "share": 0.29
+        },
+        {
+          "hex": "#782828",
+          "share": 0.158
+        },
+        {
+          "hex": "#982828",
+          "share": 0.119
+        },
+        {
+          "hex": "#080808",
+          "share": 0.038
+        }
+      ],
+      "sequence_no": 0,
+      "observation": {
+        "name": "红底角色连续推近",
+        "summary": "深红背景中先出现发光小点与黑色触须，触须汇聚后硬切到角色面部特写，再连续拉远至全身并保持红底。",
+        "role": "ACCENT",
+        "look": {
+          "ground": "纯深红平涂背景，带轻微暗角与颗粒",
+          "subject_treatment": "高对比平涂动画角色，黑色紧身衣配荧光绿线条，护目镜红圈反光，长发飘动",
+          "texture": "轻微胶片颗粒与暗角，无网点",
+          "type_treatment": null
+        },
+        "motion": {
+          "steps": [
+            {
+              "start_ms": 33900,
+              "end_ms": 34333,
+              "framing": "INSERT",
+              "subject": "红底上的紫色发光小点与黑色触须汇聚",
+              "enter": "CUT"
+            },
+            {
+              "start_ms": 34333,
+              "end_ms": 34400,
+              "framing": "ECU",
+              "subject": "护目镜与咧嘴面部特写",
+              "enter": "CUT"
+            },
+            {
+              "start_ms": 34400,
+              "end_ms": 34467,
+              "framing": "CU",
+              "subject": "护目镜面部与肩部",
+              "enter": "CUT"
+            },
+            {
+              "start_ms": 34467,
+              "end_ms": 34567,
+              "framing": "MCU",
+              "subject": "张臂角色上半身",
+              "enter": "CUT"
+            },
+            {
+              "start_ms": 34567,
+              "end_ms": 34633,
+              "framing": "MS",
+              "subject": "张臂角色与黑色坐骑",
+              "enter": "CUT"
+            },
+            {
+              "start_ms": 34633,
+              "end_ms": 34733,
+              "framing": "MS",
+              "subject": "盘腿坐于坐骑上的角色",
+              "enter": "CUT"
+            },
+            {
+              "start_ms": 34733,
+              "end_ms": 34800,
+              "framing": "FULL",
+              "subject": "角色与坐骑整体",
+              "enter": "CUT"
+            },
+            {
+              "start_ms": 34800,
+              "end_ms": 34900,
+              "framing": "FULL",
+              "subject": "角色与坐骑整体，姿态变化",
+              "enter": "CUT"
+            },
+            {
+              "start_ms": 34900,
+              "end_ms": 34967,
+              "framing": "WIDE",
+              "subject": "角色与坐骑在红底中完整呈现",
+              "enter": "CUT"
+            },
+            {
+              "start_ms": 34967,
+              "end_ms": 35033,
+              "framing": "WIDE",
+              "subject": "角色与坐骑继续拉远",
+              "enter": "CUT"
+            }
+          ],
+          "easing": "STEPPED",
+          "camera": "PULL",
+          "accent": "荧光绿线条与红色护目镜反光"
+        },
+        "slots": [
+          {
+            "name": "红底背景",
+            "kind": "image",
+            "requirement": "纯深红平涂带暗角与颗粒的背景图"
+          },
+          {
+            "name": "发光小点与触须",
+            "kind": "video",
+            "requirement": "紫色发光点与黑色触须汇聚的动画素材"
+          },
+          {
+            "name": "角色全身分层",
+            "kind": "image",
+            "requirement": "角色全身分层切图，含护目镜、长发、紧身衣与荧光绿线条"
+          },
+          {
+            "name": "黑色坐骑",
+            "kind": "image",
+            "requirement": "黑色蛇形坐骑分层切图"
+          }
+        ],
+        "signals": [
+          "深红纯色背景",
+          "高对比平涂动画",
+          "荧光绿线条装饰",
+          "红色圆形护目镜反光",
+          "连续硬切拉远"
+        ]
+      }
+    },
+    {
+      "segment_id": "seg-0082833",
+      "start_ms": 82833,
+      "end_ms": 84067,
+      "fine_starts_ms": [
+        83067,
+        83133,
+        83233,
+        83300,
+        83467,
+        83600,
+        83667,
+        83767,
+        83833,
+        83900,
+        83933,
+        83967,
+        84000
+      ],
+      "starts_ms": [
+        83067,
+        83300,
+        83600,
+        83833
+      ],
+      "flashes_ms": [],
+      "palette": [
+        {
+          "hex": "#c80808",
+          "share": 0.086
+        },
+        {
+          "hex": "#d80808",
+          "share": 0.068
+        },
+        {
+          "hex": "#283838",
+          "share": 0.04
+        },
+        {
+          "hex": "#388888",
+          "share": 0.025
+        }
+      ],
+      "sequence_no": 1,
+      "observation": {
+        "name": "冰晶特写推镜",
+        "summary": "红色背景中角色抱持冰晶状能量体，冰晶不断变形放大，镜头连续推近至冰晶表面纹理，最后硬切到粉黄星形爆炸图形。",
+        "role": "ACCENT",
+        "look": {
+          "ground": "纯正红色平涂背景，后段转为粉红与亮黄的高饱和图形底",
+          "subject_treatment": "角色为扁平赛璐璐上色，冰晶能量体带青绿渐变、白色高光与颗粒质感，边缘发光",
+          "texture": "冰晶表面有细密颗粒与闪光点，后段出现星形与彩纸碎片",
+          "type_treatment": null
+        },
+        "motion": {
+          "steps": [
+            {
+              "start_ms": 82833,
+              "end_ms": 83067,
+              "framing": "MS",
+              "subject": "两名角色抱持巨大青绿冰晶能量体",
+              "enter": "CUT"
+            },
+            {
+              "start_ms": 83067,
+              "end_ms": 83133,
+              "framing": "MS",
+              "subject": "冰晶变形为猫头轮廓",
+              "enter": "CUT"
+            },
+            {
+              "start_ms": 83133,
+              "end_ms": 83233,
+              "framing": "MS",
+              "subject": "冰晶继续膨胀变形",
+              "enter": "CUT"
+            },
+            {
+              "start_ms": 83233,
+              "end_ms": 83300,
+              "framing": "CU",
+              "subject": "冰晶表面特写，露出猫眼纹样",
+              "enter": "ZOOM"
+            },
+            {
+              "start_ms": 83300,
+              "end_ms": 83467,
+              "framing": "ECU",
+              "subject": "冰晶内部青绿纹理与暗色轮廓",
+              "enter": "ZOOM"
+            },
+            {
+              "start_ms": 83467,
+              "end_ms": 83600,
+              "framing": "ECU",
+              "subject": "冰晶纹理进一步放大，出现白色发丝状线条",
+              "enter": "ZOOM"
+            },
+            {
+              "start_ms": 83600,
+              "end_ms": 83667,
+              "framing": "ECU",
+              "subject": "冰晶内部暗色块面与白色弧线",
+              "enter": "ZOOM"
+            },
+            {
+              "start_ms": 83667,
+              "end_ms": 83767,
+              "framing": "ECU",
+              "subject": "冰晶纹理继续推近，暗色区域扩大",
+              "enter": "ZOOM"
+            },
+            {
+              "start_ms": 83767,
+              "end_ms": 83833,
+              "framing": "ECU",
+              "subject": "冰晶表面仅剩青绿与暗色抽象纹理",
+              "enter": "ZOOM"
+            },
+            {
+              "start_ms": 83833,
+              "end_ms": 83900,
+              "framing": "GRAPHIC",
+              "subject": "粉红花瓣状图形与黄色背景，中心闪光",
+              "enter": "CUT"
+            },
+            {
+              "start_ms": 83900,
+              "end_ms": 83933,
+              "framing": "GRAPHIC",
+              "subject": "粉红图形放大，彩色星形碎片飞散",
+              "enter": "CUT"
+            },
+            {
+              "start_ms": 83933,
+              "end_ms": 83967,
+              "framing": "GRAPHIC",
+              "subject": "粉红图形继续放大，星形碎片增多",
+              "enter": "CUT"
+            },
+            {
+              "start_ms": 83967,
+              "end_ms": 84000,
+              "framing": "GRAPHIC",
+              "subject": "粉红图形铺满画面，碎片四散",
+              "enter": "CUT"
+            },
+            {
+              "start_ms": 84000,
+              "end_ms": 84067,
+              "framing": "GRAPHIC",
+              "subject": "粉红图形被白色网格分割，碎片散落",
+              "enter": "CUT"
+            }
+          ],
+          "easing": "STEPPED",
+          "camera": "PUSH",
+          "accent": "冰晶表面闪光与星形碎片飞散"
+        },
+        "slots": [
+          {
+            "name": "角色抱持冰晶全身图",
+            "kind": "image",
+            "requirement": "红色背景上两名角色抱持青绿冰晶能量体的完整画面，需可分层"
+          },
+          {
+            "name": "冰晶纹理特写序列",
+            "kind": "image",
+            "requirement": "冰晶表面从整体到极特写的连续纹理图，带青绿渐变与颗粒质感"
+          },
+          {
+            "name": "粉黄星形爆炸图形",
+            "kind": "image",
+            "requirement": "粉红花瓣状图形配亮黄底，中心闪光与彩色星形碎片，可做网格分割"
+          }
+        ],
+        "signals": [
+          "高饱和红底平涂",
+          "青绿冰晶发光质感",
+          "连续推镜至抽象纹理",
+          "硬切到粉黄图形爆炸",
+          "星形与彩纸碎片装饰"
+        ]
+      }
+    }
+  ]
+}

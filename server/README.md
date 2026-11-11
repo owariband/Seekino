@@ -92,12 +92,18 @@ Service 负责；Repository 保留事务内的状态与并发约束。
 
 `SEEKINO_AUTH_MODE=local` 时，正常 API 进程同时提供 Streamable HTTP MCP：`http://127.0.0.1:9621/mcp`。若 API 端口不同，使用实际端口。它随 API 进程启动。Cloud 部署提供同路径的 HTTPS 服务。
 
+同一编辑客户端通过这个地址取用表演和手法范例。可从 [#50](https://github.com/owariband/Seekino/pull/50) 检出整个功能，在本机用[整体验收命令](../docs/design/03-product-reassessment/mcp-edit-references-trd.md#6-结果验收与闭环)从两个普通上传开始，验证最终能取得两段原片。
+
 | 工具 | 参数与结果 |
 |---|---|
 | `list_series` | `offset=0, limit=20`，分页列出本地系列与状态，`next_offset` 用于续页 |
 | `retrieve` | `query` 必填，可选 `series_ids`、`top_k=5`、`event_types`、`speaker`；返回 Event 证据及 `evidence_ref`。使用相同条件和 `next_cursor` 继续读取排序结果 |
 | `browse_events` | 指定 `series_id`，按集和时间翻完已发布事件。可用 `visible_names` 筛选出镜角色，自动展开明确的系列别名。单页 `limit` 为 1–50，传回 `next_cursor` 直到为空 |
-| `read_evidence` | 接收 `evidence_ref`，重验当前任务/内容版本，返回事件、分页 Chunk 上下文与媒体 URL |
+| `read_evidence` | 接收正片事件或参考片的 `evidence_ref`，核对来源及发布版本。成对传入 `start_ms`、`end_ms` 可下载自选区间的 `media.clip_url` |
+| `find_edit_templates` | 用 `query` 找已发布的手法观察。可传 `series_ids`、`top_k`。每项给出步骤、原片区间、证据引用及可直接播放的 `media.play_url` |
+| `get_style_card` | 传 `video_id` 读取当前全片 Refine 卡。`anchored_signals` 的例子含 `segment_id`、`at_ms`、画面依据和 `evidence_ref`。早期卡标作 `legacy_technique_groups`，各代表段也能从 `exemplars` 打开 |
+
+参考片通过上传或重解析的 `parseConfig.profile = "edit_reference"` 选择。普通剧集可逐集发布，`retrieve` 在部分集已就绪时返回已有事件及覆盖提示。参考片发布后，编辑通过手法命中或全片卡进入 `read_evidence`，默认可播放、下载该代表段，并查原生帧时间和分步观察。引证时刻属于原视频坐标，独立 MP4 的播放时钟从零开始。人物分离、手法取舍和出片由编辑在本机完成。[双召回主设计 #50](https://github.com/owariband/Seekino/pull/50)
 
 使用剪辑素材策略解析后，可以搜索“镜头向右横移，灯塔从左边出画，小船在右边入画”。命中的 `SCENE.camera_ref` 给出镜头方向、速度类别、起幅、落幅和画面依据。对这条事件调用 `read_evidence`，适合二维复现的运镜会附带 `camera_replay`，其中有版本化 ES 模块、入口 `cameraAt(elapsedMs, params, world, viewport)` 和原片时长。返回值是新画面中的裁取矩形，可直接用于 Canvas 的 `drawImage`。
 
@@ -105,7 +111,11 @@ Service 负责；Repository 保留事务内的状态与并发约束。
 
 `top_k` 是不同 Chunk 的数量（最多 20），不是 Event 数量；同一 Chunk 可以包含多条命中事件。默认搜索本地 READY 系列，超过 50 个时先用 `list_series` 选择范围。Event 索引未覆盖会返回 `EVENT_INDEX_NOT_READY`，不会伪装成“没有匹配”。
 
-视频时间全部使用整数毫秒，区间左闭右开。`read_evidence` 的 `next_evidence_ref` 继续读取同一来源版本的上下文；`EVIDENCE_STALE` 表示需要重新检索。`original_url` 可用于下载原片，`playback_url` 仅在编解码检查通过时提供；地址指向本机 API，源媒体缺失时返回警告。外部 Agent 自行下载、按毫秒区间剪辑，MCP 不运行制作代码。
+视频时间全部使用原片整数毫秒，区间左闭右开。`next_evidence_ref` 续读同一来源版本的上下文；`EVIDENCE_STALE` 表示需要重新检索。本机不传时间时仍返回 `original_url` 和可用的 `playback_url`。传入时间可以跨同一原片的事件或分块；下载时重验权限和出处，使用本机 FFmpeg 从原片生成 H.264 MP4，保留首条音轨（若有）。源文件缺失时不返回有效下载链接。
+
+给编辑 Agent 的提示：**当手势或表情的变化承载剧情时，回看命中前后，从起势到收势选一段。把原片起止毫秒和这条 `evidence_ref` 交给 `read_evidence`，下载 `media.clip_url`。可以直接剪这段原片；需要换背景时，用你本地的工具抠出连续动作。需要强调某一拍时再定格。** 取片不需要人物名。
+
+Cloud 模式的片段下载沿用媒体访问权限，每次最多 **60,000 ms（含）**；超限会报错，不静默截断。本地没有这一分钟限制。[取片合同](../docs/design/03-product-reassessment/mcp-source-clips-trd.md)与官方 Cloud MCP 的连接、鉴权交付分开；本分支不新增公网 MCP 入口。
 
 在已恢复正常 API/数据库/ES/媒体的本机，可为一次 Codex 会话临时配置：
 
@@ -500,3 +510,16 @@ codex mcp add seekino_cloud --url "$SEEKINO_CLOUD/mcp" --bearer-token-env-var SE
 ```
 
 `list_series` 返回平台公开租户已发布且 READY 的系列。`browse_events` 返回 Event 引用，`retrieve` 用自然语言检索。先 `read_evidence(evidence_ref)` 核对来源，再给出 `start_ms` 与 `end_ms` 获取 `media.clip_url`。区间使用整数毫秒、左闭右开，每段最多 60 秒。链接最长有效 5 分钟，下载器可直接获取该 MP4，下载时服务端重新核对发布状态、证据版本和用户身份。检索与转码共用既有云端请求和并发额度。以不同名称添加本机端点即可在同一剪辑会话调用两个库。[服务端设计](../docs/design/03-product-reassessment/cloud-public-mcp-trd.md)
+
+
+### 剪辑 Skill、风格参考与个人库
+
+连接后可用 `resources/read` 读取 `skill://seekino-editing-materials/SKILL.md`。支持 MCP Skills 扩展的客户端可通过 `skills/list` 和 `skills/get` 发现指引与随附的本机分层脚本。也可以给本机 Claude Code 和 Codex 一次安装。
+
+```sh
+npx skills add https://github.com/owariband/Seekino/tree/main/server/skills/seekino-editing-materials -a claude-code -a codex -g -y
+```
+
+用 `find_edit_templates` 搜索剪辑技法或自己的模板，`get_style_card` 读取整片风格并回看例证。用 `get_edit_template` 和 `list_edit_template_versions` 读取自己的版本、来源和反馈。通过 `save_edit_template_version` 保存完整代码与来源，`append_edit_template_note` 追加反馈或本机检查，`set_default_edit_template_version` 明确指定默认版本。
+
+本机可直接保存。在 Cloud 网页登录后，打开账号菜单，选择“复制个人 MCP 凭据”，在剪辑终端把它设为 `SEEKINO_MCP_TOKEN` 后启动客户端。该凭据可读取公开素材并访问自己的模板库。网页登录的程序化调用使用 `POST /api/auth/mcp-token?scope=personal`、当前会话 Cookie 和 CSRF 请求头。游客和默认签发的凭据仍可取公开素材。客户端首次调用时可先请它读取剪辑 Skill。

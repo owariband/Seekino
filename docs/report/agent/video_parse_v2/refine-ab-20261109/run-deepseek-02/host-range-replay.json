@@ -1,0 +1,719 @@
+{
+  "scope": "Post hoc diagnostic, no model calls. Replace only source interval endpoints by an exact lookup of the editor-returned ID. Preserve cue, mechanism, ordering and refusal decisions.",
+  "summary": {
+    "E3": {
+      "A": {
+        "n": 12,
+        "registered_usable": 10,
+        "host_range_usable": 10
+      },
+      "B": {
+        "n": 12,
+        "registered_usable": 9,
+        "host_range_usable": 11
+      }
+    },
+    "Weekend": {
+      "A": {
+        "n": 6,
+        "registered_usable": 5,
+        "host_range_usable": 6
+      },
+      "B": {
+        "n": 6,
+        "registered_usable": 4,
+        "host_range_usable": 6
+      }
+    }
+  },
+  "trials": [
+    {
+      "call": "E3-1-entrance-A",
+      "panel": "E3",
+      "arm": "A",
+      "original_spans": [
+        [
+          33900,
+          35033
+        ]
+      ],
+      "host_spans": [
+        [
+          33900,
+          35033
+        ]
+      ],
+      "changed_ranges": false,
+      "registered_usable": true,
+      "host_range_usable": true
+    },
+    {
+      "call": "E3-1-entrance-B",
+      "panel": "E3",
+      "arm": "B",
+      "original_spans": [
+        [
+          33900,
+          35033
+        ]
+      ],
+      "host_spans": [
+        [
+          33900,
+          35033
+        ]
+      ],
+      "changed_ranges": false,
+      "registered_usable": false,
+      "host_range_usable": false
+    },
+    {
+      "call": "E3-1-lettering-B",
+      "panel": "E3",
+      "arm": "B",
+      "original_spans": [
+        [
+          14333,
+          14700
+        ]
+      ],
+      "host_spans": [
+        [
+          13500,
+          14700
+        ]
+      ],
+      "changed_ranges": true,
+      "registered_usable": false,
+      "host_range_usable": true
+    },
+    {
+      "call": "E3-1-lettering-A",
+      "panel": "E3",
+      "arm": "A",
+      "original_spans": [
+        [
+          13500,
+          14700
+        ]
+      ],
+      "host_spans": [
+        [
+          13500,
+          14700
+        ]
+      ],
+      "changed_ranges": false,
+      "registered_usable": true,
+      "host_range_usable": true
+    },
+    {
+      "call": "E3-1-clap-A",
+      "panel": "E3",
+      "arm": "A",
+      "original_spans": [
+        [
+          12200,
+          13133
+        ]
+      ],
+      "host_spans": [
+        [
+          12200,
+          13133
+        ]
+      ],
+      "changed_ranges": false,
+      "registered_usable": true,
+      "host_range_usable": true
+    },
+    {
+      "call": "E3-1-clap-B",
+      "panel": "E3",
+      "arm": "B",
+      "original_spans": [
+        [
+          12200,
+          13133
+        ]
+      ],
+      "host_spans": [
+        [
+          12200,
+          13133
+        ]
+      ],
+      "changed_ranges": false,
+      "registered_usable": true,
+      "host_range_usable": true
+    },
+    {
+      "call": "E3-1-burst-B",
+      "panel": "E3",
+      "arm": "B",
+      "original_spans": [
+        [
+          82833,
+          84067
+        ]
+      ],
+      "host_spans": [
+        [
+          82833,
+          84067
+        ]
+      ],
+      "changed_ranges": false,
+      "registered_usable": true,
+      "host_range_usable": true
+    },
+    {
+      "call": "E3-1-burst-A",
+      "panel": "E3",
+      "arm": "A",
+      "original_spans": [
+        [
+          82833,
+          84067
+        ]
+      ],
+      "host_spans": [
+        [
+          82833,
+          84067
+        ]
+      ],
+      "changed_ranges": false,
+      "registered_usable": true,
+      "host_range_usable": true
+    },
+    {
+      "call": "E3-1-pair-A",
+      "panel": "E3",
+      "arm": "A",
+      "original_spans": [
+        [
+          33900,
+          35033
+        ],
+        [
+          13500,
+          14700
+        ]
+      ],
+      "host_spans": [
+        [
+          33900,
+          35033
+        ],
+        [
+          13500,
+          14700
+        ]
+      ],
+      "changed_ranges": false,
+      "registered_usable": false,
+      "host_range_usable": false
+    },
+    {
+      "call": "E3-1-pair-B",
+      "panel": "E3",
+      "arm": "B",
+      "original_spans": [
+        [
+          33900,
+          35033
+        ],
+        [
+          13500,
+          14700
+        ]
+      ],
+      "host_spans": [
+        [
+          33900,
+          35033
+        ],
+        [
+          13500,
+          14700
+        ]
+      ],
+      "changed_ranges": false,
+      "registered_usable": true,
+      "host_range_usable": true
+    },
+    {
+      "call": "E3-1-absent-B",
+      "panel": "E3",
+      "arm": "B",
+      "original_spans": [],
+      "host_spans": [],
+      "changed_ranges": false,
+      "registered_usable": true,
+      "host_range_usable": true
+    },
+    {
+      "call": "E3-1-absent-A",
+      "panel": "E3",
+      "arm": "A",
+      "original_spans": [],
+      "host_spans": [],
+      "changed_ranges": false,
+      "registered_usable": true,
+      "host_range_usable": true
+    },
+    {
+      "call": "E3-2-absent-A",
+      "panel": "E3",
+      "arm": "A",
+      "original_spans": [],
+      "host_spans": [],
+      "changed_ranges": false,
+      "registered_usable": true,
+      "host_range_usable": true
+    },
+    {
+      "call": "E3-2-absent-B",
+      "panel": "E3",
+      "arm": "B",
+      "original_spans": [],
+      "host_spans": [],
+      "changed_ranges": false,
+      "registered_usable": true,
+      "host_range_usable": true
+    },
+    {
+      "call": "E3-2-pair-B",
+      "panel": "E3",
+      "arm": "B",
+      "original_spans": [
+        [
+          33900,
+          35033
+        ],
+        [
+          13500,
+          14700
+        ]
+      ],
+      "host_spans": [
+        [
+          33900,
+          35033
+        ],
+        [
+          13500,
+          14700
+        ]
+      ],
+      "changed_ranges": false,
+      "registered_usable": true,
+      "host_range_usable": true
+    },
+    {
+      "call": "E3-2-pair-A",
+      "panel": "E3",
+      "arm": "A",
+      "original_spans": [
+        [
+          33900,
+          35033
+        ],
+        [
+          13500,
+          14700
+        ]
+      ],
+      "host_spans": [
+        [
+          33900,
+          35033
+        ],
+        [
+          13500,
+          14700
+        ]
+      ],
+      "changed_ranges": false,
+      "registered_usable": false,
+      "host_range_usable": false
+    },
+    {
+      "call": "E3-2-burst-A",
+      "panel": "E3",
+      "arm": "A",
+      "original_spans": [
+        [
+          82833,
+          84067
+        ]
+      ],
+      "host_spans": [
+        [
+          82833,
+          84067
+        ]
+      ],
+      "changed_ranges": false,
+      "registered_usable": true,
+      "host_range_usable": true
+    },
+    {
+      "call": "E3-2-burst-B",
+      "panel": "E3",
+      "arm": "B",
+      "original_spans": [
+        [
+          82833,
+          84067
+        ]
+      ],
+      "host_spans": [
+        [
+          82833,
+          84067
+        ]
+      ],
+      "changed_ranges": false,
+      "registered_usable": true,
+      "host_range_usable": true
+    },
+    {
+      "call": "E3-2-clap-B",
+      "panel": "E3",
+      "arm": "B",
+      "original_spans": [
+        [
+          12200,
+          13133
+        ]
+      ],
+      "host_spans": [
+        [
+          12200,
+          13133
+        ]
+      ],
+      "changed_ranges": false,
+      "registered_usable": true,
+      "host_range_usable": true
+    },
+    {
+      "call": "E3-2-clap-A",
+      "panel": "E3",
+      "arm": "A",
+      "original_spans": [
+        [
+          12200,
+          13133
+        ]
+      ],
+      "host_spans": [
+        [
+          12200,
+          13133
+        ]
+      ],
+      "changed_ranges": false,
+      "registered_usable": true,
+      "host_range_usable": true
+    },
+    {
+      "call": "E3-2-lettering-A",
+      "panel": "E3",
+      "arm": "A",
+      "original_spans": [
+        [
+          13500,
+          14700
+        ]
+      ],
+      "host_spans": [
+        [
+          13500,
+          14700
+        ]
+      ],
+      "changed_ranges": false,
+      "registered_usable": true,
+      "host_range_usable": true
+    },
+    {
+      "call": "E3-2-lettering-B",
+      "panel": "E3",
+      "arm": "B",
+      "original_spans": [
+        [
+          14333,
+          14700
+        ]
+      ],
+      "host_spans": [
+        [
+          13500,
+          14700
+        ]
+      ],
+      "changed_ranges": true,
+      "registered_usable": false,
+      "host_range_usable": true
+    },
+    {
+      "call": "E3-2-entrance-B",
+      "panel": "E3",
+      "arm": "B",
+      "original_spans": [
+        [
+          33900,
+          35033
+        ]
+      ],
+      "host_spans": [
+        [
+          33900,
+          35033
+        ]
+      ],
+      "changed_ranges": false,
+      "registered_usable": true,
+      "host_range_usable": true
+    },
+    {
+      "call": "E3-2-entrance-A",
+      "panel": "E3",
+      "arm": "A",
+      "original_spans": [
+        [
+          33900,
+          35033
+        ]
+      ],
+      "host_spans": [
+        [
+          33900,
+          35033
+        ]
+      ],
+      "changed_ranges": false,
+      "registered_usable": true,
+      "host_range_usable": true
+    },
+    {
+      "call": "Weekend-1-entrance-A",
+      "panel": "Weekend",
+      "arm": "A",
+      "original_spans": [
+        [
+          33900,
+          35033
+        ]
+      ],
+      "host_spans": [
+        [
+          33900,
+          35033
+        ]
+      ],
+      "changed_ranges": false,
+      "registered_usable": true,
+      "host_range_usable": true
+    },
+    {
+      "call": "Weekend-1-entrance-B",
+      "panel": "Weekend",
+      "arm": "B",
+      "original_spans": [
+        [
+          33900,
+          35033
+        ]
+      ],
+      "host_spans": [
+        [
+          33900,
+          35033
+        ]
+      ],
+      "changed_ranges": false,
+      "registered_usable": true,
+      "host_range_usable": true
+    },
+    {
+      "call": "Weekend-1-lettering-B",
+      "panel": "Weekend",
+      "arm": "B",
+      "original_spans": [
+        [
+          14333,
+          14700
+        ]
+      ],
+      "host_spans": [
+        [
+          13500,
+          14700
+        ]
+      ],
+      "changed_ranges": true,
+      "registered_usable": false,
+      "host_range_usable": true
+    },
+    {
+      "call": "Weekend-1-lettering-A",
+      "panel": "Weekend",
+      "arm": "A",
+      "original_spans": [
+        [
+          13500,
+          14700
+        ]
+      ],
+      "host_spans": [
+        [
+          13500,
+          14700
+        ]
+      ],
+      "changed_ranges": false,
+      "registered_usable": true,
+      "host_range_usable": true
+    },
+    {
+      "call": "Weekend-1-clap-A",
+      "panel": "Weekend",
+      "arm": "A",
+      "original_spans": [],
+      "host_spans": [],
+      "changed_ranges": false,
+      "registered_usable": true,
+      "host_range_usable": true
+    },
+    {
+      "call": "Weekend-1-clap-B",
+      "panel": "Weekend",
+      "arm": "B",
+      "original_spans": [],
+      "host_spans": [],
+      "changed_ranges": false,
+      "registered_usable": true,
+      "host_range_usable": true
+    },
+    {
+      "call": "Weekend-1-burst-B",
+      "panel": "Weekend",
+      "arm": "B",
+      "original_spans": [
+        [
+          82833,
+          84067
+        ]
+      ],
+      "host_spans": [
+        [
+          82833,
+          84067
+        ]
+      ],
+      "changed_ranges": false,
+      "registered_usable": true,
+      "host_range_usable": true
+    },
+    {
+      "call": "Weekend-1-burst-A",
+      "panel": "Weekend",
+      "arm": "A",
+      "original_spans": [
+        [
+          82833,
+          84067
+        ]
+      ],
+      "host_spans": [
+        [
+          82833,
+          84067
+        ]
+      ],
+      "changed_ranges": false,
+      "registered_usable": true,
+      "host_range_usable": true
+    },
+    {
+      "call": "Weekend-1-pair-A",
+      "panel": "Weekend",
+      "arm": "A",
+      "original_spans": [
+        [
+          34333,
+          35033
+        ],
+        [
+          14333,
+          14700
+        ]
+      ],
+      "host_spans": [
+        [
+          33900,
+          35033
+        ],
+        [
+          13500,
+          14700
+        ]
+      ],
+      "changed_ranges": true,
+      "registered_usable": false,
+      "host_range_usable": true
+    },
+    {
+      "call": "Weekend-1-pair-B",
+      "panel": "Weekend",
+      "arm": "B",
+      "original_spans": [
+        [
+          34333,
+          35033
+        ],
+        [
+          14333,
+          14700
+        ]
+      ],
+      "host_spans": [
+        [
+          33900,
+          35033
+        ],
+        [
+          13500,
+          14700
+        ]
+      ],
+      "changed_ranges": true,
+      "registered_usable": false,
+      "host_range_usable": true
+    },
+    {
+      "call": "Weekend-1-absent-B",
+      "panel": "Weekend",
+      "arm": "B",
+      "original_spans": [],
+      "host_spans": [],
+      "changed_ranges": false,
+      "registered_usable": true,
+      "host_range_usable": true
+    },
+    {
+      "call": "Weekend-1-absent-A",
+      "panel": "Weekend",
+      "arm": "A",
+      "original_spans": [],
+      "host_spans": [],
+      "changed_ranges": false,
+      "registered_usable": true,
+      "host_range_usable": true
+    }
+  ]
+}

@@ -5261,6 +5261,87 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "kind": "pr"
     }
    ]
+  },
+  {
+   "id": "EDIT-CLIP-01",
+   "title": "编辑自选连续原片入出点并下载 MP4",
+   "category": "search",
+   "type": "task",
+   "status": "verifying",
+   "priority": "P1",
+   "description": "编辑从现有证据指定同一视频的起止毫秒；Cloud 每次最多 60 秒，分割和合成由编辑本地完成。",
+   "next": "本机取片随主需求 EDIT-REFERENCE-01 在 #50 整体验收。片主安排独立编辑试剪，公网取片由 Cloud MCP 会话负责。",
+   "verification": "EP04 已归档命中通过真实 MySQL 副本和 MCP/HTTP 取回 4.713 秒、113 帧带声 MP4。隔离 Cloud 测过 60 秒边界、撤销访问和旧版本。",
+   "updatedAt": "2026-11-10",
+   "tags": [
+    "连续原片"
+   ],
+   "related": [
+    "EDIT-REFERENCE-01",
+    "EDIT-ANIME-01",
+    "B15"
+   ],
+   "branch": "docs/editing-skill-style-reference",
+   "links": [
+    {
+     "label": "双召回需求与交付 #50",
+     "kind": "pr",
+     "url": "https://github.com/owariband/Seekino/pull/50"
+    },
+    {
+     "label": "取片合同",
+     "kind": "trd",
+     "url": "https://github.com/owariband/Seekino/blob/docs/editing-skill-style-reference/docs/design/03-product-reassessment/mcp-source-clips-trd.md"
+    },
+    {
+     "label": "EP04 实测",
+     "kind": "evidence",
+     "url": "https://github.com/owariband/Seekino/blob/docs/editing-skill-style-reference/docs/report/server/mcp-source-clips-20261109.json"
+    }
+   ]
+  },
+  {
+   "id": "EDIT-REFERENCE-01",
+   "title": "从剧本召回表演和剪辑手法并取得两段原片",
+   "category": "search",
+   "type": "requirement",
+   "status": "verifying",
+   "priority": "P1",
+   "description": "从剧本寻找可剪表演和有原片依据的手法，编辑在本机选入点、出点并判断如何使用。",
+   "next": "片主决定何时由 Claude 用剧本、MCP 和本地工具独立验收。",
+   "verification": "同一 #50 应用在独立 MySQL、ES 和临时媒体目录从两支上传贯通六个 MCP 工具、带毫秒引证的新卡及两段 MP4。真实 P5R 回看 34 帧。11 月 11 日隔离验证了 11 个工具、Skill 文件摘要、两个普通账户之间的模板权限和重复写入。",
+   "updatedAt": "2026-11-11",
+   "tags": [
+    "参考片",
+    "MCP"
+   ],
+   "related": [
+    "EDIT-CLIP-01",
+    "EDIT-ANIME-01"
+   ],
+   "branch": "docs/editing-skill-style-reference",
+   "links": [
+    {
+     "label": "双召回需求与交付 #50",
+     "kind": "pr",
+     "url": "https://github.com/owariband/Seekino/pull/50"
+    },
+    {
+     "label": "主设计",
+     "kind": "trd",
+     "url": "https://github.com/owariband/Seekino/blob/docs/editing-skill-style-reference/docs/design/03-product-reassessment/editing-skill-style-reference-trd.md"
+    },
+    {
+     "label": "只读接口设计",
+     "kind": "trd",
+     "url": "https://github.com/owariband/Seekino/blob/docs/editing-skill-style-reference/docs/design/03-product-reassessment/mcp-edit-references-trd.md"
+    },
+    {
+     "label": "协议与回放回执",
+     "kind": "evidence",
+     "url": "https://github.com/owariband/Seekino/blob/docs/editing-skill-style-reference/docs/report/server/editing-mcp-code-loop-20261110.json"
+    }
+   ]
   }
  ]
 }</script>

@@ -259,7 +259,7 @@ def test_worker_subscribes_before_snapshot_reads_and_unsubscribes_on_failure():
 
         def load(task_id):
             observed.append(runtime._refine_subscription.get())
-            return object()
+            return SimpleNamespace(task=SimpleNamespace(parse_config={}))
 
         @asynccontextmanager
         async def stage(*args, **kwargs):

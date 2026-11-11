@@ -101,6 +101,8 @@ class ChunkUnderstandingWorkflow:
     async def _understand(self, state: ChunkState) -> dict[str, object]:
         execution = state["execution"]
         config = execution.inputs.parse_config
+        if config.profile == "edit_reference":
+            return {"result": await self._runtime.observe_reference(execution)}
         canvas = ParseContextCanvas(
             scope="chunk:" + execution.chunk_parse_task_id, stage="understanding",
             members={execution.chunk_parse_task_id: {
@@ -226,7 +228,7 @@ class ChunkUnderstandingWorkflow:
         await self._runtime.commit_chunk_result(
             state["execution"],
             state["result"],
-            evidence={
+            evidence={} if state["execution"].inputs.parse_config.profile == "edit_reference" else {
                 **state["canvas"].get("evidence", state["execution"].chunk_parse_task_id),
                 "media": state["canvas"].get("evidence", "media"),
             },

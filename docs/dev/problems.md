@@ -2866,6 +2866,14 @@ micrograd v5 共 146 块，整集 90 分 04.884 秒。调度反复锁取候选�
 
 同日复核还发现 Event 工具在缩小片段范围前生成了覆盖信息，并要求所有候选视频都具备事件索引。已授权课程中缺少某个集号也会终止对话。补充验收直接对照送给 ES 的来源集合、游客看到的提示，以及刷新后恢复的回答。[逐集对照与浏览器结果](../design/03-product-reassessment/public-course-readiness-trd.md#5-试点验证与方案取舍)
 
+## EDIT-CLIP-01 · 剪辑命中给了整集地址，编辑还需自己裁出连续表演
+
+2026-11-09。《Weekend》的导演委托明确要求选一张原帧，虽然紧邻的画面包含完整抬手动作，交付却偏向静帧。验收分开看：先从同一命中自选跨事件范围并取得可独立播放的原片，再让没看过时间码的新编辑自主取用。[取片合同](../design/03-product-reassessment/mcp-source-clips-trd.md) · [工作台](workbench.html)。
+
+## EDIT-REFERENCE-01 · 全片风格卡和手法搜索缺少能直接回看的带时间引证
+
+2026-11-10。编辑需要从一段剧本同时找到连续表演和有来源的手法。验收要求手法搜索、整片卡能把同一代表段交给证据读取器，切换时刻有原生帧可核，正片可按自选区间下载。两份提示词以 #50 的 Weekend 观察与全片 Refine 存档为准。主需求与代码在 [#50](https://github.com/owariband/Seekino/pull/50)，连续原片下载 EDIT-CLIP-01 是其子任务。独立成片验收由片主安排。[合同](../design/03-product-reassessment/mcp-edit-references-trd.md) · [工作台](workbench.html)
+
 ### WATCH-KINO-01 · 观看页只能推开侧栏，已设计的 Kino 浮窗没有进入发布分支
 
 2026-11-10，在生产网页打开公开课程，能调整淡化时间，却没有可拖动的 Kino 和悬浮切换按钮。验收要求是通过正常观看入口打开浮窗而不缩窄视频，停靠和刷新能保留偏好，网页全屏与手机也能继续对话。[专项设计](../design/03-product-reassessment/watch-kino-entry-trd.md) · [工作台](workbench.html)

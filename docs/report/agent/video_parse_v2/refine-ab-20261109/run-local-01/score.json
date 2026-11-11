@@ -1,0 +1,1711 @@
+{
+  "refine": {
+    "E3": {
+      "complete_membership": false,
+      "members_attempt_host_overwrite": false,
+      "members": 8,
+      "signals": 4,
+      "citations": [
+        {
+          "signal": "手法",
+          "segment_id": "seg-0000167",
+          "at_ms": 167,
+          "detail": "纯正红底，后段转为红色天空",
+          "resolves": true
+        },
+        {
+          "signal": "手法",
+          "segment_id": "seg-0012200",
+          "at_ms": 12200,
+          "detail": "高饱和红紫黄撞色",
+          "resolves": true
+        },
+        {
+          "signal": "手法",
+          "segment_id": "seg-0013500",
+          "at_ms": 13500,
+          "detail": "高饱和洋红配深紫星星平铺",
+          "resolves": true
+        },
+        {
+          "signal": "手法",
+          "segment_id": "seg-0018200",
+          "at_ms": 18200,
+          "detail": "高对比黄黑剪影",
+          "resolves": true
+        },
+        {
+          "signal": "手法",
+          "segment_id": "seg-0028367",
+          "at_ms": 28367,
+          "detail": "高对比平涂配色",
+          "resolves": true
+        },
+        {
+          "signal": "手法",
+          "segment_id": "seg-0030833",
+          "at_ms": 30833,
+          "detail": "高饱和紫底配黑色锯齿剪影",
+          "resolves": true
+        },
+        {
+          "signal": "手法",
+          "segment_id": "seg-0033900",
+          "at_ms": 33900,
+          "detail": "深红纯色背景",
+          "resolves": true
+        },
+        {
+          "signal": "手法",
+          "segment_id": "seg-0082833",
+          "at_ms": 82833,
+          "detail": "高饱和红底平涂",
+          "resolves": true
+        },
+        {
+          "signal": "手法",
+          "segment_id": "seg-0000167",
+          "at_ms": 167,
+          "detail": "红黑双色高对比",
+          "resolves": true
+        },
+        {
+          "signal": "手法",
+          "segment_id": "seg-0012200",
+          "at_ms": 12200,
+          "detail": "半调网点漫画质感",
+          "resolves": true
+        },
+        {
+          "signal": "手法",
+          "segment_id": "seg-0013500",
+          "at_ms": 13500,
+          "detail": "白色尖角面具与红色瞳孔的强对比",
+          "resolves": true
+        },
+        {
+          "signal": "手法",
+          "segment_id": "seg-0018200",
+          "at_ms": 18200,
+          "detail": "半调网点印刷质感",
+          "resolves": true
+        },
+        {
+          "signal": "手法",
+          "segment_id": "seg-0028367",
+          "at_ms": 28367,
+          "detail": "放射状速度线",
+          "resolves": true
+        },
+        {
+          "signal": "手法",
+          "segment_id": "seg-0030833",
+          "at_ms": 30833,
+          "detail": "橙色星形速度带环绕主体",
+          "resolves": true
+        },
+        {
+          "signal": "手法",
+          "segment_id": "seg-0033900",
+          "at_ms": 33900,
+          "detail": "荧光绿线条装饰",
+          "resolves": true
+        },
+        {
+          "signal": "手法",
+          "segment_id": "seg-0082833",
+          "at_ms": 82833,
+          "detail": "青绿冰晶发光质感",
+          "resolves": true
+        },
+        {
+          "signal": "手法",
+          "segment_id": "seg-0000167",
+          "at_ms": 167,
+          "detail": "硬边几何图形",
+          "resolves": true
+        },
+        {
+          "signal": "手法",
+          "segment_id": "seg-0012200",
+          "at_ms": 12200,
+          "detail": "星形爆闪与放射线",
+          "resolves": true
+        },
+        {
+          "signal": "手法",
+          "segment_id": "seg-0013500",
+          "at_ms": 13500,
+          "detail": "漫画式锯齿闪电框与手写粗体标语",
+          "resolves": true
+        },
+        {
+          "signal": "手法",
+          "segment_id": "seg-0018200",
+          "at_ms": 18200,
+          "detail": "红白放射状闪切",
+          "resolves": true
+        },
+        {
+          "signal": "手法",
+          "segment_id": "seg-0028367",
+          "at_ms": 28367,
+          "detail": "月牙形发光剑气",
+          "resolves": true
+        },
+        {
+          "signal": "手法",
+          "segment_id": "seg-0030833",
+          "at_ms": 30833,
+          "detail": "粉红圆形图形擦除转场",
+          "resolves": true
+        },
+        {
+          "signal": "手法",
+          "segment_id": "seg-0033900",
+          "at_ms": 33900,
+          "detail": "连续硬切拉远",
+          "resolves": true
+        },
+        {
+          "signal": "手法",
+          "segment_id": "seg-0082833",
+          "at_ms": 82833,
+          "detail": "星形与彩纸碎片装饰",
+          "resolves": true
+        },
+        {
+          "signal": "手法",
+          "segment_id": "seg-0000167",
+          "at_ms": 167,
+          "detail": "逐帧硬切节奏",
+          "resolves": true
+        },
+        {
+          "signal": "手法",
+          "segment_id": "seg-0012200",
+          "at_ms": 12200,
+          "detail": "逐帧跳切的节奏",
+          "resolves": true
+        },
+        {
+          "signal": "手法",
+          "segment_id": "seg-0013500",
+          "at_ms": 13500,
+          "detail": "阶梯式构图",
+          "resolves": true
+        },
+        {
+          "signal": "手法",
+          "segment_id": "seg-0018200",
+          "at_ms": 18200,
+          "detail": "硬切无过渡的节奏",
+          "resolves": true
+        },
+        {
+          "signal": "手法",
+          "segment_id": "seg-0028367",
+          "at_ms": 28367,
+          "detail": "白色与粉色月牙形剑气",
+          "resolves": true
+        },
+        {
+          "signal": "手法",
+          "segment_id": "seg-0030833",
+          "at_ms": 30833,
+          "detail": "橙色星形速度带与粉红圆形擦除",
+          "resolves": true
+        },
+        {
+          "signal": "手法",
+          "segment_id": "seg-0033900",
+          "at_ms": 33900,
+          "detail": "荧光绿线条与红色护目镜反光",
+          "resolves": true
+        },
+        {
+          "signal": "手法",
+          "segment_id": "seg-0082833",
+          "at_ms": 82833,
+          "detail": "冰晶表面闪光与星形碎片飞散",
+          "resolves": true
+        }
+      ],
+      "elapsed_s": 93.2059,
+      "usage": {
+        "completion_tokens": 2488,
+        "prompt_tokens": 8005,
+        "total_tokens": 10493,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      }
+    },
+    "Weekend": {
+      "complete_membership": false,
+      "members_attempt_host_overwrite": false,
+      "members": 3,
+      "signals": 8,
+      "citations": [
+        {
+          "signal": "手法",
+          "segment_id": "seg-0013500",
+          "at_ms": 13500,
+          "detail": "洋红底深紫星星图案上，先是白色面具红色眼睛的大特写（13500–13733ms）。",
+          "resolves": true
+        },
+        {
+          "signal": "手法",
+          "segment_id": "seg-0033900",
+          "at_ms": 33900,
+          "detail": "红色暗角平涂背景上，一颗粉紫色小心形物体下坠，黑色带纹理的触手从画面右上方伸入（33933起）。",
+          "resolves": true
+        },
+        {
+          "signal": "手法",
+          "segment_id": "seg-0082833",
+          "at_ms": 82833,
+          "detail": "红色纯色底上，两名穿校服的少女（左侧白上衣灰裤袜，右侧米色开衫红色裤袜、浅金双马尾）面对面弯腰。",
+          "resolves": true
+        },
+        {
+          "signal": "重复星星图案底",
+          "segment_id": "seg-0013500",
+          "at_ms": 13500,
+          "detail": "洋红底深紫星星图案上，先是白色面具红色眼睛的大特写（13500–13733ms）。",
+          "resolves": true
+        },
+        {
+          "signal": "重复星星图案底",
+          "segment_id": "seg-0013500",
+          "at_ms": 14333,
+          "detail": "左右两侧出现绿、黄对白气泡及白色英文字，逐帧轻微抖动。",
+          "resolves": true
+        },
+        {
+          "signal": "洋红色底",
+          "segment_id": "seg-0013500",
+          "at_ms": 13500,
+          "detail": "洋红底深紫星星图案上，先是白色面具红色眼睛的大特写（13500–13733ms）。",
+          "resolves": true
+        },
+        {
+          "signal": "洋红色底",
+          "segment_id": "seg-0082833",
+          "at_ms": 82833,
+          "detail": "红色纯色底上，两名穿校服的少女（左侧白上衣灰裤袜，右侧米色开衫红色裤袜、浅金双马尾）面对面弯腰。",
+          "resolves": true
+        },
+        {
+          "signal": "绿黄双色对白气泡",
+          "segment_id": "seg-0013500",
+          "at_ms": 14333,
+          "detail": "左右两侧出现绿、黄对白气泡及白色英文字，逐帧轻微抖动。",
+          "resolves": true
+        },
+        {
+          "signal": "绿黄双色对白气泡",
+          "segment_id": "seg-0082833",
+          "at_ms": 83833,
+          "detail": "粉红星纹云团与黄色缝隙，中心彩色纸屑与白色闪光。",
+          "resolves": true
+        },
+        {
+          "signal": "白色手写体描边文字",
+          "segment_id": "seg-0013500",
+          "at_ms": 14333,
+          "detail": "左侧绿色锯齿对白气泡内纵向分三行写“You're / myself”，右侧黄色气泡内写“I'm / Your / Self”（大小写按字形辨认，可能有出入）。",
+          "resolves": true
+        },
+        {
+          "signal": "闪电符号",
+          "segment_id": "seg-0013500",
+          "at_ms": 14233,
+          "detail": "两侧出现绿色和黄色闪电符号。",
+          "resolves": true
+        },
+        {
+          "signal": "逐帧抖动",
+          "segment_id": "seg-0013500",
+          "at_ms": 14367,
+          "detail": "气泡内部是绿底配深绿四角星纹、黄底配深黄四角星纹。",
+          "resolves": true
+        },
+        {
+          "signal": "逐帧抖动",
+          "segment_id": "seg-0082833",
+          "at_ms": 83967,
+          "detail": "纸屑星星放大扩散，缝隙变为青绿色。",
+          "resolves": true
+        },
+        {
+          "signal": "居中对称构图",
+          "segment_id": "seg-0013500",
+          "at_ms": 14333,
+          "detail": "角色仍位于中间。",
+          "resolves": true
+        },
+        {
+          "signal": "居中对称构图",
+          "segment_id": "seg-0082833",
+          "at_ms": 83833,
+          "detail": "粉红星纹云团与黄色缝隙，中心彩色纸屑与白色闪光。",
+          "resolves": true
+        }
+      ],
+      "elapsed_s": 76.1032,
+      "usage": {
+        "completion_tokens": 2426,
+        "prompt_tokens": 4734,
+        "total_tokens": 7160,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      }
+    }
+  },
+  "trials": [
+    {
+      "panel": "E3",
+      "order": 1,
+      "question": "entrance",
+      "arm": "A",
+      "located": true,
+      "spans": true,
+      "cue": true,
+      "movement": true,
+      "usable": true,
+      "picks": [
+        {
+          "segment_id": "seg-0033900",
+          "start_ms": 33900,
+          "end_ms": 35033,
+          "cue_ms": 34333,
+          "scale_change": "wider",
+          "mechanism": "cut_series"
+        }
+      ],
+      "elapsed_s": 13.3052,
+      "usage": {
+        "completion_tokens": 122,
+        "prompt_tokens": 7838,
+        "total_tokens": 7960,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "record": "calls/E3-1-entrance-A.json"
+    },
+    {
+      "panel": "E3",
+      "order": 1,
+      "question": "entrance",
+      "arm": "B",
+      "located": false,
+      "spans": false,
+      "cue": false,
+      "movement": false,
+      "usable": false,
+      "picks": [
+        {
+          "segment_id": "seg-0000167",
+          "start_ms": 167,
+          "end_ms": 1300,
+          "cue_ms": 400,
+          "scale_change": "wider|tighter|mixed|unchanged|unknown",
+          "mechanism": "cut_series|within_shot|single_cut|mixed|unknown"
+        }
+      ],
+      "elapsed_s": 16.2178,
+      "usage": {
+        "completion_tokens": 135,
+        "prompt_tokens": 8975,
+        "total_tokens": 9110,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "record": "calls/E3-1-entrance-B.json"
+    },
+    {
+      "panel": "E3",
+      "order": 1,
+      "question": "lettering",
+      "arm": "B",
+      "located": true,
+      "spans": true,
+      "cue": false,
+      "movement": true,
+      "usable": false,
+      "picks": [
+        {
+          "segment_id": "seg-0013500",
+          "start_ms": 13500,
+          "end_ms": 14700,
+          "cue_ms": 13500,
+          "scale_change": "unchanged",
+          "mechanism": "cut_series"
+        }
+      ],
+      "elapsed_s": 15.7437,
+      "usage": {
+        "completion_tokens": 121,
+        "prompt_tokens": 8968,
+        "total_tokens": 9089,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "record": "calls/E3-1-lettering-B.json"
+    },
+    {
+      "panel": "E3",
+      "order": 1,
+      "question": "lettering",
+      "arm": "A",
+      "located": true,
+      "spans": true,
+      "cue": false,
+      "movement": true,
+      "usable": false,
+      "picks": [
+        {
+          "segment_id": "seg-0013500",
+          "start_ms": 13500,
+          "end_ms": 14700,
+          "cue_ms": 13733,
+          "scale_change": "unchanged",
+          "mechanism": "cut_series"
+        }
+      ],
+      "elapsed_s": 13.6043,
+      "usage": {
+        "completion_tokens": 121,
+        "prompt_tokens": 7831,
+        "total_tokens": 7952,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "record": "calls/E3-1-lettering-A.json"
+    },
+    {
+      "panel": "E3",
+      "order": 1,
+      "question": "clap",
+      "arm": "A",
+      "located": true,
+      "spans": true,
+      "cue": true,
+      "movement": true,
+      "usable": true,
+      "picks": [
+        {
+          "segment_id": "seg-0012200",
+          "start_ms": 12200,
+          "end_ms": 13133,
+          "cue_ms": 12767,
+          "scale_change": "wider|tighter|mixed|unchanged|unknown",
+          "mechanism": "cut_series|within_shot|single_cut|mixed|unknown"
+        }
+      ],
+      "elapsed_s": 14.1587,
+      "usage": {
+        "completion_tokens": 145,
+        "prompt_tokens": 7828,
+        "total_tokens": 7973,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "record": "calls/E3-1-clap-A.json"
+    },
+    {
+      "panel": "E3",
+      "order": 1,
+      "question": "clap",
+      "arm": "B",
+      "located": true,
+      "spans": true,
+      "cue": false,
+      "movement": true,
+      "usable": false,
+      "picks": [
+        {
+          "segment_id": "seg-0012200",
+          "start_ms": 12200,
+          "end_ms": 13133,
+          "cue_ms": 12200,
+          "scale_change": "wider|tighter|mixed|unchanged|unknown",
+          "mechanism": "cut_series|within_shot|single_cut|mixed|unknown"
+        }
+      ],
+      "elapsed_s": 15.4919,
+      "usage": {
+        "completion_tokens": 124,
+        "prompt_tokens": 8965,
+        "total_tokens": 9089,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "record": "calls/E3-1-clap-B.json"
+    },
+    {
+      "panel": "E3",
+      "order": 1,
+      "question": "burst",
+      "arm": "B",
+      "located": false,
+      "spans": false,
+      "cue": false,
+      "movement": false,
+      "usable": false,
+      "picks": [
+        {
+          "segment_id": "seg-0018200",
+          "start_ms": 18200,
+          "end_ms": 19400,
+          "cue_ms": 18200,
+          "scale_change": "wider|tighter|mixed|unchanged|unknown",
+          "mechanism": "cut_series|within_shot|single_cut|mixed|unknown"
+        }
+      ],
+      "elapsed_s": 16.2439,
+      "usage": {
+        "completion_tokens": 147,
+        "prompt_tokens": 8967,
+        "total_tokens": 9114,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "record": "calls/E3-1-burst-B.json"
+    },
+    {
+      "panel": "E3",
+      "order": 1,
+      "question": "burst",
+      "arm": "A",
+      "located": false,
+      "spans": false,
+      "cue": false,
+      "movement": false,
+      "usable": false,
+      "picks": [
+        {
+          "segment_id": "seg-0018200",
+          "start_ms": 18200,
+          "end_ms": 19400,
+          "cue_ms": 19167,
+          "scale_change": "wider|tighter|mixed|unchanged|unknown",
+          "mechanism": "cut_series|within_shot|single_cut|mixed|unknown"
+        }
+      ],
+      "elapsed_s": 14.6042,
+      "usage": {
+        "completion_tokens": 147,
+        "prompt_tokens": 7830,
+        "total_tokens": 7977,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "record": "calls/E3-1-burst-A.json"
+    },
+    {
+      "panel": "E3",
+      "order": 1,
+      "question": "pair",
+      "arm": "A",
+      "located": true,
+      "spans": false,
+      "cue": false,
+      "movement": true,
+      "usable": false,
+      "picks": [
+        {
+          "segment_id": "seg-0033900",
+          "start_ms": 34333,
+          "end_ms": 34400,
+          "cue_ms": 34333,
+          "scale_change": "wider",
+          "mechanism": "cut_series"
+        },
+        {
+          "segment_id": "seg-0013500",
+          "start_ms": 13733,
+          "end_ms": 13733,
+          "cue_ms": 13733,
+          "scale_change": "wider",
+          "mechanism": "cut_series"
+        }
+      ],
+      "elapsed_s": 17.536,
+      "usage": {
+        "completion_tokens": 224,
+        "prompt_tokens": 7855,
+        "total_tokens": 8079,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "record": "calls/E3-1-pair-A.json"
+    },
+    {
+      "panel": "E3",
+      "order": 1,
+      "question": "pair",
+      "arm": "B",
+      "located": false,
+      "spans": false,
+      "cue": false,
+      "movement": false,
+      "usable": false,
+      "picks": [
+        {
+          "segment_id": "seg-0028367",
+          "start_ms": 28367,
+          "end_ms": 29500,
+          "cue_ms": 28933,
+          "scale_change": "wider|tighter|mixed|unchanged|unknown",
+          "mechanism": "cut_series|within_shot|single_cut|mixed|unknown"
+        },
+        {
+          "segment_id": "seg-0013500",
+          "start_ms": 13500,
+          "end_ms": 14700,
+          "cue_ms": 13733,
+          "scale_change": "wider|tighter|mixed|unchanged|unknown",
+          "mechanism": "cut_series|within_shot|single_cut|mixed|unknown"
+        }
+      ],
+      "elapsed_s": 20.6155,
+      "usage": {
+        "completion_tokens": 246,
+        "prompt_tokens": 8992,
+        "total_tokens": 9238,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "record": "calls/E3-1-pair-B.json"
+    },
+    {
+      "panel": "E3",
+      "order": 1,
+      "question": "absent",
+      "arm": "B",
+      "located": false,
+      "spans": false,
+      "cue": false,
+      "movement": false,
+      "usable": false,
+      "picks": [
+        {
+          "segment_id": "seg-0030833",
+          "start_ms": 30833,
+          "end_ms": 32467,
+          "cue_ms": 30833,
+          "scale_change": "wider|tighter|mixed|unchanged|unknown",
+          "mechanism": "cut_series|within_shot|single_cut|mixed|unknown"
+        }
+      ],
+      "elapsed_s": 17.1435,
+      "usage": {
+        "completion_tokens": 149,
+        "prompt_tokens": 8968,
+        "total_tokens": 9117,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "record": "calls/E3-1-absent-B.json"
+    },
+    {
+      "panel": "E3",
+      "order": 1,
+      "question": "absent",
+      "arm": "A",
+      "located": false,
+      "spans": false,
+      "cue": false,
+      "movement": false,
+      "usable": false,
+      "picks": [
+        {
+          "segment_id": "seg-0030833",
+          "start_ms": 30833,
+          "end_ms": 32467,
+          "cue_ms": 30833,
+          "scale_change": "wider|tighter|mixed|unchanged|unknown",
+          "mechanism": "cut_series|within_shot|single_cut|mixed|unknown"
+        }
+      ],
+      "elapsed_s": 14.8903,
+      "usage": {
+        "completion_tokens": 154,
+        "prompt_tokens": 7831,
+        "total_tokens": 7985,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "record": "calls/E3-1-absent-A.json"
+    },
+    {
+      "panel": "E3",
+      "order": 2,
+      "question": "absent",
+      "arm": "A",
+      "located": false,
+      "spans": false,
+      "cue": false,
+      "movement": false,
+      "usable": false,
+      "picks": [
+        {
+          "segment_id": "seg-0030833",
+          "start_ms": 30833,
+          "end_ms": 32467,
+          "cue_ms": 31133,
+          "scale_change": "wider|tighter|mixed|unchanged|unknown",
+          "mechanism": "cut_series|within_shot|single_cut|mixed|unknown"
+        }
+      ],
+      "elapsed_s": 15.735,
+      "usage": {
+        "completion_tokens": 187,
+        "prompt_tokens": 7831,
+        "total_tokens": 8018,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "record": "calls/E3-2-absent-A.json"
+    },
+    {
+      "panel": "E3",
+      "order": 2,
+      "question": "absent",
+      "arm": "B",
+      "located": false,
+      "spans": false,
+      "cue": false,
+      "movement": false,
+      "usable": false,
+      "picks": [
+        {
+          "segment_id": "seg-0028367",
+          "start_ms": 28367,
+          "end_ms": 29500,
+          "cue_ms": 28367,
+          "scale_change": "wider|tighter|mixed|unchanged|unknown",
+          "mechanism": "cut_series|within_shot|single_cut|mixed|unknown"
+        }
+      ],
+      "elapsed_s": 17.2359,
+      "usage": {
+        "completion_tokens": 171,
+        "prompt_tokens": 8968,
+        "total_tokens": 9139,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "record": "calls/E3-2-absent-B.json"
+    },
+    {
+      "panel": "E3",
+      "order": 2,
+      "question": "pair",
+      "arm": "B",
+      "located": false,
+      "spans": false,
+      "cue": false,
+      "movement": false,
+      "usable": false,
+      "picks": [
+        {
+          "segment_id": "seg-0018200",
+          "start_ms": 18200,
+          "end_ms": 19400,
+          "cue_ms": 18933,
+          "scale_change": "wider|tighter|mixed|unchanged|unknown",
+          "mechanism": "cut_series|within_shot|single_cut|mixed|unknown"
+        },
+        {
+          "segment_id": "seg-0013500",
+          "start_ms": 13500,
+          "end_ms": 14700,
+          "cue_ms": 14000,
+          "scale_change": "wider|tighter|mixed|unchanged|unknown",
+          "mechanism": "cut_series|within_shot|single_cut|mixed|unknown"
+        }
+      ],
+      "elapsed_s": 19.7752,
+      "usage": {
+        "completion_tokens": 244,
+        "prompt_tokens": 8992,
+        "total_tokens": 9236,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "record": "calls/E3-2-pair-B.json"
+    },
+    {
+      "panel": "E3",
+      "order": 2,
+      "question": "pair",
+      "arm": "A",
+      "located": false,
+      "spans": false,
+      "cue": false,
+      "movement": false,
+      "usable": false,
+      "picks": [
+        {
+          "segment_id": "seg-0013500",
+          "start_ms": 13500,
+          "end_ms": 14700,
+          "cue_ms": 13500,
+          "scale_change": "wider",
+          "mechanism": "cut_series"
+        },
+        {
+          "segment_id": "seg-0012200",
+          "start_ms": 12200,
+          "end_ms": 13133,
+          "cue_ms": 12833,
+          "scale_change": "wider",
+          "mechanism": "cut_series"
+        }
+      ],
+      "elapsed_s": 16.3603,
+      "usage": {
+        "completion_tokens": 206,
+        "prompt_tokens": 7855,
+        "total_tokens": 8061,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "record": "calls/E3-2-pair-A.json"
+    },
+    {
+      "panel": "E3",
+      "order": 2,
+      "question": "burst",
+      "arm": "A",
+      "located": false,
+      "spans": false,
+      "cue": false,
+      "movement": false,
+      "usable": false,
+      "picks": [
+        {
+          "segment_id": "seg-0012200",
+          "start_ms": 12200,
+          "end_ms": 13133,
+          "cue_ms": 12833,
+          "scale_change": "wider|tighter|mixed|unchanged|unknown",
+          "mechanism": "cut_series|within_shot|single_cut|mixed|unknown"
+        }
+      ],
+      "elapsed_s": 14.2549,
+      "usage": {
+        "completion_tokens": 145,
+        "prompt_tokens": 7830,
+        "total_tokens": 7975,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "record": "calls/E3-2-burst-A.json"
+    },
+    {
+      "panel": "E3",
+      "order": 2,
+      "question": "burst",
+      "arm": "B",
+      "located": false,
+      "spans": false,
+      "cue": false,
+      "movement": false,
+      "usable": false,
+      "picks": [
+        {
+          "segment_id": "seg-0013500",
+          "start_ms": 13500,
+          "end_ms": 14700,
+          "cue_ms": 13500,
+          "scale_change": "wider|tighter|mixed|unchanged|unknown",
+          "mechanism": "cut_series|within_shot|single_cut|mixed|unknown"
+        }
+      ],
+      "elapsed_s": 16.4289,
+      "usage": {
+        "completion_tokens": 112,
+        "prompt_tokens": 8967,
+        "total_tokens": 9079,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "record": "calls/E3-2-burst-B.json"
+    },
+    {
+      "panel": "E3",
+      "order": 2,
+      "question": "clap",
+      "arm": "B",
+      "located": true,
+      "spans": true,
+      "cue": false,
+      "movement": true,
+      "usable": false,
+      "picks": [
+        {
+          "segment_id": "seg-0012200",
+          "start_ms": 12200,
+          "end_ms": 13133,
+          "cue_ms": 12833,
+          "scale_change": "wider|tighter|mixed|unchanged|unknown",
+          "mechanism": "cut_series|within_shot|single_cut|mixed|unknown"
+        }
+      ],
+      "elapsed_s": 18.3867,
+      "usage": {
+        "completion_tokens": 166,
+        "prompt_tokens": 8965,
+        "total_tokens": 9131,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "record": "calls/E3-2-clap-B.json"
+    },
+    {
+      "panel": "E3",
+      "order": 2,
+      "question": "clap",
+      "arm": "A",
+      "located": true,
+      "spans": false,
+      "cue": false,
+      "movement": true,
+      "usable": false,
+      "picks": [
+        {
+          "segment_id": "seg-0012200",
+          "start_ms": 12900,
+          "end_ms": 13133,
+          "cue_ms": 12833,
+          "scale_change": "wider|tighter|mixed|unchanged|unknown",
+          "mechanism": "cut_series|within_shot|single_cut|mixed|unknown"
+        }
+      ],
+      "elapsed_s": 15.117,
+      "usage": {
+        "completion_tokens": 170,
+        "prompt_tokens": 7828,
+        "total_tokens": 7998,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "record": "calls/E3-2-clap-A.json"
+    },
+    {
+      "panel": "E3",
+      "order": 2,
+      "question": "lettering",
+      "arm": "A",
+      "located": true,
+      "spans": true,
+      "cue": false,
+      "movement": true,
+      "usable": false,
+      "picks": [
+        {
+          "segment_id": "seg-0013500",
+          "start_ms": 13500,
+          "end_ms": 14700,
+          "cue_ms": 14000,
+          "scale_change": "wider",
+          "mechanism": "cut_series"
+        }
+      ],
+      "elapsed_s": 13.7597,
+      "usage": {
+        "completion_tokens": 133,
+        "prompt_tokens": 7831,
+        "total_tokens": 7964,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "record": "calls/E3-2-lettering-A.json"
+    },
+    {
+      "panel": "E3",
+      "order": 2,
+      "question": "lettering",
+      "arm": "B",
+      "located": true,
+      "spans": true,
+      "cue": false,
+      "movement": true,
+      "usable": false,
+      "picks": [
+        {
+          "segment_id": "seg-0013500",
+          "start_ms": 13500,
+          "end_ms": 14700,
+          "cue_ms": 13733,
+          "scale_change": "wider",
+          "mechanism": "cut_series"
+        }
+      ],
+      "elapsed_s": 15.713,
+      "usage": {
+        "completion_tokens": 120,
+        "prompt_tokens": 8968,
+        "total_tokens": 9088,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "record": "calls/E3-2-lettering-B.json"
+    },
+    {
+      "panel": "E3",
+      "order": 2,
+      "question": "entrance",
+      "arm": "B",
+      "located": true,
+      "spans": true,
+      "cue": true,
+      "movement": false,
+      "usable": false,
+      "picks": [
+        {
+          "segment_id": "seg-0033900",
+          "start_ms": 33900,
+          "end_ms": 35033,
+          "cue_ms": 34333,
+          "scale_change": "wider|tighter|mixed|unchanged|unknown",
+          "mechanism": "cut_series|within_shot|single_cut|mixed|unknown"
+        }
+      ],
+      "elapsed_s": 17.7796,
+      "usage": {
+        "completion_tokens": 142,
+        "prompt_tokens": 8975,
+        "total_tokens": 9117,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "record": "calls/E3-2-entrance-B.json"
+    },
+    {
+      "panel": "E3",
+      "order": 2,
+      "question": "entrance",
+      "arm": "A",
+      "located": true,
+      "spans": true,
+      "cue": true,
+      "movement": true,
+      "usable": true,
+      "picks": [
+        {
+          "segment_id": "seg-0033900",
+          "start_ms": 33900,
+          "end_ms": 35033,
+          "cue_ms": 34333,
+          "scale_change": "wider",
+          "mechanism": "cut_series"
+        }
+      ],
+      "elapsed_s": 15.4867,
+      "usage": {
+        "completion_tokens": 126,
+        "prompt_tokens": 7838,
+        "total_tokens": 7964,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "record": "calls/E3-2-entrance-A.json"
+    },
+    {
+      "panel": "Weekend",
+      "order": 1,
+      "question": "entrance",
+      "arm": "A",
+      "located": false,
+      "spans": false,
+      "cue": false,
+      "movement": false,
+      "usable": false,
+      "picks": [
+        {
+          "segment_id": "seg-0013500",
+          "start_ms": 13500,
+          "end_ms": 14700,
+          "cue_ms": 13500,
+          "scale_change": "wider",
+          "mechanism": "cut_series"
+        }
+      ],
+      "elapsed_s": 8.5228,
+      "usage": {
+        "completion_tokens": 132,
+        "prompt_tokens": 4567,
+        "total_tokens": 4699,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "record": "calls/Weekend-1-entrance-A.json"
+    },
+    {
+      "panel": "Weekend",
+      "order": 1,
+      "question": "entrance",
+      "arm": "B",
+      "located": false,
+      "spans": false,
+      "cue": false,
+      "movement": false,
+      "usable": false,
+      "picks": [
+        {
+          "segment_id": "seg-0013500",
+          "start_ms": 13500,
+          "end_ms": 13733,
+          "cue_ms": 13500,
+          "scale_change": "wider",
+          "mechanism": "cut_series"
+        },
+        {
+          "segment_id": "seg-0013500",
+          "start_ms": 14333,
+          "end_ms": 14700,
+          "cue_ms": 14333,
+          "scale_change": "wider",
+          "mechanism": "cut_series"
+        }
+      ],
+      "elapsed_s": 12.5388,
+      "usage": {
+        "completion_tokens": 202,
+        "prompt_tokens": 5561,
+        "total_tokens": 5763,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "record": "calls/Weekend-1-entrance-B.json"
+    },
+    {
+      "panel": "Weekend",
+      "order": 1,
+      "question": "lettering",
+      "arm": "B",
+      "located": true,
+      "spans": true,
+      "cue": true,
+      "movement": true,
+      "usable": true,
+      "picks": [
+        {
+          "segment_id": "seg-0013500",
+          "start_ms": 13500,
+          "end_ms": 14700,
+          "cue_ms": 14333,
+          "scale_change": "wider|tighter|mixed|unchanged|unknown",
+          "mechanism": "cut_series|within_shot|single_cut|mixed|unknown"
+        }
+      ],
+      "elapsed_s": 10.8966,
+      "usage": {
+        "completion_tokens": 160,
+        "prompt_tokens": 5554,
+        "total_tokens": 5714,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "record": "calls/Weekend-1-lettering-B.json"
+    },
+    {
+      "panel": "Weekend",
+      "order": 1,
+      "question": "lettering",
+      "arm": "A",
+      "located": true,
+      "spans": true,
+      "cue": true,
+      "movement": true,
+      "usable": true,
+      "picks": [
+        {
+          "segment_id": "seg-0013500",
+          "start_ms": 13500,
+          "end_ms": 14700,
+          "cue_ms": 14333,
+          "scale_change": "wider",
+          "mechanism": "within_shot"
+        }
+      ],
+      "elapsed_s": 8.7685,
+      "usage": {
+        "completion_tokens": 144,
+        "prompt_tokens": 4560,
+        "total_tokens": 4704,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "record": "calls/Weekend-1-lettering-A.json"
+    },
+    {
+      "panel": "Weekend",
+      "order": 1,
+      "question": "clap",
+      "arm": "A",
+      "located": false,
+      "spans": false,
+      "cue": false,
+      "movement": false,
+      "usable": false,
+      "picks": [
+        {
+          "segment_id": "seg-0082833",
+          "start_ms": 82833,
+          "end_ms": 84067,
+          "cue_ms": 83067,
+          "scale_change": "wider|tighter|mixed|unchanged|unknown",
+          "mechanism": "cut_series|within_shot|single_cut|mixed|unknown"
+        }
+      ],
+      "elapsed_s": 8.9941,
+      "usage": {
+        "completion_tokens": 153,
+        "prompt_tokens": 4557,
+        "total_tokens": 4710,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "record": "calls/Weekend-1-clap-A.json"
+    },
+    {
+      "panel": "Weekend",
+      "order": 1,
+      "question": "clap",
+      "arm": "B",
+      "located": false,
+      "spans": false,
+      "cue": false,
+      "movement": false,
+      "usable": false,
+      "picks": [
+        {
+          "segment_id": "seg-0082833",
+          "start_ms": 82833,
+          "end_ms": 84067,
+          "cue_ms": 83067,
+          "scale_change": "wider|tighter|mixed|unchanged|unknown",
+          "mechanism": "cut_series|within_shot|single_cut|mixed|unknown"
+        }
+      ],
+      "elapsed_s": 10.7303,
+      "usage": {
+        "completion_tokens": 158,
+        "prompt_tokens": 5551,
+        "total_tokens": 5709,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "record": "calls/Weekend-1-clap-B.json"
+    },
+    {
+      "panel": "Weekend",
+      "order": 1,
+      "question": "burst",
+      "arm": "B",
+      "located": true,
+      "spans": false,
+      "cue": true,
+      "movement": true,
+      "usable": false,
+      "picks": [
+        {
+          "segment_id": "seg-0082833",
+          "start_ms": 83833,
+          "end_ms": 84067,
+          "cue_ms": 83833,
+          "scale_change": "wider",
+          "mechanism": "cut_series"
+        }
+      ],
+      "elapsed_s": 10.0429,
+      "usage": {
+        "completion_tokens": 136,
+        "prompt_tokens": 5553,
+        "total_tokens": 5689,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "record": "calls/Weekend-1-burst-B.json"
+    },
+    {
+      "panel": "Weekend",
+      "order": 1,
+      "question": "burst",
+      "arm": "A",
+      "located": true,
+      "spans": false,
+      "cue": true,
+      "movement": true,
+      "usable": false,
+      "picks": [
+        {
+          "segment_id": "seg-0082833",
+          "start_ms": 83833,
+          "end_ms": 84067,
+          "cue_ms": 83833,
+          "scale_change": "wider|tighter|mixed|unchanged|unknown",
+          "mechanism": "cut_series|within_shot|single_cut|mixed|unknown"
+        }
+      ],
+      "elapsed_s": 9.3299,
+      "usage": {
+        "completion_tokens": 163,
+        "prompt_tokens": 4559,
+        "total_tokens": 4722,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "record": "calls/Weekend-1-burst-A.json"
+    },
+    {
+      "panel": "Weekend",
+      "order": 1,
+      "question": "pair",
+      "arm": "A",
+      "located": true,
+      "spans": false,
+      "cue": true,
+      "movement": true,
+      "usable": false,
+      "picks": [
+        {
+          "segment_id": "seg-0033900",
+          "start_ms": 34333,
+          "end_ms": 34400,
+          "cue_ms": 34333,
+          "scale_change": "wider",
+          "mechanism": "cut_series"
+        },
+        {
+          "segment_id": "seg-0013500",
+          "start_ms": 14333,
+          "end_ms": 14700,
+          "cue_ms": 14333,
+          "scale_change": "wider",
+          "mechanism": "cut_series"
+        }
+      ],
+      "elapsed_s": 10.7492,
+      "usage": {
+        "completion_tokens": 211,
+        "prompt_tokens": 4584,
+        "total_tokens": 4795,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "record": "calls/Weekend-1-pair-A.json"
+    },
+    {
+      "panel": "Weekend",
+      "order": 1,
+      "question": "pair",
+      "arm": "B",
+      "located": true,
+      "spans": true,
+      "cue": true,
+      "movement": true,
+      "usable": true,
+      "picks": [
+        {
+          "segment_id": "seg-0033900",
+          "start_ms": 33900,
+          "end_ms": 35033,
+          "cue_ms": 34333,
+          "scale_change": "wider",
+          "mechanism": "cut_series"
+        },
+        {
+          "segment_id": "seg-0013500",
+          "start_ms": 13500,
+          "end_ms": 14700,
+          "cue_ms": 14333,
+          "scale_change": "wider",
+          "mechanism": "cut_series"
+        }
+      ],
+      "elapsed_s": 11.9826,
+      "usage": {
+        "completion_tokens": 200,
+        "prompt_tokens": 5578,
+        "total_tokens": 5778,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "record": "calls/Weekend-1-pair-B.json"
+    },
+    {
+      "panel": "Weekend",
+      "order": 1,
+      "question": "absent",
+      "arm": "B",
+      "located": false,
+      "spans": false,
+      "cue": false,
+      "movement": false,
+      "usable": false,
+      "picks": [
+        {
+          "segment_id": "seg-0082833",
+          "start_ms": 82833,
+          "end_ms": 84067,
+          "cue_ms": 82833,
+          "scale_change": "wider|tighter|mixed|unchanged|unknown",
+          "mechanism": "cut_series|within_shot|single_cut|mixed|unknown"
+        }
+      ],
+      "elapsed_s": 10.5492,
+      "usage": {
+        "completion_tokens": 150,
+        "prompt_tokens": 5554,
+        "total_tokens": 5704,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "record": "calls/Weekend-1-absent-B.json"
+    },
+    {
+      "panel": "Weekend",
+      "order": 1,
+      "question": "absent",
+      "arm": "A",
+      "located": false,
+      "spans": false,
+      "cue": false,
+      "movement": false,
+      "usable": false,
+      "picks": [
+        {
+          "segment_id": "seg-0082833",
+          "start_ms": 82833,
+          "end_ms": 84067,
+          "cue_ms": 82900,
+          "scale_change": "wider|tighter|mixed|unchanged|unknown",
+          "mechanism": "cut_series|within_shot|single_cut|mixed|unknown"
+        }
+      ],
+      "elapsed_s": 9.3797,
+      "usage": {
+        "completion_tokens": 164,
+        "prompt_tokens": 4560,
+        "total_tokens": 4724,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "record": "calls/Weekend-1-absent-A.json"
+    }
+  ],
+  "aggregate": {
+    "E3": {
+      "all": {
+        "A": {
+          "n": 12,
+          "located": 7,
+          "usable": 3,
+          "wins_over_other": 3,
+          "paired_n": 0,
+          "paired_median_s": null,
+          "tokens": {
+            "prompt_tokens": 94026,
+            "completion_tokens": 1880,
+            "total_tokens": 95906,
+            "prompt_cache_hit_tokens": 0,
+            "prompt_cache_miss_tokens": 0
+          }
+        },
+        "B": {
+          "n": 12,
+          "located": 5,
+          "usable": 0,
+          "wins_over_other": 0,
+          "paired_n": 0,
+          "paired_median_s": null,
+          "tokens": {
+            "prompt_tokens": 107670,
+            "completion_tokens": 1877,
+            "total_tokens": 109547,
+            "prompt_cache_hit_tokens": 0,
+            "prompt_cache_miss_tokens": 0
+          }
+        }
+      },
+      "orders": {
+        "1": {
+          "A": {
+            "n": 6,
+            "located": 4,
+            "usable": 2,
+            "wins_over_other": 2,
+            "paired_n": 0,
+            "paired_median_s": null,
+            "tokens": {
+              "prompt_tokens": 47013,
+              "completion_tokens": 913,
+              "total_tokens": 47926,
+              "prompt_cache_hit_tokens": 0,
+              "prompt_cache_miss_tokens": 0
+            }
+          },
+          "B": {
+            "n": 6,
+            "located": 2,
+            "usable": 0,
+            "wins_over_other": 0,
+            "paired_n": 0,
+            "paired_median_s": null,
+            "tokens": {
+              "prompt_tokens": 53835,
+              "completion_tokens": 922,
+              "total_tokens": 54757,
+              "prompt_cache_hit_tokens": 0,
+              "prompt_cache_miss_tokens": 0
+            }
+          }
+        },
+        "2": {
+          "A": {
+            "n": 6,
+            "located": 3,
+            "usable": 1,
+            "wins_over_other": 1,
+            "paired_n": 0,
+            "paired_median_s": null,
+            "tokens": {
+              "prompt_tokens": 47013,
+              "completion_tokens": 967,
+              "total_tokens": 47980,
+              "prompt_cache_hit_tokens": 0,
+              "prompt_cache_miss_tokens": 0
+            }
+          },
+          "B": {
+            "n": 6,
+            "located": 3,
+            "usable": 0,
+            "wins_over_other": 0,
+            "paired_n": 0,
+            "paired_median_s": null,
+            "tokens": {
+              "prompt_tokens": 53835,
+              "completion_tokens": 955,
+              "total_tokens": 54790,
+              "prompt_cache_hit_tokens": 0,
+              "prompt_cache_miss_tokens": 0
+            }
+          }
+        }
+      }
+    },
+    "Weekend": {
+      "all": {
+        "A": {
+          "n": 6,
+          "located": 3,
+          "usable": 1,
+          "wins_over_other": 0,
+          "paired_n": 1,
+          "paired_median_s": 8.768,
+          "tokens": {
+            "prompt_tokens": 27387,
+            "completion_tokens": 967,
+            "total_tokens": 28354,
+            "prompt_cache_hit_tokens": 0,
+            "prompt_cache_miss_tokens": 0
+          }
+        },
+        "B": {
+          "n": 6,
+          "located": 3,
+          "usable": 2,
+          "wins_over_other": 1,
+          "paired_n": 1,
+          "paired_median_s": 10.897,
+          "tokens": {
+            "prompt_tokens": 33351,
+            "completion_tokens": 1006,
+            "total_tokens": 34357,
+            "prompt_cache_hit_tokens": 0,
+            "prompt_cache_miss_tokens": 0
+          }
+        }
+      },
+      "orders": {
+        "1": {
+          "A": {
+            "n": 6,
+            "located": 3,
+            "usable": 1,
+            "wins_over_other": 0,
+            "paired_n": 1,
+            "paired_median_s": 8.768,
+            "tokens": {
+              "prompt_tokens": 27387,
+              "completion_tokens": 967,
+              "total_tokens": 28354,
+              "prompt_cache_hit_tokens": 0,
+              "prompt_cache_miss_tokens": 0
+            }
+          },
+          "B": {
+            "n": 6,
+            "located": 3,
+            "usable": 2,
+            "wins_over_other": 1,
+            "paired_n": 1,
+            "paired_median_s": 10.897,
+            "tokens": {
+              "prompt_tokens": 33351,
+              "completion_tokens": 1006,
+              "total_tokens": 34357,
+              "prompt_cache_hit_tokens": 0,
+              "prompt_cache_miss_tokens": 0
+            }
+          }
+        }
+      }
+    }
+  }
+}

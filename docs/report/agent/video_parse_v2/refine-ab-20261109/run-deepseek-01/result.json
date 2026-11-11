@@ -1,0 +1,21 @@
+{
+  "status": "provider_insufficient_balance",
+  "model_requested": "deepseek-flash",
+  "input": "text only",
+  "started_at_utc": "2026-11-09T04:11:24.010+00:00",
+  "ended_at_utc": "2026-11-09T04:11:31.831+00:00",
+  "attempted_http": {
+    "refine": 2,
+    "reader_A": 18,
+    "reader_B": 0
+  },
+  "statuses": {
+    "402": 20
+  },
+  "unique_provider_request_ids": 20,
+  "generated_cards": 0,
+  "generated_reader_answers": 0,
+  "scorable_pairs": 0,
+  "usage": null,
+  "charge": null
+}

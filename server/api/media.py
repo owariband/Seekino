@@ -86,7 +86,7 @@ def _clip_output() -> Iterator[Path]:
 def get_video_clip(
     request: Request, evidence_ref: str = Query(alias="evidenceRef", min_length=1, max_length=4096),
     start_ms: int = Query(alias="startMs", ge=0), end_ms: int = Query(alias="endMs", gt=0),
-    ticket: str | None = Query(None, min_length=1, max_length=8192),
+    ticket: str | None = Query(None, min_length=1, max_length=8192), inline: bool = Query(False),
     output: Path = Depends(_clip_output, scope="request"),
 ) -> FileResponse:
     services = get_services(request)
@@ -103,6 +103,7 @@ def get_video_clip(
     if ticket is not None:
         services.auth.authenticate_clip(ticket, evidence_ref, start_ms, end_ms)
     return FileResponse(output, media_type="video/mp4", filename=f"clip-{start_ms}-{end_ms}.mp4",
+                        content_disposition_type="inline" if inline else "attachment",
                         headers={"Cache-Control": "private, no-store"})
 
 

@@ -11,7 +11,7 @@ from pydantic import Field, model_serializer, model_validator
 
 from engine.common.config import VideoParseRuntimeConfig
 from agent.video_parse_v2.input import (
-    ContentKind,
+    ContentKind, ResultProfile,
     ASRModelConfig as VideoParseV2ASRModelConfig,
     EmbeddingModelConfig as VideoParseV2EmbeddingModelConfig,
     ExecutionConfig as VideoParseV2ExecutionConfig,
@@ -39,6 +39,9 @@ from .media import ImageUploadConfig
 from .elasticsearch import DEFAULT_INDEX_GENERATION
 from .mq import MQConsumerConfig
 from .upload import UploadServiceConfig
+
+
+EDIT_REFERENCE_INDEX_FINGERPRINT = hashlib.sha256(b"edit_reference:technique-lexical:v1").hexdigest()
 
 
 _MODEL_POLICY_FIELDS = (
@@ -318,6 +321,7 @@ class ParseExecutionConfig(ContractModel):
 
 class ParseConfig(ContractModel):
     version: Literal[2] = 2
+    profile: ResultProfile = "content"
     content_kind: ContentKind | None = None
     window: ParseWindowConfig
     asr: ParseASRConfig
@@ -333,6 +337,8 @@ class ParseConfig(ContractModel):
     @model_serializer(mode="wrap")
     def serialize_optional_fields(self, handler):
         values = handler(self)
+        if self.profile == "content":
+            values.pop("profile", None)
         if self.content_kind is None:
             values.pop("content_kind", None)
             values.pop("contentKind", None)
@@ -376,6 +382,7 @@ class ParseConfig(ContractModel):
         if self.indexing is None or any(getattr(self.execution, name) is None for name in _EXECUTION_POLICY_FIELDS):
             raise ValueError("parse execution configuration must be resolved before creating a V2 task")
         return VideoParseV2Config(
+            profile=self.profile,
             content_kind=self.content_kind,
             chunk_duration=self.window.chunk_duration_seconds,
             interval_duration=self.window.chunk_duration_seconds * 3,

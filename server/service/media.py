@@ -43,7 +43,7 @@ from ..utils.media import (
 )
 from .library import LibraryService
 from .access import series_access, require_tenant_read
-from .mcp_evidence import EvidenceRef, StaleEvidenceError
+from .mcp_evidence import REFERENCE_PREFIX, EvidenceRef, StaleEvidenceError, decode_reference_evidence, resolve_reference_evidence
 
 
 def validate_clip_range(start_ms: int | None, end_ms: int | None, *, duration_ms: int, cloud: bool) -> None:
@@ -68,12 +68,14 @@ class MediaService:
         artifact_store: ArtifactStore,
         *,
         parse_persistence: VideoParsePersistenceService | None = None,
+        reference_index_name: str | None = None,
         probe_playback: Callable[[Path], bool] | None = None,
         config: ImageUploadConfig | None = None,
     ) -> None:
         self._library = library
         self._artifact_store = artifact_store
         self._parse_persistence = parse_persistence
+        self._reference_index_name = reference_index_name
         self._probe_playback = probe_playback or _cached_browser_playable
         self.image_upload_config = config or ImageUploadConfig()
 
@@ -239,30 +241,40 @@ class MediaService:
         public_only: bool = False,
     ) -> None:
         """Recheck access and the publication when downloading, including on replayed URLs."""
-        ref = EvidenceRef.decode(evidence_ref)
-        tenant_id = ref.identity.tenant_id
+        reference = decode_reference_evidence(evidence_ref) if evidence_ref.startswith(REFERENCE_PREFIX) else None
+        ref = None if reference else EvidenceRef.decode(evidence_ref)
+        identity_key = reference if reference else ref.identity
+        tenant_id, series_id = identity_key.tenant_id, identity_key.series_id
         cloud = identity.mode == "cloud"
         if public_only:
             if not cloud or tenant_id != identity.public_tenant_id:
                 raise SeriesNotFoundError("当前公开素材库中没有此系列")
-            self._library.require_public_ready_series(ref.identity.series_id, tenant_id=tenant_id,
+            self._library.require_public_ready_series(series_id, tenant_id=tenant_id,
                                                       owner_user_id=identity.user_id)
         elif cloud:
-            series = self._library.get_series(ref.identity.series_id, tenant_id=tenant_id, owner_user_id=identity.user_id)
+            series = self._library.get_series(series_id, tenant_id=tenant_id, owner_user_id=identity.user_id)
             series_access(identity, series)
         elif tenant_id != identity.tenant_id:
             raise SeriesNotFoundError("视频资源不存在")
         if self._parse_persistence is None:
             raise MediaNotReadyError("片段证据读取尚未装配")
         try:
-            evidence = ref.resolve(self._parse_persistence, tenant_id=tenant_id)
+            if reference:
+                if self._reference_index_name is None:
+                    raise MediaNotReadyError("参考片证据读取尚未装配")
+                observation = resolve_reference_evidence(reference, self._parse_persistence, tenant_id=tenant_id,
+                                                         index_name=self._reference_index_name)
+                duration_ms, video_id, video = observation.duration_ms, reference.video_id, None
+            else:
+                video = ref.resolve(self._parse_persistence, tenant_id=tenant_id)
+                duration_ms, video_id = video.duration_seconds, video.video_id
         except StaleEvidenceError as error:
             raise VideoParseConflictError("EVIDENCE_STALE: 来源版本已变化，请重新检索") from error
-        validate_clip_range(start_ms, end_ms, duration_ms=evidence.duration_seconds, cloud=cloud)
-        source = self.get_original(evidence.video_id, tenant_id=tenant_id, video=evidence)
+        validate_clip_range(start_ms, end_ms, duration_ms=duration_ms, cloud=cloud)
+        source = self.get_original(video_id, tenant_id=tenant_id, video=video)
         _encode_source_clip(source.path, destination, start_ms, end_ms, cloud=cloud)
         if public_only:
-            self._library.require_public_ready_series(ref.identity.series_id, tenant_id=tenant_id,
+            self._library.require_public_ready_series(series_id, tenant_id=tenant_id,
                                                       owner_user_id=identity.user_id)
 
     def thumbnail_view(

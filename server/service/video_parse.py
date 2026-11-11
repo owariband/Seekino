@@ -24,6 +24,9 @@ from langchain_core.tools import BaseTool
 from pydantic import BaseModel
 
 from agent.video_parse_v2 import ParseAgent
+from agent.video_parse_v2.edit_reference import consolidate, observe_segments
+from engine.parsev2.edit_reference import ReferenceChunk
+from ..storage.elasticsearch_references import ElasticsearchReferenceStore
 from agent.video_parse_v2.content_route import routing_evidence
 from agent.utils.context_canvas_tools import build_context_canvas_tools
 from agent.utils.context_canvas import ContextCanvas
@@ -168,6 +171,7 @@ class VideoParseRuntimeService:
         gateway_client: GatewayClient | None = None,
         event_store: ElasticsearchVideoEventStore | None = None,
         event_contract: EventIndexingContract | None = None,
+        reference_store: ElasticsearchReferenceStore | None = None,
     ) -> None:
         if not worker_id.strip():
             raise ValueError("worker_id must not be blank")
@@ -186,6 +190,7 @@ class VideoParseRuntimeService:
         self._gateway = gateway_client or GatewayClient(gateway_config)
         self._elasticsearch_store = elasticsearch_store
         self._event_store = event_store
+        self._reference_store = reference_store
         self._event_contract = event_contract
         self._worker_id = worker_id.strip()
         self._lease_duration = lease_duration
@@ -243,19 +248,28 @@ class VideoParseRuntimeService:
                         video_required = transport.input_mode != "audio"
                     finally:
                         transport.close()
-                media_context = self._media_service.prepare_episode(
-                    MediaLeaseIdentity(lease.video_parse_task_id, lease.video_parse_task_id,
-                                       lease.lease_version, execution_kind="video"),
-                    source_video=self._artifact_store.resolve(task_input.inference_proxy_uri or task_input.original_source_uri),
-                    duration_ms=task_input.duration_seconds, chunk_duration=config.chunk_duration,
-                    visual_mode=visual.mode, frame_fps=visual.fps, max_height=visual.max_height,
-                    ocr_enabled=config.ocr_enabled,
-                    overlap_ms=visual.context_overlap_seconds * 1000 if config.understanding_enabled else 0,
-                    visual_fallback_enabled=config.models.understanding.fallback is not None,
-                    camera_frames_required=config.content_kind == "clip" and config.understanding_enabled,
-                    chunk_video_required=video_required,
-                    check_active=lambda: self._require_video_active(lease),
-                )
+                if config.profile == "edit_reference":
+                    media_context = self._media_service.prepare_reference_episode(
+                        MediaLeaseIdentity(lease.video_parse_task_id, lease.video_parse_task_id,
+                                           lease.lease_version, execution_kind="video"),
+                        source_video=self._artifact_store.resolve(task_input.original_source_uri),
+                        duration_ms=task_input.duration_seconds, chunk_duration=config.chunk_duration,
+                        max_height=min(visual.max_height, 480), check_active=lambda: self._require_video_active(lease),
+                    )
+                else:
+                    media_context = self._media_service.prepare_episode(
+                        MediaLeaseIdentity(lease.video_parse_task_id, lease.video_parse_task_id,
+                                           lease.lease_version, execution_kind="video"),
+                        source_video=self._artifact_store.resolve(task_input.inference_proxy_uri or task_input.original_source_uri),
+                        duration_ms=task_input.duration_seconds, chunk_duration=config.chunk_duration,
+                        visual_mode=visual.mode, frame_fps=visual.fps, max_height=visual.max_height,
+                        ocr_enabled=config.ocr_enabled,
+                        overlap_ms=visual.context_overlap_seconds * 1000 if config.understanding_enabled else 0,
+                        visual_fallback_enabled=config.models.understanding.fallback is not None,
+                        camera_frames_required=config.content_kind == "clip" and config.understanding_enabled,
+                        chunk_video_required=video_required,
+                        check_active=lambda: self._require_video_active(lease),
+                    )
                 await self._run_blocking(media_context.__enter__)
                 if video_asr:
                     await asyncio.to_thread(self._persistence.finish_video_asr_preparation, lease)
@@ -393,7 +407,10 @@ class VideoParseRuntimeService:
                         lease, task_input, sequence_no=None, category="parse",
                         check_active=lambda: self._require_interval_active(lease),
                     ):
-                        await self.agent.interval_refine.InvokeRefine(lease.interval_parse_task_id)
+                        if task_input.task.parse_config.get("profile") == "edit_reference":
+                            await self._refine_reference(lease, self._parse_input(task_input).parse_config)
+                        else:
+                            await self.agent.interval_refine.InvokeRefine(lease.interval_parse_task_id)
                 finally:
                     self._refine_subscription.reset(subscription_token)
         finally:
@@ -406,6 +423,10 @@ class VideoParseRuntimeService:
                 self._persistence.load_task_input, lease.video_parse_task_id
             )
             inputs = self._parse_input(task_input)
+            if inputs.parse_config.profile == "edit_reference":
+                await self._run_blocking(self._index_reference, lease)
+                self._notify_change(lease.video_parse_task_id)
+                return
             async with self._model_stage(
                 lease,
                 task_input,
@@ -427,6 +448,18 @@ class VideoParseRuntimeService:
             self._notify_change(lease.video_parse_task_id)
         finally:
             self._chunk_binding.reset(token)
+
+    def _index_reference(self, lease):
+        if self._reference_store is None:
+            raise RuntimeError("editing-reference index is unavailable")
+        snapshot = self._persistence.load_chunk_indexing_snapshot(lease)
+        publication = self._reference_store.publish(snapshot)
+        chunk = snapshot.chunk
+        receipt = {"parse_task_id": snapshot.video_parse_task_id, "video_chunk_id": chunk.video_chunk_id,
+                   "content_version": chunk.content_version, "index_generation": snapshot.target_index_generation,
+                   "edit_reference": publication}
+        self._persistence.save_index_embeddings(lease, chunk.chunk_parse_task_id, chunk.content_version, {}, receipt=receipt)
+        self._persistence.complete_chunk_indexing(lease, chunk.content_version, snapshot.target_index_generation)
 
     async def run_next_prefix(self) -> bool:
         lease = await asyncio.to_thread(
@@ -1208,10 +1241,38 @@ class VideoParseRuntimeService:
             schema_name="video_parse_v2_chunk_repair",
         )
 
+    async def observe_reference(self, execution: ChunkExecution) -> ReferenceChunk:
+        media = await self._ensure_chunk_media(execution)
+        config = execution.inputs.parse_config
+
+        async def generate(inputs, schema):
+            return await self._generate_multimodal(config.models.understanding, inputs,
+                                                   schema_name="technique_observation", result_type=schema)
+
+        return await observe_segments(media.reference_segments, dict(media.frames), generate,
+                                      config.execution.max_retry_count + 1)
+
+    async def _refine_reference(self, lease, config):
+        snapshot = await asyncio.to_thread(self._persistence.load_interval_members, lease)
+        members = {m.sequence_no: ReferenceChunk.model_validate(m.content) for m in snapshot.members}
+        binding = config.models.refine or config.models.understanding
+
+        async def generate(inputs, schema):
+            return await self._generate_multimodal(binding, inputs, schema_name="edit_reference_style_card", result_type=schema)
+
+        refined = await consolidate(members, generate, config.execution.max_retry_count + 1)
+        await asyncio.to_thread(
+            self._persistence.commit_interval_refinement, lease, interval_content=refined.model_dump(mode="json"),
+            member_updates={}, input_versions={m.chunk_parse_task_id: m.version for m in snapshot.members},
+            input_fingerprints={m.chunk_parse_task_id: parse_content_fingerprint(m.content) for m in snapshot.members},
+            input_contents={m.chunk_parse_task_id: m.content for m in snapshot.members},
+        )
+        self._notify_change(lease.video_parse_task_id)
+
     async def commit_chunk_result(
         self,
         execution: ChunkExecution,
-        result: VideoParseResult,
+        result: VideoParseResult | ReferenceChunk,
         *,
         evidence: dict[str, object],
     ) -> None:
