@@ -11,7 +11,7 @@ const cloudOrigin = /^https:\/\/[a-z0-9.-]+(?::[0-9]+)?$/i.test(pageOrigin)
   ? pageOrigin : "https://your-seekino-cloud.example";
 const cloudToken = [
   `SEEKINO_CLOUD='${cloudOrigin}'`,
-  'SEEKINO_MCP_TOKEN=$(curl -fsS -X POST "$SEEKINO_CLOUD/api/auth/mcp-token" | python3 -c \'import json,sys; print(json.load(sys.stdin)["accessToken"])\') && export SEEKINO_MCP_TOKEN',
+  'SEEKINO_MCP_TOKEN=$(curl -fsS -X POST "$SEEKINO_CLOUD/api/auth/mcp-token?scope=editing" | python3 -c \'import json,sys; print(json.load(sys.stdin)["accessToken"])\') && export SEEKINO_MCP_TOKEN',
 ].join("\n");
 const installEditingSkill = "npx skills add https://github.com/owariband/Seekino/tree/main/server/skills/seekino-editing-materials -a claude-code -a codex -g -y";
 const claudeCloud = `claude mcp add --transport http seekino_cloud "$SEEKINO_CLOUD/mcp" --header 'Authorization: Bearer \${SEEKINO_MCP_TOKEN}'`;
@@ -130,7 +130,7 @@ const zh: DocsContent = {
       blocks: [
         { kind: "h", text: "接入" },
         { kind: "steps", items: [
-          { title: "获取 Cloud 只读凭据", body: "在 Cloud 站点复制命令，到剪辑终端运行。游客可读取已发布的平台系列，凭据到期后重跑这一步。", code: cloudToken },
+          { title: "获取 Cloud 游客剪辑凭据", body: "在 Cloud 站点复制命令，到剪辑终端运行。游客可读取公开素材并保存自己的模板。保留同一凭据以继续使用该库；重新匿名申请会创建另一个游客。", code: cloudToken },
           { title: "Claude Code 接入 Cloud", body: "使用 Claude 时运行，然后从这个终端打开 Claude Code。", code: claudeCloud },
           { title: "Codex 接入 Cloud", body: "使用 Codex 时运行，然后从这个终端打开 Codex。", code: codexCloud },
           { title: "保存到个人 Cloud 剪辑库", body: "登录后从账号菜单复制个人 MCP 凭据，在剪辑终端将它设为 SEEKINO_MCP_TOKEN 后启动客户端。同一连接可读公开素材并写回自己的经验。" },
@@ -255,7 +255,7 @@ const en: DocsContent = {
       blocks: [
         { kind: "h", text: "Connect" },
         { kind: "steps", items: [
-          { title: "Get a Cloud read token", body: "Copy from your Cloud site and run in your editing terminal. Guests can read published platform series. Run it again when the token expires.", code: cloudToken },
+          { title: "Get a Cloud guest editing token", body: "Copy from your Cloud site and run in your editing terminal. Guests can read published footage and save their own templates. Keep that token for later sessions. A new cookie-free request opens a separate guest library.", code: cloudToken },
           { title: "Connect Claude Code to Cloud", body: "Run this if you use Claude, then start Claude Code in this terminal.", code: claudeCloud },
           { title: "Connect Codex to Cloud", body: "Run this if you use Codex, then start Codex in this terminal.", code: codexCloud },
           { title: "Also use local footage", body: "Start the local API on your computer and add this second server to your client.", code: "claude mcp add --transport http seekino_local http://127.0.0.1:9621/mcp\n# or\ncodex mcp add seekino_local --url http://127.0.0.1:9621/mcp" },

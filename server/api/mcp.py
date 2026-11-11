@@ -30,7 +30,8 @@ if TYPE_CHECKING:
     from ..service.mcp_retrieval import McpRetrievalService
 
 _ERRORS = {
-    "PERSONAL_LIBRARY_REQUIRED": "Sign in to Cloud and copy a personal MCP token from the account menu.",
+    "PERSONAL_LIBRARY_REQUIRED": "Get an editing token with POST /api/auth/mcp-token?scope=editing. Guests can use it without email.",
+    "GUEST_LIBRARY_FULL": "This guest library has reached its editing limit. Existing versions are still readable.",
     "TEMPLATE_NOT_FOUND": "No such template or version exists in your library.",
     "TEMPLATE_CONFLICT": "Read the current revision and retry. Reuse a request_id only for identical input.",
     "REFERENCE_INDEX_UNAVAILABLE": "Editing-reference search is unavailable on this instance.",
@@ -182,7 +183,7 @@ def create_mcp_app(service: McpRetrievalService, *, auth_mode: str, auth: AuthSe
         instructions=(
             "For editing, read skill://seekino-editing-materials/SKILL.md with resources/read. "
             "It explains shot selection, style references, local cutouts and saving feedback. "
-            "Local or signed-in personal credentials can save template versions, append notes and select defaults. "
+            "Local, guest editing and signed-in personal credentials can save private versions, append notes and select defaults. "
             "Find source performances with retrieve. For editing techniques and shot changes, use find_edit_templates, "
             "play its media.play_url and inspect the source frames. get_style_card returns a whole-film card "
             "with an evidence_ref for every exemplar. Read those references with read_evidence. Results are indexed evidence, "
@@ -376,7 +377,7 @@ def create_mcp_app(service: McpRetrievalService, *, auth_mode: str, auth: AuthSe
         source_refs: Annotated[list[Annotated[str, Field(min_length=1, max_length=4096)]], Field(max_length=16)] = [],
         check: dict | None = None,
     ) -> dict[str, Any]:
-        """Save a revision in your local or personal Cloud library. Supply template_id or new_template
+        """Save a revision in your local, guest or signed-in Cloud library. Supply template_id or new_template
         {name, description, tags}. files is a map of relative paths to text (1 MiB total); entry names one.
         Include source evidence_refs from this connection. For a parent use evaluation.kind=revision_rationale
         and describe changes. A save never selects a default. Reuse request_id on retry."""

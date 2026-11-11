@@ -492,11 +492,11 @@ uv run python -m server.cli hydrate \
 
 ## Cloud MCP
 
-在 Cloud 网页的 `/docs/agents` 可复制带本站地址的命令。也可以在剪辑终端把下方示例的域名换成部署地址，取得游客只读凭据。已有网页登录身份可用相同接口和当前 CSRF 凭据换取令牌。令牌随该会话过期，身份失效时撤销。
+在 Cloud 网页的 `/docs/agents` 可复制带本站地址的命令。也可以在剪辑终端把下方示例的域名换成部署地址，取得游客剪辑凭据。已有网页登录身份可用相同接口和当前 CSRF 凭据换取令牌。令牌随该会话过期，身份失效时撤销。
 
 ```sh
 SEEKINO_CLOUD='https://your-seekino-cloud.example'
-SEEKINO_MCP_TOKEN=$(curl -fsS -X POST "$SEEKINO_CLOUD/api/auth/mcp-token" | python3 -c 'import json,sys; print(json.load(sys.stdin)["accessToken"])') && export SEEKINO_MCP_TOKEN
+SEEKINO_MCP_TOKEN=$(curl -fsS -X POST "$SEEKINO_CLOUD/api/auth/mcp-token?scope=editing" | python3 -c 'import json,sys; print(json.load(sys.stdin)["accessToken"])') && export SEEKINO_MCP_TOKEN
 ```
 
 在同一个终端为所用客户端添加服务，随后启动客户端。
@@ -523,3 +523,6 @@ npx skills add https://github.com/owariband/Seekino/tree/main/server/skills/seek
 用 `find_edit_templates` 搜索剪辑技法或自己的模板，`get_style_card` 读取整片风格并回看例证。用 `get_edit_template` 和 `list_edit_template_versions` 读取自己的版本、来源和反馈。通过 `save_edit_template_version` 保存完整代码与来源，`append_edit_template_note` 追加反馈或本机检查，`set_default_edit_template_version` 明确指定默认版本。
 
 本机可直接保存。在 Cloud 网页登录后，打开账号菜单，选择“复制个人 MCP 凭据”，在剪辑终端把它设为 `SEEKINO_MCP_TOKEN` 后启动客户端。该凭据可读取公开素材并访问自己的模板库。网页登录的程序化调用使用 `POST /api/auth/mcp-token?scope=personal`、当前会话 Cookie 和 CSRF 请求头。游客和默认签发的凭据仍可取公开素材。客户端首次调用时可先请它读取剪辑 Skill。
+
+
+游客无须邮箱。终端一次申请 `POST /api/auth/mcp-token?scope=editing`，把返回的 bearer 留给后续剪辑会话。没有 Cookie 的新申请会创建独立的游客库。该令牌可读公开素材并私下保存版本、反馈和默认选择，令牌到期后失效。网页游客也可以从账号菜单复制剪辑凭据，之后从同一游客会话登录将保留模板及版本 ID。每个游客库可保存 32 个版本，每版含初始评价在内最多有 64 条评价、检查和默认选择记录。默认的 `scope=public` 维持只读。
