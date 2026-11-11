@@ -3,7 +3,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
-from urllib.parse import unquote
+from urllib.parse import unquote, urlsplit
 
 
 def git_paths(*args):
@@ -31,6 +31,20 @@ def main():
         return covered.returncode
     matched = set(covered.stdout.decode().split("\0"))
     problems.extend(f"Missing release ignore rule for {path}" for path in private_examples if path not in matched)
+
+    guide_dir = Path("docs/guide")
+    for lang in ("zh", "en"):
+        for name in ("README.md", "start.md"):
+            if guide_dir / lang / name not in tracked:
+                problems.append(f"Missing public guide: {guide_dir / lang / name}")
+    for guide in sorted(path for path in tracked if guide_dir in path.parents and path.suffix == ".md"):
+        for href in re.findall(r'\]\(([^\s)]+)\)', guide.read_text()):
+            target = urlsplit(href)
+            if target.scheme or target.netloc or not target.path or target.path.startswith("/"):
+                continue
+            linked = (guide.parent / unquote(target.path)).resolve()
+            if not linked.is_relative_to(Path.cwd()) or linked.relative_to(Path.cwd()) not in tracked:
+                problems.append(f"{guide} links to an unpublished file: {href}")
 
     # Publish README images, linked drawing sources and assets used by the web build.
     assets = {path for path in tracked if path.parts[0] == "assets"}

@@ -4,6 +4,7 @@ WORKDIR /build/web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci
 COPY web/ ./
+COPY docs/guide/ /build/docs/guide/
 COPY assets/ /build/assets/
 RUN npm run build
 
@@ -36,5 +37,6 @@ CMD ["python", "-m", "server.main"]
 
 FROM nginx:1.28-alpine AS web
 COPY --from=web-build /build/web/dist/ /usr/share/nginx/html/
+RUN chmod -R a+rX /usr/share/nginx/html/docs/
 COPY deploy/docker/nginx.conf /etc/nginx/conf.d/default.conf
 EXPOSE 80

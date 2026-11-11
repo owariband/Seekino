@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { configuredModels, firstModel } from "../test/personalModelFixtures";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
@@ -149,6 +151,11 @@ function renderApp(
   const userMessage = { ...assistantMessage, messageId: "user", sequenceNo: 0, role: "USER", status: "COMPLETED", content: "雨天门口" };
   const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
     const url = typeof input === "string" ? input : input.toString();
+    if (url.startsWith("/docs/guide/")) {
+      const file = join(import.meta.dirname, "../../..", url);
+      const markdown = await readFile(file, "utf8").catch(() => null);
+      return new Response(markdown, { status: markdown === null ? 404 : 200, headers: { "Content-Type": "text/markdown" } });
+    }
     if (url.includes("/healthz")) return jsonResponse({ status: "ok" });
     if (url.includes("/api/system/runtime-config")) {
       if (options.failRuntimeConfig) return new Response(null, { status: 503 });
@@ -452,9 +459,20 @@ describe("application shell", () => {
     }
     const docsNav = screen.getByRole("navigation", { name: "文档" });
     expect(within(docsNav).getByRole("link", { name: "快速开始" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("img", { name: /EP 07/ })).toHaveAttribute("src", "/docs/guide/media/recall-self-attention.png");
     await userEvent.click(within(docsNav).getByRole("link", { name: "未来计划" }));
     expect(await screen.findByRole("heading", { level: 1, name: "说出一个名字，列出 TA 出场的每一秒" })).toBeInTheDocument();
     expect(screen.getByText("[xxx]")).toBeInTheDocument();
+  });
+
+  it("opens the English guide from a deep link and follows relative Markdown links", async () => {
+    localStorage.setItem(LOCALE_STORAGE_KEY, "en");
+    renderApp([apiSeries], { initialPath: "/docs/versions" });
+    expect(await screen.findByRole("heading", { name: "Cloud is for trying it. Local is for your own videos." })).toBeInTheDocument();
+    expect(screen.getByRole("table")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("link", { name: "Deploy the Local version" }));
+    expect(await screen.findByRole("heading", { name: "One command runs the full Seekino on your computer" })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Copy" })).toHaveLength(3);
   });
 
   it("keeps normal settings in release and hides internal configuration", async () => {

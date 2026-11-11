@@ -6,9 +6,10 @@ Seekino 把视频整理成可以搜索的个人资料库。上传视频并完成
 
 | 想做什么 | 从哪里开始 |
 | --- | --- |
+| 阅读使用指南 | [简体中文](guide/zh/README.md) · [English](guide/en/README.md) |
 | 看实机截图、功能和架构图 | [项目首页](../README.md) · [English](../README.en.md) |
 | 在自己的电脑上运行 | [Docker 安装与模型配置](../deploy/local-setup.md) |
 | 管理已有媒体、备份数据库或升级 | [部署与本地运行](../deploy/README.md) |
 | 用外部工具检索片段、读取证据 | [HTTP 与 MCP 接入](../server/README.md) |
 
-启动后，在 Web 的「文档」页查看使用指南。默认本机地址为 [http://127.0.0.1:5173/docs](http://127.0.0.1:5173/docs)。
+启动后，在 [Web 使用指南](http://127.0.0.1:5173/docs) 也能读到相同的文章。修改正文时编辑对应的 Markdown 文件。添加文章时，将链接加入该语言的 `README.md`，链接的排列顺序就是站内目录的顺序。共用截图放在 `guide/media/`。
