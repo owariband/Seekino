@@ -171,6 +171,7 @@ class LlamaCppEmbeddingSourceConfig(BaseModel):
     adapter: Literal["llama_cpp_embedding"] = "llama_cpp_embedding"
     provider: Literal["llama_cpp"] = "llama_cpp"
     base_url: _AudioBaseUrl
+    document_base_urls: tuple[_AudioBaseUrl, ...] = Field(default=(), exclude_if=lambda urls: not urls)
 
 
 class OpenAIAudioSourceConfig(ChatSourceCredentials):

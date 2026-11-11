@@ -38,7 +38,7 @@ HTTPS、媒体、SSE 及请求来源校验参照 [Nginx 入口](../nginx/README.
 | 服务器 | 运行内容 |
 | --- | --- |
 | CPU 服务器 | 根 [Compose](../../compose.yaml) 叠加 [compose.prod.yaml](compose.prod.yaml) 运行 Web、API、MySQL、Elasticsearch 和 Redis。Web 复用 [Nginx 模板](../nginx/nginx.conf.template)，80 将请求重定向到公开域名的 HTTPS 地址，443 提供页面与 API。API 仅发布在 loopback，数据库与索引只使用内部网络。 |
-| GPU 服务器 | 自托管模型：查询 embedding（与样例索引相同的 Qwen3-Embedding-0.6B Q8 GGUF，llama.cpp，1024 维）、WhisperX 转写（OpenAI `/v1/audio/transcriptions` 兼容服务）、替换 Jev 的路由模型。 |
+| GPU 服务器 | 解析索引可优先使用与 CPU 同权重的 Qwen embedding；WhisperX 转写使用独立来源。 |
 
 云端入站使用 TCP 80 和 443。设置 `SEEKINO_PUBLIC_HOST` 为公开域名，80 对收到的请求
 返回 308 并保留路径和查询参数。可用 `curl -I 'http://你的域名/settings?lang=zh'`
@@ -46,11 +46,21 @@ HTTPS、媒体、SSE 及请求来源校验参照 [Nginx 入口](../nginx/README.
 
 服务器的模型 YAML（`SEEKINO_MODEL_CONFIG`）指向的 `base_url`：
 
-- `llama_cpp_embedding` 来源：`https://<GPU 主机>`；`openai_audio` 转写来源：`https://<GPU 主机>/v1`。
-  非 loopback 地址必须是 HTTPS（`gateway/config.py` 的 `_https_base_url` / `_audio_base_url`），
-  因此 GPU 服务器需要提供 TLS 入口。
-- DeepSeek、Kimi 等对话与重排模型仍使用各自的公网 HTTPS API。
-- 查询路由当前仍为 OpenRouter 上的 Jev；改为 GPU 上的路由模型需要单独修改 `gateway/query_hook.py`。
+- Cloud 的查询 embedding 使用 API 的本机 loopback。文档按 `document_base_urls` 顺序尝试 GPU 转发和本机。下面是这次部署的设置，其他部署可选自己的副本。
+- WhisperX 与对话模型分别使用自己的来源。非 loopback 模型地址须提供 HTTPS。
+
+```yaml
+model_sources:
+  llama_embedding_local:
+    adapter: llama_cpp_embedding
+    provider: llama_cpp
+    base_url: http://127.0.0.1:18845
+    document_base_urls:
+      - http://127.0.0.1:18843
+      - http://127.0.0.1:18845
+```
+
+[Cloud Compose 示例](compose.embedding.example.yaml) 使用 llama.cpp b12283，与 API 共享 loopback。CPU 副本限两核、1600 MiB，使用同一份 Qwen3-Embedding-0.6B-Q8_0.gguf（SHA-256 `06507c7b42688469c4e7298b0a1e16deff06caf291cf0a5b278c308249c3e439`）。设置 `SEEKINO_EMBEDDING_GGUF` 为宿主机权重路径，镜像须提供 llama-server 入口和 Python 健康检查。替换 API 时用同一条 Compose 命令更新 `api embedding`。GPU 启动后，由原有转发提供 API 内的 18843；只有这个端点实际可达才会接手文档。
 
 
 ## 从本机私有配置启动

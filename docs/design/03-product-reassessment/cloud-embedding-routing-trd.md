@@ -1,8 +1,8 @@
 # 1. 问题与现状
 
-工作分支 `fix/cloud-embedding-routing`。PR 创建后回填。
+工作分支 `fix/cloud-embedding-routing`。[PR #112](https://github.com/owariband/Seekino/pull/112)。
 
-Cloud 在 GPU 关机时无法为 Chat 查询生成向量。MyGO 原问题出现 6 次失败工具块，396 秒后返回 3 段降级素材。课程查询出现 3 次失败工具块，耗时 123 秒。线上 `embed_query` 和索引阶段的 `embed_text` 使用同一个 llama.cpp 地址，GPU 转发当时拒绝连接。短查询 CPU 实测见 [运行记录](../../../outputs/ops/cloud-runtime/query-embedding-cpu-20261111/verification.json)。
+Cloud 在 GPU 关机时无法为 Chat 查询生成向量。MyGO 原问题出现 6 次失败工具块，396 秒后返回 3 段降级素材。课程查询出现 3 次失败工具块，耗时 123 秒。线上 `embed_query` 和索引阶段的 `embed_text` 使用同一个 llama.cpp 地址，GPU 转发当时拒绝连接。短查询 CPU 实测见 运维记录 `outputs/ops/cloud-runtime/query-embedding-cpu-20261111/verification.json`。
 
 ## 2. 影响因素、假设与评价指标
 

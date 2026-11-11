@@ -1,0 +1,64 @@
+# Optional Cloud example. The image entrypoint must be llama-server.
+services:
+  embedding:
+    image: ${SEEKINO_EMBEDDING_IMAGE:-seekino-qwen-embedding:b12283}
+    network_mode: service:api
+    depends_on:
+      api:
+        condition: service_healthy
+        restart: true
+    restart: unless-stopped
+    cpus: 2
+    mem_limit: 1600m
+    memswap_limit: 1600m
+    pids_limit: 128
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: ["/tmp:rw,nosuid,nodev,noexec,size=64m"]
+    volumes:
+      - type: bind
+        source: ${SEEKINO_EMBEDDING_GGUF:?Set SEEKINO_EMBEDDING_GGUF to the GGUF path}
+        target: /models/qwen.gguf
+        read_only: true
+        bind:
+          create_host_path: false
+    command:
+      - -m
+      - /models/qwen.gguf
+      - --alias
+      - seekino-qwen3-embedding-0.6b
+      - --embeddings
+      - --pooling
+      - last
+      - --device
+      - none
+      - -ngl
+      - "0"
+      - --threads
+      - "2"
+      - --threads-batch
+      - "2"
+      - --parallel
+      - "1"
+      - --ctx-size
+      - "8192"
+      - --batch-size
+      - "8192"
+      - --ubatch-size
+      - "256"
+      - --poll
+      - "0"
+      - --poll-batch
+      - "0"
+      - --host
+      - 127.0.0.1
+      - --port
+      - "18845"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:18845/health', timeout=3).read()"]
+      start_period: 30s
+      interval: 15s
+      timeout: 5s
+      retries: 3
