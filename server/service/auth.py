@@ -12,7 +12,7 @@ from redis.exceptions import RedisError
 
 from ..config.auth import AuthConfig
 from ..constants.auth import MCP_CLIP_TICKET_TTL_SECONDS
-from ..constants.identity import LOCAL_USER_ID
+from ..constants.identity import LOCAL_USER_ID, guest_editing_tenant
 from ..error.auth import AuthError, IdentityConflictError, IdentityDeniedError
 from ..model.dto.authDTO import AuthCredentials, AuthIdentity
 from ..model.user import User
@@ -139,12 +139,16 @@ class AuthService:
             raise AuthError("登录状态已失效", code="AUTH_EXPIRED")
         return self._identity(user)
 
-    def issue_mcp_token(self, session_token: str, *, personal: bool = False) -> tuple[str, int]:
+    def issue_mcp_token(self, session_token: str, *, scope: str = "public") -> tuple[str, int]:
         """Exchange the session for a scoped credential until that session expires."""
         payload = decode_auth_token(session_token, self._signing_key)
         identity = self._active_identity(payload)
-        if personal:
+        if scope == "personal" and identity.is_guest:
+            raise AuthError("请先登录后再连接会员剪辑库", status_code=403, code="PERSONAL_MCP_REQUIRED")
+        if scope in {"editing", "personal"}:
             payload["editing_tenant"] = self._editing_tenant(identity)
+        elif scope != "public":
+            raise AuthError("不支持的 MCP 凭据范围", status_code=400, code="INVALID_SCOPE")
         payload["aud"] = "public-mcp"
         return encode_auth_token(payload, self._mcp_key), payload["exp"]
 
@@ -159,8 +163,8 @@ class AuthService:
         return identity
 
     def _editing_tenant(self, identity: AuthIdentity) -> str:
-        if identity.is_guest or identity.auth_level != "email":
-            raise AuthError("请先登录后再连接个人剪辑库", status_code=403, code="PERSONAL_MCP_REQUIRED")
+        if identity.is_guest:
+            return guest_editing_tenant(identity.user_id)
         tenant = self.repository.get_owned_tenant(identity.user_id)
         if tenant is None:
             raise AuthError("个人剪辑库不可用", status_code=403, code="TENANT_UNAVAILABLE")

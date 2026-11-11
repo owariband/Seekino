@@ -90,7 +90,8 @@ def create_guest(request: Request, response: Response) -> AuthIdentityView:
     return _apply_credentials(request, response, service, service.create_guest(request.client.host if request.client else None))
 
 
-def issue_mcp_token(request: Request, response: Response, scope: Literal["public", "personal"] = "public") -> McpTokenView:
+def issue_mcp_token(request: Request, response: Response,
+                    scope: Literal["public", "personal", "editing"] = "public") -> McpTokenView:
     service = _service(request)
     if service.config.mode != "cloud":
         raise AuthError("本机直接连接 MCP 即可", status_code=404, code="NOT_FOUND")
@@ -103,7 +104,7 @@ def issue_mcp_token(request: Request, response: Response, scope: Literal["public
         # A native client starts as an ordinary rate-limited guest. Keep the browser cookie private.
         create_guest(request, Response())
         session_token = request.state.auth_token
-    token, expires_at = service.issue_mcp_token(session_token, personal=scope == "personal")
+    token, expires_at = service.issue_mcp_token(session_token, scope=scope)
     response.headers["Cache-Control"] = "private, no-store"
     return McpTokenView(access_token=token, expires_at=expires_at)
 

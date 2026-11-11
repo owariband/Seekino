@@ -4,13 +4,13 @@
 
 ## 接入
 
-1. **获取 Cloud 只读凭据**
+1. **领取游客剪辑凭据**
 
-   在 Cloud 站点复制命令，到剪辑终端运行。游客可读取已发布的平台系列，凭据到期后重跑这一步。
+   在 Cloud 站点复制命令，到剪辑终端运行。游客可读取公开素材并保存自己的剪辑模板。保留同一枚凭据以继续使用这个库。
 
    ```sh
    SEEKINO_CLOUD='https://your-seekino-cloud.example'
-   SEEKINO_MCP_TOKEN=$(curl -fsS -X POST "$SEEKINO_CLOUD/api/auth/mcp-token" | python3 -c 'import json,sys; print(json.load(sys.stdin)["accessToken"])') && export SEEKINO_MCP_TOKEN
+   SEEKINO_MCP_TOKEN=$(curl -fsS -X POST "$SEEKINO_CLOUD/api/auth/mcp-token?scope=editing" | python3 -c 'import json,sys; print(json.load(sys.stdin)["accessToken"])') && export SEEKINO_MCP_TOKEN
    ```
 
 2. **Claude Code 接入 Cloud**
@@ -56,7 +56,9 @@
 
 ## 使用剪辑 Skill 与个人 Cloud 库
 
-在 Cloud 登录后，打开账号菜单，选择“复制个人 MCP 凭据”。在剪辑终端将它设为 `SEEKINO_MCP_TOKEN`，再启动客户端。个人凭据可读取平台公开素材，并访问该账号自己的剪辑模板。游客凭据仍可取公开素材，本机连接可直接保存到本机。
+游客可以完成整个剪辑流程。上面的命令会领取可写的游客凭据，也可以在网页账号菜单选择“复制游客剪辑 MCP 凭据”。用同一枚令牌就能找回刚存的版本、反馈和默认选择。没有 Cookie 的新申请会创建独立游客，令牌过期后失效。每个游客库可保存 32 个版本，每版最多 64 条评价、检查和默认选择记录（含初始评价）。
+
+从同一个网页游客会话登录后，原模板和版本 ID 会转入账号的个人库。已登录的用户可从账号菜单复制个人 MCP 凭据。本机连接直接保存到本机。只需要公开素材时，可以通过默认的 `POST /api/auth/mcp-token` 领取只读凭据。
 
 在 MCP 上用 `resources/read` 读取 `skill://seekino-editing-materials/SKILL.md`，也可以用 `skills/list` 和 `skills/get` 发现完整文件清单。要在剪辑机上同时给 Claude Code 和 Codex 安装指引与本机分层脚本，可以运行下面的命令。
 

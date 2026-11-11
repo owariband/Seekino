@@ -4,13 +4,13 @@ In our editing tests, Claude Code used Seekino to find the 1.3 seconds where Ano
 
 ## Connect
 
-1. **Get a Cloud read token**
+1. **Get a guest editing token**
 
-   Copy from your Cloud site and run in your editing terminal. Guests can read published platform series. Run it again when the token expires.
+   Copy from your Cloud site and run in your editing terminal. Guest editors can read public footage and save their own templates. Keep the same token to reopen this library.
 
    ```sh
    SEEKINO_CLOUD='https://your-seekino-cloud.example'
-   SEEKINO_MCP_TOKEN=$(curl -fsS -X POST "$SEEKINO_CLOUD/api/auth/mcp-token" | python3 -c 'import json,sys; print(json.load(sys.stdin)["accessToken"])') && export SEEKINO_MCP_TOKEN
+   SEEKINO_MCP_TOKEN=$(curl -fsS -X POST "$SEEKINO_CLOUD/api/auth/mcp-token?scope=editing" | python3 -c 'import json,sys; print(json.load(sys.stdin)["accessToken"])') && export SEEKINO_MCP_TOKEN
    ```
 
 2. **Connect Claude Code to Cloud**
@@ -56,7 +56,9 @@ In our editing tests, Claude Code used Seekino to find the 1.3 seconds where Ano
 
 ## Use the editing skill and your personal Cloud library
 
-Sign in to Cloud, open your account menu, and select **Copy personal MCP token**. Set `SEEKINO_MCP_TOKEN` to the copied token in the terminal where you launch the client. This credential can read published footage and use your personal template library. Guest tokens can still fetch published footage. A local connection saves to your local library.
+Guests can run the whole editing workflow. Use the token from the command above or choose **Copy guest editing MCP token** in the account menu. Keep the same bearer to reopen your private versions, notes and default choices. Another cookie-free request creates a separate guest. The token expires with its session. Each guest can store 32 revisions and up to 64 entries per revision including its initial evaluation, checks and default choices.
+
+Signing in from that same guest browser moves its templates and version IDs into the account’s personal library. Members can copy a personal MCP token from their account menu. A local connection saves to the local library. To obtain a public read-only token use `POST /api/auth/mcp-token` without the editing scope.
 
 Read `skill://seekino-editing-materials/SKILL.md` with MCP `resources/read`, or discover the guide and helper with `skills/list` and `skills/get`. To install the guide and the local cutout script for both Claude Code and Codex on the editing computer, run the following command.
 
