@@ -69,7 +69,7 @@ export function App() {
             <Route path="tasks" element={canManage ? <TasksPage /> : <Navigate to="/watch" replace />} />
             <Route path="usage" element={canManage ? <UsagePage /> : <Navigate to="/watch" replace />} />
             <Route path="settings" element={<SettingsPage />} />
-            <Route path="docs/:page?" element={<DocsPage />} />
+            <Route path="docs/*" element={<DocsPage />} />
             <Route path="*" element={<Navigate to="/watch" replace />} />
           </Route>
         </Routes>

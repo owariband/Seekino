@@ -1,6 +1,7 @@
-# Public checkout: project overview, README media and runtime logos.
+# Public checkout: project overview, user guides, README media and runtime logos.
 /docs/*
 !/docs/README.md
+!/docs/guide/
 /assets/*
 !/assets/readme/
 !/assets/seekino-logo.png

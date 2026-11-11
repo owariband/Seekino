@@ -1,8 +1,25 @@
 import { createHash } from "node:crypto";
+import { cp } from "node:fs/promises";
+import { join } from "node:path";
 import { defineConfig, loadEnv, type Plugin, type ProxyOptions } from "vite";
 import react from "@vitejs/plugin-react";
+import sirv from "sirv";
 
 const apiTarget = `http://${process.env.SEEKINO_HTTP_HOST || "127.0.0.1"}:${process.env.SEEKINO_HTTP_PORT || "9621"}`;
+const guideDir = join(import.meta.dirname, "../docs/guide");
+
+// Keep the published Markdown at the same URLs in development and in the web image.
+function publicGuides(): Plugin {
+  return {
+    name: "seekino-public-guides",
+    configureServer(server) {
+      server.middlewares.use("/docs/guide", sirv(guideDir, { dev: true }));
+    },
+    async writeBundle({ dir }) {
+      if (dir) await cp(guideDir, join(dir, "docs/guide"), { recursive: true });
+    },
+  };
+}
 
 export function remoteDevelopmentProxy(targetValue: string, upstreamCookie = "seekino_auth") {
   const target = new URL(targetValue);
@@ -96,7 +113,7 @@ export default defineConfig(({ command, mode }) => {
     ? remoteDevelopmentProxy(env.SEEKINO_REMOTE_API_URL.trim(), env.SEEKINO_REMOTE_COOKIE_NAME || "seekino_auth")
     : undefined;
   return {
-    plugins: [react(), ...(remote ? [remote.plugin] : [])],
+    plugins: [react(), publicGuides(), ...(remote ? [remote.plugin] : [])],
     define: {
       "import.meta.env.VITE_REMOTE_API_BASE_URL": JSON.stringify(remote ? "/remote" : env.VITE_REMOTE_API_BASE_URL || ""),
       "import.meta.env.VITE_REMOTE_API_ORIGIN": JSON.stringify(remote?.origin || env.VITE_REMOTE_API_ORIGIN || ""),

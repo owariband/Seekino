@@ -1,125 +1,134 @@
-import { ArrowRight, Check, Copy, ExternalLink, Search } from "lucide-react";
-import { useLayoutEffect, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { Check, Copy, Search } from "lucide-react";
+import { useLayoutEffect, useRef, useState, type PropsWithChildren } from "react";
+import Markdown, { defaultUrlTransform, type Components } from "react-markdown";
 import { Link, Navigate, NavLink, useParams } from "react-router";
+import remarkGfm from "remark-gfm";
 
 import { useI18n } from "../../app/i18n";
-import { DOC_PAGES, docsContent, GITHUB_URL, type DocBlock, type DocPageId, type DocsContent } from "./content";
 import { GitHubMark } from "./GitHubMark";
+import { GITHUB_URL } from "./links";
 import styles from "./docs.module.css";
 
-const pagePath = (page: DocPageId) => page === "start" ? "/docs" : `/docs/${page}`;
+function useGuideFile(path: string) {
+  return useQuery({
+    queryKey: ["user-guide", path],
+    queryFn: async ({ signal }) => {
+      const response = await fetch(path, { signal, headers: { Accept: "text/markdown" } });
+      if (response.status === 404) return null;
+      if (!response.ok || response.headers.get("Content-Type")?.includes("text/html")) {
+        throw new Error(`Unable to read Markdown at ${path} (HTTP ${response.status})`);
+      }
+      return response.text();
+    },
+    staleTime: Infinity,
+    retry: false,
+  });
+}
 
-function CodeBlock({ code, copy, copied }: { code: string; copy: string; copied: string }) {
-  const [done, setDone] = useState(false);
+// Resolve references against the Markdown file, just as GitHub does. Article links open in the app.
+function guideUrl(raw: string, source: string, localeRoot: string) {
+  const safe = defaultUrlTransform(raw);
+  const base = new URL(source, window.location.origin);
+  if (!safe || !URL.canParse(safe, base)) return "";
+  const url = new URL(safe, base);
+  if (url.origin !== window.location.origin) return url.href;
+  if (url.pathname.startsWith(localeRoot) && url.pathname.endsWith(".md")) {
+    const slug = url.pathname.slice(localeRoot.length, -3);
+    const path = slug === "start" || slug === "README" ? "/docs" : `/docs/${slug}`;
+    return path + url.search + url.hash;
+  }
+  return url.pathname + url.search + url.hash;
+}
+
+function CodeBlock({ children }: PropsWithChildren) {
+  const { t } = useI18n();
+  const pre = useRef<HTMLPreElement>(null);
+  const [copied, setCopied] = useState(false);
+  async function copy() {
+    if (!pre.current) return;
+    try {
+      await navigator.clipboard.writeText((pre.current.textContent ?? "").replace(/\n$/, ""));
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1600);
+    } catch { /* The command can still be selected and copied manually. */ }
+  }
   return <div className={styles.code}>
-    <pre><code>{code}</code></pre>
-    <button type="button" onClick={async () => {
-      try { await navigator.clipboard.writeText(code); setDone(true); window.setTimeout(() => setDone(false), 1600); }
-      catch { /* Selecting the text still works when the clipboard is blocked. */ }
-    }} aria-label={done ? copied : copy} title={done ? copied : copy}>
-      {done ? <Check size={15} aria-hidden="true" /> : <Copy size={15} aria-hidden="true" />}
+    <pre ref={pre}>{children}</pre>
+    <button type="button" onClick={copy} aria-label={t(copied ? "已复制" : "复制")}>
+      {copied ? <Check size={15} /> : <Copy size={15} />}
     </button>
   </div>;
 }
 
-function Block({ block, content }: { block: DocBlock; content: DocsContent }) {
-  switch (block.kind) {
-    case "p": return <p className={styles.text}>{block.text}</p>;
-    case "h": return <h2 className={styles.heading}>{block.text}</h2>;
-    case "question": return <p className={styles.question}>{block.text}</p>;
-    case "steps": return <ol className={styles.steps}>{block.items.map((step) => <li key={step.title}>
-      <h3>{step.title}</h3>
-      <p>{step.body}</p>
-      {step.code ? <CodeBlock code={step.code} copy={content.copy} copied={content.copied} /> : null}
-    </li>)}</ol>;
-    // A real screenshot of one Cloud answer, with the exact question so readers can repeat it.
-    case "shot": return <figure className={styles.shot}>
-      <p className={styles.shotLabel}>{block.label}</p>
-      <p className={styles.shotQuery}><span>{block.asked}</span>“{block.query}”</p>
-      <img src={block.src} alt={block.alt} width={1170} height={772} loading="lazy" />
-      <figcaption>{block.note}</figcaption>
-    </figure>;
-    case "examples": return <div className={styles.examples}>
-      <p>{block.label}</p>
-      <ul>{block.items.map((item) => <li key={item.text}><span>“{item.text}”</span><small>{item.note}</small></li>)}</ul>
-    </div>;
-    case "compare": return <div className={styles.tableWrap}>
-      <table className={styles.compare}>
-        <thead><tr>{block.columns.map((column, index) => <th key={index} scope="col">{column}</th>)}</tr></thead>
-        <tbody>{block.rows.map(([label, cloud, local]) => <tr key={label}>
-          <th scope="row">{label}</th><td data-label={block.columns[1]}>{cloud}</td><td data-label={block.columns[2]}>{local}</td>
-        </tr>)}</tbody>
-      </table>
-    </div>;
-    case "tools": return <dl className={styles.tools}>{block.items.map((tool) => <div key={tool.name}>
-      <dt><code>{tool.name}</code></dt><dd>{tool.body}</dd>
-    </div>)}</dl>;
-    case "roadmap": return <ul className={styles.roadmap}>{block.items.map((item) => <li key={item.title}>
-      <div><h3>{item.title}</h3><span>{block.status}</span></div>
-      <p>{item.body}</p>
-    </li>)}</ul>;
-    case "channels": return <dl className={styles.channels}>{block.items.map((channel) => <div key={channel.label}>
-      <dt>{channel.label}</dt>
-      <dd>{channel.href ? <a href={channel.href} target="_blank" rel="noreferrer">{channel.value}</a> : channel.value}</dd>
-    </div>)}</dl>;
-    case "star": return <a className={styles.star} href={GITHUB_URL} target="_blank" rel="noreferrer">
-      <GitHubMark size={22} />
-      <span><strong>owariband/Seekino</strong><small>{block.text}</small></span>
-      <ArrowRight size={18} aria-hidden="true" />
-    </a>;
-    case "links": return <div className={styles.links}>
-      <p>{block.label}</p>
-      <ul>{block.items.map((link) => <li key={link.href}>
-        <a href={link.href} target="_blank" rel="noreferrer">{link.label}<ExternalLink size={13} aria-hidden="true" /></a>
-      </li>)}</ul>
-    </div>;
-    case "next": return <nav className={styles.next} aria-label={content.nextLabel}>{block.items.map((item) => <Link key={item.page} to={pagePath(item.page)}>
-      <span>{item.label}</span><ArrowRight size={16} aria-hidden="true" />
-    </Link>)}</nav>;
-  }
+const articleElements: Components = {
+  a: ({ href, children }) => href?.startsWith("/") && !href.startsWith("/docs/guide/") ? <Link to={href}>{children}</Link>
+    : <a href={href} target="_blank" rel="noreferrer">{children}</a>,
+  pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
+  code: ({ children, className }) => {
+    const origin = window.location.origin;
+    // The example stays portable on GitHub; Cloud visitors copy their site's actual URL.
+    const text = typeof children === "string" && /^https:\/\/[a-z0-9.-]+(?::[0-9]+)?$/i.test(origin)
+      ? children.replaceAll("https://your-seekino-cloud.example", origin) : children;
+    return <code className={className}>{text}</code>;
+  },
+  table: ({ children }) => <div className={styles.tableWrap}><table>{children}</table></div>,
+  img: ({ src, alt, title }) => <img src={src} alt={alt} title={title} loading="lazy" />,
+};
+
+function StartHeading({ children }: PropsWithChildren) {
+  const { t } = useI18n();
+  return <>
+    <h1>{children}</h1>
+    <div className={styles.actions}>
+      <Link className="button-primary" to="/search" state={{ focusComposer: true }}><Search size={16} />{t("现在试一句")}</Link>
+      <a className="button-secondary" href={GITHUB_URL} target="_blank" rel="noreferrer"><GitHubMark size={17} />{t("GitHub 上给个 Star")}</a>
+    </div>
+  </>;
 }
 
-function scrollParent(node: HTMLElement | null): HTMLElement | null {
-  for (let el = node?.parentElement ?? null; el; el = el.parentElement) {
-    if (/(auto|scroll)/.test(getComputedStyle(el).overflowY)) return el;
-  }
-  return null;
-}
+const startElements: Components = { ...articleElements, h1: StartHeading };
+
+const navigationElements: Components = {
+  h1: ({ children }) => <p>{children}</p>,
+  a: ({ href, children }) => <NavLink to={href ?? "/docs"} end>{children}</NavLink>,
+};
 
 export function DocsPage() {
-  const { locale } = useI18n();
-  const params = useParams();
+  const { locale, t } = useI18n();
+  const { "*": route = "" } = useParams();
+  const slug = route.replace(/\/+$/, "") || "start";
+  const localeRoot = `/docs/guide/${locale}/`;
+  const parts = slug.split("/");
+  const valid = parts.every(part => part.length > 0 && !part.startsWith(".") && !part.includes("\\"));
+  const indexPath = localeRoot + "README.md";
+  const pagePath = `${localeRoot}${valid ? parts.map(encodeURIComponent).join("/") : "start"}.md`;
+  const index = useGuideFile(indexPath);
+  const page = useGuideFile(pagePath);
   const ref = useRef<HTMLElement>(null);
-  const page = (params.page ?? "start") as DocPageId;
-  const valid = DOC_PAGES.includes(page);
-  // Pages share one scroll container with the app; a new page starts at its top.
   useLayoutEffect(() => {
-    const container = valid ? scrollParent(ref.current) : null;
-    if (container) container.scrollTop = 0;
-  }, [page, valid]);
-  if (!valid) return <Navigate to="/docs" replace />;
-  const content = docsContent(locale);
-  const current = content.pages[page];
+    for (let el = ref.current?.parentElement; el; el = el.parentElement) {
+      if (/(auto|scroll)/.test(getComputedStyle(el).overflowY)) {
+        el.scrollTop = 0;
+        break;
+      }
+    }
+  }, [slug]);
 
+  if (!valid || (route && slug === "start") || (page.data === null && slug !== "start")) return <Navigate to="/docs" replace />;
+  const failed = index.isError || page.isError || index.data === null || page.data === null;
   return <main className={styles.docs} ref={ref}>
-    <nav className={styles.toc} aria-label={content.toc}>
-      <p>{content.kicker}</p>
-      <div>{DOC_PAGES.map((id) => <NavLink key={id} to={pagePath(id)} end className={({ isActive }) => isActive ? styles.tocActive : undefined}>
-        {content.pages[id].nav}
-      </NavLink>)}</div>
+    <nav className={styles.toc} aria-label={t("文档")}>
+      <Markdown components={navigationElements} urlTransform={url => guideUrl(url, indexPath, localeRoot)}>{index.data}</Markdown>
     </nav>
-
     <article className={styles.article}>
-      <header className={styles.hero}>
-        <p className="page-kicker">{current.nav}</p>
-        <h1>{current.title}</h1>
-        <p className={styles.lead}>{current.lead}</p>
-        {page === "start" ? <div className={styles.actions}>
-          <Link className="button-primary" to="/search" state={{ focusComposer: true }}><Search size={16} aria-hidden="true" />{content.tryCloud}</Link>
-          <a className="button-secondary" href={GITHUB_URL} target="_blank" rel="noreferrer"><GitHubMark size={17} />{content.github}</a>
-        </div> : null}
-      </header>
-      <div className={styles.body}>{current.blocks.map((block, index) => <Block key={index} block={block} content={content} />)}</div>
+      {failed ? <div role="alert">
+        <p>{t("无法加载使用文档")}</p>
+        <button type="button" onClick={() => { void index.refetch(); void page.refetch(); }}>{t("重试")}</button>
+      </div> : page.isPending ? <p role="status">{t("正在加载…")}</p> :
+        <Markdown remarkPlugins={[remarkGfm]} components={slug === "start" ? startElements : articleElements}
+          urlTransform={url => guideUrl(url, pagePath, localeRoot)}>{page.data}</Markdown>
+      }
     </article>
   </main>;
 }

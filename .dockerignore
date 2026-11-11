@@ -16,6 +16,10 @@
 !server/**
 !web/
 !web/**
+!docs/
+docs/**
+!docs/guide/
+!docs/guide/**
 !assets/
 assets/**
 !assets/seekino-logo.png

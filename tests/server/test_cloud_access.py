@@ -106,7 +106,7 @@ def cloud_api(tmp_path, monkeypatch):
     attachments = AgentAttachmentService(agent_repository, store, config=ImageUploadConfig())
     agent = AgentChatService(agent_repository, library, runtime, config=config, attachments=attachments)
     services = SimpleNamespace(
-        auth=auth, library=library, agent=agent, parse_consumer=None,
+        auth=auth, library=library, agent=agent,
         agent_attachments=attachments,
         media=MediaService(library, store, probe_playback=lambda _path: True),
         uploads=SimpleNamespace(parse_defaults=None), jobs=SimpleNamespace(),
