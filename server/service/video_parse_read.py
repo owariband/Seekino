@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from copy import deepcopy
 from typing import Any
 
@@ -32,6 +32,7 @@ from ..model.dto.libraryDTO import (
     VideoData,
 )
 from ..model.dto.searchDTO import (
+    EventCoverageChunk,
     VideoParseRetrievalChunkData,
     VideoParseRetrievalTaskData,
     VideoParseRetrievalScope,
@@ -41,7 +42,10 @@ from .video_parse_errors import VideoParseTaskNotFoundError, VideoParseConflictE
 from ..utils.time import datetime_to_unix_time_ms
 from ..utils.validation import canonical_uuid
 from .video_parse_task import _video_failure_status, _latest_video_task_id
-from .video_parse_content import EVENT_INDEX_TARGET_DETAIL_KEY, _index_receipt, _require_event_publication
+from .video_parse_content import (
+    EVENT_INDEX_TARGET_DETAIL_KEY, INDEX_EMBEDDINGS_DETAIL_KEY, _index_receipt,
+    _receipt_for_content_version, _require_event_publication, _verify_event_receipt,
+)
 
 
 def _require_matching_retrieval_identity(
@@ -615,13 +619,13 @@ def validate_event_coverage(
     task_ids = set(tasks) if requested is None else set(requested_by_task)
     if allow_partial:
         task_ids = {key for key in task_ids if (tasks[key].detail or {}).get(EVENT_INDEX_TARGET_DETAIL_KEY) is not None}
-    rows_by_task = {}
-    for row in read_store.load_event_source_rows(session, task_ids=tuple(task_ids)):
-        rows_by_task.setdefault(row[0].video_task_id, []).append(row)
     sources = []
     for task_id in task_ids:
         try:
-            video_sources = _published_video_events(tasks[task_id], rows_by_task.get(task_id, []), index_name, contract_id)
+            with read_store.event_source_rows(
+                session, task_id=task_id, embedding_detail_key=INDEX_EMBEDDINGS_DETAIL_KEY,
+            ) as rows:
+                video_sources = _published_video_events(tasks[task_id], rows, index_name, contract_id)
         except (VideoParseConflictError, ValueError):
             if not allow_partial:
                 raise
@@ -639,25 +643,30 @@ def validate_event_coverage(
 
 
 def _published_video_events(
-    parent: VideoParseTaskData, rows: Sequence[tuple[ChunkParseTaskData, ChunkParseContentData, VideoChunkData]],
+    parent: VideoParseTaskData, rows: Iterable[EventCoverageChunk],
     index_name: str, contract_id: str,
 ) -> list[tuple[str, str, int]]:
     target = (parent.detail or {}).get(EVENT_INDEX_TARGET_DETAIL_KEY)
     if (not isinstance(target, Mapping) or target.get("index_name") != index_name
             or target.get("contract_id") != contract_id):
         raise VideoParseConflictError("Event index has not covered the selected Chunk scope")
-    if len(rows) != parent.chunk_count or {chunk.sequence_no for _, _, chunk in rows} != set(range(parent.chunk_count)):
-        raise VideoParseConflictError("Event publication scope has missing Chunk content")
     sources = []
-    for child, content, chunk in rows:
-        if (chunk.video_id != parent.video_id or child.phase != ChunkTaskPhase.INDEX
-                or child.status != ChunkParseTaskStatus.COMPLETE.value or child.indexed_content_version != content.version):
+    seen: set[int] = set()
+    for row in rows:
+        if not 0 <= row.sequence_no < parent.chunk_count or row.sequence_no in seen:
+            raise VideoParseConflictError("Event publication scope has missing Chunk content")
+        seen.add(row.sequence_no)
+        if (row.video_id != parent.video_id or row.phase != ChunkTaskPhase.INDEX
+                or row.status != ChunkParseTaskStatus.COMPLETE.value or row.indexed_content_version != row.version):
             raise VideoParseConflictError("Event source is no longer a COMPLETE publication")
-        receipt = _index_receipt(content, parent.id, child.chunk_id)
+        receipt = _receipt_for_content_version(row.index_envelope, row.version, parent.id, row.chunk_id)
         if receipt["index_generation"] != parent.parse_config.get("indexing", {}).get("index_generation"):
             raise VideoParseConflictError("Event source Chunk generation differs from its frozen task")
-        _require_event_publication(parent, child, content, receipt, target, chunk=chunk)
-        sources.append((parent.id, child.chunk_id, content.version))
+        _verify_event_receipt(parent, row.chunk_id, row.version, row.content, receipt, target,
+                              start_ms=row.start_ms, end_ms=row.end_ms)
+        sources.append((parent.id, row.chunk_id, row.version))
+    if len(seen) != parent.chunk_count:
+        raise VideoParseConflictError("Event publication scope has missing Chunk content")
     return sources
 
 

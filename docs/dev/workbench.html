@@ -5169,6 +5169,38 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    ]
   },
   {
+   "id": "CLOUD-EVENT-COVERAGE-01",
+   "title": "全季 Event 覆盖验证按批读取发布内容",
+   "category": "search",
+   "type": "requirement",
+   "status": "verifying",
+   "priority": "P0",
+   "description": "Cloud 全季查询期间 API 遭遇整机 OOM，覆盖查询将只读取校验字段并逐集释放。",
+   "next": "隔离验证后核对两条真实游客搜索、整机内存和回答片段。",
+   "verification": "MySQL 8.4 同一组 160 条合成记录，来源和版本一致，Python 峰值 88.78 → 0.16 MiB。",
+   "updatedAt": "2026-11-11",
+   "tags": [
+    "Cloud",
+    "内存"
+   ],
+   "related": [
+    "MOD-CHAT"
+   ],
+   "branch": "perf/stream-event-coverage",
+   "links": [
+    {
+     "label": "设计与实测",
+     "kind": "trd",
+     "url": "https://github.com/owariband/Seekino/blob/perf/stream-event-coverage/docs/design/03-product-reassessment/event-coverage-memory-trd.md"
+    },
+    {
+     "label": "PR #116",
+     "kind": "pr",
+     "url": "https://github.com/owariband/Seekino/pull/116"
+    }
+   ]
+  },
+  {
    "id": "PUBLIC-COURSE-01",
    "title": "公开课程在解析期间继续播放、对话和逐集检索",
    "category": "library",

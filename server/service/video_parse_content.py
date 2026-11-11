@@ -162,7 +162,14 @@ def _index_receipt(
     video_chunk_id: str,
 ) -> dict[str, Any]:
     detail = content.detail if isinstance(content.detail, Mapping) else {}
-    envelope = detail.get(INDEX_EMBEDDINGS_DETAIL_KEY)
+    return _receipt_for_content_version(
+        detail.get(INDEX_EMBEDDINGS_DETAIL_KEY), content.version, parse_task_id, video_chunk_id,
+    )
+
+
+def _receipt_for_content_version(
+    envelope: Any, content_version: int, parse_task_id: str, video_chunk_id: str,
+) -> dict[str, Any]:
     receipt = envelope.get("receipt") if isinstance(envelope, Mapping) else None
     if not isinstance(receipt, Mapping):
         raise VideoParseConflictError(
@@ -172,12 +179,12 @@ def _index_receipt(
     if (
         isinstance(version, bool)
         or not isinstance(version, int)
-        or version != content.version
+        or version != content_version
     ):
         raise VideoParseConflictError(
             "Video Parse V2 index receipt differs from current content version"
         )
-    return _validate_index_receipt(receipt, parse_task_id, video_chunk_id, content.version)
+    return _validate_index_receipt(receipt, parse_task_id, video_chunk_id, content_version)
 
 
 def _normalize_event_index_target(target: Mapping[str, Any]) -> dict[str, Any]:
@@ -211,18 +218,26 @@ def _require_event_publication(
     content: ChunkParseContentData, receipt: Mapping[str, Any], target: Mapping[str, Any],
     *, chunk: VideoChunkData | None,
 ) -> None:
+    if chunk is None:
+        raise VideoParseConflictError("Event source Chunk no longer exists")
+    _verify_event_receipt(parent, child.chunk_id, content.version, content.content,
+                          receipt, target, start_ms=chunk.start_ms, end_ms=chunk.end_ms)
+
+
+def _verify_event_receipt(
+    parent: VideoParseTaskData, chunk_id: str, version: int, content: Any,
+    receipt: Mapping[str, Any], target: Mapping[str, Any], *, start_ms: int, end_ms: int,
+) -> None:
     from engine.rag.indexing.events import (
         EventIndexingContract, build_event_index_receipt, plan_event_index,
     )
 
     _require_event_index_target(parent, target)
     contract = EventIndexingContract.model_validate(target["contract"])
-    if chunk is None:
-        raise VideoParseConflictError("Event source Chunk no longer exists")
     plans = plan_event_index(
-        parse_task_id=parent.id, video_chunk_id=child.chunk_id, version=content.version,
-        result=VideoParseResult.model_validate(content.content),
-        chunk_start_ms=chunk.start_ms, chunk_end_ms=chunk.end_ms, contract=contract,
+        parse_task_id=parent.id, video_chunk_id=chunk_id, version=version,
+        result=VideoParseResult.model_validate(content),
+        chunk_start_ms=start_ms, chunk_end_ms=end_ms, contract=contract,
     )
     expected = build_event_index_receipt(target["index_name"], contract, plans).as_dict()
     if receipt.get("events") != expected:

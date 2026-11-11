@@ -190,6 +190,43 @@ def test_event_receipt_required_for_completion_and_preserves_other_cache(reposit
     assert status["task_complete"] and status["covered_chunks"] == status["total_chunks"] == 1
 
 
+def test_event_source_query_streams_only_receipt_and_content(repository):
+    from server.repository.video_parse_retrieval import event_source_rows
+    from server.service.video_parse_content import _receipt_for_content_version
+
+    factory, _, _, task_id, _, _, _ = _event_index_fixture(repository)
+    with factory.begin() as session:
+        content = session.scalar(select(ChunkParseContent))
+        content.detail = {
+            "unused_trace": "x" * 262_144,
+            INDEX_EMBEDDINGS_DETAIL_KEY: {
+                "content_version": True, "receipt": {"stored": 1},
+                "representations": {"vector": [0.5] * 1024},
+            },
+        }
+    sizes = []
+
+    def record_batch_size(_conn, _cursor, _statement, _params, ctx, _many):
+        if ctx.execution_options.get("stream_results"):
+            sizes.append(ctx.execution_options["yield_per"])
+
+    engine = repository[0]
+    event.listen(engine, "before_cursor_execute", record_batch_size)
+    try:
+        with factory.begin() as session:
+            with pytest.raises(VideoParseConflictError, match="content version"):
+                with event_source_rows(session, task_id=task_id, embedding_detail_key=INDEX_EMBEDDINGS_DETAIL_KEY) as rows:
+                    row = next(rows)
+                    assert row.index_envelope == {"content_version": True, "receipt": {"stored": 1}}
+                    assert row.index_envelope["content_version"] is True
+                    assert row.content["timeline"]
+                    _receipt_for_content_version(row.index_envelope, row.version, task_id, row.chunk_id)
+            assert session.scalar(select(VideoParseTask.id).where(VideoParseTask.id == task_id)) == task_id
+    finally:
+        event.remove(engine, "before_cursor_execute", record_batch_size)
+    assert sizes == [4]
+
+
 def test_event_coverage_pairs_version_and_rebuild_preserves_source(repository):
     factory, _queue, repo, task_id, lease, at, video_lease = _event_index_fixture(repository)
     target = repo.bind_event_index_target(lease, _event_target(), now=at)

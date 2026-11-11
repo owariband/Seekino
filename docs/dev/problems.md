@@ -2876,6 +2876,11 @@ micrograd v5 共 146 块，整集 90 分 04.884 秒。调度反复锁取候选�
 
 2026-11-11。移除游客上限后，普通云端预算仍读到 6/24。验收追加游客和普通用户默认及上界均为 100/100，管理员更新全局设置后可单独备份运行文件。[修正 #101](https://github.com/owariband/Seekino/pull/101)
 
+<a id="cloud-event-coverage-01"></a>
+### CLOUD-EVENT-COVERAGE-01 · 全季 Event 查询使 API 同时持有全部 Chunk 的完整 JSON
+
+云机在 MyGO 游客检索期间耗尽内存与 swap，内核终止无内存上限的 API 进程。检索覆盖校验会读取当前系列全部 Chunk 的任务、内容和缓存向量。验收须保留真实回源与部分覆盖语义，验证读取峰值和真实游客搜索。[设计](../design/03-product-reassessment/event-coverage-memory-trd.md) · [工作台](workbench.html)
+
 ### MCP-CLOUD-01 · Cloud 启动跳过 MCP，剪辑端无法获取已公开的系列
 
 2026-11-11，Cloud Web 能读取 MyGO 的 13 集，公网 MCP 握手却返回 405 HTML。启动装配仅构造本机检索服务，公网代理也未转发协议入口。验收须从标准客户端列出平台公开系列、核对版本化证据并下载带音视频的指定区间，另核对私有系列、下架和本机兼容性。[专项设计](../design/03-product-reassessment/cloud-public-mcp-trd.md) · [工作台](workbench.html)

@@ -45,6 +45,23 @@ class VideoParseRetrievalChunkData:
 
 
 @dataclass(frozen=True, slots=True)
+class EventCoverageChunk:
+    """Current content and publication fields used to check an Event source."""
+
+    chunk_id: str
+    video_id: str
+    sequence_no: int
+    start_ms: int
+    end_ms: int
+    phase: int
+    status: str
+    indexed_content_version: int | None
+    version: int
+    content: Any
+    index_envelope: Any
+
+
+@dataclass(frozen=True, slots=True)
 class PublishedTimelineChunk:
     video_id: str
     parse_task_id: str
