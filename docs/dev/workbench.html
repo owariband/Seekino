@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-11T18:58:26+08:00",
+ "updatedAt": "2026-11-11T23:22:06+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 37,
+ "revision": 38,
  "categories": [
   {
    "id": "parse",
@@ -5341,6 +5341,43 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "kind": "evidence",
      "url": "https://github.com/owariband/Seekino/blob/docs/editing-skill-style-reference/docs/report/server/editing-mcp-code-loop-20261110.json"
     }
+   ]
+  },
+  {
+   "id": "CHAT-KINO-01",
+   "title": "让 Kino 在最新回复上庆祝、入睡并在追问时起跳",
+   "category": "chat",
+   "type": "task",
+   "status": "verifying",
+   "priority": "unset",
+   "description": "收起完成状态后仍保留 Kino，历史对话只在最新助手回复上直接入睡。",
+   "next": "合并后在 dev 的聊天页复核两轮问答。",
+   "verification": "Chrome 两轮问答覆盖有、无思考文字，已看到庆祝、睡眠、唤醒和跨回复跳跃；重新打开历史后只有一个睡着的 Kino。",
+   "updatedAt": "2026-11-11",
+   "tags": ["Kino", "动画"],
+   "related": ["MOD-CHAT"],
+   "branch": "fix/player-seekbar-border",
+   "links": [
+    {"label": "完成态设计更正", "url": "https://github.com/owariband/Seekino/blob/fix/player-seekbar-border/docs/design/03-product-reassessment/chat-answer-shape-trd.md", "kind": "trd"},
+    {"label": "PR #118", "url": "https://github.com/owariband/Seekino/pull/118", "kind": "pr"}
+   ]
+  },
+  {
+   "id": "WATCH-SEEK-01",
+   "title": "去除播放进度轨道的浅色描边",
+   "category": "library",
+   "type": "task",
+   "status": "verifying",
+   "priority": "unset",
+   "description": "保留进度颜色、滑块和跳转操作，让轨道直接叠在画面上。",
+   "next": "合并后在 dev 的观看页复核进度条。",
+   "verification": "本地 Chrome 桌面和模拟触屏、明暗主题均无描边；轨道色带仍是 6 个 CSS 像素，拖动和键盘跳转可用。",
+   "updatedAt": "2026-11-11",
+   "tags": ["播放器"],
+   "related": ["MOD-LIBRARY"],
+   "branch": "fix/player-seekbar-border",
+   "links": [
+    {"label": "PR #118", "url": "https://github.com/owariband/Seekino/pull/118", "kind": "pr"}
    ]
   }
  ]
