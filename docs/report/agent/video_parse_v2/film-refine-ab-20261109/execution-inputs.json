@@ -1,0 +1,71 @@
+{
+  "approved_brief": "8a685be6a2846285c9e192e0eb418b24396556e8d49cf9952bc4a4b4de08ef00",
+  "reviewed_base": "edf941de66574fde7a4fa2d048be98a3d67e79f6b9b2958078b1fdd322d6c883",
+  "user_amendments": [
+    "加入概念架构在眼前划过",
+    "使用像素版 Kino 动画并说可以帮忙"
+  ],
+  "pixel_source": "5836b94843b6b2e32e2b22696b3a7be583961dab64bb79b7e6248b899eeedbf9",
+  "identical_commissions": true,
+  "notes_sha256": "2f80c1409a74b47d7d4f8fb98cabd3f477eb60debdb259cb593b38e691f19b3a",
+  "card_object_sha256": "7c6b115cf5b7e0ce72b04dee970e8511924302d3189fa68643e6f8336fe0a066",
+  "common_guide": "131abe25b5cd0d360880154425227cf2616a6839603a5714dac09d74a91c8787",
+  "library_versions": [
+    [
+      1,
+      1,
+      "COMPLETE"
+    ],
+    [
+      2,
+      1,
+      "COMPLETE"
+    ],
+    [
+      3,
+      1,
+      "COMPLETE"
+    ],
+    [
+      4,
+      3,
+      "COMPLETE"
+    ],
+    [
+      5,
+      1,
+      "COMPLETE"
+    ]
+  ],
+  "approved_date": "2026-11-09",
+  "director_model": "deepseek-official/deepseek-flash",
+  "effort": "max",
+  "budget_minutes_per_arm": 65,
+  "pixel_animation_states": [
+    "idle",
+    "wander",
+    "look",
+    "jump",
+    "leap",
+    "happy",
+    "think",
+    "oops",
+    "loading",
+    "run",
+    "sleep"
+  ],
+  "excluded_smooth_mascot_assets": [
+    "kino.svg",
+    "kino-idle.svg",
+    "kino-seek.svg"
+  ],
+  "source_libraries_ready": [
+    "list_series",
+    "retrieve",
+    "browse_events",
+    "read_evidence"
+  ],
+  "director_brief_file": "editor-brief.txt",
+  "review_snapshot_commit": "b6a92c2d",
+  "blind_key_commitment_sha256": "37365630ecc4a1e751d52ce83a4c0115dddfabca6f6aed73b5fd1c2814313b99"
+}

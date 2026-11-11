@@ -1,0 +1,58 @@
+{
+  "performed_on": "2026-11-09",
+  "blind_key_sha256_committed_before_dispatch": "37365630ecc4a1e751d52ce83a4c0115dddfabca6f6aed73b5fd1c2814313b99",
+  "blind_player_sha256": "67736e56278e66e3ec345f96893b10e0b87c8e1ad2275167a409d4d0cbd2db13",
+  "unexpected_network_requests": 0,
+  "films": [
+    {
+      "film": "01",
+      "file": "film-01.mp4",
+      "sha256": "a66bae7aee8149fd6cedba18419a3dbe9c445a5cd545b604a16719529b013738",
+      "seconds": 29.466667,
+      "frames": 884,
+      "size": [
+        1920,
+        1080
+      ],
+      "fps": 30,
+      "video": "h264",
+      "audio": "aac",
+      "decoded_to_end": true,
+      "music_windows_matching_original_Weekend": 9,
+      "music_windows_sampled": 9,
+      "real_ep04_cutout_drawn": true,
+      "real_pixel_kino_drawn": true,
+      "on_screen_lecture_frames_matched_original": true,
+      "local_player_seek_and_play_passed": true,
+      "player_volume": 0.8,
+      "offline_rebuild_exit": 0,
+      "offline_rebuild_produced_mp4": true
+    },
+    {
+      "film": "02",
+      "file": "film-02.mp4",
+      "sha256": "bd6aac9eeac370acf9c4560f317b560b49e41edb2c7e18c1370d0f3c155b67dc",
+      "seconds": 30.0,
+      "frames": 900,
+      "size": [
+        1920,
+        1080
+      ],
+      "fps": 30,
+      "video": "h264",
+      "audio": "aac",
+      "decoded_to_end": true,
+      "music_windows_matching_original_Weekend": 10,
+      "music_windows_sampled": 10,
+      "real_ep04_cutout_drawn": true,
+      "real_pixel_kino_drawn": true,
+      "on_screen_lecture_frames_matched_original": true,
+      "local_player_seek_and_play_passed": true,
+      "player_volume": 0.8,
+      "offline_rebuild_exit": 0,
+      "offline_rebuild_produced_mp4": true
+    }
+  ],
+  "owner_preference": "pending",
+  "comparison": "notes vs the same notes plus optional automatic P5R card"
+}

@@ -1,0 +1,16 @@
+{
+  "reproduced_reader_request_hashes": 36,
+  "checked_raw_note_pairs": 18,
+  "provider_prompt_cache_tokens": 0,
+  "fully_recorded_calls_including_warmup": 39,
+  "diagnostic_enum_values": {
+    "A": {
+      "reader_answers": 18,
+      "invalid_movement_enum_answers": 9
+    },
+    "B": {
+      "reader_answers": 18,
+      "invalid_movement_enum_answers": 13
+    }
+  }
+}

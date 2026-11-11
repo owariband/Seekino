@@ -6,7 +6,7 @@
 | Type | Feature design, implementation and integrated acceptance. Review the complete workflow on this PR against `dev` (§3.8 and §6). |
 | Opened / revised | Opened 2026-11-05. Direction rewritten 2026-11-06 after four rounds of owner review (decision log) |
 | Branch / PR | `docs/editing-skill-style-reference` / [PR #50](https://github.com/owariband/Seekino/pull/50) |
-| Status | Code and repeatable local integration checks are on this PR. The original E2 cost gate failed. The owner-controlled independent film and blind review are pending. See §4–§6. |
+| Status | Code and repeatable local integration checks are on this PR. The original E2 cost gate failed. The 2026-11-09 Weekend film trial has an owner vote. The owner-controlled independent Weekend Study film and review are pending. See §4–§6. |
 | Earlier checkpoint | Final design agreed with the owner 2026-11-07. E0, E1, E3 pass (standalone scripts, with adjustments); **E2 cost gate failed**. the separate Weekend trial led to the 2026-11-08 animation-material pilot. Whole-EP04 ranked recall and exhaustive MCP browsing passed on the local five-episode library in [PR #77](https://github.com/owariband/Seekino/pull/77) |
 | Related | [MCP access TRD](mcp-access-trd.md); [Sub-Chunk / Event TRD](../02-agent-harness/sub-chunk-trd.md); [PR #34](https://github.com/owariband/Seekino/pull/34) (course parse profile, the base for per-type schema config); [PR #53](https://github.com/owariband/Seekino/pull/53) (ASR blank-word fix found while parsing MyGO) |
 
@@ -423,6 +423,12 @@ At this point on 2026-11-07 implementation was held for review. The owner subseq
 Freeze the five-episode scope, 3 fps inputs, provider and reasoning setting. Reparse only the whole fourth episode under an explicit anime prompt with no character, episode, timestamp or desired expression in its instructions. Replay the unhinted editing query and the archived expression query with the same top_k. Count a ranked hit when a returned EP04 event contains 941732 or 943401 ms and its visual description and source frame support the reaction. Record the first rank, exact event bounds, task version and observed frame. Inspect the return to the smile separately. Compare exhaustive MCP coverage independently, including duplicated or skipped events and stale cursors after a reparse. A pass by enumeration alone is a ranked miss. The earlier 1/8 usable-as-returned baseline and four-query keyframe test remain separate gates for a stored representative frame.
 
 The local pilot completed on 2026-11-08. Only EP04 was reparsed in the five-episode library. Its 24 chunks and 22 Refine windows completed in 17 min 54 s, including one same-task retry after an official provider disconnect. The two copies of the 15:00–16:00 request have identical 198 image hashes, order, timestamps, Flash model and reasoning setting. The final visual event explicitly records gritted teeth and clenched fists at [943166, 944500) ms. Its midpoint at 943833 ms was extracted from the media URL returned by MCP and visually checked. The first sampled smile is at 944166 ms, one sample earlier than the stored transition. Both original queries also return the close-up at ranks 4 and 3 with the default top_k of 5. No stored keyframe field was added in this prompt pilot. [Implementation, measurements and exact queries](https://github.com/owariband/Seekino/blob/feat/anime-material-recall/docs/report/agent/video_parse_v2/anime-material-recall-20261108.json).
+
+## 2026-11-09，《Weekend》成片盲评
+
+两个独立的 DeepSeek Flash 编辑会话都收到相同剧本和八段 P5R 笔记。影片 02 的导演另拿到一张自动 Refine 风格卡。片主在揭晓前选了 02。两位导演第一次交出可播放版本分别用了 28 分 34 秒（01）和 22 分 16 秒（02），每组各一支。随后在 02 的工程副本上用 EP04 的 113 张连续原帧另做了 6.20 秒试剪，人工确定选区。这次试剪发生在投票之后。[片主选票、手法与工时](../../report/agent/video_parse_v2/film-refine-ab-20261109/owner-review.md) · [动态试剪](../../report/agent/video_parse_v2/film-refine-ab-20261109/motion-cutout.md)
+
+同日文字选片的主实验里，八段笔记组首答可用 10/12，加卡组 9/12。该项检验的是给定素材的选片、区间和镜头判断。11 月 10 日批准的《Weekend Study》另有验收条件，需要 Claude 根据剧本自行通过 MCP 找镜头并交片，再由片主评看。[文字选片评分](../../report/agent/video_parse_v2/refine-ab-20261109/README.md) · [《Weekend Study》剧本及验收](editing-promo-weekend-study.md#acceptance)
 
 ## Results
 

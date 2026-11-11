@@ -23,6 +23,8 @@
 
 ## Agent / video_parse_v2
 
+11 月 9 日，片主在《Weekend》两支匿名成片中选了 02。两组收到同样的八段 P5R 笔记，02 的导演多拿到一张自动风格卡。[成片盲评与动态试剪](agent/video_parse_v2/film-refine-ab-20261109/README.md) · [同日文字选片评分](agent/video_parse_v2/refine-ab-20261109/README.md)
+
 剪辑素材的镜头方向、起止构图与回放误差，见[四段控制样例及 10 秒灯塔片实测](agent/video_parse_v2/clip-camera-reference-20261110.md)。
 
 最新实验：[2026-10-29 精简字段与 SHOT 的 JSON/XML 对照](agent/video_parse_v2/parse-compact-shot-20261029.md)。复用本地 Whisper、关闭独立 OCR，同字段 8 次未显示 XML 性能优势；最终选择精简 JSON，不换 XML，不再追求单 Chunk 30 秒，质量优先并沿用既有并行策略。此前的[首轮完整 JSON/XML 对照](agent/video_parse_v2/parse-protocol-20261029.md)独立保留，均未接入生产。

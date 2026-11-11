@@ -14,7 +14,7 @@ The owner's 2026-11-07 brief, verbatim:
 
 > At the same time, I hope to maintain the advanced use of many transitions and camera movements, combined with the multi-character interactions from MyGO to form a script. It's about Anon wanting to learn LLM but always finding it boring and escaping until she meets Seekino. Then Seekino demonstrates its features. Finally, Anon becomes highly interested—not only finishing the videos but also learning how to read papers (?).
 
-The first half was already cut twice in the Weekend trials (A/B/C on 11-07 and film A/B on 11-09, local evidence under `outputs/verification/anon-weekend-*`; [summary on #50](https://github.com/owariband/Seekino/pull/50#issuecomment-6708274214)); the owner blind-picked the version with the automatic style card and noted that the P5 style and Anon's shot choice were still weak.
+Two earlier trials cut the first half of the Weekend story. The 11-07 A/B/C review raised concerns about the P5 style and Anon’s shot choice. On 11-09 the owner picked film 02 before the reveal. Its director had the automatic style card. The follow-up used 113 native frames for Anon’s movement. [11-07 review](https://github.com/owariband/Seekino/pull/50#issuecomment-6708274214) · [11-09 film review](../../report/agent/video_parse_v2/film-refine-ab-20261109/owner-review.md) · [Motion excerpt](../../report/agent/video_parse_v2/film-refine-ab-20261109/motion-cutout.md)
 
 ## Why it was redesigned
 

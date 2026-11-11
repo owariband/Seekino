@@ -1,0 +1,1502 @@
+{
+  "refine": {
+    "E3": {
+      "complete_membership": false,
+      "members_attempt_host_overwrite": false,
+      "members": 8,
+      "signals": 8,
+      "citations": [
+        {
+          "signal": "红黑硬边几何图形",
+          "segment_id": "seg-0000167",
+          "at_ms": 400,
+          "detail": "黑色斜条切入红底",
+          "resolves": true
+        },
+        {
+          "signal": "红黑硬边几何图形",
+          "segment_id": "seg-0000167",
+          "at_ms": 633,
+          "detail": "红色闪电折线硬切出现",
+          "resolves": true
+        },
+        {
+          "signal": "高饱和洋红/紫底配平涂角色",
+          "segment_id": "seg-0013500",
+          "at_ms": 13500,
+          "detail": "洋红星空底上的白色面具双眼极特写",
+          "resolves": true
+        },
+        {
+          "signal": "高饱和洋红/紫底配平涂角色",
+          "segment_id": "seg-0028367",
+          "at_ms": 28367,
+          "detail": "深紫网点背景前腾空持刀角色",
+          "resolves": true
+        },
+        {
+          "signal": "逐级硬切拉远/推近",
+          "segment_id": "seg-0013500",
+          "at_ms": 13733,
+          "detail": "面具缩小露出帽檐的硬切",
+          "resolves": true
+        },
+        {
+          "signal": "逐级硬切拉远/推近",
+          "segment_id": "seg-0033900",
+          "at_ms": 34333,
+          "detail": "硬切到护目镜面部特写",
+          "resolves": true
+        },
+        {
+          "signal": "星形/放射状爆闪与速度带",
+          "segment_id": "seg-0012200",
+          "at_ms": 12767,
+          "detail": "黑紫放射星形硬切出现",
+          "resolves": true
+        },
+        {
+          "signal": "星形/放射状爆闪与速度带",
+          "segment_id": "seg-0030833",
+          "at_ms": 31133,
+          "detail": "橙色星形速度带环绕摩托",
+          "resolves": true
+        },
+        {
+          "signal": "红白高频闪切",
+          "segment_id": "seg-0018200",
+          "at_ms": 18933,
+          "detail": "暗红底白色放射线条闪入",
+          "resolves": true
+        },
+        {
+          "signal": "红白高频闪切",
+          "segment_id": "seg-0018200",
+          "at_ms": 19167,
+          "detail": "红底白色网格状放射线闪切",
+          "resolves": true
+        },
+        {
+          "signal": "圆形/弧形擦除转场",
+          "segment_id": "seg-0030833",
+          "at_ms": 32000,
+          "detail": "粉红与紫色圆形图形擦除画面",
+          "resolves": true
+        },
+        {
+          "signal": "圆形/弧形擦除转场",
+          "segment_id": "seg-0030833",
+          "at_ms": 32300,
+          "detail": "戴帽角色从粉红弧形后露出",
+          "resolves": true
+        },
+        {
+          "signal": "半调网点与放射速度线",
+          "segment_id": "seg-0018200",
+          "at_ms": 18200,
+          "detail": "亮黄色半调网点背景",
+          "resolves": true
+        },
+        {
+          "signal": "半调网点与放射速度线",
+          "segment_id": "seg-0028367",
+          "at_ms": 28367,
+          "detail": "深紫底黑色放射线与红色斜线网点",
+          "resolves": true
+        },
+        {
+          "signal": "冰晶发光质感与星形碎片",
+          "segment_id": "seg-0082833",
+          "at_ms": 83067,
+          "detail": "冰晶变形为猫头轮廓",
+          "resolves": true
+        },
+        {
+          "signal": "冰晶发光质感与星形碎片",
+          "segment_id": "seg-0082833",
+          "at_ms": 83833,
+          "detail": "硬切到粉红花瓣状图形与黄色背景",
+          "resolves": true
+        }
+      ],
+      "elapsed_s": 9.2669,
+      "usage": {
+        "prompt_tokens": 7069,
+        "completion_tokens": 2080,
+        "total_tokens": 9149,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 7069
+      }
+    },
+    "Weekend": {
+      "complete_membership": false,
+      "members_attempt_host_overwrite": false,
+      "members": 7,
+      "signals": 0,
+      "citations": [],
+      "elapsed_s": 8.0105,
+      "usage": {
+        "prompt_tokens": 4099,
+        "completion_tokens": 1366,
+        "total_tokens": 5465,
+        "prompt_tokens_details": {
+          "cached_tokens": 384
+        },
+        "prompt_cache_hit_tokens": 384,
+        "prompt_cache_miss_tokens": 3715
+      }
+    }
+  },
+  "trials": [
+    {
+      "panel": "E3",
+      "order": 1,
+      "question": "entrance",
+      "arm": "A",
+      "located": true,
+      "spans": true,
+      "cue": true,
+      "movement": true,
+      "usable": true,
+      "picks": [
+        {
+          "segment_id": "seg-0033900",
+          "start_ms": 33900,
+          "end_ms": 35033,
+          "cue_ms": 34333,
+          "scale_change": "wider",
+          "mechanism": "cut_series"
+        }
+      ],
+      "elapsed_s": 1.2021,
+      "usage": {
+        "prompt_tokens": 6901,
+        "completion_tokens": 113,
+        "total_tokens": 7014,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 6901
+      },
+      "record": "calls/E3-1-entrance-A.json"
+    },
+    {
+      "panel": "E3",
+      "order": 1,
+      "question": "entrance",
+      "arm": "B",
+      "located": true,
+      "spans": true,
+      "cue": true,
+      "movement": false,
+      "usable": false,
+      "picks": [
+        {
+          "segment_id": "seg-0033900",
+          "start_ms": 33900,
+          "end_ms": 35033,
+          "cue_ms": 34333,
+          "scale_change": "wider",
+          "mechanism": "within_shot",
+          "edit_note": "用 seg-0033900 作登场参考：从 33900 的黑色触须汇聚硬切到 34333 护目镜脸部特写，再连续硬切拉远揭示全身，红底无标语抢戏。"
+        }
+      ],
+      "elapsed_s": 1.2025,
+      "usage": {
+        "prompt_tokens": 7786,
+        "completion_tokens": 141,
+        "total_tokens": 7927,
+        "prompt_tokens_details": {
+          "cached_tokens": 6784
+        },
+        "prompt_cache_hit_tokens": 6784,
+        "prompt_cache_miss_tokens": 1002
+      },
+      "record": "calls/E3-1-entrance-B.json"
+    },
+    {
+      "panel": "E3",
+      "order": 1,
+      "question": "lettering",
+      "arm": "B",
+      "located": true,
+      "spans": false,
+      "cue": true,
+      "movement": true,
+      "usable": false,
+      "picks": [
+        {
+          "segment_id": "seg-0013500",
+          "start_ms": 14333,
+          "end_ms": 14700,
+          "cue_ms": 14333,
+          "scale_change": "unchanged",
+          "mechanism": "single_cut",
+          "edit_note": "用 seg-0013500 的 14333–14700 段作字幕节奏参考：面具人物居中亮相后，左右绿黄闪电框以爆裂式弹入并同时亮出框内文字，可照此把字幕分左右两框、在人物定格后同帧出现。"
+        }
+      ],
+      "elapsed_s": 2.122,
+      "usage": {
+        "prompt_tokens": 7777,
+        "completion_tokens": 147,
+        "total_tokens": 7924,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 7777
+      },
+      "record": "calls/E3-1-lettering-B.json"
+    },
+    {
+      "panel": "E3",
+      "order": 1,
+      "question": "lettering",
+      "arm": "A",
+      "located": true,
+      "spans": true,
+      "cue": true,
+      "movement": true,
+      "usable": true,
+      "picks": [
+        {
+          "segment_id": "seg-0013500",
+          "start_ms": 13500,
+          "end_ms": 14700,
+          "cue_ms": 14333,
+          "scale_change": "wider",
+          "mechanism": "within_shot"
+        }
+      ],
+      "elapsed_s": 1.3824,
+      "usage": {
+        "prompt_tokens": 6892,
+        "completion_tokens": 98,
+        "total_tokens": 6990,
+        "prompt_tokens_details": {
+          "cached_tokens": 6656
+        },
+        "prompt_cache_hit_tokens": 6656,
+        "prompt_cache_miss_tokens": 236
+      },
+      "record": "calls/E3-1-lettering-A.json"
+    },
+    {
+      "panel": "E3",
+      "order": 1,
+      "question": "clap",
+      "arm": "A",
+      "located": true,
+      "spans": true,
+      "cue": true,
+      "movement": true,
+      "usable": true,
+      "picks": [
+        {
+          "segment_id": "seg-0012200",
+          "start_ms": 12200,
+          "end_ms": 13133,
+          "cue_ms": 12767,
+          "scale_change": "wider",
+          "mechanism": "single_cut",
+          "edit_note": "用 12767ms 这一刀作图形重音：合掌后硬切到黑紫放射星形，取 12767–12900 的星形起幅核对同心星形是否只剩黑与洋红。"
+        }
+      ],
+      "elapsed_s": 2.1168,
+      "usage": {
+        "prompt_tokens": 6891,
+        "completion_tokens": 153,
+        "total_tokens": 7044,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 6891
+      },
+      "record": "calls/E3-1-clap-A.json"
+    },
+    {
+      "panel": "E3",
+      "order": 1,
+      "question": "clap",
+      "arm": "B",
+      "located": true,
+      "spans": true,
+      "cue": true,
+      "movement": true,
+      "usable": true,
+      "picks": [
+        {
+          "segment_id": "seg-0012200",
+          "start_ms": 12200,
+          "end_ms": 13133,
+          "cue_ms": 12767,
+          "scale_change": "tighter",
+          "mechanism": "single_cut",
+          "edit_note": "用 seg-0012200 的 12767ms 切点作参考：合掌后硬切到黑紫放射星形，取该切点前后各约 0.5s 核对图形重音落点。"
+        }
+      ],
+      "elapsed_s": 1.2566,
+      "usage": {
+        "prompt_tokens": 7776,
+        "completion_tokens": 138,
+        "total_tokens": 7914,
+        "prompt_tokens_details": {
+          "cached_tokens": 6784
+        },
+        "prompt_cache_hit_tokens": 6784,
+        "prompt_cache_miss_tokens": 992
+      },
+      "record": "calls/E3-1-clap-B.json"
+    },
+    {
+      "panel": "E3",
+      "order": 1,
+      "question": "burst",
+      "arm": "B",
+      "located": true,
+      "spans": true,
+      "cue": true,
+      "movement": true,
+      "usable": true,
+      "picks": [
+        {
+          "segment_id": "seg-0082833",
+          "start_ms": 82833,
+          "end_ms": 84067,
+          "cue_ms": 83833,
+          "scale_change": "tighter",
+          "mechanism": "within_shot",
+          "edit_note": "用 seg-0082833 作参考：从 82833 起连续推近青绿冰晶纹理，在 83833 粉黄图形第一帧硬切，复刻“纹理局部→粉黄爆点”的节奏。"
+        }
+      ],
+      "elapsed_s": 1.3598,
+      "usage": {
+        "prompt_tokens": 7780,
+        "completion_tokens": 136,
+        "total_tokens": 7916,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 7780
+      },
+      "record": "calls/E3-1-burst-B.json"
+    },
+    {
+      "panel": "E3",
+      "order": 1,
+      "question": "burst",
+      "arm": "A",
+      "located": true,
+      "spans": true,
+      "cue": true,
+      "movement": true,
+      "usable": true,
+      "picks": [
+        {
+          "segment_id": "seg-0082833",
+          "start_ms": 82833,
+          "end_ms": 84067,
+          "cue_ms": 83833,
+          "scale_change": "tighter",
+          "mechanism": "within_shot",
+          "edit_note": "用 82833–83833 的青绿冰晶连续推近段作前段，在 83833 粉黄花瓣图形首帧硬切进入，保留 83833–84067 的星形碎片扩散作爆点。"
+        }
+      ],
+      "elapsed_s": 1.6141,
+      "usage": {
+        "prompt_tokens": 6895,
+        "completion_tokens": 159,
+        "total_tokens": 7054,
+        "prompt_tokens_details": {
+          "cached_tokens": 6656
+        },
+        "prompt_cache_hit_tokens": 6656,
+        "prompt_cache_miss_tokens": 239
+      },
+      "record": "calls/E3-1-burst-A.json"
+    },
+    {
+      "panel": "E3",
+      "order": 1,
+      "question": "pair",
+      "arm": "A",
+      "located": true,
+      "spans": true,
+      "cue": true,
+      "movement": false,
+      "usable": false,
+      "picks": [
+        {
+          "segment_id": "seg-0033900",
+          "start_ms": 33900,
+          "end_ms": 35033,
+          "cue_ms": 34333,
+          "scale_change": "wider",
+          "mechanism": "within_shot",
+          "edit_note": "第一处取红底护目镜角色首次露脸（34333ms 的 ECU 护目镜特写），随后连续硬切拉远至全身，作为“由紧到松”的呼应起点。"
+        },
+        {
+          "segment_id": "seg-0013500",
+          "start_ms": 13500,
+          "end_ms": 14700,
+          "cue_ms": 14333,
+          "scale_change": "tighter",
+          "mechanism": "single_cut",
+          "edit_note": "第二处取面具角色在两侧绿黄闪电文字框真正弹入并落定的 14333ms 起，与第一处的拉远形成“先紧后松、再以文字框收紧落定”的景别呼应。"
+        }
+      ],
+      "elapsed_s": 2.0956,
+      "usage": {
+        "prompt_tokens": 6919,
+        "completion_tokens": 235,
+        "total_tokens": 7154,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 6919
+      },
+      "record": "calls/E3-1-pair-A.json"
+    },
+    {
+      "panel": "E3",
+      "order": 1,
+      "question": "pair",
+      "arm": "B",
+      "located": true,
+      "spans": true,
+      "cue": true,
+      "movement": true,
+      "usable": true,
+      "picks": [
+        {
+          "segment_id": "seg-0033900",
+          "start_ms": 33900,
+          "end_ms": 35033,
+          "cue_ms": 34333,
+          "scale_change": "wider",
+          "mechanism": "cut_series"
+        },
+        {
+          "segment_id": "seg-0013500",
+          "start_ms": 13500,
+          "end_ms": 14700,
+          "cue_ms": 14333,
+          "scale_change": "wider",
+          "mechanism": "within_shot"
+        }
+      ],
+      "elapsed_s": 1.3726,
+      "usage": {
+        "prompt_tokens": 7804,
+        "completion_tokens": 147,
+        "total_tokens": 7951,
+        "prompt_tokens_details": {
+          "cached_tokens": 6912
+        },
+        "prompt_cache_hit_tokens": 6912,
+        "prompt_cache_miss_tokens": 892
+      },
+      "record": "calls/E3-1-pair-B.json"
+    },
+    {
+      "panel": "E3",
+      "order": 1,
+      "question": "absent",
+      "arm": "B",
+      "located": true,
+      "spans": true,
+      "cue": true,
+      "movement": true,
+      "usable": true,
+      "picks": [],
+      "elapsed_s": 0.7608,
+      "usage": {
+        "prompt_tokens": 7779,
+        "completion_tokens": 47,
+        "total_tokens": 7826,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 7779
+      },
+      "record": "calls/E3-1-absent-B.json"
+    },
+    {
+      "panel": "E3",
+      "order": 1,
+      "question": "absent",
+      "arm": "A",
+      "located": true,
+      "spans": true,
+      "cue": true,
+      "movement": true,
+      "usable": true,
+      "picks": [],
+      "elapsed_s": 0.8025,
+      "usage": {
+        "prompt_tokens": 6894,
+        "completion_tokens": 41,
+        "total_tokens": 6935,
+        "prompt_tokens_details": {
+          "cached_tokens": 6656
+        },
+        "prompt_cache_hit_tokens": 6656,
+        "prompt_cache_miss_tokens": 238
+      },
+      "record": "calls/E3-1-absent-A.json"
+    },
+    {
+      "panel": "E3",
+      "order": 2,
+      "question": "absent",
+      "arm": "A",
+      "located": true,
+      "spans": true,
+      "cue": true,
+      "movement": true,
+      "usable": true,
+      "picks": [],
+      "elapsed_s": 0.8547,
+      "usage": {
+        "prompt_tokens": 6894,
+        "completion_tokens": 44,
+        "total_tokens": 6938,
+        "prompt_tokens_details": {
+          "cached_tokens": 128
+        },
+        "prompt_cache_hit_tokens": 128,
+        "prompt_cache_miss_tokens": 6766
+      },
+      "record": "calls/E3-2-absent-A.json"
+    },
+    {
+      "panel": "E3",
+      "order": 2,
+      "question": "absent",
+      "arm": "B",
+      "located": true,
+      "spans": true,
+      "cue": true,
+      "movement": true,
+      "usable": true,
+      "picks": [],
+      "elapsed_s": 0.986,
+      "usage": {
+        "prompt_tokens": 7779,
+        "completion_tokens": 42,
+        "total_tokens": 7821,
+        "prompt_tokens_details": {
+          "cached_tokens": 6784
+        },
+        "prompt_cache_hit_tokens": 6784,
+        "prompt_cache_miss_tokens": 995
+      },
+      "record": "calls/E3-2-absent-B.json"
+    },
+    {
+      "panel": "E3",
+      "order": 2,
+      "question": "pair",
+      "arm": "B",
+      "located": true,
+      "spans": true,
+      "cue": true,
+      "movement": true,
+      "usable": true,
+      "picks": [
+        {
+          "segment_id": "seg-0033900",
+          "start_ms": 33900,
+          "end_ms": 35033,
+          "cue_ms": 34333,
+          "scale_change": "wider",
+          "mechanism": "cut_series"
+        },
+        {
+          "segment_id": "seg-0013500",
+          "start_ms": 13500,
+          "end_ms": 14700,
+          "cue_ms": 14333,
+          "scale_change": "unchanged",
+          "mechanism": "within_shot"
+        }
+      ],
+      "elapsed_s": 2.0089,
+      "usage": {
+        "prompt_tokens": 7804,
+        "completion_tokens": 167,
+        "total_tokens": 7971,
+        "prompt_tokens_details": {
+          "cached_tokens": 128
+        },
+        "prompt_cache_hit_tokens": 128,
+        "prompt_cache_miss_tokens": 7676
+      },
+      "record": "calls/E3-2-pair-B.json"
+    },
+    {
+      "panel": "E3",
+      "order": 2,
+      "question": "pair",
+      "arm": "A",
+      "located": true,
+      "spans": true,
+      "cue": true,
+      "movement": false,
+      "usable": false,
+      "picks": [
+        {
+          "segment_id": "seg-0033900",
+          "start_ms": 33900,
+          "end_ms": 35033,
+          "cue_ms": 34333,
+          "scale_change": "tighter",
+          "mechanism": "within_shot"
+        },
+        {
+          "segment_id": "seg-0013500",
+          "start_ms": 13500,
+          "end_ms": 14700,
+          "cue_ms": 14333,
+          "scale_change": "wider",
+          "mechanism": "within_shot"
+        }
+      ],
+      "elapsed_s": 1.5384,
+      "usage": {
+        "prompt_tokens": 6919,
+        "completion_tokens": 140,
+        "total_tokens": 7059,
+        "prompt_tokens_details": {
+          "cached_tokens": 6784
+        },
+        "prompt_cache_hit_tokens": 6784,
+        "prompt_cache_miss_tokens": 135
+      },
+      "record": "calls/E3-2-pair-A.json"
+    },
+    {
+      "panel": "E3",
+      "order": 2,
+      "question": "burst",
+      "arm": "A",
+      "located": true,
+      "spans": true,
+      "cue": true,
+      "movement": true,
+      "usable": true,
+      "picks": [
+        {
+          "segment_id": "seg-0082833",
+          "start_ms": 82833,
+          "end_ms": 84067,
+          "cue_ms": 83833,
+          "scale_change": "tighter",
+          "mechanism": "within_shot",
+          "edit_note": "用 82833–83833 的青绿冰晶连续推近段做前戏，在 83833 粉黄图形首帧处下刀，直接接粉黄爆炸。"
+        }
+      ],
+      "elapsed_s": 1.4441,
+      "usage": {
+        "prompt_tokens": 6895,
+        "completion_tokens": 131,
+        "total_tokens": 7026,
+        "prompt_tokens_details": {
+          "cached_tokens": 128
+        },
+        "prompt_cache_hit_tokens": 128,
+        "prompt_cache_miss_tokens": 6767
+      },
+      "record": "calls/E3-2-burst-A.json"
+    },
+    {
+      "panel": "E3",
+      "order": 2,
+      "question": "burst",
+      "arm": "B",
+      "located": true,
+      "spans": true,
+      "cue": true,
+      "movement": true,
+      "usable": true,
+      "picks": [
+        {
+          "segment_id": "seg-0082833",
+          "start_ms": 82833,
+          "end_ms": 84067,
+          "cue_ms": 83833,
+          "scale_change": "tighter",
+          "mechanism": "within_shot",
+          "edit_note": "用 seg-0082833 作参考：从 82833 起连续推近青绿冰晶纹理，在 83833 粉黄图形第一帧硬切，cue 取 83833。"
+        }
+      ],
+      "elapsed_s": 1.4432,
+      "usage": {
+        "prompt_tokens": 7780,
+        "completion_tokens": 131,
+        "total_tokens": 7911,
+        "prompt_tokens_details": {
+          "cached_tokens": 6784
+        },
+        "prompt_cache_hit_tokens": 6784,
+        "prompt_cache_miss_tokens": 996
+      },
+      "record": "calls/E3-2-burst-B.json"
+    },
+    {
+      "panel": "E3",
+      "order": 2,
+      "question": "clap",
+      "arm": "B",
+      "located": true,
+      "spans": true,
+      "cue": true,
+      "movement": true,
+      "usable": true,
+      "picks": [
+        {
+          "segment_id": "seg-0012200",
+          "start_ms": 12200,
+          "end_ms": 13133,
+          "cue_ms": 12767,
+          "scale_change": "tighter",
+          "mechanism": "single_cut",
+          "edit_note": "用 seg-0012200 从 12200 起看合掌，12767 处硬切进黑紫放射星形作为图形重音落点。"
+        }
+      ],
+      "elapsed_s": 1.6168,
+      "usage": {
+        "prompt_tokens": 7776,
+        "completion_tokens": 146,
+        "total_tokens": 7922,
+        "prompt_tokens_details": {
+          "cached_tokens": 128
+        },
+        "prompt_cache_hit_tokens": 128,
+        "prompt_cache_miss_tokens": 7648
+      },
+      "record": "calls/E3-2-clap-B.json"
+    },
+    {
+      "panel": "E3",
+      "order": 2,
+      "question": "clap",
+      "arm": "A",
+      "located": true,
+      "spans": true,
+      "cue": true,
+      "movement": true,
+      "usable": true,
+      "picks": [
+        {
+          "segment_id": "seg-0012200",
+          "start_ms": 12200,
+          "end_ms": 13133,
+          "cue_ms": 12767,
+          "scale_change": "wider",
+          "mechanism": "within_shot",
+          "edit_note": "用 12767ms 这一帧作图形重音切点：拍手爆闪后画面第一次只剩黑紫放射星形，直接硬切进该帧再继续放大。"
+        }
+      ],
+      "elapsed_s": 1.467,
+      "usage": {
+        "prompt_tokens": 6891,
+        "completion_tokens": 130,
+        "total_tokens": 7021,
+        "prompt_tokens_details": {
+          "cached_tokens": 6656
+        },
+        "prompt_cache_hit_tokens": 6656,
+        "prompt_cache_miss_tokens": 235
+      },
+      "record": "calls/E3-2-clap-A.json"
+    },
+    {
+      "panel": "E3",
+      "order": 2,
+      "question": "lettering",
+      "arm": "A",
+      "located": true,
+      "spans": true,
+      "cue": true,
+      "movement": true,
+      "usable": true,
+      "picks": [
+        {
+          "segment_id": "seg-0013500",
+          "start_ms": 13500,
+          "end_ms": 14700,
+          "cue_ms": 14333,
+          "scale_change": "tighter",
+          "mechanism": "within_shot"
+        }
+      ],
+      "elapsed_s": 1.1752,
+      "usage": {
+        "prompt_tokens": 6892,
+        "completion_tokens": 106,
+        "total_tokens": 6998,
+        "prompt_tokens_details": {
+          "cached_tokens": 128
+        },
+        "prompt_cache_hit_tokens": 128,
+        "prompt_cache_miss_tokens": 6764
+      },
+      "record": "calls/E3-2-lettering-A.json"
+    },
+    {
+      "panel": "E3",
+      "order": 2,
+      "question": "lettering",
+      "arm": "B",
+      "located": true,
+      "spans": false,
+      "cue": true,
+      "movement": true,
+      "usable": false,
+      "picks": [
+        {
+          "segment_id": "seg-0013500",
+          "start_ms": 14333,
+          "end_ms": 14700,
+          "cue_ms": 14333,
+          "scale_change": "unchanged",
+          "mechanism": "within_shot",
+          "edit_note": "用 seg-0013500 的 14333–14700ms 段作字幕节奏参考：面具人物居中后两侧绿黄闪电框弹入，字幕可照此在人物亮相后延迟约一帧再亮出左右两框文字。"
+        }
+      ],
+      "elapsed_s": 1.3329,
+      "usage": {
+        "prompt_tokens": 7777,
+        "completion_tokens": 133,
+        "total_tokens": 7910,
+        "prompt_tokens_details": {
+          "cached_tokens": 6784
+        },
+        "prompt_cache_hit_tokens": 6784,
+        "prompt_cache_miss_tokens": 993
+      },
+      "record": "calls/E3-2-lettering-B.json"
+    },
+    {
+      "panel": "E3",
+      "order": 2,
+      "question": "entrance",
+      "arm": "B",
+      "located": true,
+      "spans": true,
+      "cue": true,
+      "movement": true,
+      "usable": true,
+      "picks": [
+        {
+          "segment_id": "seg-0033900",
+          "start_ms": 33900,
+          "end_ms": 35033,
+          "cue_ms": 34333,
+          "scale_change": "wider",
+          "mechanism": "cut_series"
+        }
+      ],
+      "elapsed_s": 0.8714,
+      "usage": {
+        "prompt_tokens": 7786,
+        "completion_tokens": 111,
+        "total_tokens": 7897,
+        "prompt_tokens_details": {
+          "cached_tokens": 128
+        },
+        "prompt_cache_hit_tokens": 128,
+        "prompt_cache_miss_tokens": 7658
+      },
+      "record": "calls/E3-2-entrance-B.json"
+    },
+    {
+      "panel": "E3",
+      "order": 2,
+      "question": "entrance",
+      "arm": "A",
+      "located": true,
+      "spans": true,
+      "cue": true,
+      "movement": true,
+      "usable": true,
+      "picks": [
+        {
+          "segment_id": "seg-0033900",
+          "start_ms": 33900,
+          "end_ms": 35033,
+          "cue_ms": 34333,
+          "scale_change": "wider",
+          "mechanism": "cut_series"
+        }
+      ],
+      "elapsed_s": 1.1071,
+      "usage": {
+        "prompt_tokens": 6901,
+        "completion_tokens": 107,
+        "total_tokens": 7008,
+        "prompt_tokens_details": {
+          "cached_tokens": 6656
+        },
+        "prompt_cache_hit_tokens": 6656,
+        "prompt_cache_miss_tokens": 245
+      },
+      "record": "calls/E3-2-entrance-A.json"
+    },
+    {
+      "panel": "Weekend",
+      "order": 1,
+      "question": "entrance",
+      "arm": "A",
+      "located": true,
+      "spans": true,
+      "cue": true,
+      "movement": true,
+      "usable": true,
+      "picks": [
+        {
+          "segment_id": "seg-0033900",
+          "start_ms": 33900,
+          "end_ms": 35033,
+          "cue_ms": 34333,
+          "scale_change": "wider",
+          "mechanism": "cut_series"
+        }
+      ],
+      "elapsed_s": 1.4694,
+      "usage": {
+        "prompt_tokens": 3931,
+        "completion_tokens": 93,
+        "total_tokens": 4024,
+        "prompt_tokens_details": {
+          "cached_tokens": 128
+        },
+        "prompt_cache_hit_tokens": 128,
+        "prompt_cache_miss_tokens": 3803
+      },
+      "record": "calls/Weekend-1-entrance-A.json"
+    },
+    {
+      "panel": "Weekend",
+      "order": 1,
+      "question": "entrance",
+      "arm": "B",
+      "located": true,
+      "spans": true,
+      "cue": true,
+      "movement": true,
+      "usable": true,
+      "picks": [
+        {
+          "segment_id": "seg-0033900",
+          "start_ms": 33900,
+          "end_ms": 35033,
+          "cue_ms": 34333,
+          "scale_change": "wider",
+          "mechanism": "cut_series"
+        }
+      ],
+      "elapsed_s": 1.9355,
+      "usage": {
+        "prompt_tokens": 4689,
+        "completion_tokens": 123,
+        "total_tokens": 4812,
+        "prompt_tokens_details": {
+          "cached_tokens": 3840
+        },
+        "prompt_cache_hit_tokens": 3840,
+        "prompt_cache_miss_tokens": 849
+      },
+      "record": "calls/Weekend-1-entrance-B.json"
+    },
+    {
+      "panel": "Weekend",
+      "order": 1,
+      "question": "lettering",
+      "arm": "B",
+      "located": true,
+      "spans": false,
+      "cue": true,
+      "movement": true,
+      "usable": false,
+      "picks": [
+        {
+          "segment_id": "seg-0013500",
+          "start_ms": 14333,
+          "end_ms": 14700,
+          "cue_ms": 14333,
+          "scale_change": "unchanged",
+          "mechanism": "within_shot"
+        }
+      ],
+      "elapsed_s": 1.6761,
+      "usage": {
+        "prompt_tokens": 4680,
+        "completion_tokens": 125,
+        "total_tokens": 4805,
+        "prompt_tokens_details": {
+          "cached_tokens": 3840
+        },
+        "prompt_cache_hit_tokens": 3840,
+        "prompt_cache_miss_tokens": 840
+      },
+      "record": "calls/Weekend-1-lettering-B.json"
+    },
+    {
+      "panel": "Weekend",
+      "order": 1,
+      "question": "lettering",
+      "arm": "A",
+      "located": true,
+      "spans": true,
+      "cue": true,
+      "movement": true,
+      "usable": true,
+      "picks": [
+        {
+          "segment_id": "seg-0013500",
+          "start_ms": 13500,
+          "end_ms": 14700,
+          "cue_ms": 14333,
+          "scale_change": "tighter",
+          "mechanism": "within_shot"
+        }
+      ],
+      "elapsed_s": 1.5171,
+      "usage": {
+        "prompt_tokens": 3922,
+        "completion_tokens": 105,
+        "total_tokens": 4027,
+        "prompt_tokens_details": {
+          "cached_tokens": 128
+        },
+        "prompt_cache_hit_tokens": 128,
+        "prompt_cache_miss_tokens": 3794
+      },
+      "record": "calls/Weekend-1-lettering-A.json"
+    },
+    {
+      "panel": "Weekend",
+      "order": 1,
+      "question": "clap",
+      "arm": "A",
+      "located": true,
+      "spans": true,
+      "cue": true,
+      "movement": true,
+      "usable": true,
+      "picks": [],
+      "elapsed_s": 1.0649,
+      "usage": {
+        "prompt_tokens": 3921,
+        "completion_tokens": 36,
+        "total_tokens": 3957,
+        "prompt_tokens_details": {
+          "cached_tokens": 128
+        },
+        "prompt_cache_hit_tokens": 128,
+        "prompt_cache_miss_tokens": 3793
+      },
+      "record": "calls/Weekend-1-clap-A.json"
+    },
+    {
+      "panel": "Weekend",
+      "order": 1,
+      "question": "clap",
+      "arm": "B",
+      "located": true,
+      "spans": true,
+      "cue": true,
+      "movement": true,
+      "usable": true,
+      "picks": [],
+      "elapsed_s": 1.0658,
+      "usage": {
+        "prompt_tokens": 4679,
+        "completion_tokens": 55,
+        "total_tokens": 4734,
+        "prompt_tokens_details": {
+          "cached_tokens": 3840
+        },
+        "prompt_cache_hit_tokens": 3840,
+        "prompt_cache_miss_tokens": 839
+      },
+      "record": "calls/Weekend-1-clap-B.json"
+    },
+    {
+      "panel": "Weekend",
+      "order": 1,
+      "question": "burst",
+      "arm": "B",
+      "located": true,
+      "spans": true,
+      "cue": true,
+      "movement": true,
+      "usable": true,
+      "picks": [
+        {
+          "segment_id": "seg-0082833",
+          "start_ms": 82833,
+          "end_ms": 84067,
+          "cue_ms": 83833,
+          "scale_change": "tighter",
+          "mechanism": "cut_series"
+        }
+      ],
+      "elapsed_s": 1.1841,
+      "usage": {
+        "prompt_tokens": 4683,
+        "completion_tokens": 115,
+        "total_tokens": 4798,
+        "prompt_tokens_details": {
+          "cached_tokens": 3840
+        },
+        "prompt_cache_hit_tokens": 3840,
+        "prompt_cache_miss_tokens": 843
+      },
+      "record": "calls/Weekend-1-burst-B.json"
+    },
+    {
+      "panel": "Weekend",
+      "order": 1,
+      "question": "burst",
+      "arm": "A",
+      "located": true,
+      "spans": true,
+      "cue": true,
+      "movement": true,
+      "usable": true,
+      "picks": [
+        {
+          "segment_id": "seg-0082833",
+          "start_ms": 82833,
+          "end_ms": 84067,
+          "cue_ms": 83833,
+          "scale_change": "tighter",
+          "mechanism": "cut_series"
+        }
+      ],
+      "elapsed_s": 1.4109,
+      "usage": {
+        "prompt_tokens": 3925,
+        "completion_tokens": 107,
+        "total_tokens": 4032,
+        "prompt_tokens_details": {
+          "cached_tokens": 256
+        },
+        "prompt_cache_hit_tokens": 256,
+        "prompt_cache_miss_tokens": 3669
+      },
+      "record": "calls/Weekend-1-burst-A.json"
+    },
+    {
+      "panel": "Weekend",
+      "order": 1,
+      "question": "pair",
+      "arm": "A",
+      "located": true,
+      "spans": false,
+      "cue": true,
+      "movement": true,
+      "usable": false,
+      "picks": [
+        {
+          "segment_id": "seg-0033900",
+          "start_ms": 34333,
+          "end_ms": 35033,
+          "cue_ms": 34333,
+          "scale_change": "wider",
+          "mechanism": "cut_series"
+        },
+        {
+          "segment_id": "seg-0013500",
+          "start_ms": 14333,
+          "end_ms": 14700,
+          "cue_ms": 14333,
+          "scale_change": "unchanged",
+          "mechanism": "within_shot"
+        }
+      ],
+      "elapsed_s": 1.4007,
+      "usage": {
+        "prompt_tokens": 3949,
+        "completion_tokens": 161,
+        "total_tokens": 4110,
+        "prompt_tokens_details": {
+          "cached_tokens": 128
+        },
+        "prompt_cache_hit_tokens": 128,
+        "prompt_cache_miss_tokens": 3821
+      },
+      "record": "calls/Weekend-1-pair-A.json"
+    },
+    {
+      "panel": "Weekend",
+      "order": 1,
+      "question": "pair",
+      "arm": "B",
+      "located": true,
+      "spans": false,
+      "cue": true,
+      "movement": true,
+      "usable": false,
+      "picks": [
+        {
+          "segment_id": "seg-0033900",
+          "start_ms": 34333,
+          "end_ms": 35033,
+          "cue_ms": 34333,
+          "scale_change": "wider",
+          "mechanism": "cut_series"
+        },
+        {
+          "segment_id": "seg-0013500",
+          "start_ms": 14333,
+          "end_ms": 14700,
+          "cue_ms": 14333,
+          "scale_change": "unchanged",
+          "mechanism": "within_shot"
+        }
+      ],
+      "elapsed_s": 1.1269,
+      "usage": {
+        "prompt_tokens": 4707,
+        "completion_tokens": 151,
+        "total_tokens": 4858,
+        "prompt_tokens_details": {
+          "cached_tokens": 3840
+        },
+        "prompt_cache_hit_tokens": 3840,
+        "prompt_cache_miss_tokens": 867
+      },
+      "record": "calls/Weekend-1-pair-B.json"
+    },
+    {
+      "panel": "Weekend",
+      "order": 1,
+      "question": "absent",
+      "arm": "B",
+      "located": true,
+      "spans": true,
+      "cue": true,
+      "movement": true,
+      "usable": true,
+      "picks": [],
+      "elapsed_s": 1.355,
+      "usage": {
+        "prompt_tokens": 4682,
+        "completion_tokens": 49,
+        "total_tokens": 4731,
+        "prompt_tokens_details": {
+          "cached_tokens": 3840
+        },
+        "prompt_cache_hit_tokens": 3840,
+        "prompt_cache_miss_tokens": 842
+      },
+      "record": "calls/Weekend-1-absent-B.json"
+    },
+    {
+      "panel": "Weekend",
+      "order": 1,
+      "question": "absent",
+      "arm": "A",
+      "located": true,
+      "spans": true,
+      "cue": true,
+      "movement": true,
+      "usable": true,
+      "picks": [],
+      "elapsed_s": 1.0299,
+      "usage": {
+        "prompt_tokens": 3924,
+        "completion_tokens": 46,
+        "total_tokens": 3970,
+        "prompt_tokens_details": {
+          "cached_tokens": 128
+        },
+        "prompt_cache_hit_tokens": 128,
+        "prompt_cache_miss_tokens": 3796
+      },
+      "record": "calls/Weekend-1-absent-A.json"
+    }
+  ],
+  "aggregate": {
+    "E3": {
+      "all": {
+        "A": {
+          "n": 12,
+          "located": 12,
+          "usable": 10,
+          "wins_over_other": 3,
+          "paired_n": 7,
+          "paired_median_s": 1.444,
+          "tokens": {
+            "prompt_tokens": 82784,
+            "completion_tokens": 1457,
+            "total_tokens": 84241,
+            "prompt_cache_hit_tokens": 40448,
+            "prompt_cache_miss_tokens": 42336
+          }
+        },
+        "B": {
+          "n": 12,
+          "located": 12,
+          "usable": 9,
+          "wins_over_other": 2,
+          "paired_n": 7,
+          "paired_median_s": 1.257,
+          "tokens": {
+            "prompt_tokens": 93404,
+            "completion_tokens": 1486,
+            "total_tokens": 94890,
+            "prompt_cache_hit_tokens": 41216,
+            "prompt_cache_miss_tokens": 52188
+          }
+        }
+      },
+      "orders": {
+        "1": {
+          "A": {
+            "n": 6,
+            "located": 6,
+            "usable": 5,
+            "wins_over_other": 2,
+            "paired_n": 3,
+            "paired_median_s": 1.614,
+            "tokens": {
+              "prompt_tokens": 41392,
+              "completion_tokens": 799,
+              "total_tokens": 42191,
+              "prompt_cache_hit_tokens": 19968,
+              "prompt_cache_miss_tokens": 21424
+            }
+          },
+          "B": {
+            "n": 6,
+            "located": 6,
+            "usable": 4,
+            "wins_over_other": 1,
+            "paired_n": 3,
+            "paired_median_s": 1.257,
+            "tokens": {
+              "prompt_tokens": 46702,
+              "completion_tokens": 756,
+              "total_tokens": 47458,
+              "prompt_cache_hit_tokens": 20480,
+              "prompt_cache_miss_tokens": 26222
+            }
+          }
+        },
+        "2": {
+          "A": {
+            "n": 6,
+            "located": 6,
+            "usable": 5,
+            "wins_over_other": 1,
+            "paired_n": 4,
+            "paired_median_s": 1.276,
+            "tokens": {
+              "prompt_tokens": 41392,
+              "completion_tokens": 658,
+              "total_tokens": 42050,
+              "prompt_cache_hit_tokens": 20480,
+              "prompt_cache_miss_tokens": 20912
+            }
+          },
+          "B": {
+            "n": 6,
+            "located": 6,
+            "usable": 5,
+            "wins_over_other": 1,
+            "paired_n": 4,
+            "paired_median_s": 1.215,
+            "tokens": {
+              "prompt_tokens": 46702,
+              "completion_tokens": 730,
+              "total_tokens": 47432,
+              "prompt_cache_hit_tokens": 20736,
+              "prompt_cache_miss_tokens": 25966
+            }
+          }
+        }
+      }
+    },
+    "Weekend": {
+      "all": {
+        "A": {
+          "n": 6,
+          "located": 6,
+          "usable": 5,
+          "wins_over_other": 1,
+          "paired_n": 4,
+          "paired_median_s": 1.238,
+          "tokens": {
+            "prompt_tokens": 23572,
+            "completion_tokens": 548,
+            "total_tokens": 24120,
+            "prompt_cache_hit_tokens": 896,
+            "prompt_cache_miss_tokens": 22676
+          }
+        },
+        "B": {
+          "n": 6,
+          "located": 6,
+          "usable": 4,
+          "wins_over_other": 0,
+          "paired_n": 4,
+          "paired_median_s": 1.27,
+          "tokens": {
+            "prompt_tokens": 28120,
+            "completion_tokens": 618,
+            "total_tokens": 28738,
+            "prompt_cache_hit_tokens": 23040,
+            "prompt_cache_miss_tokens": 5080
+          }
+        }
+      },
+      "orders": {
+        "1": {
+          "A": {
+            "n": 6,
+            "located": 6,
+            "usable": 5,
+            "wins_over_other": 1,
+            "paired_n": 4,
+            "paired_median_s": 1.238,
+            "tokens": {
+              "prompt_tokens": 23572,
+              "completion_tokens": 548,
+              "total_tokens": 24120,
+              "prompt_cache_hit_tokens": 896,
+              "prompt_cache_miss_tokens": 22676
+            }
+          },
+          "B": {
+            "n": 6,
+            "located": 6,
+            "usable": 4,
+            "wins_over_other": 0,
+            "paired_n": 4,
+            "paired_median_s": 1.27,
+            "tokens": {
+              "prompt_tokens": 28120,
+              "completion_tokens": 618,
+              "total_tokens": 28738,
+              "prompt_cache_hit_tokens": 23040,
+              "prompt_cache_miss_tokens": 5080
+            }
+          }
+        }
+      }
+    }
+  }
+}

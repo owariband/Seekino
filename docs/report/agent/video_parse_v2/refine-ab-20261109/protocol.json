@@ -1,0 +1,23 @@
+{
+  "experiment": "P5R full-window text Refine E5", "date": "2026-11-09",
+  "design_revision": "a3f95533289ff5ca5d5ef8e98085f2947bb4c8ab",
+  "source": "Persona 5 Royal opening, 30 fps",
+  "hypothesis": "A source-linked whole-film style card makes the first usable editing exemplar easier to select than the exact same pick notes alone.",
+  "arms": {"A":"frozen raw observations and scan facts","B":"byte-identical raw observations and scan facts, plus an automatically generated style_card only"},
+  "panels": {"E3": {"input":"all eight archived E3c DeepSeek Flash observations", "orders":2}, "Weekend":{"input":"all three archived Weekend B Opus 5.5 medium observations", "orders":1}},
+  "settings": {"model":"deepseek-flash","provider":"DeepSeek","thinking":{"type":"disabled"},"temperature":0,"format":"json_object","refine_max_tokens":6400,"reader_max_tokens":600},
+  "access": "Each reader request is stateless. It sees only the common editorial instruction, one brief and its reference packet. The refiner sees observations and scan facts only. Neither sees the answer key, other responses, phase name or arm label. Presence of a card is visible. Model requests are text only.",
+  "order": "Single in-flight request, two independently generated cards (one per panel), alternating AB/BA by brief index; swap arm order and reverse cue order on E3 pass 2. Rotate the notes by brief index and reverse them on pass 2. Both arms of each pair have the same ordering. Transport failures logged; retry a failed transport at most once.",
+  "scoring": "One first answer, no repair on editor content. Require every intended pick in requested order, exact host [start_ms,end_ms), and exact first requested picture cue_ms (integer ms on the experiment clock). For the red-background reveal also require cut_series + wider. Negative requires no selection. 'Located' only checks ordered IDs or abstention. A useful response also needs the range, cue and movement checks. Two orders repeat the same briefs, not new videos.",
+  "time": "Elapsed seconds from sending the complete request to receiving its complete JSON. Include a transport retry in elapsed time. Compare medians on pairs in which both arms are usable. Also report provider token usage and one-off Refine time/cost separately. Cache state is observed, not controlled.",
+  "integrity_gate": "Every input ID appears exactly once in its original chunk. Measured fields and ranges are host-owned. Every card citation resolves to a real pick and a measured or edge timestamp; inspect rendered strip and text grounding independently, note every unsupported claim. The red-background entry must describe widening across cuts, without claiming a continuous camera pull. A false factual cue is a failed card even if its ID exists.",
+  "decision_rule": "Treat card utility as positive here if it adds usable pairs with no paired losses and passes the source gate, or if success is equal and its usable-pair median time is at least 15% lower in BOTH primary presentation orders, with the source gate met. Otherwise retain the measured tradeoff; one film does not establish library-wide efficiency. The three-note panel is a separate sensitivity test.",
+  "questions": [
+    {"id":"entrance","brief":"主角要从神秘变得张扬。找一个红底、没有标语抢戏的登场参考。我要从黑色物体切到护目镜脸部的那一帧，再看它怎样揭示整个角色。","target":[["seg-0033900",34333]]},
+    {"id":"lettering","brief":"面具人物亮相后，两旁的对白框才亮出字。我想借它安排字幕。找第一个两侧框内都已能看到文字的画面。","target":[["seg-0013500",14333]]},
+    {"id":"clap","brief":"我要把一个合掌动作接成图形重音。找拍手之后，画面第一次只剩黑色和洋红色同心星形的切点。","target":[["seg-0012200",12767]],"absent_from":["Weekend"]},
+    {"id":"burst","brief":"需要一处视觉爆点。从青绿纹理的局部突然切到粉黄图形和碎屑，我想从粉黄画面出现的第一帧起切。","target":[["seg-0082833",83833]]},
+    {"id":"pair","brief":"两名角色先后亮相，我想找一对可以呼应的景别变化。第一处要用红底护目镜，从第一次露出脸开始，第二处要让面具角色在两侧漫画文字之间落定，从字真正出现时开始。按这个顺序给两处。","target":[["seg-0033900",34333],["seg-0013500",14333]]},
+    {"id":"absent","brief":"想找雨水沿着真实车窗滑落、倒影和实拍人脸慢慢叠化的手法。只在给的材料里挑，有明确依据才采用。","target":[]}
+  ]
+}
