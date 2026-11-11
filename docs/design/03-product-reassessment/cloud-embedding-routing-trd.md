@@ -24,4 +24,4 @@ GPU 关机。云机单槽 b12283 对 4129 token 合成文档返回 1024 维，67
 
 2026-11-11 在 Cloud main `fe614585` 镜像上附加本 PR 的三个 Gateway 文件。实际模型设置位于数据卷 `/data/config/cloud/models.yaml`。切换前活跃 Chat 和 Parse 均为 0。API 与 embedding 健康。API 内实测 `embed_query` 在本机返回 1024 维（0.282 秒）；`embed_text` 首选 GPU 转发拒绝连接后，本机返回 1024 维（0.085 秒）。真实 GPU 在线尚待下次开启时验证。
 
-游客 MyGO 原题已进入 RETRIEVING。读取答案时公网 HTTPS 与 SSH 同时超时，未取得终态；课程题未再次提交。整机故障原因有待内核和云监控证据。公网检索验收尚未完成。[问题记录](../../dev/problems.md#cloud-embedding-01--gpu-离线时检索丢失查询向量) · [工作台](../../dev/workbench.html)
+公网 MyGO 原题进入 RETRIEVING，并已完成 3 次 Qwen 编码。19:57 可用内存仅余 50,000 KiB，swap 剩 12 KiB。21:31:06 内核因整机 OOM 杀掉 API 的 Python，匿名 RSS 为 4,938,604 KiB，API 没有内存上限；Qwen 容器未重启。21:38 公网首页返回 200，SSH 恢复。已把这条测试消息从处理中标记为服务中断。课程题等待受控重放。[检索内存修复 PR #116](https://github.com/owariband/Seekino/pull/116) · [工作台](../../dev/workbench.html)

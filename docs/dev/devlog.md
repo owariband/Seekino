@@ -5650,4 +5650,4 @@ Web 容器。公网直连和系统代理各验证三个地址，Chrome 验证真
 
 **方案验证**　向量适配器回归验证了查询独立与文档回退，真实 4C8G 云机跑通 4129 token 文档。实际 Cloud 配置位于数据卷；只改启动模板会漏掉管理设置。生产切换后两种调用均返回 1024 维。
 
-**指标对比**　短查询实测 0.282 秒，短文档经拒绝连接回退 0.085 秒。CPU 长文档 67.78 秒，单槽运行期间其他请求可能排队。游客重放遇到 HTTPS/SSH 超时，端到端耗时、片段与整机状态须独立核对。[设计与实测](../design/03-product-reassessment/cloud-embedding-routing-trd.md)
+**指标对比**　短查询实测 0.282 秒，短文档经拒绝连接回退 0.085 秒。CPU 长文档 67.78 秒，单槽运行期间其他请求可能排队。游客重放完成 3 次向量调用后，整机 OOM 终止 API。内存问题独立在 [PR #116](https://github.com/owariband/Seekino/pull/116) 修复，公网片段仍待验收。[设计与实测](../design/03-product-reassessment/cloud-embedding-routing-trd.md)

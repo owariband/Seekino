@@ -2882,4 +2882,4 @@ micrograd v5 共 146 块，整集 90 分 04.884 秒。调度反复锁取候选�
 
 ### CLOUD-EMBEDDING-01 · GPU 离线时检索丢失查询向量
 
-Cloud 两次游客验收在 Qwen 查询编码阶段失败，分别耗时 396 秒和 123 秒。GPU 离线时，本机同权重副本现已通过查询和文档回退调用。真实 MyGO 重放遇到整站 HTTPS 与 SSH 超时，尚未取得最终答案。验收要求两条原题均返回可回看的片段并且检索工具成功。[设计与实测](../design/03-product-reassessment/cloud-embedding-routing-trd.md) · [工作台](workbench.html)
+Cloud 两次游客验收在 Qwen 查询编码阶段失败，分别耗时 396 秒和 123 秒。GPU 离线时，本机同权重副本现已通过查询和文档回退调用。真实 MyGO 重放的 3 次查询编码均成功，随后整机 OOM 终止 API，未取得最终答案。覆盖内存问题见 [PR #116](https://github.com/owariband/Seekino/pull/116)。验收要求两条原题均返回可回看的片段并且检索工具成功。[设计与实测](../design/03-product-reassessment/cloud-embedding-routing-trd.md) · [工作台](workbench.html)
