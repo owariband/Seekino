@@ -5061,6 +5061,38 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    ]
   },
   {
+   "id": "CHAT-GUEST-01",
+   "title": "游客观看问答使用云端 Chat 单轮预算",
+   "category": "chat",
+   "type": "task",
+   "status": "verifying",
+   "priority": "P1",
+   "description": "允许已获准的游客问答继续读取证据并收尾，按 IP 保留每日请求额度。",
+   "next": "核对 CPU 发布镜像、游客消息选项和公开课程的实际回答。",
+   "verification": "隔离 HTTP 与 Gateway 对照在第五次模型调用收尾。真实 Redis 验证同 IP 换身份、到期与并发控制。",
+   "updatedAt": "2026-11-11",
+   "tags": [
+    "游客",
+    "观看问答"
+   ],
+   "related": [
+    "MOD-CHAT"
+   ],
+   "branch": "fix/guest-chat-turn-budget",
+   "links": [
+    {
+     "label": "游客单轮预算设计与验证",
+     "kind": "trd",
+     "url": "https://github.com/owariband/Seekino/blob/dev/docs/design/03-product-reassessment/guest-chat-turn-budget-trd.md"
+    },
+    {
+     "label": "PR #99",
+     "kind": "pr",
+     "url": "https://github.com/owariband/Seekino/pull/99"
+    }
+   ]
+  },
+  {
    "id": "WATCH-KINO-01",
    "title": "观看页通过 Kino 打开浮窗并可停靠",
    "category": "chat",

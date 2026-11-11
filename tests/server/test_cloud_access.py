@@ -532,19 +532,53 @@ def test_search_rechecks_personal_public_series_after_model_work(cloud_api):
         assert response.status_code == 404, response.text
 
 
-def test_guest_model_call_limits_are_capped_by_server(cloud_api):
+@pytest.mark.parametrize("requested", [{}, {"maxModelCallsPerTurn": 5, "maxToolCallsPerTurn": 9}])
+def test_guest_turn_uses_shared_chat_budgets(cloud_api, requested):
+    shared = cloud_api.services.agent.message_options()
+    series_id, _ = _course(cloud_api)
+    with TestClient(cloud_api.app) as client:
+        guest = _guest(client)
+        response = client.get("/api/agent/messages/options")
+        assert response.status_code == 200, response.text
+        options = response.json()
+        for field, budget in (
+            ("maxModelCallsPerTurn", shared.max_model_calls_per_turn),
+            ("maxToolCallsPerTurn", shared.max_tool_calls_per_turn),
+        ):
+            assert options[field] == {
+                "defaultValue": budget.default_value, "minimum": budget.minimum, "maximum": budget.maximum,
+            }
+        conversation_id = _conversation(client, guest)
+        response = client.post(
+            "/api/agent/messages/send", params={"conversationId": conversation_id},
+            headers={"Idempotency-Key": "guest-budget", "X-CSRF-Token": guest["csrfToken"]},
+            json={"tenantId": guest["publicTenantId"], "content": "找课程片段", "seriesIds": [series_id], **requested},
+        )
+        assert response.status_code == 200, response.text
+        assert len(cloud_api.runtime.calls) == 1
+        _, actual = cloud_api.runtime.calls[0]
+        assert actual["max_model_calls_per_turn"] == requested.get(
+            "maxModelCallsPerTurn", shared.max_model_calls_per_turn.default_value,
+        )
+        assert actual["max_tool_calls_per_turn"] == requested.get(
+            "maxToolCallsPerTurn", shared.max_tool_calls_per_turn.default_value,
+        )
+
+
+@pytest.mark.parametrize("field", ["maxModelCallsPerTurn", "maxToolCallsPerTurn"])
+def test_guest_cannot_exceed_shared_chat_budget(cloud_api, field):
     series_id, _ = _course(cloud_api)
     with TestClient(cloud_api.app) as client:
         guest = _guest(client)
         conversation_id = _conversation(client, guest)
+        maximum = client.get("/api/agent/messages/options").json()[field]["maximum"]
         response = client.post(
             "/api/agent/messages/send", params={"conversationId": conversation_id},
-            headers={"Idempotency-Key": "guest-limit-cap", "X-CSRF-Token": guest["csrfToken"]},
-            json={"tenantId": "platform-public", "content": "找课程片段", "seriesIds": [series_id], "maxModelCallsPerTurn": 999, "maxToolCallsPerTurn": 999},
+            headers={"Idempotency-Key": "above-maximum", "X-CSRF-Token": guest["csrfToken"]},
+            json={"tenantId": guest["publicTenantId"], "content": "找课程片段", "seriesIds": [series_id], field: maximum + 1},
         )
-        assert response.status_code == 200, response.text
-        assert cloud_api.runtime.calls[-1][1]["max_model_calls_per_turn"] == cloud_api.services.auth.config.guest_max_model_calls
-        assert cloud_api.runtime.calls[-1][1]["max_tool_calls_per_turn"] == cloud_api.services.auth.config.guest_max_model_calls * 2
+        assert response.status_code == 400, response.text
+        assert not cloud_api.runtime.calls
 
 
 def test_open_message_stream_revalidates_revoked_token_before_next_snapshot(cloud_api):
