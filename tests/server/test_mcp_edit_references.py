@@ -9,6 +9,9 @@ from engine.parsev2.edit_reference import TechniqueObservation
 from server.database import create_session_factory
 from server.model.parse_content import ChunkParseContent, IntervalParseContent
 from server.model.task import ChunkParseTask, IntervalParseTask, VideoParseTask
+from server.repository.editing_template import EditingTemplateRepository
+from server.repository.library import LibraryRepository
+from server.service.library import LibraryService
 from server.service.mcp_retrieval import McpRetrievalService
 from server.service.video_parse_persistence import INDEX_EMBEDDINGS_DETAIL_KEY
 from server.storage.elasticsearch_references import observation_fingerprint
@@ -69,7 +72,8 @@ def test_search_and_style_card_replay_the_same_current_publication(repository, s
     for key in ("generation", "version", "tenant_id", "fingerprint", "segment_id", "video_id"):
         assert resolve({**hit, key: 2 if key in ("generation", "version") else "other"}) == []
 
-    service = McpRetrievalService(library=None, media=SimpleNamespace(get_original=lambda *a, **kw: True),
+    service = McpRetrievalService(library=LibraryService(LibraryRepository(factory)), media=SimpleNamespace(get_original=lambda *a, **kw: True),
+        editing_repository=EditingTemplateRepository(factory),
         event_retrieval=None, parse_persistence=persistence, local_tenant_id=src.tenant_id,
         reference_store=SimpleNamespace(index_name=index, search=lambda *a, **kw: [hit]))
     found, = service.find_edit_templates("人物登场")["techniques"]
@@ -89,11 +93,21 @@ def test_search_and_style_card_replay_the_same_current_publication(repository, s
     assert read["media"]["clip_url"] == found["media"]["clip_url"]
     chosen = service.read_evidence(token, start_ms=50, end_ms=300)
     assert "startMs=50&endMs=300" in chosen["media"]["clip_url"]
-    with pytest.raises(ValueError, match="EVIDENCE_SCOPE_MISMATCH"):
-        service.read_evidence(token, cloud=True)
+    cloud_media = service.read_evidence(token, cloud=True)["media"]
+    assert cloud_media["original_url"] is None and cloud_media["clip_url"] == found["media"]["clip_url"]
+    revision = dict(new_template={"name": "登场"}, template_id=None, parent_version_id=None, spec={}, runtime={},
+                    visual_requirements={}, slots=[], params_schema={}, files={"cut.js": "export default 1"},
+                    entry="cut.js", evaluation={"context": "first edit"}, check=None, request_id="first", source_refs=[token])
+    saved = service.save_edit_template_version(**revision)
+    ident = {"template_id": saved["template_id"], "version_id": saved["version_id"]}
+    original = service.get_edit_template(**ident)["version"]
+    assert original["sources"][0]["status"] == "current" and original["sources"][0]["note"] == obs.note.model_dump()
     with factory.begin() as session:
         session.get(VideoParseTask, src.video_parse_task_id).status = "INDEXING"
     assert resolve(hit) == []
+    assert service.save_edit_template_version(**revision) == saved
+    archived = service.get_edit_template(**ident)["version"]
+    assert archived["sources"][0]["status"] == "unavailable" and archived["content_hash"] == original["content_hash"]
     with pytest.raises(ValueError, match="EVIDENCE_STALE"):
         service.read_evidence(token)
     with pytest.raises(ValueError, match="EVIDENCE_STALE"):

@@ -25,15 +25,18 @@ def encode_reference_evidence(key: ReferenceKey) -> str:
     return REFERENCE_PREFIX + base64.urlsafe_b64encode(key.model_dump_json().encode()).decode()
 
 
-def resolve_reference_evidence(token: str, persistence: VideoParsePersistenceService, *,
-                               tenant_id: str, index_name: str) -> PublishedReference:
+def decode_reference_evidence(token: str) -> ReferenceKey:
     try:
         if not token.startswith(REFERENCE_PREFIX) or len(token) > 4096:
             raise ValueError("invalid reference")
         body = base64.b64decode(token[len(REFERENCE_PREFIX):], altchars=b"-_", validate=True)
-        key = ReferenceKey.model_validate_json(body)
+        return ReferenceKey.model_validate_json(body)
     except (ValueError, binascii.Error, ValidationError) as error:
         raise ValueError("INVALID_EVIDENCE_REF: Copy the complete editing reference.") from error
+
+
+def resolve_reference_evidence(key: ReferenceKey, persistence: VideoParsePersistenceService, *,
+                               tenant_id: str, index_name: str) -> PublishedReference:
     if key.tenant_id != tenant_id:
         raise ValueError("EVIDENCE_SCOPE_MISMATCH: Reference belongs to a different library.")
     sources = persistence.reference_observations([key], tenant_id=tenant_id, series_ids=[key.series_id],

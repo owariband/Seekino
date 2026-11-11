@@ -42,6 +42,7 @@ import type {
   VideoSummary,
   VideoParseTaskView,
   VideoSearchRequest,
+  VideoTextTimeline,
 } from "./contracts";
 
 export let TENANT_ID =
@@ -235,6 +236,10 @@ export function verifyEmailCode(email: string, code: string, connection = REMOTE
   return requestJson("/api/auth/email/verify", {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email, code }),
   }, accountContext(connection));
+}
+
+export function issuePersonalMcpToken(connection: ApiConnection): Promise<{ accessToken: string; expiresAt: number }> {
+  return requestJson("/api/auth/mcp-token?scope=personal", { method: "POST" }, accountContext(connection));
 }
 
 export function logoutIdentity(connection = REMOTE_CONNECTION ?? PRIMARY_CONNECTION): Promise<AuthIdentity> {
@@ -597,6 +602,10 @@ export function updateAgentGlobalSettings(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ values, revision }),
   });
+}
+
+export function getVideoTextTimeline(videoId: string, tenantId: string, signal?: AbortSignal): Promise<VideoTextTimeline> {
+  return requestJson(`/api/videos/text-timeline?${new URLSearchParams({ tenantId, videoId })}`, { signal });
 }
 
 export function getVideoChunk(videoChunkId: string, tenantId = TENANT_ID): Promise<VideoChunkEvidence> {

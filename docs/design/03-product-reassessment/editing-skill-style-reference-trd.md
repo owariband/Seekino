@@ -84,7 +84,7 @@ Together they remove most of the manual guidance an AI edit needs today: the use
 
 In scope:
 - An **`edit_reference` parse profile** inside the existing parse task. A video parsed with it (for example P5R) gets representative highlights picked in Prepare, high-frame-rate visual analysis of those picks in Understanding, consolidation of observations and a style card in one whole-video Refine window, and indexing.
-- A deferred template-library design, pending a technique-level reuse test after the MCP pilot: reusable templates, immutable versions holding their complete contract and code, append-only evaluations and checks, an explicit default version, and server-side source snapshots.
+- The template library requested for local and signed-in Cloud editing on November 11: reusable templates, immutable versions holding their complete contract and code, append-only evaluations and checks, an explicit default version, and server-side source snapshots.
 - MCP tools for finding templates and observations, reading versions, style cards, saving versions and appending notes.
 - The promo as the acceptance case. The first delivery is a character reaction discoverable by expression and a way to browse the full authorized candidate set through MCP.
 
@@ -309,7 +309,7 @@ For a character reaction, start with the visible action and the character’s na
 | `append_edit_template_note(version_id, kind, entry)` | Adds a timestamped, attributed evaluation or check entry |
 | `set_default_edit_template_version(template_id, version_id, reason)` | Explicit, guarded by `revision`; records a `default_selection` entry |
 
-Write tools run only under MCP's current local mode (loopback-only `_LocalOnly`, `server/api/mcp.py`). Cloud access belongs to the MCP access TRD.
+The November 11 delivery extends the original loopback write contract to each signed-in editor's private Cloud library. The existing guest and public-read credentials keep their original scope. A separate, explicitly requested personal MCP credential authorizes reads and writes in the active account's own library. The server resolves ownership and public reference visibility for each operation. Templates, notes and defaults belong to that owner independently of the public footage they cite. The same installable `seekino-editing-materials` guide describes selecting performances, viewing reference techniques and saving a revision or feedback. A new client should discover and read the guide through MCP and use it in Claude Code or Codex.
 
 ## 3.6 Rejected options
 
@@ -344,6 +344,11 @@ The branches below record how the implementation was developed. [PR #50](https:/
 | 3 | read-only reference lookup and pilot | A fresh editor uses MCP for character material and viewable P5R exemplars, and chooses whether to borrow a technique | §5 |
 | Deferred | `feat/edit-template-library` | Test reuse of one technique-level component before building the two tables and write tools | Measured reuse benefit plus the version invariants in §3.4 |
 | Later | own TRD | Content-type judgment on top of PR #34; `keyframe_ms` for content (E4) | — |
+
+On November 11 the owner requested delivery of the guide and the full tool contract, including personal Cloud writes. This supersedes the earlier scheduling gate for implementation. The E2 cost result still stands. Validate public discovery, a traceable reference clip, persistence across requests, idempotent retries and isolation between two signed-in owners. Product availability and savings from reuse have separate acceptance evidence.
+
+The SDK transport now exposes eleven tools and the installable skill. The modern client discovers the skill and both file digests; the legacy client reads the same bytes as Resources. HTTP tests sign in two ordinary members of a public-library-only deployment, retry a 70 KiB revision, append a client check and select a default. Public credentials and the other member cannot read or change it. The packaged single-frame helper reproduced the original MyGO foreground, matte, background and preview byte for byte. The isolated Elasticsearch and FFmpeg upload test checks original frames for both a performance and a visual reference. Published film quality, reuse cost, and production deployment have their own evidence.
+
 
 # 4. 对照实验与结果分析
 

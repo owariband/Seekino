@@ -53,7 +53,7 @@ def test_retrieve_uses_formal_events_fixed_tenant_and_millisecond_evidence():
     assert (item["start_ms"], item["end_ms"]) == (1, 4)
     assert item["event"]["start_ms"] == 1
     assert "seconds" not in json.dumps(result)
-    library.list_series.assert_called_once_with(tenant_id=inputs["tenant_id"], status="READY", limit=51)
+    library.list_series.assert_called_once_with(tenant_id=inputs["tenant_id"], offset=0, status="READY", limit=51)
     read = service.read_evidence(item["evidence_ref"])
     assert read["matched_event"]["description"] == "角色拿起蓝色杯子"
     assert read["content_version"] == 1

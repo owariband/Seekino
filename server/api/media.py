@@ -11,8 +11,9 @@ from fastapi.responses import FileResponse, Response
 
 from .context import get_identity, get_services
 from .library import read_series
-from ..service.access import is_series_member, require_tenant_write, series_access
-from ..model.dto.mediaDTO import ParseExportOptions, ParseExportRequest, parse_export_event_types
+from ..error.auth import AuthError
+from ..service.access import is_series_member, model_query, require_tenant_write, series_access
+from ..model.dto.mediaDTO import ParseExportOptions, ParseExportRequest, VideoTextTimeline, parse_export_event_types
 from ..repository.library import SeriesNotFoundError
 from ..model.vo.searchVO import VideoChunkEvidenceView
 from .search import evidence_view
@@ -65,6 +66,17 @@ def get_video_content(
                         headers={"Cache-Control": "private, no-store"} if identity.mode == "cloud" else None)
 
 
+def get_video_text_timeline(
+    request: Request, response: Response, video_id: str = Query(alias="videoId"),
+    tenant_id: str = Query(alias="tenantId"),
+) -> VideoTextTimeline:
+    services = get_services(request)
+    video = services.library.get_video(video_id, tenant_id=tenant_id)
+    read_series(request, video.series_id, tenant_id=tenant_id)
+    response.headers["Cache-Control"] = "private, no-store"
+    return services.media.video_text_timeline(video_id, tenant_id=tenant_id)
+
+
 def _clip_output() -> Iterator[Path]:
     # The request-scoped dependency stays alive until FileResponse finishes sending.
     with TemporaryDirectory(prefix="seekino-clip-") as directory:
@@ -74,12 +86,22 @@ def _clip_output() -> Iterator[Path]:
 def get_video_clip(
     request: Request, evidence_ref: str = Query(alias="evidenceRef", min_length=1, max_length=4096),
     start_ms: int = Query(alias="startMs", ge=0), end_ms: int = Query(alias="endMs", gt=0),
-    inline: bool = Query(False),
+    ticket: str | None = Query(None, min_length=1, max_length=8192), inline: bool = Query(False),
     output: Path = Depends(_clip_output, scope="request"),
 ) -> FileResponse:
-    get_services(request).media.write_evidence_clip(
-        get_identity(request), evidence_ref, start_ms=start_ms, end_ms=end_ms, destination=output,
-    )
+    services = get_services(request)
+    if ticket is not None:
+        if getattr(services, "auth", None) is None or services.auth.config.mode != "cloud":
+            raise AuthError("云端片段凭据须在签发服务使用")
+        identity = services.auth.authenticate_clip(ticket, evidence_ref, start_ms, end_ms)
+    else:
+        identity = get_identity(request)
+    with model_query(getattr(services, "auth", None), identity, request.client.host if request.client else "unknown",
+                     maximum_concurrent=getattr(getattr(services, "agent", None), "active_maximum_concurrent_kicks", None)):
+        services.media.write_evidence_clip(identity, evidence_ref, start_ms=start_ms, end_ms=end_ms,
+                                           destination=output, public_only=ticket is not None)
+    if ticket is not None:
+        services.auth.authenticate_clip(ticket, evidence_ref, start_ms, end_ms)
     return FileResponse(output, media_type="video/mp4", filename=f"clip-{start_ms}-{end_ms}.mp4",
                         content_disposition_type="inline" if inline else "attachment",
                         headers={"Cache-Control": "private, no-store"})

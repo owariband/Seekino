@@ -228,7 +228,7 @@ export function WatchPage() {
   };
 
   const switchPaneOnTab = (event: KeyboardEvent<HTMLElement>, destination: "chat" | "player") => {
-    if (event.key !== "Tab") return;
+    if (event.key !== "Tab" || (event.target instanceof Element && event.target.closest('[role="search"]'))) return;
     event.preventDefault();
     if (destination === "chat") focusChat();
     else focusPlayer();

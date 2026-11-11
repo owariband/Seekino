@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from copy import deepcopy
 
-from sqlalchemy import and_, exists, func, or_, select
+from sqlalchemy import Select, and_, exists, func, or_, select
 from sqlalchemy.orm import Session, aliased, load_only
 
 from ..model.dto.parseContentDTO import ChunkParseContentData
@@ -69,6 +69,31 @@ def list_video_tasks(session: Session, *, video_ids: Sequence[str]) -> list[Vide
     ) for row in rows]
 
 
+def saved_source_status(session: Session, snapshot: dict) -> str:
+    """Classify a saved reference after its exact published evidence no longer resolves."""
+    generation = VideoParseTask.parse_config["indexing"]["index_generation"].as_integer()
+    task = session.execute(select(VideoParseTask.id, VideoParseTask.status, generation.label("generation")).select_from(Series).join(
+        Video, Video.series_id == Series.id,
+    ).join(VideoParseTask, VideoParseTask.video_id == Video.id).where(
+        Series.tenant_id == snapshot["tenant_id"], Series.id == snapshot["series_id"],
+        Video.id == snapshot["video_id"], VideoParseTask.is_deleted.is_(False), ~video_deletion_pending(),
+    ).order_by(VideoParseTask.version.desc()).limit(1)).first()
+    if task is None:
+        return "unavailable"
+    if task.id != snapshot["parse_task_id"]:
+        return "superseded"
+    if task.status != "COMPLETE":
+        return "unavailable"
+    version = session.scalar(select(ChunkParseContent.version).join(
+        ChunkParseTask, ChunkParseTask.id == ChunkParseContent.chunk_task_id,
+    ).where(ChunkParseTask.video_task_id == task.id, ChunkParseTask.chunk_id == snapshot["video_chunk_id"]))
+    if version is not None and version != snapshot["content_version"]:
+        return "content_changed"
+    if version is not None and task.generation and task.generation != snapshot["index_generation"]:
+        return "superseded"
+    return "unavailable"
+
+
 def current_reference_tasks(session: Session, *, tenant_id: str, series_ids=None, video_id=None):
     """A newer task of any profile supersedes a previous reference."""
     newer = aliased(VideoParseTask)
@@ -111,30 +136,52 @@ def list_indexed_chunk_rows(
     ) for row in rows]
 
 
-def list_published_timeline_chunks(
-    session: Session, *, workspace: str, series_id: str, task_status: str, phase: int, status: str,
-) -> list[PublishedTimelineChunk]:
-    """Read lightweight publication identities in viewing order, across encoder generations."""
+def _published_timeline_query(query: Select, workspace: str, task_status: str, phase: int, status: str) -> Select:
     newer = aliased(VideoParseTask)
-    array_length = func.json_array_length if session.get_bind().dialect.name == "sqlite" else func.json_length
-    rows = session.execute(select(
-        Video.id, VideoParseTask.id, VideoChunk.id, ChunkParseContent.version,
-        VideoParseTask.parse_config["indexing"]["index_generation"].as_integer(),
-        array_length(ChunkParseContent.content, "$.timeline"),
-    ).select_from(Series).join(Video, Video.series_id == Series.id).join(
+    return query.select_from(Series).join(Video, Video.series_id == Series.id).join(
         VideoParseTask, VideoParseTask.video_id == Video.id,
     ).join(ChunkParseTask, ChunkParseTask.video_task_id == VideoParseTask.id).join(
         VideoChunk, and_(VideoChunk.id == ChunkParseTask.chunk_id, VideoChunk.video_id == Video.id),
     ).join(ChunkParseContent, and_(ChunkParseContent.chunk_task_id == ChunkParseTask.id,
                                    ChunkParseContent.version == ChunkParseTask.indexed_content_version)).where(
-        Series.tenant_id == workspace, Series.id == series_id,
+        Series.tenant_id == workspace,
         func.coalesce(VideoParseTask.parse_config["profile"].as_string(), "content") == "content",
         VideoParseTask.status == task_status, VideoParseTask.is_deleted.is_(False),
         ChunkParseTask.phase == phase, ChunkParseTask.status == status,
         ~exists(select(newer.id).where(newer.video_id == Video.id, newer.is_deleted.is_(False),
                                        newer.version > VideoParseTask.version).correlate(Video, VideoParseTask)),
-    ).order_by(Video.episode_order, Video.id, VideoChunk.sequence_no, VideoChunk.id))
+    )
+
+
+def list_published_timeline_chunks(
+    session: Session, *, workspace: str, series_id: str, task_status: str, phase: int, status: str,
+) -> list[PublishedTimelineChunk]:
+    """Read lightweight publication identities in viewing order, across encoder generations."""
+    array_length = func.json_array_length if session.get_bind().dialect.name == "sqlite" else func.json_length
+    columns = select(
+        Video.id, VideoParseTask.id, VideoChunk.id, ChunkParseContent.version,
+        VideoParseTask.parse_config["indexing"]["index_generation"].as_integer(),
+        array_length(ChunkParseContent.content, "$.timeline"),
+    )
+    query = _published_timeline_query(columns, workspace, task_status, phase, status)
+    rows = session.execute(query.where(Series.id == series_id).order_by(
+        Video.episode_order, Video.id, VideoChunk.sequence_no, VideoChunk.id,
+    ))
     return [PublishedTimelineChunk(*row) for row in rows]
+
+
+def published_video_contents(
+    session: Session, *, workspace: str, video_id: str, task_status: str, phase: int, status: str,
+) -> list[dict] | None:
+    """Read all current Chunk contents and their coverage in one snapshot."""
+    columns = select(VideoParseTask.chunk_count, VideoChunk.sequence_no, ChunkParseContent.content)
+    query = _published_timeline_query(columns, workspace, task_status, phase, status)
+    rows = session.execute(query.where(
+        Video.id == video_id, ~video_deletion_pending(),
+    ).order_by(VideoChunk.sequence_no)).all()
+    if not rows or len(rows) != rows[0].chunk_count or any(row.sequence_no != i for i, row in enumerate(rows)):
+        return None
+    return [row.content for row in rows]
 
 
 def load_task_chunk_rows(

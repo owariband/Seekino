@@ -57,6 +57,7 @@ from .service.job import ParseJobService
 from .service.library import LibraryService
 from .service.media import MediaService
 from .service.mcp_retrieval import McpRetrievalService
+from .repository.editing_template import EditingTemplateRepository
 from .service.model_settings import ModelSettings
 from .service.parse_output_draft import ParseOutputDraftService
 from .service.personal_models import LegacyPersonalModels
@@ -606,6 +607,8 @@ def _build_application_services(
         auth=auth,
         mcp_retrieval=McpRetrievalService(
             library=library, media=media, event_retrieval=event_retrieval,
-            parse_persistence=parse_persistence, local_tenant_id=settings.auth.local_tenant_id, reference_store=reference_store,
-        ) if settings.auth.mode == "local" else None,
+            reference_store=reference_store, editing_repository=EditingTemplateRepository(session_factory),
+            parse_persistence=parse_persistence, local_tenant_id=settings.auth.local_tenant_id,
+            public_tenant_id=settings.auth.public_tenant_id if settings.auth.mode == "cloud" else None,
+        ),
     )

@@ -32,6 +32,18 @@ class ParseExportOptions(ContractModel):
     event_types: list[str]
 
 
+class VideoTextCue(ContractModel):
+    start_ms: int = Field(ge=0)
+    end_ms: int = Field(gt=0)
+    source: Literal["dialogue", "screen_text"]
+    texts: list[str]
+
+
+class VideoTextTimeline(ContractModel):
+    ready: bool
+    cues: list[VideoTextCue]
+
+
 class ParseExportSource(BaseModel):
     model_config = ConfigDict(extra="forbid")
     video_id: str

@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-11T12:50:11+08:00",
+ "updatedAt": "2026-11-11T18:58:26+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 36,
+ "revision": 37,
  "categories": [
   {
    "id": "parse",
@@ -1179,6 +1179,11 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
     {
      "label": "Devlog",
      "url": "https://github.com/owariband/Seekino/blob/56e7977721e51a61b20894c9d38fa775d9300c70/docs/dev/devlog.md#devlog-summary-title-20261029",
+     "kind": "devlog"
+    },
+    {
+     "label": "MyGO 第 2 集线上标题复核（2026-11-11）",
+     "url": "https://github.com/owariband/Seekino/blob/dev/docs/dev/devlog.md#devlog-mygo-ep02-title-20261111",
      "kind": "devlog"
     }
    ],
@@ -5067,9 +5072,9 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "type": "task",
    "status": "verifying",
    "priority": "P1",
-   "description": "允许已获准的游客问答继续读取证据并收尾，按 IP 保留每日请求额度。",
+   "description": "云端新回答默认可使用 100 次模型和 100 次工具调用，按 IP 保留每日请求额度。",
    "next": "核对 CPU 发布镜像、游客消息选项和公开课程的实际回答。",
-   "verification": "隔离 HTTP 与 Gateway 对照在第五次模型调用收尾。真实 Redis 验证同 IP 换身份、到期与并发控制。",
+   "verification": "隔离 HTTP 验证 100/100 默认与上界，配置升级只写独立文件。真实 Redis 验证同 IP 换身份、到期与并发控制。",
    "updatedAt": "2026-11-11",
    "tags": [
     "游客",
@@ -5089,6 +5094,11 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "label": "PR #99",
      "kind": "pr",
      "url": "https://github.com/owariband/Seekino/pull/99"
+    },
+    {
+     "label": "100/100 修正 #101",
+     "kind": "pr",
+     "url": "https://github.com/owariband/Seekino/pull/101"
     }
    ]
   },
@@ -5193,6 +5203,66 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    ]
   },
   {
+   "id": "MCP-CLOUD-01",
+   "title": "剪辑机通过公网 MCP 获取平台公开片段",
+   "category": "creation",
+   "type": "requirement",
+   "status": "verifying",
+   "priority": "P1",
+   "description": "让本机 Agent 同时连接公开系列和本机库。",
+   "next": "按 main 发布流程验证公网握手和 MyGO 取片。",
+   "verification": "隔离验证四个工具、范围授权和 H.264/AAC 下载。线上 Web 样片已取回，公网 MCP 待发布。",
+   "updatedAt": "2026-11-11",
+   "tags": [
+    "MCP",
+    "剪辑"
+   ],
+   "related": [
+    "B15",
+    "MOD-CREATION"
+   ],
+   "branch": "feat/cloud-public-mcp",
+   "links": [
+    {
+     "label": "Cloud MCP TRD",
+     "kind": "trd",
+     "url": "https://github.com/owariband/Seekino/blob/dev/docs/design/03-product-reassessment/cloud-public-mcp-trd.md"
+    },
+    {
+     "label": "PR #106",
+     "kind": "pr",
+     "url": "https://github.com/owariband/Seekino/pull/106"
+    }
+   ]
+  },
+  {
+   "id": "WATCH-FIND-01",
+   "title": "在当前视频按台词和画面文字跳转",
+   "category": "search",
+   "type": "requirement",
+   "status": "verifying",
+   "priority": "P1",
+   "description": "观看页支持混合繁简、字间空格和逐处跳转，同一事件的对白译文共用一个位置。",
+   "next": "发布后用新游客会话在 MyGO 第一集核对命中列表和播放器实际位置。",
+   "verification": "localhost 的 MyGO E01 命中 05:01.166，E02 命中 11:20.820 和 22:00.000，Chrome 实际跳转时间逐项相符，每集只读一次。E02 片尾姓名在 21:58.000 的原帧可见，22:00.000 已消失。接口用例覆盖切集、授权撤回和旧版失效。",
+   "updatedAt": "2026-11-11",
+   "tags": ["片内查找", "繁简匹配"],
+   "related": ["MOD-SEARCH", "MOD-LIBRARY"],
+   "branch": "feat/watch-text-find",
+   "links": [
+    {
+     "label": "视频内文字查找设计与验收",
+     "url": "https://github.com/owariband/Seekino/blob/feat/watch-text-find/docs/design/03-product-reassessment/watch-text-find-trd.md",
+     "kind": "trd"
+    },
+    {
+     "label": "PR #105",
+     "url": "https://github.com/owariband/Seekino/pull/105",
+     "kind": "pr"
+    }
+   ]
+  },
+  {
    "id": "EDIT-CLIP-01",
    "title": "编辑自选连续原片入出点并下载 MP4",
    "category": "search",
@@ -5239,8 +5309,8 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "priority": "P1",
    "description": "从剧本寻找可剪表演和有原片依据的手法，编辑在本机选入点、出点并判断如何使用。",
    "next": "片主决定何时由 Claude 用剧本、MCP 和本地工具独立验收。",
-   "verification": "同一 #50 应用在独立 MySQL、ES 和临时媒体目录从两支上传贯通六个 MCP 工具、带毫秒引证的新卡及两段 MP4。真实 P5R 回看 34 帧。",
-   "updatedAt": "2026-11-10",
+   "verification": "同一 #50 应用在独立 MySQL、ES 和临时媒体目录从两支上传贯通六个 MCP 工具、带毫秒引证的新卡及两段 MP4。真实 P5R 回看 34 帧。11 月 11 日隔离验证了 11 个工具、Skill 文件摘要、两个普通账户之间的模板权限和重复写入。",
+   "updatedAt": "2026-11-11",
    "tags": [
     "参考片",
     "MCP"

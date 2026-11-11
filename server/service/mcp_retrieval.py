@@ -1,4 +1,4 @@
-"""Ranked retrieval and complete, version-pinned browsing for the local MCP endpoint."""
+"""Ranked retrieval and version-pinned browsing within one MCP library."""
 
 from __future__ import annotations
 
@@ -14,14 +14,18 @@ from engine.rag.indexing.events import compute_event_id
 from engine.rag.retrieval.contracts import EventIndexNotReadyError, SeriesNotReadyError
 
 from ..constants.media import CLOUD_CLIP_MAX_MS
+from ..constants.identity import LOCAL_USER_ID
 from ..model.dto.parseContentDTO import PublishedReference
 from ..error.retrieval import SeriesScopeNotFoundError
+from ..model.dto.authDTO import AuthIdentity
+from ..model.dto.libraryDTO import SeriesState
+from ..repository.library import SeriesNotFoundError
 from .pagination import decode_cursor, encode_cursor
 from .library import LibraryService
 from .media import MediaMissingError, MediaNotReadyError, MediaService, validate_clip_range
 from .video_event_retrieval import VideoEventRetrievalService
 from .mcp_evidence import (
-    REFERENCE_PREFIX, EvidenceRef, encode_reference_evidence, evidence_clip_url, evidence_identity,
+    REFERENCE_PREFIX, EvidenceRef, decode_reference_evidence, encode_reference_evidence, evidence_clip_url, evidence_identity,
     published_chunk, resolve_reference_evidence,
 )
 from .video_parse_persistence import VideoParsePersistenceService
@@ -37,21 +41,49 @@ class McpRetrievalService:
     def __init__(
         self, *, library: LibraryService, media: MediaService,
         event_retrieval: VideoEventRetrievalService | None,
-        parse_persistence: VideoParsePersistenceService, local_tenant_id: str, reference_store=None,
+        parse_persistence: VideoParsePersistenceService, local_tenant_id: str, public_tenant_id: str | None = None,
+        reference_store=None, editing_repository=None,
     ) -> None:
         if not isinstance(local_tenant_id, str) or not local_tenant_id.strip():
             raise ValueError("local_tenant_id must be nonblank")
         self._library, self._media = library, media
         self._events, self._persistence = event_retrieval, parse_persistence
-        self._tenant_id = local_tenant_id
+        self._tenant_id = public_tenant_id if public_tenant_id is not None else local_tenant_id
+        self._public = public_tenant_id is not None
         self._reference_store = reference_store
+        self._editing = editing_repository
 
-    def find_edit_templates(self, query, *, series_ids=None, top_k=5):
+    def _editing_scope(self, viewer):
+        if self._public:
+            self._public_owner(viewer)
+            if viewer.is_guest or not viewer.editing_tenant_id:
+                raise ValueError("PERSONAL_LIBRARY_REQUIRED: Use a personal Cloud credential.")
+            return viewer.editing_tenant_id, viewer.user_id
+        return self._tenant_id, LOCAL_USER_ID
+
+    def find_edit_templates(self, query, *, tags=None, series_ids=None, include_parse_techniques=True,
+                            top_k=5, viewer: AuthIdentity | None = None):
         _integer(top_k, "top_k", 1, 8)
         if not query.strip() or len(query) > 2000:
             raise ValueError("INVALID_ARGUMENT: Enter a technique query")
+        if self._public:
+            self._public_owner(viewer)
+        templates = []
+        if self._editing is not None and (not self._public or (viewer.editing_tenant_id and not viewer.is_guest)):
+            templates = self._editing.search(*self._editing_scope(viewer), query=query.strip(), limit=top_k, tags=tags)
+        if not include_parse_techniques:
+            return {"techniques": [], "templates": templates}
         if self._reference_store is None:
+            if self._editing is not None:
+                return {"techniques": [], "templates": templates, "warnings": ["REFERENCE_INDEX_UNAVAILABLE"]}
             raise ValueError("REFERENCE_INDEX_UNAVAILABLE: Reference search is not configured")
+        if self._public:
+            if series_ids is None:
+                states = self._series_page(0, 51, viewer, ready_only=True)
+                if len(states) > 50:
+                    raise ValueError("SERIES_SELECTION_REQUIRED: Select a reference series.")
+                series_ids = [state.series_id for state in states]
+            self._require_series(series_ids, viewer)
         scope = self._persistence.reference_scope(self._tenant_id, series_ids)
         hits = self._reference_store.search(query.strip(), tenant_id=self._tenant_id, task_ids=scope, size=top_k * 3)
         notes = self._persistence.reference_observations(hits, tenant_id=self._tenant_id, series_ids=series_ids,
@@ -65,9 +97,60 @@ class McpRetrievalService:
             card = _reference_card(source)
             card.update(steps=[s.model_dump() for s in source.observation.note.motion.steps],
                         fine_starts_ms=source.observation.segment.fine_starts_ms)
-            card["media"] = _reference_media(media_by_video[video_id], card["evidence_ref"], card["start_ms"], card["end_ms"])
+            card["media"] = _reference_media(media_by_video[video_id], card["evidence_ref"], card["start_ms"], card["end_ms"], self._public)
             techniques.append(card)
-        return {"techniques": techniques, "templates": []}
+        self._require_series([card["series_id"] for card in techniques], viewer)
+        return {"techniques": techniques, "templates": templates}
+
+    def _source_snapshot(self, evidence_ref, viewer):
+        evidence = self.read_evidence(evidence_ref, viewer=viewer)
+        fields = ("evidence_ref", "series_id", "video_id", "parse_task_id", "content_version", "index_generation",
+                  "video_chunk_id", "segment_id", "technique_key", "start_ms", "end_ms", "note", "event_id")
+        snapshot = {key: evidence[key] for key in fields if key in evidence}
+        if "matched_event" in evidence:
+            event = evidence["matched_event"]
+            snapshot.update(note=event, start_ms=event["start_ms"], end_ms=event["end_ms"])
+        return {"tenant_id": self._tenant_id, **snapshot}
+
+    def _source_status(self, snapshot, viewer):
+        if self._tenant_id != snapshot["tenant_id"]:
+            return "unavailable"
+        try:
+            self._require_series([snapshot["series_id"]], viewer)
+            self._library.get_video(snapshot["video_id"], tenant_id=self._tenant_id)
+            self._source_snapshot(snapshot["evidence_ref"], viewer)
+        except (SeriesNotFoundError, LookupError):
+            return "unavailable"
+        except ValueError as error:
+            if str(error).startswith("EVIDENCE_STALE"):
+                return self._persistence.saved_source_status(snapshot)
+            if str(error).startswith(("EVIDENCE_SCOPE_MISMATCH", "REFERENCE_INDEX_UNAVAILABLE")):
+                return "unavailable"
+            raise
+        return "current"
+
+    def get_edit_template(self, template_id, version_id=None, *, viewer=None):
+        result = self._editing.read(*self._editing_scope(viewer), template_id, version_id)
+        if result.get("version"):
+            for source in result["version"]["sources"]:
+                source["status"] = self._source_status(source, viewer)
+        return result
+
+    def list_edit_template_versions(self, template_id, *, viewer=None):
+        return self._editing.versions(*self._editing_scope(viewer), template_id)
+
+    def save_edit_template_version(self, *, source_refs, viewer=None, **arguments):
+        scope = self._editing_scope(viewer)
+        content = {name: arguments.pop(name) for name in
+                   ("spec", "visual_requirements", "slots", "params_schema", "files", "entry", "runtime")}
+        return self._editing.save(*scope, content=content, source_refs=source_refs,
+                                  resolve_source=lambda ref: self._source_snapshot(ref, viewer), **arguments)
+
+    def append_edit_template_note(self, *, viewer=None, **arguments):
+        return self._editing.append(*self._editing_scope(viewer), **arguments)
+
+    def set_default_edit_template_version(self, *, viewer=None, **arguments):
+        return self._editing.set_default(*self._editing_scope(viewer), **arguments)
 
     def _reference_original_url(self, video_id):
         try:
@@ -76,9 +159,12 @@ class McpRetrievalService:
             return None
         return "/api/videos/content?" + urlencode({"tenantId": self._tenant_id, "videoId": video_id, "variant": "original"})
 
-    def get_style_card(self, video_id):
+    def get_style_card(self, video_id, *, viewer: AuthIdentity | None = None):
         if self._reference_store is None:
             raise ValueError("REFERENCE_INDEX_UNAVAILABLE: Reference search is not configured")
+        if self._public:
+            video = self._library.get_video(video_id, tenant_id=self._tenant_id)
+            self._require_series([video.series_id], viewer)
         task_id, card, sources = self._persistence.reference_style_card(
             tenant_id=self._tenant_id, video_id=video_id, index_name=self._reference_store.index_name,
         )
@@ -89,13 +175,36 @@ class McpRetrievalService:
             for signal in style["signals"]:
                 for example in signal["examples"]:
                     example["evidence_ref"] = refs[example["segment_id"]]
+        if self._public:
+            self._require_series([video.series_id], viewer)
         return {"video_id": video_id, "parse_task_id": task_id, "style_card": style, "exemplars": exemplars,
                 "style_card_format": "anchored_signals" if "signals" in style else "legacy_technique_groups"}
 
-    def list_series(self, offset: int = 0, limit: int = 20) -> dict[str, Any]:
+    def _public_owner(self, viewer: AuthIdentity | None) -> str:
+        if viewer is None or viewer.mode != "cloud" or viewer.public_tenant_id != self._tenant_id:
+            raise ValueError("EVIDENCE_SCOPE_MISMATCH: Missing Cloud library identity.")
+        return viewer.user_id
+
+    def _require_series(self, series_ids: list[str], viewer: AuthIdentity | None) -> None:
+        if self._public:
+            owner = self._public_owner(viewer)
+            for series_id in dict.fromkeys(series_ids):
+                self._library.require_public_ready_series(series_id, tenant_id=self._tenant_id, owner_user_id=owner)
+
+    def _series_page(self, offset: int, limit: int, viewer: AuthIdentity | None, *, ready_only: bool = False) -> list[SeriesState]:
+        if self._public:
+            states, _ = self._library.list_public_series_page(
+                tenant_id=self._tenant_id, owner_user_id=self._public_owner(viewer), status="READY",
+                offset=offset, limit=limit,
+            )
+            return states
+        return self._library.list_series(tenant_id=self._tenant_id, offset=offset, limit=limit,
+                                         **({"status": "READY"} if ready_only else {}))
+
+    def list_series(self, offset: int = 0, limit: int = 20, *, viewer: AuthIdentity | None = None) -> dict[str, Any]:
         _integer(offset, "offset", 0, 1_000_000)
         _integer(limit, "limit", 1, 50)
-        states = self._library.list_series(tenant_id=self._tenant_id, offset=offset, limit=limit + 1)
+        states = self._series_page(offset, limit + 1, viewer)
         items = [{
             "series_id": state.series_id, "name": (state.display_name or state.name)[:255],
             "status": state.status, "video_count": state.video_count,
@@ -106,6 +215,7 @@ class McpRetrievalService:
     def retrieve(
         self, query: str, series_ids: list[str] | None = None, top_k: int = 5,
         event_types: list[str] | None = None, speaker: str | None = None, cursor: str | None = None,
+        *, viewer: AuthIdentity | None = None,
     ) -> dict[str, Any]:
         _integer(top_k, "top_k", 1, 20)
         if not isinstance(query, str) or not query.strip() or len(query) > 4000:
@@ -113,7 +223,7 @@ class McpRetrievalService:
         if self._events is None:
             raise ValueError("EVENT_INDEX_NOT_READY: Event retrieval is not configured; no search was performed.")
         if series_ids is None:
-            states = self._library.list_series(tenant_id=self._tenant_id, status="READY", limit=51)
+            states = self._series_page(0, 51, viewer, ready_only=True)
             if len(states) > 50:
                 raise ValueError("SERIES_SELECTION_REQUIRED: Use list_series and select at most 50 series.")
             series_ids = [state.series_id for state in states]
@@ -127,6 +237,7 @@ class McpRetrievalService:
             raise ValueError("INVALID_ARGUMENT: event_types must be a list of supported Event types.")
         if speaker is not None and (not isinstance(speaker, str) or not speaker.strip() or len(speaker) > 255):
             raise ValueError("INVALID_ARGUMENT: speaker must contain 1–255 characters.")
+        self._require_series(series_ids, viewer)
         try:
             found = self._events.search(
                 query, tenant_id=self._tenant_id, series_ids=series_ids, top_k=top_k,
@@ -137,6 +248,10 @@ class McpRetrievalService:
         except ValueError as error:
             raise ValueError("INVALID_ARGUMENT: Check series IDs, Event types and speaker filters.") from error
         result = found.chunk_result
+        if self._public:
+            if not set(result.series_ids).issubset(series_ids):
+                raise SeriesNotFoundError("检索结果超出所选公开系列")
+            self._require_series(series_ids, viewer)
         by_chunk = {hit.evidence.video_chunk_id: hit.evidence for hit in result.hits}
         items, truncated = [], False
         used_bytes = 0
@@ -161,7 +276,10 @@ class McpRetrievalService:
             truncated |= card["evidence_truncated"]
         next_offset = offset + len(items)
         more = next_offset < len(found.matches)
-        warnings = [str(value)[:500] for value in result.warnings[:8]]
+        if self._public:
+            warnings = ["Results cover only part of the requested footage."] if result.partial else []
+        else:
+            warnings = [str(value)[:500] for value in result.warnings[:8]]
         if truncated:
             warnings.append("Inspect source media for abbreviated details. Follow next_cursor for more ranked results when present.")
         return {
@@ -176,9 +294,11 @@ class McpRetrievalService:
     def browse_events(
         self, series_id: str, visible_names: list[str] | None = None,
         limit: int = 24, cursor: str | None = None,
+        *, viewer: AuthIdentity | None = None,
     ) -> dict[str, Any]:
         """Walk every published Timeline Event in episode order, without a similarity cutoff."""
         _integer(limit, "limit", 1, 50)
+        self._require_series([series_id], viewer)
         if visible_names is not None and (
             not isinstance(visible_names, list) or not 1 <= len(visible_names) <= 32
             or any(not isinstance(n, str) or not n.strip() or len(n) > 255 for n in visible_names)
@@ -237,6 +357,7 @@ class McpRetrievalService:
                 position += 1
             if position < chunk_end:
                 break
+        self._require_series([series_id], viewer)
         return {"series_id": series_id, "published_event_count": total, "returned_event_count": len(items),
                 "resolved_visible_names": sorted(resolved_names)[:32], "resolved_name_count": len(resolved_names),
                 "ambiguous_names": sorted(ambiguous),
@@ -244,22 +365,30 @@ class McpRetrievalService:
 
     def read_evidence(
         self, evidence_ref: str, *, start_ms: int | None = None, end_ms: int | None = None, cloud: bool = False,
+        viewer: AuthIdentity | None = None,
     ) -> dict[str, Any]:
         if isinstance(evidence_ref, str) and evidence_ref.startswith(REFERENCE_PREFIX):
-            if cloud or self._reference_store is None:
-                raise ValueError("EVIDENCE_SCOPE_MISMATCH: Editing references are available in the local library")
-            source = resolve_reference_evidence(evidence_ref, self._persistence, tenant_id=self._tenant_id,
+            if self._reference_store is None:
+                raise ValueError("REFERENCE_INDEX_UNAVAILABLE: Reference search is not configured")
+            key = decode_reference_evidence(evidence_ref)
+            self._require_series([key.series_id], viewer)
+            source = resolve_reference_evidence(key, self._persistence, tenant_id=self._tenant_id,
                                                 index_name=self._reference_store.index_name)
             segment = source.observation.segment
             if start_ms is None and end_ms is None:
                 start_ms, end_ms = segment.start_ms, segment.end_ms
-            validate_clip_range(start_ms, end_ms, duration_ms=source.duration_ms, cloud=False)
+                if self._public or cloud:
+                    end_ms = min(end_ms, start_ms + CLOUD_CLIP_MAX_MS)
+            validate_clip_range(start_ms, end_ms, duration_ms=source.duration_ms, cloud=self._public or cloud)
             original_url = self._reference_original_url(source.key.video_id)
+            self._require_series([key.series_id], viewer)
             return {**_reference_card(source), "duration_ms": source.duration_ms, "kind": "edit_reference",
                     "note": source.observation.note.model_dump(), "measured": segment.model_dump(),
-                    "media": _reference_media(original_url, evidence_ref, start_ms, end_ms),
+                    "media": _reference_media(original_url, evidence_ref, start_ms, end_ms, self._public or cloud),
                     "warnings": [] if original_url else ["Original media is unavailable."]}
         ref = EvidenceRef.decode(evidence_ref)
+        cloud = self._public or cloud
+        self._require_series([ref.identity.series_id], viewer)
         evidence = ref.resolve(self._persistence, tenant_id=self._tenant_id)
         clip_requested = start_ms is not None or end_ms is not None
         if clip_requested:
@@ -321,6 +450,7 @@ class McpRetrievalService:
             observation = CameraReference.model_validate(source_event["camera_ref"])
             result["camera_replay"] = camera_replay(observation, matched_event["start_ms"], matched_event["end_ms"],
                                                     evidence.camera_hints)
+        self._require_series([evidence.series_id], viewer)
         return result
 
 
@@ -333,8 +463,10 @@ def _reference_card(source: PublishedReference) -> dict[str, Any]:
             "name": obs.note.name, "summary": obs.note.summary, "palette": [p.model_dump() for p in obs.segment.palette]}
 
 
-def _reference_media(original_url, evidence_ref, start_ms, end_ms):
-    return {"original_url": original_url,
+def _reference_media(original_url, evidence_ref, start_ms, end_ms, cloud):
+    if cloud:
+        end_ms = min(end_ms, start_ms + CLOUD_CLIP_MAX_MS)
+    return {"original_url": None if cloud else original_url,
             "clip_url": evidence_clip_url(evidence_ref, start_ms, end_ms) if original_url else None,
             "start_ms": start_ms, "end_ms": end_ms, "mime_type": "video/mp4"}
 

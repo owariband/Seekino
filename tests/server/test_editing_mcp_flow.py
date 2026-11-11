@@ -218,7 +218,8 @@ def test_one_mcp_from_upload_to_both_source_clips(tmp_path, editing_app):
         assert init.json()["result"]["serverInfo"]["name"] == "seekino"
         tools = _rpc(client, "tools/list").json()["result"]["tools"]
         assert {t["name"] for t in tools} == {"list_series", "retrieve", "browse_events", "read_evidence",
-                                              "find_edit_templates", "get_style_card"}
+                                              "find_edit_templates", "get_style_card", "get_edit_template", "list_edit_template_versions",
+            "save_edit_template_version", "append_edit_template_note", "set_default_edit_template_version"}
         def call(name, **arguments):
             result = _call(client, name, arguments)
             assert not result.get("isError"), result
@@ -246,3 +247,49 @@ def test_one_mcp_from_upload_to_both_source_clips(tmp_path, editing_app):
         played = _check_clip(client, hit["media"]["play_url"], tmp_path / "exemplar.mp4", reference,
                              start_ms=hit["start_ms"], end_ms=hit["end_ms"], disposition="inline")
         assert client.get(ref["media"]["clip_url"]).content == played
+
+        # Serve the same indexed fixture as a published Cloud library, then withdraw the series.
+        from unittest.mock import Mock
+        from server.api.app import build_app
+        from server.config.auth import AuthConfig
+        from server.config.sse import SSEConfig
+        from server.model.tenant import Tenant
+        from server.model.video import Series, SeriesVisibility
+        from server.service.auth import AuthService
+        from server.service.mcp_retrieval import McpRetrievalService
+
+        services = editing_app.state.services
+        local = services.mcp_retrieval
+        sessions = services.auth.repository._session_factory
+        tenant = "local-default"
+        with sessions.begin() as session:
+            publisher = session.get(Tenant, tenant)
+            publisher.type, publisher.owner_id = "public", None
+            session.get(Series, series_id).visibility = SeriesVisibility.PUBLIC
+        cloud_auth = AuthService(services.auth.repository,
+            AuthConfig(mode="cloud", public_tenant_id=tenant, local_tenant_id="unused-local", secret_key="editing-fixture" * 4),
+            redis=Mock(eval=Mock(return_value=[1, 0])))
+        reader = McpRetrievalService(library=services.library, media=services.media, event_retrieval=None,
+            parse_persistence=local._persistence, reference_store=local._reference_store,
+            editing_repository=local._editing, local_tenant_id=tenant, public_tenant_id=tenant)
+        origin = "https://editing.example.com"
+        app = build_app(SimpleNamespace(auth=cloud_auth, mcp_retrieval=reader, media=services.media),
+                        settings=SimpleNamespace(auth=cloud_auth.config, allowed_origins=(origin,), sse=SSEConfig()))
+        with TestClient(app, base_url=origin, headers={"Accept": "application/json, text/event-stream"}) as public:
+            token = public.post("/api/auth/mcp-token").json()["accessToken"]
+            public.headers["Authorization"] = "Bearer " + token
+            public_card = _call(public, "get_style_card", {"video_id": reference_id})["structuredContent"]
+            assert public_card["exemplars"][0]["evidence_ref"] == hit["evidence_ref"]
+            public_hit = _call(public, "find_edit_templates", {"query": "方块逐级硬切"})["structuredContent"]["techniques"][0]
+            url = public_hit["media"]["play_url"]
+            assert public_hit["media"]["original_url"] is None and "ticket=" in url and token not in url
+            del public.headers["Authorization"]
+            assert _check_clip(public, url, tmp_path / "cloud-reference.mp4", reference,
+                               start_ms=hit["start_ms"], end_ms=hit["end_ms"], disposition="inline") == played
+            with sessions.begin() as session:
+                session.get(Series, series_id).visibility = SeriesVisibility.PRIVATE
+            assert public.get(url).status_code == 404
+            public.headers["Authorization"] = "Bearer " + token
+            assert _call(public, "get_style_card", {"video_id": reference_id})["isError"]
+            assert _call(public, "read_evidence", {"evidence_ref": hit["evidence_ref"]})["isError"]
+            assert _call(public, "find_edit_templates", {"query": "方块逐级硬切"})["structuredContent"]["techniques"] == []

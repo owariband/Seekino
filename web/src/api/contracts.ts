@@ -93,6 +93,11 @@ export interface VideoEpisodeUpdateRequest {
   episodeOrder: number;
 }
 
+export interface VideoTextTimeline {
+  ready: boolean;
+  cues: { startMs: number; endMs: number; source: "dialogue" | "screen_text"; texts: string[] }[];
+}
+
 export interface ParseExportRequest {
   tenantId: string;
   videoIds: string[];

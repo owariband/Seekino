@@ -110,6 +110,7 @@ Event / Sub-Chunk 的实施入口是 [sub-chunk-trd.md](02-agent-harness/sub-chu
 | 设置工作区 | [settings-workspace-trd.md](03-product-reassessment/settings-workspace-trd.md) | 分类设置、保留聊天草稿、共享 Kino 偏好及 Flash 与 Pro 同题对照。 |
 | 对话回答模型与输入区 | [chat-composer-models-trd.md](03-product-reassessment/chat-composer-models-trd.md) | 当前对话保存回答模型，输入面板支持附件，桌面历史可调宽。依赖 #67。 |
 | 观看页 Kino 入口 | [watch-kino-entry-trd.md](03-product-reassessment/watch-kino-entry-trd.md) | 打开悬浮陪看、停靠与位置记忆，窄屏使用底部抽屉。 |
+| 视频内文字查找 | [watch-text-find-trd.md](03-product-reassessment/watch-text-find-trd.md) | 按台词与画面文字逐处跳转，支持繁简混排与字间空白。 |
 | 观看回答交付 | [watch-answer-delivery-trd.md](03-product-reassessment/watch-answer-delivery-trd.md) | 修复：实时证据不提交视频卡、失败表述准确、回答长度与用户可见术语受控（LOOP-06 / C22 / C25）。 |
 | 对话延迟创建 | [chat-lazy-conversation-trd.md](03-product-reassessment/chat-lazy-conversation-trd.md) | 修复：打开页面、新对话、删除补位不再创建空对话，首次发送时才创建；实现完成，待合并。 |
 | Chat 正文流式与真实 FTT | [chat-streaming-trd.md](03-product-reassessment/chat-streaming-trd.md) | 承接课程 PRD：正文增量交付、调用来源、浏览器采证及非流式/缓冲反例；关联 #18 / #25。 |
@@ -118,6 +119,7 @@ Event / Sub-Chunk 的实施入口是 [sub-chunk-trd.md](02-agent-harness/sub-chu
 | 网页搜索供应商 | [deepseek-web-search-trd.md](03-product-reassessment/deepseek-web-search-trd.md) | 主 TRD：可选免 key DDGS / DeepSeek API、查询边界、错误处理与真实入口验证。 |
 | 外部 Agent MCP 接入 | [mcp-access-trd.md](03-product-reassessment/mcp-access-trd.md) | 主 TRD：localhost 工具发现、Event 召回、版本化证据与媒体取用；外部 Agent 承担制作。 |
 | 剪辑双召回 | [主设计与实现](03-product-reassessment/editing-skill-style-reference-trd.md) | [#50](https://github.com/owariband/Seekino/pull/50) 从剧本召回可剪表演和有原片依据的剪辑手法。模板库待跨片复用验收后决定。 |
+| 云端公开系列 MCP | [cloud-public-mcp-trd.md](03-product-reassessment/cloud-public-mcp-trd.md) | 公网原生工具发现、公开素材检索与可直接下载的片段。 |
 | 动画表情素材召回 | [E4 专项](03-product-reassessment/anime-material-recall-trd.md) | 动画表情提示词、整集对照与 MCP 全量素材浏览。 |
 | 剧本双召回与原片取用 | [同一个 MCP 的整体验收](03-product-reassessment/mcp-edit-references-trd.md) | 从剧本找表演、查手法、取用两类原片，随 #50 向 dev 交付。 |
 | 剪辑参考解析 | [代表片段与全片风格卡](03-product-reassessment/edit-reference-profile-trd.md) | 参考档案使用原片帧与独立手法索引。 |

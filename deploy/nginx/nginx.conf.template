@@ -47,7 +47,7 @@ http {
         client_max_body_size 32m;
         client_body_timeout 120s;
 
-        location ~ ^/(api(?:/|$)|healthz$) {
+        location ~ ^/(api(?:/|$)|healthz$|mcp$) {
             gzip off;
             # No URI suffix: preserve /api and keep media authorization upstream.
             proxy_pass http://127.0.0.1:@API_PORT@;

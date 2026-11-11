@@ -62,6 +62,7 @@ hypnos 于 **2026-04-27 入职实习**，到这次面试复盘时已接近半年
 | [kimi-streaming-trd.md](kimi-streaming-trd.md) | 2026-10-30，长 Chunk 504 与历史流式成功记录 | 正式 Kimi 生成入口接入 Chat SSE，收齐后校验和执行工具 | 单独验证代码接入、流式接口兼容性、真实素材效果与部署 |
 | [model-streaming-trd.md](model-streaming-trd.md) | 2026-10-31，默认 stream 被 profile / 入口写死，temperature 缺少创建时配置 | 通用模型配置、默认 stream=true / temperature=0、Kimi 固定温度、独立 fallback、共享协议接收与 Parse 快照 | 承接 Kimi 接入修复；隔离 HTTP 验证与真实部署、供应商效果分开验收 |
 | [local-whisperx-asr-trd.md](local-whisperx-asr-trd.md) | 2026-10-29 本地 ASR；10-30 故障续版与 10-31 存储／GPU 测试 | 视频级 ASR／Summary 持久成果、Task／成果归类及 Turbo＋Metal 本地测试接线 | 存储与恢复隔离验证通过；Turbo＋Metal 正式 Gateway 短样本与完整 116 分 20 秒 ASR 均通过，业务库迁移、独立对齐及完整课程闭环待验 |
+| [cloud-public-mcp-trd.md](cloud-public-mcp-trd.md) | 2026-11-11，本机剪辑 Agent 取云端公开素材 | 同一 MCP SDK 挂载到 Cloud，按发布范围检索，下载有时限和区间限制的 MP4 | 游客身份、工具发现与真实取片分别验证 |
 | [mcp-access-trd.md](mcp-access-trd.md) | 2026-10-28，外部 Agent 素材库与演示需求 | 将首要交付收敛为 localhost MCP，Cloud 保留 Chat 与后续轻量 HTML 作品 | 区分协议与隔离测试、真实 Codex 连接、真实素材到作品；不把历史 Sandbox 探针当作已交付能力 |
 | [剪辑双召回主设计](editing-skill-style-reference-trd.md) | 2026-11-05 开题，同一 PR 交付设计和代码 | 编辑从剧本找表演与剪辑手法，凭证据取回原片 | [需求、实现与验收 #50](https://github.com/owariband/Seekino/pull/50) |
 | [本机 MCP 接口与整体验收](mcp-edit-references-trd.md) | #50 接口部分 | 由同一客户端查表演、查手法、取两段原片 | [可复跑测试](../../../tests/server/test_editing_mcp_flow.py) |
@@ -117,5 +118,6 @@ hypnos 于 **2026-04-27 入职实习**，到这次面试复盘时已接近半年
 - [模型注册与用途](model-registry-roles-trd.md) 延伸 #74，将同一组注册模型接入聊天、解析和检索。
 - [游客观看问答的执行预算](guest-chat-turn-budget-trd.md) 记录第五次模型调用中断的复现，以及按 IP 计数的独立验收。
 - [观看页 Kino 入口与悬浮陪看窗](watch-kino-entry-trd.md) 记录桌面浮窗、停靠、全屏和手机抽屉的实测。
+- [视频内文字查找](watch-text-find-trd.md) 记录当前一集的台词、画面文字和播放器毫秒跳转。[PR #105](https://github.com/owariband/Seekino/pull/105)
 - [设置工作区](settings-workspace-trd.md) 记录会话内打开设置、设备偏好、管理员配置和设计样稿对照。
 - [对话回答模型与输入区](chat-composer-models-trd.md) 记录会话级模型选择、附件位置和侧栏调宽。状态见[工作台](../../dev/workbench.html) CHAT-COMPOSER-02。

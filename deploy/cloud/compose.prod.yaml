@@ -11,6 +11,7 @@ x-production: &production
     SEEKINO_DATABASE_URL: mysql+pymysql://seekino:${MYSQL_PASSWORD:?}@mysql:3306/seekino_production?charset=utf8mb4
     SEEKINO_AUTH_REDIS_URL: redis://redis:6379/0
     SEEKINO_MODEL_CONFIG: /etc/seekino/models.yaml
+    SEEKINO_AGENT_RUNTIME_CONFIG: /data/config/cloud/agent-runtime.yaml
     SEEKINO_ALLOWED_ORIGINS: https://${SEEKINO_PUBLIC_HOST:?}
     # The API port is published on loopback only; the TLS proxy reaches it through Docker's gateway.
     FORWARDED_ALLOW_IPS: "*"

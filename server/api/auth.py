@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import time
+from typing import Literal
 from urllib.parse import urlsplit
 
 from fastapi import Request, Response
 
 from ..model.dto.authDTO import AuthCredentials, AuthIdentity, EmailCodeSendRequest, EmailCodeVerifyRequest
-from ..model.vo.authVO import AuthIdentityView, EmailCodeSendView
+from ..model.vo.authVO import AuthIdentityView, EmailCodeSendView, McpTokenView
 from ..error.auth import AuthError
 from ..service.auth import AuthService
 from .context import get_services
@@ -87,6 +88,24 @@ def create_guest(request: Request, response: Response) -> AuthIdentityView:
             response.headers["Cache-Control"] = "no-store"
             return _view(service, identity, service.csrf_token(token))
     return _apply_credentials(request, response, service, service.create_guest(request.client.host if request.client else None))
+
+
+def issue_mcp_token(request: Request, response: Response, scope: Literal["public", "personal"] = "public") -> McpTokenView:
+    service = _service(request)
+    if service.config.mode != "cloud":
+        raise AuthError("本机直接连接 MCP 即可", status_code=404, code="NOT_FOUND")
+    session_token = _token(request, service)
+    if session_token:
+        _check_write(request, service)
+    elif scope == "personal":
+        raise AuthError("请先登录后再连接个人剪辑库", status_code=401, code="PERSONAL_MCP_REQUIRED")
+    else:
+        # A native client starts as an ordinary rate-limited guest. Keep the browser cookie private.
+        create_guest(request, Response())
+        session_token = request.state.auth_token
+    token, expires_at = service.issue_mcp_token(session_token, personal=scope == "personal")
+    response.headers["Cache-Control"] = "private, no-store"
+    return McpTokenView(access_token=token, expires_at=expires_at)
 
 
 def send_email_code(body: EmailCodeSendRequest, request: Request, response: Response) -> EmailCodeSendView:

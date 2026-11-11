@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from agent.video_parse_v2.input import ParseConfig
 from agent.video_summarize.state import VideoSummarizeInput, VideoSummaryResult
+from engine.parsev2.schemas import VideoParseResult
 from engine.rag.contracts import VideoChunkEvidence, VideoChunkRetrievalIdentity
 
 from ..constants.parse import MAX_INDEX_GENERATION, PREPARE_FAILURES_KEY, RUNTIME_DETAIL_KEY
@@ -284,6 +285,15 @@ class VideoParsePersistenceService:
             )
         return self.hydrate_retrieval_evidence([(chunk_id, identity)])[0]
 
+    def published_video_contents(self, video_id: str, *, tenant_id: str) -> list[VideoParseResult] | None:
+        with self._session_factory() as session:
+            contents = read_store.published_video_contents(
+                session, workspace=require_nonempty_text(tenant_id, "tenant_id"),
+                video_id=canonical_uuid(video_id, "video_id"), task_status=VideoParseTaskStatus.COMPLETE.value,
+                phase=ChunkTaskPhase.INDEX, status=ChunkParseTaskStatus.COMPLETE.value,
+            )
+        return None if contents is None else [VideoParseResult.model_validate(item) for item in contents]
+
     def list_published_timeline_chunks(
         self, *, series_id: str, tenant_id: str,
     ) -> list[PublishedTimelineChunk]:
@@ -342,6 +352,10 @@ class VideoParsePersistenceService:
                 event_index=event_index,
                 video_chunk_ids=video_chunk_ids,
             )
+
+    def saved_source_status(self, snapshot):
+        with self._session_factory() as session:
+            return read_store.saved_source_status(session, snapshot)
 
     def reference_scope(self, tenant_id, series_ids):
         with self._session_factory() as session:

@@ -52,7 +52,7 @@ Seekino 提供灵活的视频定位能力，为你召回需要的片段，并带
 | 想学习课程，但不想截图？ | 观看的同时支持问答，AI 懂你看到了哪里、有什么困惑 |
 | 需要专属的“视频课程速成路线”？ | 给出你的问题，AI “浏览”视频大纲结构，为你深度定制学习路线 |
 | 剪辑需要素材，懒得手动翻？ | 提供 MCP，你的 Claude Code 自动帮你找到目标片段；你只需给出模糊印象，再 review |
-| 剪辑需要参考，过去的参考结果却无法复用？🚧 | 深度存储历史动效解析结果，支持 MCP “更新自己的剪辑参考经验”，让剪辑经验简单地复利、复用 |
+| 剪辑需要参考，过去的参考结果却无法复用？ | 检索参考片的剪辑手法，在本机或个人 Cloud 库保存自己的动效代码、来源与反馈 |
 
 ### 1.2. 解析支持
 
@@ -350,7 +350,7 @@ Web 界面与外部工具使用同一套服务接口：
 | 跟踪解析任务 | `GET /api/jobs/video-parse/get`、`GET /api/jobs/video-parse/events` |
 | 检索素材 | `POST /api/search`，返回片段来源、时间范围与证据 |
 | Agent 对话 | `/api/agent/conversations/*`、`/api/agent/messages/*`，支持持续对话与流式回答 |
-| 外部 Agent 取素材（MCP） | `/mcp`（Streamable HTTP，仅 local 身份模式），工具 `list_series`、`retrieve`、`browse_events`、`read_evidence` |
+| 外部 Agent 取素材（MCP） | `/mcp`（Streamable HTTP，本机素材库及 Cloud 已发布的平台系列，见[连接说明](server/README.md#cloud-mcp)），工具 选片、风格参考、个人模板与反馈（11 个工具），附剪辑 Skill |
 
 启动后查看 [OpenAPI 文档](http://127.0.0.1:9621/api/docs)，接入说明见 [Server](server/README.md)。当前范围字段使用 `tenantId`；视频时间采用相对原片起点的整数毫秒，部分字段仍保留 `*Seconds` 旧名。
 
