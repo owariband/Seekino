@@ -37,7 +37,7 @@ HTTPS、媒体、SSE 及请求来源校验参照 [Nginx 入口](../nginx/README.
 
 | 服务器 | 运行内容 |
 | --- | --- |
-| CPU 服务器 | 根 [Compose](../../compose.yaml) 叠加 [compose.prod.yaml](compose.prod.yaml) 运行 Web、API、MySQL、Elasticsearch 和 Redis。Web 复用 [Nginx 模板](../nginx/nginx.conf.template)，80 将请求重定向到公开域名的 HTTPS 地址，443 提供页面与 API。API 仅发布在 loopback，数据库与索引只使用内部网络。 |
+| CPU 服务器 | 根 [Compose](../../compose.yaml) 叠加 [compose.prod.yaml](compose.prod.yaml) 运行 Web、API、MySQL、Elasticsearch 和 Redis。可选的 Qwen embedding 服务与 API 同在默认网络，宿主机通过 loopback 端口 18845 访问。Web 复用 [Nginx 模板](../nginx/nginx.conf.template)，80 将请求重定向到公开域名的 HTTPS 地址，443 提供页面与 API。API 仅发布在 loopback，数据库与索引只使用内部网络。 |
 | GPU 服务器 | 解析索引可优先使用与 CPU 同权重的 Qwen embedding；WhisperX 转写使用独立来源。 |
 
 云端入站使用 TCP 80 和 443。设置 `SEEKINO_PUBLIC_HOST` 为公开域名，80 对收到的请求
@@ -46,23 +46,33 @@ HTTPS、媒体、SSE 及请求来源校验参照 [Nginx 入口](../nginx/README.
 
 服务器的模型 YAML（`SEEKINO_MODEL_CONFIG`）指向的 `base_url`：
 
-- Cloud 的查询 embedding 使用 API 的本机 loopback。文档按 `document_base_urls` 顺序尝试 GPU 转发和本机。下面是这次部署的设置，其他部署可选自己的副本。
-- WhisperX 与对话模型分别使用自己的来源。非 loopback 模型地址须提供 HTTPS。
+- 启用本地 Qwen 时，Cloud 查询通过 Compose 默认网络访问 `http://embedding:18845`。文档按 `document_base_urls` 顺序尝试 GPU 转发和 CPU 服务。
+- 宿主机上的 CPU 命令通过 loopback `http://127.0.0.1:18845` 访问同一服务。
+- WhisperX 与对话模型分别使用自己的来源。仅 `llama_cpp_embedding` 接受上述 Compose 服务根，其他非 loopback 模型地址须提供 HTTPS。
 
 ```yaml
 model_sources:
   llama_embedding_local:
     adapter: llama_cpp_embedding
     provider: llama_cpp
-    base_url: http://127.0.0.1:18845
+    base_url: http://embedding:18845
     document_base_urls:
       - http://127.0.0.1:18843
-      - http://127.0.0.1:18845
+      - http://embedding:18845
+```
+
+在 CPU 宿主机分别检查健康状态和实际向量维度。
+
+```bash
+curl -fsS http://127.0.0.1:18845/health
+curl -fsS http://127.0.0.1:18845/v1/embeddings \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"seekino-qwen3-embedding-0.6b","input":["hello"],"encoding_format":"float"}' | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["data"][0]["embedding"]))'
 ```
 
 已经使用管理设置的 Cloud 实例可把生效模型文件保存在数据卷 `/data/config/cloud/models.yaml`。修改 API 容器的 `SEEKINO_MODEL_CONFIG` 所指文件，并核对通过该配置构造的查询和文档调用。长文档回退时，示例云机将 `models.embedding.request_timeout_seconds` 配为 360 秒。
 
-[Cloud Compose 示例](compose.embedding.example.yaml) 使用 llama.cpp b12283，与 API 共享 loopback。CPU 副本限两核、1600 MiB，使用同一份 Qwen3-Embedding-0.6B-Q8_0.gguf（SHA-256 `06507c7b42688469c4e7298b0a1e16deff06caf291cf0a5b278c308249c3e439`）。设置 `SEEKINO_EMBEDDING_GGUF` 为宿主机权重路径，镜像须提供 llama-server 入口和 Python 健康检查。替换 API 时用同一条 Compose 命令更新 `api embedding`。GPU 启动后，由原有转发提供 API 内的 18843；只有这个端点实际可达才会接手文档。
+[Cloud Compose 示例](compose.embedding.example.yaml) 使用 llama.cpp b12283。容器内 llama-server 监听 `0.0.0.0:18845`，Docker 只将该端口发布在 CPU 宿主机回环。Qwen 拥有自己的网络空间，API 重建后仍使用同一服务名。CPU 副本限两核、1600 MiB，使用 Qwen3-Embedding-0.6B-Q8_0.gguf（SHA-256 `06507c7b42688469c4e7298b0a1e16deff06caf291cf0a5b278c308249c3e439`）。设置 `SEEKINO_EMBEDDING_GGUF` 为宿主机权重路径，镜像须提供 llama-server 入口和 Python 健康检查。GPU 启动并恢复 18843 转发后，可优先承担文档编码。
 
 
 ## 从本机私有配置启动

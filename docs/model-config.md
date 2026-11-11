@@ -585,7 +585,7 @@ Ollama 不需要 API Key，使用原生 `/api/embed`。文档直接编码，查�
 指令不一致的任务配置，因此这是部署/素材库级设置，并非任意单次上传的 UI 开关。
 方案与实验边界见 [本地文本向量 TRD](design/03-product-reassessment/local-text-embedding-trd.md)。
 
-来源名（如 `asr_default`）只是用户定义的标识；`adapter` 决定协议，`provider` 标识供应商。云端连接 URL 沿用原来的 HTTPS 要求，本地 Ollama 另允许 loopback HTTP；不允许 URL 中包含用户名、密码、查询参数和片段。供应商专用 WebSocket 或任务轮询 ASR 不属于 `openai_audio`。
+来源名（如 `asr_default`）由部署者定义，`adapter` 决定协议，`provider` 标识供应商。云端模型来源使用 HTTPS。本地 Ollama 和 llama.cpp 可用回环 HTTP 地址，`llama_cpp_embedding` 也支持 Compose 内部端点 `http://embedding:18845`。URL 中不能包含用户名、密码、查询参数和片段。供应商专用 WebSocket 和任务轮询 ASR 由各自的适配器处理。
 
 ## 旧配置兼容规则
 

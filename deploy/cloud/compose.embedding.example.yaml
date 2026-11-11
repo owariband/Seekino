@@ -2,12 +2,10 @@
 services:
   embedding:
     image: ${SEEKINO_EMBEDDING_IMAGE:-seekino-qwen-embedding:b12283}
-    network_mode: service:api
-    depends_on:
-      api:
-        condition: service_healthy
-        restart: true
     restart: unless-stopped
+    # The API uses http://embedding:18845 on the Compose network.
+    ports:
+      - "127.0.0.1:18845:18845"
     cpus: 2
     mem_limit: 1600m
     memswap_limit: 1600m
@@ -53,7 +51,7 @@ services:
       - --poll-batch
       - "0"
       - --host
-      - 127.0.0.1
+      - "0.0.0.0"
       - --port
       - "18845"
     healthcheck:

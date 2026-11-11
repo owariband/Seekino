@@ -75,10 +75,25 @@ def _audio_base_url(value: str) -> str:
     return _https_base_url(value)
 
 
+_COMPOSE_EMBEDDING_BASE_URL = "http://embedding:18845"
+
+
+def _llama_cpp_base_url(value: str) -> str:
+    """Allow the operator's private Compose endpoint for the llama.cpp adapter."""
+    if value.removesuffix("/").lower() == _COMPOSE_EMBEDDING_BASE_URL:
+        return _COMPOSE_EMBEDDING_BASE_URL
+    return _audio_base_url(value)
+
+
 _AudioBaseUrl = Annotated[
     str,
     StringConstraints(strip_whitespace=True, min_length=1),
     AfterValidator(_audio_base_url),
+]
+_LlamaCppBaseUrl = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1),
+    AfterValidator(_llama_cpp_base_url),
 ]
 _NonEmptyString = Annotated[
     str,
@@ -170,8 +185,8 @@ class LlamaCppEmbeddingSourceConfig(BaseModel):
 
     adapter: Literal["llama_cpp_embedding"] = "llama_cpp_embedding"
     provider: Literal["llama_cpp"] = "llama_cpp"
-    base_url: _AudioBaseUrl
-    document_base_urls: tuple[_AudioBaseUrl, ...] = Field(default=(), exclude_if=lambda urls: not urls)
+    base_url: _LlamaCppBaseUrl
+    document_base_urls: tuple[_LlamaCppBaseUrl, ...] = Field(default=(), exclude_if=lambda urls: not urls)
 
 
 class OpenAIAudioSourceConfig(ChatSourceCredentials):

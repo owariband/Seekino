@@ -11,6 +11,7 @@ from gateway.local.llama_cpp_embedding import LlamaCppTextEmbedder, LlamaCppEmbe
 from gateway.usage import capture_model_usage
 
 MODEL = 'course-qwen'
+COMPOSE_ROOT = 'http://embedding:18845'
 
 
 def configured():
@@ -129,5 +130,49 @@ def test_document_replicas_keep_index_identity_and_validate_every_url():
     source = GatewayConfig.model_validate(data).source(binding.source)
     assert describe_embedding_model(binding, source) == describe_embedding_model(binding, original.source(binding.source))
     routes["document_base_urls"] = ["http://plain-http.example"]
+    with pytest.raises(ValueError):
+        GatewayConfig.model_validate(data)
+
+
+def test_compose_embedding_root_is_accepted_for_query_and_document_fallback():
+    data = configured()
+    routes = data["model_sources"]["course"]
+    routes["base_url"] = COMPOSE_ROOT + '/'
+    routes["document_base_urls"] = ["https://gpu.example", COMPOSE_ROOT + '/']
+    config = GatewayConfig.model_validate(data)
+    binding = config.resolve_embedding_binding(environ={})
+    source = config.source(binding.source)
+    assert source.base_url == COMPOSE_ROOT
+    assert source.document_base_urls == ("https://gpu.example", COMPOSE_ROOT)
+    assert describe_embedding_model(binding, source).provider_name == 'llama_cpp'
+
+
+@pytest.mark.parametrize('url', [
+    'http://embedding:18844',
+    'http://embedding.example:18845',
+    'http://embedding:18845/v1',
+    'http://embedding:18845//',
+    'http://user:secret@embedding:18845',
+    'http://embedding:18845?key=secret',
+    'http://embedding:18845#fragment',
+    'http://embedding',
+    'http://plain-http.example',
+])
+@pytest.mark.parametrize('field', ['base_url', 'document_base_urls'])
+def test_compose_embedding_root_keeps_other_urls_rejected(field, url):
+    data = configured()
+    routes = data["model_sources"]["course"]
+    routes[field] = url if field == 'base_url' else [url]
+    with pytest.raises(ValueError):
+        GatewayConfig.model_validate(data)
+
+
+@pytest.mark.parametrize('source', [
+    {'adapter': 'openai_audio', 'provider': 'speech', 'base_url': COMPOSE_ROOT, 'api_key_env': 'SPEECH_KEY'},
+    {'adapter': 'ollama_embedding', 'provider': 'ollama', 'base_url': COMPOSE_ROOT},
+])
+def test_compose_embedding_root_stays_specific_to_llama_sources(source):
+    data = configured()
+    data['model_sources']['other'] = source
     with pytest.raises(ValueError):
         GatewayConfig.model_validate(data)
