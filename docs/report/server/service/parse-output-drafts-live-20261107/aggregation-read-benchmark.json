@@ -1,0 +1,48 @@
+{
+  "task": "68602d50-8da7-4d68-982e-0550ce7f8e6c",
+  "terminal_status": "COMPLETE",
+  "no_parent_lock": true,
+  "results": [
+    {
+      "repeat": 0,
+      "variant": "full_rows_and_dto_copies",
+      "seconds": 1.6950382920003904,
+      "rows": 146
+    },
+    {
+      "repeat": 0,
+      "variant": "status_projection",
+      "seconds": 0.005156084000191186,
+      "rows": 146
+    },
+    {
+      "repeat": 1,
+      "variant": "status_projection",
+      "seconds": 0.002772499999991851,
+      "rows": 146
+    },
+    {
+      "repeat": 1,
+      "variant": "full_rows_and_dto_copies",
+      "seconds": 1.5494698330003303,
+      "rows": 146
+    },
+    {
+      "repeat": 2,
+      "variant": "full_rows_and_dto_copies",
+      "seconds": 1.359758624999813,
+      "rows": 146
+    },
+    {
+      "repeat": 2,
+      "variant": "status_projection",
+      "seconds": 0.005586457999015693,
+      "rows": 146
+    }
+  ],
+  "median_seconds": {
+    "status_projection": 0.005156084000191186,
+    "full_rows_and_dto_copies": 1.5494698330003303
+  },
+  "scope": "Chunk load and DTO conversion only; not a complete replacement aggregator or throughput benchmark."
+}

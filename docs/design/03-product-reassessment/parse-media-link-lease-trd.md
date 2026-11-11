@@ -30,8 +30,10 @@
 
 # 6. 验收
 
-两种输入每轮都只取得两次父行锁和两次子行锁。新增的检查时机与失租断言在原实现上失败，调整后通过。媒体、worker、队列、暂停、派发与持久化回归共 518 项通过，另有 31 项真实 MySQL 用例通过。批次交付的验收达到目标，整集耗时需要完整成功的解析另行测量。[Devlog](../../dev/devlog.md#devlog-frame-link-lease-20261107) · [工作台](../../dev/workbench.html)
+两种输入每轮都只取得两次父行锁和两次子行锁。新增的检查时机与失租断言在原实现上失败，调整后通过。媒体、worker、队列、暂停、派发与持久化回归共 518 项通过，另有 31 项真实 MySQL 用例通过。在 #75 合入时，已测得批次交付耗时。后续的整集测量见下节。[Devlog](../../dev/devlog.md#devlog-frame-link-lease-20261107) · [工作台](../../dev/workbench.html)
 
-## 整集验收补录计划（2026-11-11）
+## MyGO 第 3 集整集冷跑（2026-11-07 至 08）
 
-分支 `docs/parse-acceptance-evidence`，目标 `dev`。用 11 月 7 日 MyGO 第 3 集两次冷跑的任务记录核对起止时间、解析块和 ES 事件，再与四集并行时的同一集对读。单块锁次数有独立对照，整集耗时还受并发负载和模型配置影响。同期 micrograd 的草稿、取消和索引记录回填到[解析草稿报告](../../report/server/service/parse-output-drafts-20261107.md)。
+合并版 `6e14c79d` 单跑这一集，从提交到可检索用了 14 分 58.684 秒。24 个理解块、22 个细化窗口、24 个当前版本索引全部完成，ES 中的 562 个事件逐个对上。旧版的 54 分 47.661 秒来自四集并跑。#75 对锁和交付耗时的影响见第 4 节的同输入对照。[两次冷跑与早期对照](../../report/server/mq/parse-ready-dispatch/animation.md#dev-ep03-reruns)
+
+2026-11-11 在分支 `docs/parse-acceptance-evidence` 补录到 `dev`。[文档 PR #98](https://github.com/owariband/Seekino/pull/98)
