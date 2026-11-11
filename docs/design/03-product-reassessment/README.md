@@ -39,6 +39,7 @@ hypnos 于 **2026-04-27 入职实习**，到这次面试复盘时已接近半年
 | [model-discovery-feedback-trd.md](model-discovery-feedback-trd.md) | 2026-11-10，“获取模型列表”结果不可见，whisper.cpp 必然 404 | 内联结果与模型 chip、防重复；无列表的服务给出中性说明 | 初稿 |
 | [sticky-docs-trd.md](sticky-docs-trd.md) | 2026-11-10，欢迎卡片与文档准确但抓不住首次访客 | 按 SUCCESs 重写，`/docs` 拆为快速开始等多页 | 初稿 |
 | [smtp-login-availability-trd.md](smtp-login-availability-trd.md) | 2026-11-07，邮件未配置仍展示验证码表单，用户填写后才知道不可用 | 由账号服务传递可用能力，空配置展示游客模式和未开放说明 | 当前状态见工作台 DEPLOY-04；依赖 #62，随 #63 发布 |
+| [cloud-embedding-routing-trd.md](cloud-embedding-routing-trd.md) | 2026-11-11，GPU 离线时游客 Chat 的检索工具失败 | 查询走本机，解析索引可按配置回退到同一模型的本机副本 | 详见设计与实测 |
 | [cloud-docker-deploy-trd.md](cloud-docker-deploy-trd.md) | 2026-11-06，简历筛选需要公开演示，但云服务器上没有任何服务 | 用 Docker 在 4C8G 服务器部署发布后的 `main`，迁移演示数据，经公网 HTTPS 提供观看、检索与问答 | 初稿；实施与验收待进行 |
 | [chat-stream-snapshot-coalescing-trd.md](chat-stream-snapshot-coalescing-trd.md) | 2026-11-05，长回答流式交付途中被判为慢消费者并断开 | 合并缓冲中相邻的未发送快照，持续读取的客户端不再收到中断 | 初稿；实验待测 |
 | [series-background-ownership-trd.md](series-background-ownership-trd.md) | 2026-11-05，系列概览讨论中发现简介、背景资料与人物资料归属不清 | 系列只保留“简介 + 一份背景资料”由用户维护，`character_bible` 转为只读兼容，Agent 使用显示名称 | 初稿；实验待测 |

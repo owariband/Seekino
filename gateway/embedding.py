@@ -186,6 +186,7 @@ def build_embedding_model(
             raise ValueError("llama_cpp_embedding requires input_mode=text")
         delegate = LlamaCppTextEmbedder(
             binding.model, base_url=source.base_url, dimensions=binding.dimensions,
+            document_base_urls=source.document_base_urls,
             query_instruction=binding.query_instruction,
             request_timeout_seconds=binding.request_timeout_seconds or 600,
         )

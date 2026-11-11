@@ -139,6 +139,7 @@ Event / Sub-Chunk 的实施入口是 [sub-chunk-trd.md](02-agent-harness/sub-chu
 | Series 共享 | [series-sharing-trd.md](02-agent-harness/series-sharing-trd.md) | 专项 TRD：Series 共享、团队范围与访问合同。 |
 | Docker 发布资源与 main 构建 | [docker-web-assets-trd.md](03-product-reassessment/docker-web-assets-trd.md) | PNG/SVG 软链接的构建输入、镜像验证和 CPU 源码提交对齐；关联云部署 PR #57。 |
 | 游客观看问答的执行预算 | [guest-chat-turn-budget-trd.md](03-product-reassessment/guest-chat-turn-budget-trd.md) | 每 IP 的请求额度与单条回答的模型、工具调用分别核验。 |
+| Cloud 查询与解析向量 | [Cloud embedding 路由](03-product-reassessment/cloud-embedding-routing-trd.md) | 同一编码器按操作选择副本；GPU 离线时由云机生成向量。 |
 | 云端无 SMTP 的游客启动 | [cloud-guest-without-smtp-trd.md](03-product-reassessment/cloud-guest-without-smtp-trd.md) | 邮件能力可选，游客身份仍保留签名、Redis、CSRF 与权限校验。 |
 | Cloud 使用文档与推广入口 | [cloud-user-docs-trd.md](03-product-reassessment/cloud-user-docs-trd.md) | `/docs` 归站内用户文档，Swagger 迁到 `/api/docs`。 |
 | Apple 式视觉刷新 | [apple-style-refresh-trd.md](03-product-reassessment/apple-style-refresh-trd.md) | 字体改为 SF / 自托管 Inter，标签去等宽，中性色板与磨砂顶栏。 |

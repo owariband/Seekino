@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import math
 from pathlib import Path
 
 import httpx
 
 from gateway.embedding import EmbeddingResult, SparseEmbeddingResult
-from gateway.usage import track_model_call
+from gateway.usage import ModelCallTracker, track_model_call
+
+
+logger = logging.getLogger(__name__)
 
 
 def llama_cpp_encoder_revision(query_instruction: str | None) -> str:
@@ -35,6 +39,7 @@ class LlamaCppTextEmbedder:
     def __init__(
         self, model: str, *, base_url: str, dimensions: int,
         request_timeout_seconds: float = 600, query_instruction: str | None = None,
+        document_base_urls: tuple[str, ...] = (),
         client: httpx.Client | None = None,
     ) -> None:
         if not model.strip() or not base_url.strip():
@@ -47,6 +52,7 @@ class LlamaCppTextEmbedder:
             raise ValueError("query_instruction must not be blank")
         self.model_name = model
         self.base_url = base_url.rstrip("/")
+        self.document_base_urls = tuple(url.rstrip("/") for url in document_base_urls) or (self.base_url,)
         self.dimensions = dimensions
         self.query_instruction = query_instruction
         self._client = client or httpx.Client(timeout=request_timeout_seconds, trust_env=False)
@@ -70,7 +76,8 @@ class LlamaCppTextEmbedder:
             unregister = call.add_cancel_callback(self._client.close)
             try:
                 call.raise_if_cancelled()
-                response = self._request_embedding(text)
+                endpoints = (self.base_url,) if query else self.document_base_urls
+                response = self._request_from_replicas(text, endpoints, call)
                 response.raise_for_status()
                 call.raise_if_cancelled()
                 try:
@@ -110,8 +117,25 @@ class LlamaCppTextEmbedder:
             finally:
                 unregister()
 
-    def _request_embedding(self, text: str) -> httpx.Response:
-        return self._client.post(f"{self.base_url}/v1/embeddings", json={
+    def _request_from_replicas(
+        self, text: str, endpoints: tuple[str, ...], call: ModelCallTracker,
+    ) -> httpx.Response:
+        for endpoint in endpoints[:-1]:
+            try:
+                response = self._request_embedding(text, endpoint)
+            except (httpx.NetworkError, httpx.TimeoutException, httpx.RemoteProtocolError) as error:
+                reason = type(error).__name__
+            else:
+                if response.status_code not in (408, 429) and not 500 <= response.status_code < 600:
+                    return response
+                reason = f"HTTP {response.status_code}"
+                response.close()
+            call.raise_if_cancelled()
+            logger.warning("Document embedding replica unavailable (%s), trying next endpoint", reason)
+        return self._request_embedding(text, endpoints[-1])
+
+    def _request_embedding(self, text: str, base_url: str) -> httpx.Response:
+        return self._client.post(f"{base_url}/v1/embeddings", json={
             "model": self.model_name, "input": [text], "encoding_format": "float", "truncate": False,
         })
 
@@ -132,7 +156,7 @@ class OpenAITextEmbedder(LlamaCppTextEmbedder):
     provider_name = "openai"
     protocol_label = "OpenAI embeddings"
 
-    def _request_embedding(self, text: str) -> httpx.Response:
-        return self._client.post(f"{self.base_url}/embeddings", json={
+    def _request_embedding(self, text: str, base_url: str) -> httpx.Response:
+        return self._client.post(f"{base_url}/embeddings", json={
             "model": self.model_name, "input": [text], "encoding_format": "float", "dimensions": self.dimensions,
         })

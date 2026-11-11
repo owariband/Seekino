@@ -75,3 +75,59 @@ def test_invalid_vectors_never_enter_index(payload):
     model = LlamaCppTextEmbedder(MODEL, base_url='http://127.0.0.1:18843', dimensions=2, client=httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(200, json=payload))))
     with pytest.raises(LlamaCppEmbeddingError): model.embed_text('formal text')
     model.close()
+
+
+@pytest.mark.parametrize("operation, primary, expected, error", [
+    ("query", 200, [1], None),
+    ("query", 503, [1], httpx.HTTPStatusError),
+    ("text", 200, [2], None),
+    ("text", "refused", [2, 1], None),
+    ("text", 503, [2, 1], None),
+    ("text", 429, [2, 1], None),
+    ("text", 401, [2], httpx.HTTPStatusError),
+    ("text", "wrong model", [2], LlamaCppEmbeddingError),
+    ("text", "wrong shape", [2], LlamaCppEmbeddingError),
+])
+def test_embedding_replica_order(operation, primary, expected, error):
+    ports, bodies = [], []
+    def respond(request):
+        ports.append(request.url.port)
+        bodies.append(json.loads(request.content))
+        result = primary if len(ports) == 1 else 200
+        if result == "refused":
+            raise httpx.ConnectError("connection refused", request=request)
+        return httpx.Response(result if isinstance(result, int) else 200, json={
+            "model": "unexpected" if result == "wrong model" else MODEL,
+            "data": [{"index": 0, "embedding": [3] if result == "wrong shape" else [3, 4]}],
+        })
+
+    urls = ("http://127.0.0.1:2", "http://127.0.0.1:1")
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        model = LlamaCppTextEmbedder(
+            MODEL, base_url=urls[1], document_base_urls=urls, dimensions=2,
+            query_instruction="Find clips.", client=client,
+        )
+        encode = model.embed_query if operation == "query" else model.embed_text
+        text = "Instruct: quoted in a document"
+        if error:
+            with pytest.raises(error):
+                encode(text)
+        else:
+            assert encode(text).vector == [0.6, 0.8]
+    assert ports == expected
+    assert all(body == bodies[0] for body in bodies)
+    expected_text = "Instruct: Find clips.\nQuery: " + text if operation == "query" else text
+    assert bodies[0]["input"] == [expected_text]
+
+
+def test_document_replicas_keep_index_identity_and_validate_every_url():
+    data = configured()
+    original = GatewayConfig.model_validate(data)
+    binding = original.resolve_embedding_binding(environ={})
+    routes = data["model_sources"]["course"]
+    routes["document_base_urls"] = ["https://replica.example", routes["base_url"]]
+    source = GatewayConfig.model_validate(data).source(binding.source)
+    assert describe_embedding_model(binding, source) == describe_embedding_model(binding, original.source(binding.source))
+    routes["document_base_urls"] = ["http://plain-http.example"]
+    with pytest.raises(ValueError):
+        GatewayConfig.model_validate(data)
