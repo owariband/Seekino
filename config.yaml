@@ -1,5 +1,5 @@
 # Connection details live in model_sources; per-stage choices live in models.
-# Legacy config files remain supported. See docs/model-config.md.
+# Legacy config files remain supported. See deploy/local-setup.md.
 config_version: 2
 
 # Select the primary chat harness at startup; model bindings stay independent.
@@ -51,7 +51,7 @@ model_sources:
     provider: codex
     max_concurrency: 10
   # Recommended optional local ASR with alignment; install weights before selecting.
-  # See docs/model-config.md. These are example paths, not auto-download targets.
+  # See deploy/local-setup.md. These are example paths, not auto-download targets.
   whisperx_local:
     adapter: whisperx
     provider: local

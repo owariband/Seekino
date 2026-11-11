@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/mascot/animated/seekino-idle.svg" width="88" alt="Seekino" />
+  <img src="assets/readme/seekino-idle.svg" width="88" alt="Seekino" />
 </p>
 
 <h1 align="center">Seekino</h1>
@@ -33,7 +33,7 @@
 Seekino recalls the clips you need, with the source video and time range, so you can always check against the original.
 
 <p align="center">
-  <img src="docs/architecture/fig01.png" width="960" alt="From remembering a moment to a verifiable clip" />
+  <img src="assets/readme/figures/fig01.png" width="960" alt="From remembering a moment to a verifiable clip" />
 </p>
 
 ### 1.1. Retrieval support
@@ -62,11 +62,11 @@ Seekino recalls the clips you need, with the source video and time range, so you
 <details>
 <summary>Screenshots (2026-10-25, local build, real footage)</summary>
 
-![Seekino library: video series, analysis status and management controls](assets/screenshots/library.jpg)
+![Seekino library: video series, analysis status and management controls](assets/readme/screenshots/library.jpg)
 
-![Seekino search: a natural-language question, retrieved clips and selection reasons](assets/screenshots/search-results.jpg)
+![Seekino search: a natural-language question, retrieved clips and selection reasons](assets/readme/screenshots/search-results.jpg)
 
-![Seekino viewing Q&A: original video player and conversation panel](assets/screenshots/watch-chat.jpg)
+![Seekino viewing Q&A: original video player and conversation panel](assets/readme/screenshots/watch-chat.jpg)
 
 </details>
 
@@ -75,17 +75,17 @@ Seekino recalls the clips you need, with the source video and time range, so you
 To offer public Q&A that casual users can try on a lightweight cloud server, and let heavy users self-host their own video knowledge base, Seekino builds the following system across three stages: parsing, retrieval and Q&A.
 
 <p align="center">
-  <img src="docs/architecture/fig-overview.png" width="960" alt="Seekino overview: parse, retrieve, chat and external services" />
+  <img src="assets/readme/figures/fig-overview.png" width="960" alt="Seekino overview: parse, retrieve, chat and external services" />
 </p>
 
-<sub>Figures 2–8 are editable: open the matching `.excalidraw` file in [docs/architecture](docs/architecture/) on [excalidraw.com](https://excalidraw.com). Older figures live in [seekino-figures.drawio](docs/architecture/seekino-figures.drawio). 🚧 = not implemented yet; TBD = not yet measured on the current build.</sub>
+<sub>Figures 2–8 are editable: open the matching `.excalidraw` file in [assets/readme/figures](assets/readme/figures/) on [excalidraw.com](https://excalidraw.com). Older figures live in [seekino-figures.drawio](assets/readme/figures/seekino-figures.drawio). 🚧 = not implemented yet; TBD = not yet measured on the current build.</sub>
 
 ### Data model
 
 MySQL holds business facts, tasks and versions. Elasticsearch holds one derived document per chunk, addressed by parse task and chunk, and can be rebuilt at any time.
 
 <p align="center">
-  <img src="docs/architecture/fig-er.png" width="960" alt="Data model: MySQL tables and the derived Elasticsearch document" />
+  <img src="assets/readme/figures/fig-er.png" width="960" alt="Data model: MySQL tables and the derived Elasticsearch document" />
 </p>
 
 ### 2.1. Parsing
@@ -101,7 +101,7 @@ To work across many scenarios and model APIs at a cost every user can afford, Se
 - **clip**: editing footage
 
 <p align="center">
-  <img src="docs/architecture/fig06.png" width="960" alt="Fixed 60 s chunks parsed in parallel" />
+  <img src="assets/readme/figures/fig06.png" width="960" alt="Fixed 60 s chunks parsed in parallel" />
 </p>
 
 #### Paying back what chunking costs
@@ -114,7 +114,7 @@ In parallel, a single chunk loses the context of its neighbours, and fixed chunk
 | Tail Summary | After parsing, reads the whole timeline once more to write the video outline and the series overview |
 
 <p align="center">
-  <img src="docs/architecture/fig-parse.png" width="960" alt="Parse V2: stages, persisted state, Refine and the JSON gate" />
+  <img src="assets/readme/figures/fig-parse.png" width="960" alt="Parse V2: stages, persisted state, Refine and the JSON gate" />
 </p>
 
 #### Results
@@ -128,7 +128,7 @@ Understanding of one 1-min chunk at 3 FPS (max height 720) on the course *Let's 
 | Doubao Seed 2.1 Pro | TBD | TBD | TBD | TBD |
 | DeepSeek Flash (non-thinking) | TBD | 31.8 s | TBD | ≈¥0.22 |
 
-<sub>FTT: time to first token; TT: total time per chunk. The DeepSeek cost comes from incomplete usage records. Sources: [Kimi trace](docs/report/server/kimi-parse-trace-20261101.md) · [DeepSeek Flash audit](docs/report/gateway/deepseek-flash-chunk-audit-20261103.md) · [devlog](docs/dev/devlog.md)</sub>
+<sub>FTT: time to first token; TT: total time per chunk. The DeepSeek cost comes from incomplete usage records. Measurements come from the November 1 Kimi run and November 3 DeepSeek calls, 2026.</sub>
 
 The benefit of parallel parsing: whatever the model, the time a long video takes stays under control. It grows with chunks ÷ concurrency, not with one serial pass over the whole video.
 
@@ -158,13 +158,13 @@ Free of the Canvas tools, the agent still must not break the JSON structure. A J
 Problems the host can fix deterministically, such as unsorted times, are fixed directly with no extra model call. The final structure is always correct and valid.
 
 <p align="center">
-  <img src="docs/architecture/fig09.png" width="960" alt="Refine before and after" />
+  <img src="assets/readme/figures/fig09.png" width="960" alt="Refine before and after" />
 </p>
 
 ### 2.2. Building retrieval
 
 <p align="center">
-  <img src="docs/architecture/fig-retrieve.png" width="960" alt="Retrieve: scope, channels, fusion, verification and rerank" />
+  <img src="assets/readme/figures/fig-retrieve.png" width="960" alt="Retrieve: scope, channels, fusion, verification and rerank" />
 </p>
 
 #### Vectors designed for multimodal input
@@ -188,7 +188,7 @@ Plain weighted RRF uses fixed weights, which can push a channel's hit 1, a resul
 Before results are returned, each one is checked against the timeline of its parse task and content version: a vector hit is only a candidate, and only a checked hit is a fact.
 
 <p align="center">
-  <img src="docs/architecture/fig10.png" width="960" alt="Why the retrieval unit changed from chunk to Event" />
+  <img src="assets/readme/figures/fig10.png" width="960" alt="Why the retrieval unit changed from chunk to Event" />
 </p>
 
 #### Top-down and bottom-up
@@ -211,7 +211,7 @@ The same words can be a new search or just a reply to the last answer. Before ea
 | Fallback<br><sub>8 s total budget</sub> | Any timeout, error or invalid output falls back to the raw message, so it can only help, never get in the way |
 
 <p align="center">
-  <img src="docs/architecture/fig-chat.png" width="960" alt="Chat: query hook, Supervisor tools and delivery" />
+  <img src="assets/readme/figures/fig-chat.png" width="960" alt="Chat: query hook, Supervisor tools and delivery" />
 </p>
 
 #### Answer with clips
@@ -230,11 +230,11 @@ Answers stream as they're generated, with the reasoning folded away. If the firs
 <details>
 <summary>Problems we hit, effects, and metrics still to measure</summary>
 
-![Problems to fixes](docs/architecture/fig08.png)
+![Problems to fixes](assets/readme/figures/fig08.png)
 
-![Effect comparison](docs/architecture/fig11.png)
+![Effect comparison](assets/readme/figures/fig11.png)
 
-![Metrics to measure](docs/architecture/fig12.png)
+![Metrics to measure](assets/readme/figures/fig12.png)
 
 </details>
 
@@ -243,13 +243,13 @@ Answers stream as they're generated, with the reasoning folded away. If the firs
 The repository is layered by folder. Calls only go downward, and each layer does only its own job:
 
 <p align="center">
-  <img src="docs/architecture/fig-layers.png" width="960" alt="Repository layers: web, server, agent, engine, gateway" />
+  <img src="assets/readme/figures/fig-layers.png" width="960" alt="Repository layers: web, server, agent, engine, gateway" />
 </p>
 
 Locally one Compose stack runs everything; the cloud sample library splits a CPU server from a GPU server:
 
 <p align="center">
-  <img src="docs/architecture/fig-deploy.png" width="960" alt="Deployment: self-hosted and cloud" />
+  <img src="assets/readme/figures/fig-deploy.png" width="960" alt="Deployment: self-hosted and cloud" />
 </p>
 
 ## API integration
@@ -266,11 +266,6 @@ The web interface and external tools use the same service APIs. Your tools can c
 
 After starting the service, inspect requests and responses in the [OpenAPI docs](http://127.0.0.1:9621/api/docs). See [Server](server/README.md) for integration details. The current scope field is `tenantId`. Video time fields use integer milliseconds relative to the original video, including fields that retain legacy `*Seconds` names; follow the current contract when integrating.
 
-## Creative experiments
-
-A separate experiment has already connected retrieval, clip preparation and HyperFrames composition into an offline HTML short video. See the [short-video experiment workflow](.agents/skills/seekino-short-video/SKILL.md). It explores reusing retrieved footage; check its scripts and configuration against the current API before using them.
-
-
 ## 3. Deployment
 
 Self-hosting is the way to run Seekino today; a cloud Docker deployment for the public demo is in progress.
@@ -280,9 +275,11 @@ The recommended first install runs **Web, API, video processing, MySQL and Elast
 
 Install Docker Desktop, or Docker Engine with a current Compose plugin. On Windows, select **WSL2 / Linux containers**; the commands also work in PowerShell. Python, Node.js, ffmpeg and the model SDKs are included in the images.
 
-From the repository root:
+Get the public release and copy the environment template:
 
 ```bash
+git clone --depth 1 --single-branch --branch main https://github.com/owariband/Seekino.git
+cd Seekino
 cp deploy/docker/env.example .env.docker
 ```
 
@@ -336,7 +333,7 @@ Fill in model credentials and local connection details in `.env.local`. The defa
 | Embeddings | Ark | Set `ARK_API_KEY`. |
 | Reranking, text fallback when vision fails | DeepSeek | Set `DEEPSEEK_API_KEY`. |
 
-Adjust the [model configuration](docs/model-config.md) to the models or endpoints you have. The default `supervisor_harness: deepagents` uses an API source. To select Codex, change the harness and Supervisor binding together. Kimi uses the existing OpenAI-compatible adapter and `kimi` profile.
+Adjust the [model configuration](deploy/local-setup.md#3-模型仍用现有配置方式) to the models or endpoints you have. The default `supervisor_harness: deepagents` uses an API source. To select Codex, change the harness and Supervisor binding together. Kimi uses the existing OpenAI-compatible adapter and `kimi` profile.
 
 | Where | What |
 | --- | --- |
@@ -397,7 +394,7 @@ The repository includes a launcher for starting installed native MySQL and Elast
 ./start.sh stop
 ```
 
-The launcher defaults to the checked-out `main` worktree and its `.env.local`. Use `./start.sh --branch dev` (and `--branch dev status` / `--branch dev stop`) for an existing dev worktree. `start` uses current local files, including uncommitted changes, without pulling or switching branches. Managed API/Web processes are refreshed when their source directory, file contents, or configuration changes; unchanged processes are reused, and unknown port owners are rejected. MySQL/ES are not stopped by this refresh.
+The launcher defaults to the checked-out `main` worktree and its `.env.local`. `start` uses current local files, including uncommitted changes, without pulling or switching branches. Managed API/Web processes are refreshed when their source directory, file contents, or configuration changes; unchanged processes are reused, and unknown port owners are rejected. MySQL/ES are not stopped by this refresh.
 
 The launcher checks the API library and the web proxy against the current `tenantId` contract, using the local tenant configured in `SEEKINO_LOCAL_TENANT_ID`. It reuses listening MySQL/Elasticsearch instances or starts installed native binaries, then validates schemas, checkpoints and indices. `stop` only stops processes the launcher manages. It does not stop a hand-started API/web or the Compose databases.
 
@@ -463,7 +460,7 @@ The gateway supports OpenAI-compatible APIs, Ark, a local Codex login, the Claud
 
 The Model Usage page reads MySQL `model_usage`. It covers V2 parsing/indexing and assistant calls, and shows only recorded tokens and known subtotals. Failed records may be missing, and unknown usage is never counted as zero. It does not calculate cost or enforce hard token quotas. The production bootstrap **does not wire up the Langfuse writer/reader**, so setting `tracing.enabled` to true does not turn on server tracing; the standalone module and config fields are still kept.
 
-For source configuration see [model configuration](docs/model-config.md) and [gateway agent sources](gateway/README.md#chat-agent-模型来源). For how usage is counted, see [model token usage](docs/parse-model-usage.md).
+For source configuration see [model configuration](deploy/local-setup.md#3-模型仍用现有配置方式) and [gateway agent sources](gateway/README.md#chat-agent-模型来源). For how usage is counted, see [model token usage](server/README.md#模型-token-用量).
 
 </details>
 
@@ -480,7 +477,7 @@ docker compose --env-file .env.local --profile cloud-auth up -d --wait redis
 
 Guests can only read content that is public and ready, and their conversations are isolated per guest. After logging in with an email code, a user gets a personal tenant and can switch between personal and public content. Library management and global settings are controlled by server permissions; public read access never grants platform write access.
 
-Cloud mode limits request counts and concurrency. Guests share a per-IP request budget; local mode has no request quota. These limits are separate from token statistics. A production reverse proxy must forward the HTTPS scheme and client address correctly. See [.env.example](.env.example) for the settings and the [user/tenant handoff notes](docs/report/server/user-tenant-handoff-20261010.md) for identity details and migration.
+Cloud mode limits request counts and concurrency. Guests share a per-IP request budget; local mode has no request quota. These limits are separate from token statistics. A production reverse proxy must forward the HTTPS scheme and client address correctly. See [.env.example](.env.example) for the settings and the [cloud deployment guide](deploy/cloud/README.md) for identity details and migration.
 
 Business HTTP scoping fields now use **`tenantId`**. Some older docs still show `workspaceId` examples; follow the current OpenAPI and DTOs.
 
@@ -491,7 +488,7 @@ Business HTTP scoping fields now use **`tenantId`**. Some older docs still show 
 
 Development, test and production use separate databases and ES indexes. Development database names end with `_dev` / `_development`, and test names end with `_test`. ES index names must include the matching `dev` / `development` / `test` component, and production indexes must not include these components. SQLite is only for isolated tests.
 
-`init-db` verifies the current schema; it does not migrate historical databases. Check your existing structure against the [identity migration](docs/migrations/20261010_user_tenant_identity.sql), the [media milliseconds migration](docs/migrations/20261008_video_timeline_milliseconds.sql) and the [server notes](server/README.md). To copy an old ES index to tenant fields, use `python -m scripts.migrate_tenant_index --help`. Run it as planned once the relevant writes have stopped. It does not recompute embeddings or overwrite the old index.
+`init-db` verifies the current schema; it does not migrate historical databases. Check your existing structure against the [identity migration](deploy/migrations/20261010_user_tenant_identity.sql), the [media milliseconds migration](deploy/migrations/20261008_video_timeline_milliseconds.sql) and the [server notes](server/README.md). To copy an old ES index to tenant fields, use `python -m scripts.migrate_tenant_index --help`. Run it as planned once the relevant writes have stopped. It does not recompute embeddings or overwrite the old index.
 
 </details>
 
@@ -513,7 +510,7 @@ npm --prefix web exec -- playwright install chromium
 npm --prefix web run test:e2e
 ```
 
-Real integration tests need separate `SEEKINO_TEST_DATABASE_URL`, `SEEKINO_TEST_ELASTICSEARCH_URL` and `SEEKINO_TEST_AUTH_REDIS_URL`. Tests against real models must be enabled explicitly and may cost money with your provider. Known issues and pending acceptance checks are recorded in the [issue list](docs/dev/problems.md).
+Real integration tests need separate `SEEKINO_TEST_DATABASE_URL`, `SEEKINO_TEST_ELASTICSEARCH_URL` and `SEEKINO_TEST_AUTH_REDIS_URL`. Tests against real models must be enabled explicitly and may cost money with your provider.
 
 Passing unit tests, builds, isolated SQL/ES tests and mocked-API browser tests is not the same as a full acceptance run with real models. Semantic quality, cold-start latency of on-demand understanding, real SMTP and full browser end-to-end runs each need separate acceptance. A successful `/healthz` only means the consumer is running.
 
@@ -528,10 +525,10 @@ seekino/
 ├── server/                     # HTTP/CLI, persistence and reliable execution
 ├── web/                        # React + TypeScript + Vite frontend
 ├── scripts/                    # Local launcher and controlled migration tools
-├── tests/ / evals/              # Automated tests, manual diagnostics and evaluations
+├── tests/                      # Automated tests
 ├── deploy/ / compose.yaml      # Local infrastructure and deployment notes
 ├── assets/                     # Logo, screenshots and architecture diagrams
-├── docs/                       # Contracts, designs, migrations and check logs
+├── docs/                       # Project overview and user guides
 └── outputs/                    # Local media, logs and run artifacts, not in Git
 ```
 
@@ -539,13 +536,8 @@ The repository root is the runtime boundary. Python modules are managed together
 
 Most module docs below are written in Chinese.
 
-- [Design document index](docs/design/README.md) · [Documentation conventions](docs/README.md)
-- [Benchmark index](evals/benchmark/README.md): query capabilities, chat behavior, retrieval quality and intent routing.
-- [Parse V2 Agent](agent/video_parse_v2/README.md) · [Context Canvas](docs/design/02-agent-harness/context-canvas-design.md)
-- [Current-position understanding](agent/chat/realtime_understanding/runtime.py) · [Server](server/README.md)
-- [Web](web/README.md) · [Gateway](gateway/README.md) · [Engine](engine/README.md)
-- [Model configuration](docs/model-config.md) · [Model token usage](docs/parse-model-usage.md) · [User/tenant](docs/report/server/user-tenant-handoff-20261010.md)
-- [Development deployment](deploy/README.md) · [Issue list](docs/dev/problems.md)
+- [Project overview](docs/README.md) · [Docker setup](deploy/local-setup.md) · [Native deployment and backups](deploy/README.md)
+- [HTTP and MCP](server/README.md) · [Model providers](gateway/README.md) · [Web](web/README.md)
 
 ## References
 
@@ -568,4 +560,4 @@ These are key sources consulted during the project's research and design. The pa
 
 ### Engineering practice
 
-- [Anthropic — Writing effective tools for agents — with agents](https://www.anthropic.com/research/writing-tools-for-agents): applied to the project's Agent tool design, including clear tool responsibilities, on-demand context reads, pagination and actionable error feedback. See the project's [Canvas tool design research](docs/research/2026-10-22-canvas-agent-tool-design.md) (in Chinese).
+- [Anthropic — Writing effective tools for agents — with agents](https://www.anthropic.com/research/writing-tools-for-agents): applied to the project's Agent tool design, including clear tool responsibilities, on-demand context reads, pagination and actionable error feedback.

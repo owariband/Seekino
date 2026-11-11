@@ -19,10 +19,10 @@
 核对供应商账户实际可用的模型或 endpoint；模板沿用项目已有 API 模型绑定，未做真实调用验收。
 cloud 要求 `supervisor_harness: deepagents`，不得绑定本机 Codex/Claude runtime；模型来源与
 样例索引的 embedding 模型、维度须匹配。当前根配置包含本机模型，不可直接用于云端。
-每条 Chat 回答的模型和工具预算默认各 100 次，默认可选上限也各为 100。生产全局 Agent 设置独立保存在 `/data/config/cloud/agent-runtime.yaml`。升级时首次读取会继承其他运行参数，管理员全局设置页可继续调整。模型连接和 API Key 使用原模型文件，按 IP 的每日查询额度使用鉴权环境变量。[配置说明](../../docs/model-config.md)
+每条 Chat 回答的模型和工具预算默认各 100 次，默认可选上限也各为 100。生产全局 Agent 设置独立保存在 `/data/config/cloud/agent-runtime.yaml`。升级时首次读取会继承其他运行参数，管理员全局设置页可继续调整。模型连接和 API Key 使用原模型文件，按 IP 的每日查询额度使用鉴权环境变量。[配置说明](../local-setup.md#3-模型仍用现有配置方式)
 
 Deep Agents checkpoint 与 MySQL schema 的初始化、已有数据库升级按
-[模型配置](../../docs/model-config.md#deep-agents-checkpoint-持久化)核对。
+[模型配置](../../gateway/README.md#云端-deep-agents-与-mysql-checkpoint)核对。
 
 Web 使用 `npm --prefix web run build` 的 `web/dist`，由公网 HTTPS 反向代理同源提供；
 API 用 `python -m server.main`，MySQL、Elasticsearch 和 Redis 保持私有连接。
@@ -62,6 +62,5 @@ HTTPS、媒体、SSE 及请求来源校验参照 [Nginx 入口](../nginx/README.
 embedding 模型、维度和编码合同；运行环境可校验通过不代表模型端点已经连通。
 
 未配置 SMTP 时可以启动游客功能，邮箱验证码发送和验证明确返回 503 EMAIL_UNAVAILABLE，
-不会放宽 CSRF 或管理权限。该启动缺陷与验证见
-[游客启动 TRD](../../docs/design/03-product-reassessment/cloud-guest-without-smtp-trd.md)。
+不会放宽 CSRF 或管理权限。
 私有配置、可信 TLS、管理员/邮箱、模型接口与已有样例数据需要分别验收。

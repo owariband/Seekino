@@ -1,3 +1,0 @@
-2026-11-01T11:44:55+0800 INFO server.service.video_parse_results request_id=- video_asr_cache_reused task=6cf69603-6708-4d24-bee3-2dff0e858ad3 source_task=613f40e2-7bcb-4e38-9ae4-9ad1021afb51
-2026-11-01T11:53:37+0800 INFO server.service.video_parse_results request_id=- video_asr_cache_hit task=6cf69603-6708-4d24-bee3-2dff0e858ad3
-2026-11-01T11:53:37+0800 INFO server.service.video_parse_results request_id=- video_diarization_cache_hit task=6cf69603-6708-4d24-bee3-2dff0e858ad3

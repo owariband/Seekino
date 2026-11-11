@@ -108,7 +108,7 @@
     --duration-page: 320ms;
     /* Translucent bar material: content scrolls beneath a frosted layer, as in Apple's navigation bars. */
     --material: color-mix(in srgb, var(--canvas) 78%, transparent);
-    /* Brand colors come from the mascot (assets/mascot/seekino-logo.svg). */
+    /* Brand colors come from the mascot (assets/seekino-logo.svg). */
     --brand: #74c5ba;
     --brand-shade: #349489;
     --brand-ink: #0b3b33;

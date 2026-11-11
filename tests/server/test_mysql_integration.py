@@ -64,7 +64,7 @@ def test_mysql_agent_attachments_migration_preserves_history_and_is_repeatable()
         engine.dispose()
         pytest.skip("attachment migration test requires an empty dedicated database")
     migration = (Path(__file__).parents[2] /
-                 "docs/migrations/20261016_agent_message_attachments.sql").read_text()
+                 "deploy/migrations/20261016_agent_message_attachments.sql").read_text()
     routine, verification = migration.split("DELIMITER $$", 1)[1].split("DELIMITER ;", 1)
     statements = [statement.strip() for statement in routine.split("$$") if statement.strip()]
     try:

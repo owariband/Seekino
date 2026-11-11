@@ -26,7 +26,7 @@ src/
 ├── app/       # 路由、主题、工作区上下文与全局壳
 ├── api/       # HTTP 边界与最小前端契约
 ├── features/  # 按 search/library/uploads/tasks/settings 纵向组织
-├── shared/    # 真正跨功能复用的格式化与小型 UI；kino/ 为聊天里的像素鲸鲨 Kino（见 shared/kino/README.md）
+├── shared/    # 真正跨功能复用的格式化与小型 UI；kino/ 为聊天里的像素鲸鲨 Kino
 ├── styles/    # 全局 token 与基础排版
 └── test/      # 单测环境
 ```
@@ -126,8 +126,7 @@ Secure 属性，上游 HTTPS 校验保持开启。登录、退出和远端失联
 身份接口的 `emailLoginEnabled` 反映账号服务是否配置邮件发送器。SMTP host 留空时，
 账号入口显示“游客模式”和“登录 / 注册（暂未开放）”，登录弹窗只提供说明及“继续体验”，
 不收集邮箱或请求验证码。配置 SMTP 并重启后，重新加载身份即可恢复表单；这不代表邮件
-连通性已经验证。本机上传继续按本机权限工作。设计与验收见
-[SMTP 登录提示](../docs/design/03-product-reassessment/smtp-login-availability-trd.md)。
+连通性已经验证。本机上传继续按本机权限工作。
 
 验证：
 
@@ -137,9 +136,3 @@ npm test
 npm run build
 npm run test:e2e
 ```
-
-## Chat 流式验收采证
-
-正常 Chat 请求通过 `seekino:chat-delivery` 浏览器事件区分发出、实时正文接收、可见 DOM 观察、模型轮次完成及持久终态。DOM 观察使用提交后的下一动画帧，并不声称精确测得物理屏幕绘制。记录不包含正文；失败/中断只有终止耗时，没有成功 TT。
-
-单独浏览器记录保留候选 `firstProviderTextReceivedMs`，`fttMs` 为 null；结合独立 `SEEKINO_CHAT_TRACE_DIR` 中的原始请求/SSE，由 `scripts/verify_chat_streaming_trace.py` 核验身份与完成前交付后才填写有效 FTT。旧服务、非流式和缺少来源的快照不能计为真实首字。采集方法、模拟与真实验证边界见 [实施报告](../docs/report/server/chat-streaming-20261101.md)。

@@ -1,9 +1,0 @@
-{
-  "tenantId": "local-default",
-  "seriesId": "34646a50-bdad-5207-837c-5d0e90adcc0f",
-  "description": "Andrej Karpathy 的《Neural Networks: Zero to Hero》系列课程讲解视频。本集为《Let's build GPT: from scratch, in code, spelled out.》，以英语讲解并通过代码演示从零构建 GPT。",
-  "importantExtraData": {
-    "format": "json",
-    "content": "{\n  \"source\": {\n    \"author\": \"Andrej Karpathy\",\n    \"course\": \"Neural Networks: Zero to Hero\",\n    \"course_url\": \"https://karpathy.ai/zero-to-hero.html\",\n    \"lesson\": \"Let's build GPT: from scratch, in code, spelled out.\"\n  },\n  \"all_speakers\": [\n    {\n      \"name\": \"Andrej Karpathy\",\n      \"aliases\": [\n        \"Karpathy\",\n        \"卡帕西\"\n      ],\n      \"role\": \"本集课程讲师与主要讲解者\"\n    }\n  ],\n  \"speaker_context\": \"当前素材是 Andrej Karpathy 的单讲师课程录屏；本集的主要讲解声音和画中画讲师对应 Andrej Karpathy。这个对应来自用户提供的课程背景，不是声纹身份验证。\"\n}"
-  }
-}

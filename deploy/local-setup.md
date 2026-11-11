@@ -56,7 +56,7 @@ docker compose --env-file .env.docker up --build -d --wait
 
 ## 3. 模型仍用现有配置方式
 
-不维护按供应商拆分的 YAML。继续使用现有 `model_sources`、`models`、`supervisor_harness` 和 `SEEKINO_MODEL_CONFIG`，完整字段见[模型配置](../docs/model-config.md)。
+不维护按供应商拆分的 YAML。继续使用现有 `model_sources`、`models`、`supervisor_harness` 和 `SEEKINO_MODEL_CONFIG`，可在[默认配置](../config.yaml)核对模型角色与来源。
 
 `.env.docker` 中的 `SEEKINO_MODEL_CONFIG=./config.yaml` 指向**首次导入的宿主机文件**，相对路径以仓库根目录为准，也可以选择自己的既有 YAML。初始化后，容器使用持久卷中的 `/data/config/config.yaml`，设置页修改也保存到这里。普通启动和镜像重建不会覆盖这份有效配置。
 
@@ -183,18 +183,7 @@ docker compose --env-file .env.docker up -d --wait
 docker compose up -d --wait mysql elasticsearch
 ```
 
-该路线使用 `.env.local` 和宿主机工具；`./start.sh --branch dev` 仍只管理宿主机进程。完整 Docker 路线不经过它，因此不依赖 Windows 上的 Bash、`fcntl` 或 `lsof`。两条路线若同时运行，需要隔离端口、数据库和媒体。
-
-## 验证边界
-
-本次配置已通过以下检查：
-
-- Compose CLI 解析默认服务、可选 profile、自定义端口和包含空格的模型路径。
-- 初始化脚本的首次导入、失败中止、重复运行，以及设置页原子写入后的配置保留测试。
-- 默认 DeepAgents、现有 Kimi / Codex 绑定和服务配置 / 装配回归测试。
-- 前端生产构建、Nginx 配置语法检查；Linux amd64 / arm64 的锁定依赖解析 dry-run。
-
-以上是原容器部署配置的验证记录。2026-10-28 已在新 Mac 验证 MySQL/Elasticsearch 容器健康、宿主机依赖和前端构建；完整应用镜像构建、Windows Docker Desktop 与供应商付费调用仍未实测。
+该路线使用 `.env.local` 和宿主机工具；`./start.sh` 仍只管理宿主机进程。完整 Docker 路线不经过它，因此不依赖 Windows 上的 Bash、`fcntl` 或 `lsof`。两条路线若同时运行，需要隔离端口、数据库和媒体。
 
 ## 6. 默认模型凭据与 M5 本地替代
 
@@ -246,39 +235,3 @@ docker compose up -d --wait mysql elasticsearch
 4K–8K 上下文、较少视频帧和串行处理开始，按阶段加载/卸载模型；不要沿用云模型的长上下文和高并发预算。
 这些是待本机压测的起点，不能推断为相同云端质量或实时处理速度。
 本地模型不需要云供应商 Key；个别兼容 SDK 的非空 `api_key` 字段可能使用本机占位值，但不能把占位值填进当前云模型配置来绕过校验。
-
-## 7. Seekino 命名空间切换（2026-10-28）
-
-项目包名、环境变量、容器项目、默认数据库/索引、Cookie、浏览器存储、Agent 内部标识与文件名已统一使用 Seekino。
-环境变量使用 `SEEKINO_*`；默认开发库为 `seekino_development`，默认 Chunk 索引为
-`seekino_video_chunks_development`，Compose 项目为 `seekino-local`。
-
-这是一次完整命名空间切换，不提供旧配置前缀的透明兼容：
-
-- 两份本机 `.env.local` 已同步改名，供应商密钥值不改动。
-- Series、Video、Chunk、ContextSnapshot 和 ParseJob 的 UUID5 输入命名空间已切换；已有实体不会自动获得新的 ID。
-- ES 索引合同版本已更新；旧索引不能直接视为兼容的新索引。
-- 旧 Cookie、主题、语言、播放记录和会话缓存不会自动导入新浏览器命名空间；既有用户可能需要重新登录和设置偏好。
-- 本机切换前已核对：业务表为空，只有 checkpoint schema 的迁移记录；搜索索引为 0 文档。
-  因此本机使用新的空开发库/索引，并保留切换前 SQL 与索引定义备份。
-- 有真实业务数据的其他部署必须先制定数据库外键、确定性 ID、素材引用、会话和 ES 重建迁移方案，不能仅替换名称或直接重建。
-
-本轮已验证宿主机前端构建、新数据库容器健康和初始化；完整应用镜像构建、实际供应商请求与本地模型效果仍需各自验收。
-
-### 本机验证结果与尚存问题
-
-2026-10-28 命名空间改名后：`uv sync --locked --offline`、前端生产构建通过；
-前端 551 项测试通过；真实 MySQL/ES/Checkpoint 相关测试 51 通过、1 跳过。
-后端非 live-agent 全量测试为 4960 通过、107 跳过、1 未选中、9 失败。
-随后在改名前源码快照上复跑全部 9 个失败用例，9 个均复现，因此不能归因为本次改名，
-也不能宣称后端测试全部通过。测试使用临时 NumPy/SciPy 依赖层，未改项目依赖声明。
-
-现存失败包括：测试引用已不存在的 `engine.common.model_factory`；Langfuse 接入头断言；
-3 个模型默认配置/独立 Supervisor 断言；1 个多模态 fallback 上下文预算用例；
-3 个真实视频处理用例。视频失败已确认是 FFmpeg 9 不再接受代码使用的
-`-filter_script:v` 参数，后续完成视频端到端验收前需要修复此兼容性问题。
-
-`./start.sh --branch dev` 已完成数据库和索引检查，但因两个默认供应商 Key 为空，
-按预期停止在 API/Web 启动前；付费模型调用与完整视频流程未验收。
-新命名 MySQL 和 Elasticsearch 容器健康。旧容器停止后，旧数据卷和网络应继续保留；
-确认备份可恢复且新实例验证完成后，再显式清理旧资源。不要用删除卷作为常规启动步骤。

@@ -6,7 +6,7 @@ from PIL import Image, ImageDraw
 from engine.parsev2.camera import CameraReference, camera_replay
 from engine.parsev2.camera_evidence import camera_motion_hints, ground_camera_pans
 from engine.parsev2.schemas import VideoParseResult
-from evals.clip_camera_reference import panorama, sample
+from tests.engine.parsev2.camera_frames import panorama, sample
 
 
 @pytest.mark.parametrize(

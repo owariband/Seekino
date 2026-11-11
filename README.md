@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/mascot/animated/seekino-idle.svg" width="96" alt="Seekino" />
+  <img src="assets/readme/seekino-idle.svg" width="96" alt="Seekino" />
 </p>
 
 <h1 align="center">Seekino</h1>
@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <a href="#1-我们-seekino-的亮点">亮点</a> ·
+  <a href="#1-seekino-亮点">亮点</a> ·
   <a href="#2-技术架构">技术架构</a> ·
   <a href="#3-部署">部署</a> ·
   <a href="#api-接入">API 与 MCP</a> ·
@@ -41,7 +41,7 @@
 Seekino 为你召回需要的片段，并带上来源视频与时间范围，随时回到原片核对。
 
 <p align="center">
-  <img src="docs/architecture/fig01.png" width="960" alt="从记得某个瞬间，到拿到可核对的片段" />
+  <img src="assets/readme/figures/fig01.png" width="960" alt="从记得某个瞬间，到拿到可核对的片段" />
 </p>
 
 ### 1.1. 召回支持
@@ -70,11 +70,11 @@ Seekino 为你召回需要的片段，并带上来源视频与时间范围，随
 <details>
 <summary>实机截图（2026-10-25，本机运行，真实素材）</summary>
 
-![Seekino 素材库：视频系列、解析状态与管理操作](assets/screenshots/library.jpg)
+![Seekino 素材库：视频系列、解析状态与管理操作](assets/readme/screenshots/library.jpg)
 
-![Seekino 自然语言检索：召回片段、选择理由与原片时间](assets/screenshots/search-results.jpg)
+![Seekino 自然语言检索：召回片段、选择理由与原片时间](assets/readme/screenshots/search-results.jpg)
 
-![Seekino 观看问答：原片播放器与对话面板](assets/screenshots/watch-chat.jpg)
+![Seekino 观看问答：原片播放器与对话面板](assets/readme/screenshots/watch-chat.jpg)
 
 </details>
 
@@ -83,17 +83,17 @@ Seekino 为你召回需要的片段，并带上来源视频与时间范围，随
 为了既能在云服务器上搭起轻量用户可体验的公开问答，又能让重度用户自建个人视频知识库，Seekino 从解析构建、召回和问答三个环节搭建了下述系统结构：
 
 <p align="center">
-  <img src="docs/architecture/fig-overview.png" width="960" alt="Seekino 整体架构：解析、召回、问答与外部服务" />
+  <img src="assets/readme/figures/fig-overview.png" width="960" alt="Seekino 整体架构：解析、召回、问答与外部服务" />
 </p>
 
-<sub>图 2–8 的源文件是 [docs/architecture](docs/architecture/) 下同名的 `.excalidraw`，可直接拖进 [excalidraw.com](https://excalidraw.com) 编辑；其余旧图在 [seekino-figures.drawio](docs/architecture/seekino-figures.drawio)。🚧 表示尚未实现，“待测”表示尚未在当前版本实测。</sub>
+<sub>图 2–8 的源文件是 [assets/readme/figures](assets/readme/figures/) 下同名的 `.excalidraw`，可直接拖进 [excalidraw.com](https://excalidraw.com) 编辑；其余旧图在 [seekino-figures.drawio](assets/readme/figures/seekino-figures.drawio)。🚧 表示尚未实现，“待测”表示尚未在当前版本实测。</sub>
 
 ### 数据模型
 
 MySQL 保存业务事实、任务与版本；Elasticsearch 只保存每个 Chunk 一份的派生文档，按解析任务与 Chunk 定位，可随时重建。
 
 <p align="center">
-  <img src="docs/architecture/fig-er.png" width="960" alt="数据模型：MySQL 表与 Elasticsearch 派生文档" />
+  <img src="assets/readme/figures/fig-er.png" width="960" alt="数据模型：MySQL 表与 Elasticsearch 派生文档" />
 </p>
 
 ### 2.1. 解析
@@ -109,7 +109,7 @@ MySQL 保存业务事实、任务与版本；Elasticsearch 只保存每个 Chunk
 - **clip**：剪辑素材
 
 <p align="center">
-  <img src="docs/architecture/fig06.png" width="960" alt="固定 60s 分块并行解析" />
+  <img src="assets/readme/figures/fig06.png" width="960" alt="固定 60s 分块并行解析" />
 </p>
 
 #### 补上分块的代价
@@ -122,7 +122,7 @@ MySQL 保存业务事实、任务与版本；Elasticsearch 只保存每个 Chunk
 | 尾 Summary | 解析完成后通读整条时间线，生成视频大纲与系列概览 |
 
 <p align="center">
-  <img src="docs/architecture/fig-parse.png" width="960" alt="Parse V2：阶段、持久化状态、Refine 与门禁" />
+  <img src="assets/readme/figures/fig-parse.png" width="960" alt="Parse V2：阶段、持久化状态、Refine 与门禁" />
 </p>
 
 #### 效果
@@ -136,7 +136,7 @@ MySQL 保存业务事实、任务与版本；Elasticsearch 只保存每个 Chunk
 | 豆包 Seed 2.1 Pro | 待测 | 待测 | 待测 | 待测 |
 | DeepSeek Flash（non-thinking） | 待测 | 31.8 s | 待测 | ≈¥0.22 |
 
-<sub>FTT：首 token 时间；TT：单 Chunk 总耗时。DeepSeek 费用来自不完整的用量记录。来源：[Kimi trace](docs/report/server/kimi-parse-trace-20261101.md) · [DeepSeek Flash 审计](docs/report/gateway/deepseek-flash-chunk-audit-20261103.md) · [devlog](docs/dev/devlog.md)</sub>
+<sub>FTT：首 token 时间；TT：单 Chunk 总耗时。DeepSeek 费用来自不完整的用量记录。测量来自 2026-11-01 的 Kimi 解析和 11-03 的 DeepSeek 调用记录。</sub>
 
 并行的好处是，不管用什么模型，一个长视频的时间消耗都能得到控制：耗时随“Chunk 数 ÷ 并发数”增长，而不是随整片串行增长。
 
@@ -166,13 +166,13 @@ Agent 从 tool 使用的无限失败重试 pipeline 中“自由”出来，耗�
 时间未排序这类能确定修复的问题由程序直接修，不再调用模型，保证最终结构正确、合法。
 
 <p align="center">
-  <img src="docs/architecture/fig09.png" width="960" alt="Refine 前后对比" />
+  <img src="assets/readme/figures/fig09.png" width="960" alt="Refine 前后对比" />
 </p>
 
 ### 2.2. 构建召回
 
 <p align="center">
-  <img src="docs/architecture/fig-retrieve.png" width="960" alt="召回：范围、多通道召回、融合、核对与重排" />
+  <img src="assets/readme/figures/fig-retrieve.png" width="960" alt="召回：范围、多通道召回、融合、核对与重排" />
 </p>
 
 #### 为多模态输入设计向量
@@ -196,7 +196,7 @@ Agent 从 tool 使用的无限失败重试 pipeline 中“自由”出来，耗�
 召回结果返回前，会按对应的解析任务和内容版本回源核对时间线：向量命中只是候选，核对过才是事实。
 
 <p align="center">
-  <img src="docs/architecture/fig10.png" width="960" alt="召回单位为什么从 Chunk 改为 Event" />
+  <img src="assets/readme/figures/fig10.png" width="960" alt="召回单位为什么从 Chunk 改为 Event" />
 </p>
 
 #### 从上而下与从下而上
@@ -219,7 +219,7 @@ Agent 会按问题自己选择方式。
 | 兜底<br><sub>总预算 8 s</sub> | 超时、报错或输出不合法都回退到原始消息，只会帮忙，不会挡路 |
 
 <p align="center">
-  <img src="docs/architecture/fig-chat.png" width="960" alt="问答：Query hook、Supervisor 工具与交付" />
+  <img src="assets/readme/figures/fig-chat.png" width="960" alt="问答：Query hook、Supervisor 工具与交付" />
 </p>
 
 #### 用片段回答
@@ -238,11 +238,11 @@ Supervisor 按需调用工具：
 <details>
 <summary>遇到的问题、效果与待测指标</summary>
 
-![问题与修复](docs/architecture/fig08.png)
+![问题与修复](assets/readme/figures/fig08.png)
 
-![效果对比](docs/architecture/fig11.png)
+![效果对比](assets/readme/figures/fig11.png)
 
-![待测指标](docs/architecture/fig12.png)
+![待测指标](assets/readme/figures/fig12.png)
 
 </details>
 
@@ -251,13 +251,13 @@ Supervisor 按需调用工具：
 按目录分层，调用只向下走，每层只做自己负责的事：
 
 <p align="center">
-  <img src="docs/architecture/fig-layers.png" width="960" alt="仓库分层：web、server、agent、engine、gateway" />
+  <img src="assets/readme/figures/fig-layers.png" width="960" alt="仓库分层：web、server、agent、engine、gateway" />
 </p>
 
 本机用一套 Compose 起全栈；云端样例库拆成 CPU 服务器与 GPU 服务器：
 
 <p align="center">
-  <img src="docs/architecture/fig-deploy.png" width="960" alt="部署：本机自托管与云端样例库" />
+  <img src="assets/readme/figures/fig-deploy.png" width="960" alt="部署：本机自托管与云端样例库" />
 </p>
 
 ## 3. 部署
@@ -274,7 +274,7 @@ Python、Node.js、ffmpeg 和模型 SDK 已放进镜像，宿主机无需另装�
 ### 2. 获取代码并填写密钥
 
 ```bash
-git clone https://github.com/owariband/Seekino.git
+git clone --depth 1 --single-branch --branch main https://github.com/owariband/Seekino.git
 cd Seekino
 
 cp deploy/docker/env.example .env.docker
@@ -287,7 +287,7 @@ ARK_API_KEY=你的火山方舟密钥
 DEEPSEEK_API_KEY=你的DeepSeek密钥
 ```
 
-仓库 `config.yaml` 默认使用 Ark 处理 Supervisor、音视频理解与向量，DeepSeek 处理检索 Agent、重排和文本回退。请确认账号已开通所配置的模型，或按[模型配置文档](docs/model-config.md) 替换为自己的模型 / Endpoint。
+仓库 `config.yaml` 默认使用 Ark 处理 Supervisor、音视频理解与向量，DeepSeek 处理检索 Agent、重排和文本回退。请确认账号已开通所配置的模型，或按[模型配置文档](deploy/local-setup.md#3-模型仍用现有配置方式) 替换为自己的模型 / Endpoint。
 
 **可选 Kimi / Codex：** 继续修改同一份 `config.yaml` 的现有 source、model 和 harness；不需要新增 provider YAML。Kimi 填写 `KIMI_API_KEY`，Codex 使用镜像内已有的 SDK runtime 登录。具体步骤见[本地配置指南](deploy/local-setup.md)。
 
@@ -332,10 +332,9 @@ docker compose --env-file .env.local up -d --wait mysql elasticsearch
 uv run --no-sync --env-file .env.local -- python -m server.cli init-db
 uv run --no-sync --env-file .env.local -- python -m server.cli init-es-index
 
-# 使用已检出的 dev 工作区
-./start.sh --branch dev
-./start.sh --branch dev status
-./start.sh --branch dev stop
+./start.sh
+./start.sh status
+./start.sh stop
 ```
 
 手动前台调试时，分别在两个终端运行：
@@ -348,7 +347,7 @@ uv run --no-sync --env-file .env.local -- python -m server.main
 uv run --no-sync --env-file .env.local -- npm --prefix web run dev -- --host 127.0.0.1 --port 5173 --strictPort
 ```
 
-main 工作区使用 `./start.sh`、`./start.sh status`、`./start.sh stop`。启动器只管理宿主机进程；本路线的 Docker 数据库使用 `docker compose --env-file .env.local stop mysql elasticsearch` 停止。更多端口、日志和旧环境恢复说明见[开发部署说明](deploy/README.md)。
+启动器只管理宿主机进程；本路线的 Docker 数据库使用 `docker compose --env-file .env.local stop mysql elasticsearch` 停止。更多端口、日志和旧环境恢复说明见[开发部署说明](deploy/README.md)。
 
 不使用 Docker 时，按[全原生本机开发](deploy/README.md#可选全原生本机开发)安装并配置 MySQL、Elasticsearch，使用同一组 `start.sh` 命令。启动器复用已监听的数据库，或启动配置的原生程序；`stop` 只停止它管理的进程，包括由它启动的原生 MySQL 和 ES。数据库默认保存到 `data/mysql/`、`data/elasticsearch/`，媒体默认保存到 `assets/library/`，旧数据不会自动迁移。
 
@@ -387,13 +386,13 @@ Web 界面与外部工具使用同一套服务接口：
 <br />
 
 **模型配置**<br />
-`model_sources` 定义协议、认证与 Provider，`models` 绑定对话、转写、视觉、embedding 与 rerank 等角色。`supervisor_harness` 选择 Codex 或 Deep Agents；来源、模型或 harness 修改后需重启 Server。已有素材库不要随意更换 embedding 模型、来源或维度。详见 [模型配置](docs/model-config.md)。
+`model_sources` 定义协议、认证与 Provider，`models` 绑定对话、转写、视觉、embedding 与 rerank 等角色。`supervisor_harness` 选择 Codex 或 Deep Agents；来源、模型或 harness 修改后需重启 Server。已有素材库不要随意更换 embedding 模型、来源或维度。详见 [模型配置](deploy/local-setup.md#3-模型仍用现有配置方式)。
 
 **local 与 cloud 身份**<br />
-默认 `SEEKINO_AUTH_MODE=local`，本机无需登录。`cloud` 模式额外需要签名秘密、Redis、SMTP 和同源 HTTPS；游客、登录用户与公开内容按服务端权限隔离。详见 [用户 / Tenant 交接说明](docs/report/server/user-tenant-handoff-20261010.md)。
+默认 `SEEKINO_AUTH_MODE=local`，本机无需登录。`cloud` 模式额外需要签名秘密、Redis、SMTP 和同源 HTTPS；游客、登录用户与公开内容按服务端权限隔离。详见 [云端身份与配置](deploy/cloud/README.md)。
 
 **已有数据库升级**<br />
-`init-db` 与 `init-es-index` 可重复执行，但不自动迁移旧库或重建不兼容索引。升级前阅读 [Server 说明](server/README.md)，并核对 [身份迁移](docs/migrations/20261010_user_tenant_identity.sql) 与 [媒体毫秒迁移](docs/migrations/20261008_video_timeline_milliseconds.sql)。
+`init-db` 与 `init-es-index` 可重复执行，但不自动迁移旧库或重建不兼容索引。升级前阅读 [Server 说明](server/README.md)，并核对 [身份迁移](deploy/migrations/20261010_user_tenant_identity.sql) 与 [媒体毫秒迁移](deploy/migrations/20261008_video_timeline_milliseconds.sql)。
 
 **数据与恢复**<br />
 `outputs/` 可能包含实际媒体、配置、日志和实验工作区，不要整体视为缓存。日常停止不要使用 `docker compose down -v`。换机或恢复前阅读 [本机资产与换机恢复](deploy/README.md#local-assets)。
@@ -429,17 +428,16 @@ Seekino/
 ├── web/           # React + TypeScript + Vite
 ├── deploy/        # 本地基础设施与部署说明
 ├── tests/         # 自动化测试
-├── evals/         # 检索、对话与意图路由评测
-└── docs/          # 契约、设计、迁移与研究记录
+├── assets/        # README 图表、截图和应用图标
+└── docs/          # 项目介绍与使用入口
 ```
 
 </details>
 
 ## 文档入口
 
-- **部署与配置：** [本地配置指南](deploy/local-setup.md) · [开发部署](deploy/README.md) · [模型配置](docs/model-config.md)
-- **产品与开发：** [Server](server/README.md) · [Web](web/README.md) · [设计文档](docs/design/README.md) · [管理工作台](docs/dev/workbench.html) · [问题分析](docs/dev/problems.md)
-- **质量与实验：** [Benchmark](evals/benchmark/README.md) · [短片创作实验](.agents/skills/seekino-short-video/SKILL.md)
+- [项目介绍](docs/README.md) · [本地配置指南](deploy/local-setup.md) · [原生部署与备份](deploy/README.md)
+- [HTTP 与 MCP 接口](server/README.md) · [模型来源](gateway/README.md) · [Web](web/README.md)
 
 <details>
 <summary><strong>References：相关论文与工程实践</strong></summary>

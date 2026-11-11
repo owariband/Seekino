@@ -747,7 +747,7 @@ def test_interval_task_database_enforces_status_and_lease(status, lease, allowed
 def test_task_indexing_migration_guards_scope_and_matches_model_checks() -> None:
     migration = (
         Path(__file__).resolve().parents[2]
-        / "docs/migrations/20260928_task_indexing_contract.sql"
+        / "deploy/migrations/20260928_task_indexing_contract.sql"
     ).read_text()
     first_alter = migration.index("    ALTER TABLE video_parse_task")
     guards = migration[:first_alter]
@@ -835,7 +835,7 @@ def test_utc_timestamp_bind_normalizes_timezone_and_millisecond_precision() -> N
 def test_video_parse_v2_migration_checks_full_timestamp3_range_and_precision() -> None:
     migration = (
         Path(__file__).resolve().parents[2]
-        / "docs/migrations/20260927_video_parse_v2_tasks.sql"
+        / "deploy/migrations/20260927_video_parse_v2_tasks.sql"
     ).read_text()
 
     assert "minimum_timestamp_ms BIGINT DEFAULT 1000" in migration
@@ -966,7 +966,7 @@ def test_mysql_agent_schema_persists_scope_messages_and_model_provenance() -> No
 def test_agent_message_detail_migration_matches_supported_empty_legacy_schema() -> None:
     migration = (
         Path(__file__).resolve().parents[2]
-        / "docs/migrations/20260927_agent_message_detail_request.sql"
+        / "deploy/migrations/20260927_agent_message_detail_request.sql"
     ).read_text()
     first_alter = migration.index("ALTER TABLE agent_message")
     guards = migration[:first_alter]

@@ -789,7 +789,7 @@ def test_worker_runs_real_agent_repository_and_stage_commits(
     queue = MySqlVideoParseQueue(factory, video_concurrency=3)
     def write_media(command):
         if camera_clip and "%012d.jpg" in str(command[-1]):
-            from evals.clip_camera_reference import panorama, sample
+            from tests.engine.parsev2.camera_frames import panorama, sample
 
             coast = panorama()
             for i in range(30):

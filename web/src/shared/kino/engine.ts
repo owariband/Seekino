@@ -1,7 +1,7 @@
 /**
  * Kino, the Seekino pixel whale shark (direction A): pure sprite data, timelines and rasterising.
  * Nothing here touches the DOM, so the React component, the gallery and the video
- * export all draw from the same frames. Ported from docs/ui-design/seekino-mascot-pixel/pixel-mascot.
+ * export all draw from the same frames.
  */
 
 export const PALETTE = {
@@ -92,7 +92,7 @@ export const POSES: Record<PoseName, Pose> = {
     ],
     legs: [[6, "shade", 2], [12, "shade", 0], [3, "belly", 0], [10, "belly", 2]], anchor: 8, shadow: 13, sink: 0,
   },
-  // Same reading as assets/mascot/seekino-logo.svg: both eyes, a straight mouth, dorsal fin and tail top-right.
+  // Same reading as assets/seekino-logo.svg: both eyes, a straight mouth, dorsal fin and tail top-right.
   front: {
     rows: [
       "...............b..",

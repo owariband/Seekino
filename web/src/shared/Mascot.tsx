@@ -16,7 +16,7 @@ export type MascotMood = "idle" | "seek" | "puzzled" | "oops" | "swim" | "hop" |
 
 const BODY = "M30 158C27 114 58 84 108 80C152 77 197 92 214 124C228 152 221 188 193 203C166 216 120 216 82 211C47 206 32 186 30 158Z";
 
-/** Layered Seekino whale shark; geometry mirrors assets/mascot/seekino-logo.svg. */
+/** Layered Seekino whale shark; geometry mirrors assets/seekino-logo.svg. */
 export function Mascot({ mood = "idle", size = 96, title, className, delayed = false }: {
   mood?: MascotMood;
   size?: number;

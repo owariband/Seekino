@@ -43,24 +43,4 @@ uv run --no-sync --env-file .env.local pytest -q tests/server/test_elasticsearch
 不执行迁移、已有索引重建、历史数据切换或模型调用。运行真实 V2 上传前，还需检查
 现有 MySQL Schema 与 V2 启动配置；已有数据不能直接套用仅支持空表的迁移脚本。
 
-## 接入验证记录（2026-10-05 更新）
-
-2026-10-04 实例通过独立健康复查与重复启动复用，脚本的非 ES / red / 超时 / green
-四种响应回归均通过。随后真实接入发现 `ensure_index()` 报
-`index field 'lexical_fields' differs`，6 个真实用例均在初始化失败：普通 mapping 回读
-省略了与 `analyzer` 相同的 `search_analyzer`，字段默认值查询证明实际均为 `cjk`。
-
-2026-10-05 已在 Server 校验中最小修复这一误判：仅对 text 字段缺省 search_analyzer
-补实际 analyzer 的语义，再保留原有严格比较；不关闭校验、不修改 Engine 合同，
-也不需要重建索引。新增 12 个直接场景，五文件定向集 `262 passed`；真实 ES 集
-`6 passed`，包括实际查询、版本拒绝、部分索引失败恢复及删除恢复。
-
-本次真实回归使用已安装 ES 8.19.22 在独立临时目录、`127.0.0.1:19200` 的测试节点，
-不访问开发索引。项目正式启动校验用实际开发维度 1024 / 1024 连续通过两次，
-自建空验证索引及 UUID 测试索引已清理。它不是业务服务恢复或整链启动：本轮开始时
-`:9200` 未监听，未恢复该节点，未启动 MySQL / API / Consumer / Web 或调用真实模型。
-真实 MySQL Schema、V2 mode 和产品上传仍待下一批检查；07B / 08A 尚未完整验收。
-
-问题与证明边界见 [VP2-007](../../docs/design/02-agent-harness/potential_problems.md#vp2-007真实-es-mapping-默认分词器被-server-校验误拒绝)。
-
 安装方法：[Elastic 官方 archive 文档](https://www.elastic.co/guide/en/elasticsearch/reference/8.19/targz.html)。

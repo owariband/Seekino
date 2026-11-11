@@ -1,27 +1,49 @@
-# Local design notes and generated visual / architecture artifacts
+# Public checkout: project overview, README media and runtime logos.
+/docs/*
+!/docs/README.md
+/assets/*
+!/assets/readme/
+!/assets/seekino-logo.png
+!/assets/seekino-logo.svg
+
+# Development material is kept on dev.
 **/design/
-docs/notes/
-docs/ui-design/
+**/experiment/
+**/report_docs/
+/training/
+/data/
+/evals/
+/tests/evals/
+/tests/training/
+/tests/manual/*
+!/tests/manual/server_mq_once.py
+/.agents/
+/.claude/
+/.codex/
+/AGENTS.md
+/CLAUDE.md
+/skills-lock.json
+/config/local-dev-config.yaml
+/web/scripts/build-kino-sheet.ts
+/agent/video_parse_v2/README.md
+/engine/parsev2/README.md
+/web/src/shared/kino/README.md
 /transfer.md
 /.baoyu-skills/
-/.agents/skills/anivag-change-gate/
 /engines/*
-/assets/diagrams/*
-!/assets/diagrams/anivag-open-source-architecture.png
-/assets/seekino-mascot-pixel/out/
 /infographic/
-/docs/*.dataflow.json
-/docs/*.visual-check.*
-/docs/*-pipeline.html
-**/experiment/
+/seekino/
 
-# Local development state
+# Local state and credentials.
+/outputs/
 /.claude-tmp/
+/.kimi-tmp/
+/.research/
+.seekino-secrets/
+*.seekino.lock
 .DS_Store
-**/.DS_Store
 .env
 .env.*
-.env.cloud
 !.env.example
 .venv/
 **/__pycache__/
@@ -34,11 +56,6 @@ web/playwright-report/
 web/test-results/
 gateway/pi/host/node_modules/
 gateway/pi/host/dist/
-
-# Local model experiments and copyrighted fixtures
-/assets/example_video_mygo/
-/assets/mygo_background_referrence/images/
-/outputs/
 /tests/gateway/fixtures/*.mp4
 /tests/gateway/fixtures/*.mov
 /tests/gateway/fixtures/*.avi
