@@ -7,6 +7,7 @@ from copy import deepcopy
 from typing import Any
 
 from agent.video_parse_v2.input import ParseConfig
+from engine.parsev2.edit_reference import ReferenceChunk
 from engine.parsev2.schemas import DialogueEvent, VideoParseResult
 from engine.parsev2.validation import validate_result_time_range
 from engine.rag.contracts import TranscriptCueView, VideoChunkEvidence, VideoChunkRetrievalIdentity
@@ -21,7 +22,10 @@ from ..repository import video_parse_task as task_store
 from ..model.dto.parseContentDTO import (
     ChunkParseContentData,
     ParseExportChunkSnapshot,
+    PublishedReference,
+    ReferenceKey,
 )
+from ..storage.elasticsearch_references import observation_fingerprint
 from ..model.dto.taskDTO import (
     ChunkParseTaskData,
     VideoParseTaskData,
@@ -204,6 +208,35 @@ def _episode_ranges(episodes: Sequence[int]) -> str:
     return "、".join(f"E{a:02}–E{b:02}" if a != b else f"E{a:02}" for a, b in ranges)
 
 
+def published_reference_sources(session, *, tenant_id, task_scope, chunk_ids, index_name):
+    """Hydrate complete chunks inside an already resolved, current tenant scope."""
+    if not task_scope:
+        return {}
+    rows = read_store.load_candidate_rows(
+        session, task_ids=tuple(task_scope), chunk_ids=chunk_ids, task_status="COMPLETE",
+        phase=ChunkTaskPhase.INDEX, status="COMPLETE",
+    )
+    published = {}
+    for series, video, chunk, task, _child, content in rows:
+        if (series.tenant_id != tenant_id or chunk.video_id != video.id
+                or task_scope.get(task.id) != (video.id, series.id)):
+            continue
+        receipt = _index_receipt(content, task.id, chunk.id)
+        generation = task.parse_config["indexing"]["index_generation"]
+        projection = receipt.get("edit_reference", {})
+        if projection.get("index_name") != index_name or receipt["index_generation"] != generation:
+            continue
+        source = ReferenceChunk.model_validate(content.content).validate_owner(chunk.start_ms, chunk.end_ms, video.duration_ms)
+        if sorted(o.segment.segment_id for o in source.observations) != projection.get("segments"):
+            raise VideoParseConflictError("reference publication disagrees with current segments")
+        for obs in source.observations:
+            key = ReferenceKey(tenant_id=tenant_id, series_id=series.id, video_id=video.id, task_id=task.id,
+                               chunk_id=chunk.id, version=content.version, generation=generation,
+                               segment_id=obs.segment.segment_id, fingerprint=observation_fingerprint(obs))
+            published[key] = PublishedReference(key, obs, video.filename, video.duration_ms, chunk.sequence_no)
+    return published
+
+
 def resolve_retrieval_scope(
     session,
     *,
@@ -245,6 +278,13 @@ def resolve_retrieval_scope(
     for task in read_store.list_video_tasks(session, video_ids=video_ids):
         latest_by_video.setdefault(task.video_id, task)
 
+    empty_series = series_names.keys() - {video.series_id for video in videos}
+    # Reference observations have their own index. Only content videos owe Event coverage.
+    videos = [video for video in videos if video.id not in latest_by_video
+              or latest_by_video[video.id].parse_config.get("profile", "content") == "content"]
+    if not videos:
+        raise SeriesNotReadyError("selected videos have no content profile",
+                                  public_message="所选范围只含剪辑参考素材")
     selected = [
         (video, latest_by_video[video.id])
         for video in videos
@@ -253,7 +293,7 @@ def resolve_retrieval_scope(
         == VideoParseTaskStatus.COMPLETE.value
     ]
     if not selected:
-        processing = any(not task.status.endswith("_FAILED") for task in latest_by_video.values())
+        processing = any(not latest_by_video[v.id].status.endswith("_FAILED") for v in videos if v.id in latest_by_video)
         message = "课程正在解析，暂时没有可检索的集数" if processing else "所选课程暂时没有可检索的集数"
         if episode_order is not None or (requested is not None and len(videos) == 1):
             task = latest_by_video.get(videos[0].id)
@@ -339,10 +379,10 @@ def resolve_retrieval_scope(
     grouped: dict[str, list[VideoData]] = {}
     for video in videos:
         grouped.setdefault(video.series_id, []).append(video)
-    partial = len(selected) != len(videos) or (requested is None and grouped.keys() != series_names.keys())
+    partial = len(selected) != len(videos) or (requested is None and bool(empty_series))
     for series_id in ordered_series_ids:
         members = grouped.get(series_id, [])
-        if requested is not None and not members:
+        if not members and (requested is not None or series_id not in empty_series):
             continue
         covered, processing, unavailable, no_events = [], [], [], []
         for video in members:
@@ -466,6 +506,8 @@ def hydrate_retrieval_candidates(
                 "retrieval candidate is missing from COMPLETE V2 facts"
             )
         series, video, chunk, task, child, content = row
+        if task.parse_config.get("profile") == "edit_reference":
+            raise VideoParseConflictError("editing reference has no content events")
         if chunk.video_id != video.id:
             raise VideoParseConflictError(
                 "retrieval candidate Chunk belongs to a different Video"
@@ -555,6 +597,8 @@ def load_chunk_evidence_identity(
     task = task_store.get_task(session, task_id)
     if task is None or task.is_deleted:
         raise VideoChunkNotFoundError("videoChunkId has no current V2 task")
+    if task.parse_config.get("profile") == "edit_reference":
+        raise VideoChunkNotFoundError("videoChunkId has no current content events")
     if task.status != VideoParseTaskStatus.COMPLETE.value:
         raise VideoParseConflictError("videoChunkId latest V2 task is not COMPLETE")
     content = read_store.load_indexed_chunk_content(
@@ -677,6 +721,8 @@ def export_snapshots(
     for source_id in selected_ids:
         source_rows = grouped[source_id]
         task, video, *_ = source_rows[0]
+        if task.parse_config.get("profile") == "edit_reference":
+            raise VideoParseConflictError("editing references have no timeline to export")
         runtime = (task.detail or {}).get(RUNTIME_DETAIL_KEY, {})
         if task.is_test or not isinstance(runtime, Mapping) or runtime.get("accepted") is not True:
             raise VideoParseConflictError(f"export task {task.id} is not a formal accepted parse")

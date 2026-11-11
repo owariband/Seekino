@@ -130,6 +130,88 @@ def test_mcp_credentials_are_scoped_expire_and_follow_account_revocation(cloud, 
             service.authenticate_clip(ticket, "test-reference", 10, 100)
 
 
+def test_personal_mcp_library_through_http_is_persistent_idempotent_and_owner_scoped(cloud):
+    from dataclasses import replace
+    from server.api.mcp import create_mcp_app
+    from server.database import create_schema
+    from server.repository.editing_template import EditingTemplateRepository
+    from server.service.mcp_retrieval import McpRetrievalService
+
+    auth, _, _, sessions = cloud
+    create_schema(sessions.kw["bind"])
+    auth.config = replace(auth.config, public_library_only=True)
+    origin = "https://editing.example.com"
+    service = McpRetrievalService(library=None, media=None, event_retrieval=None, parse_persistence=None,
+                                  local_tenant_id="local", public_tenant_id=auth.config.public_tenant_id,
+                                  editing_repository=EditingTemplateRepository(sessions))
+    app = create_mcp_app(service, auth_mode="cloud", auth=auth, allowed_origins=(origin,))
+    def token(email):
+        account = auth.verify_email_code(auth.create_guest().identity, email, "123456")
+        assert account.identity.tenant_id is None  # public-only deployments still give members a private editing library
+        with TestClient(_app(auth)) as web:
+            web.cookies.set(auth.config.cookie_name, account.token)
+            assert web.post("/api/auth/mcp-token?scope=personal").status_code == 403
+            result = web.post("/api/auth/mcp-token?scope=personal", headers={"X-CSRF-Token": account.csrf_token})
+            assert result.status_code == 200
+            return result.json()["accessToken"], auth.issue_mcp_token(account.token)[0]
+
+    alice, public = token("editor-a@example.com")
+    bob, _ = token("editor-b@example.com")
+    with TestClient(_app(auth)) as web:
+        denied = web.post("/api/auth/mcp-token?scope=personal")
+        assert denied.status_code in (401, 403) and not web.cookies
+        guest = web.post("/api/auth/mcp-token").json()["accessToken"]
+    args = dict(request_id="first", new_template={"name": "红色切入", "tags": ["红色"]},
+                spec={"fps": 24}, visual_requirements={"palette": "red"}, slots=[], params_schema={},
+                files={"enter.js": "a" * 70000}, entry="enter.js", runtime={"engine": "browser"},
+                evaluation={"agent_judgment": "reviewed the first render"}, source_refs=[])
+    headers = {"Accept": "application/json, text/event-stream", "MCP-Protocol-Version": "2025-06-18"}
+    with TestClient(app, base_url=origin, headers=headers) as client:
+        def call(credential, tool, **arguments):
+            response = client.post("/mcp", headers={"Authorization": "Bearer " + credential},
+                json={"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": tool, "arguments": arguments}})
+            assert response.status_code == 200
+            result = response.json()["result"]
+            return result["content"][0]["text"] if result.get("isError") else result["structuredContent"]
+
+        save, read, versions = "save_edit_template_version", "get_edit_template", "list_edit_template_versions"
+        feedback, choose = "append_edit_template_note", "set_default_edit_template_version"
+        for read_only in (guest, public):
+            assert "PERSONAL_LIBRARY_REQUIRED" in call(read_only, save, **{**args, "files": {"enter.js": "text"}})
+        first = call(alice, save, **args)
+        assert isinstance(first, dict), first
+        assert first == call(alice, save, **args) and first["version_no"] == 1
+        assert "TEMPLATE_CONFLICT" in call(alice, save, **{**args, "files": {"enter.js": "different"}})
+        tid, vid = first["template_id"], first["version_id"]
+        assert call(alice, read, template_id=tid)["default_version_id"] is None
+        exact = call(alice, read, template_id=tid, version_id=vid)["version"]
+        assert exact["files"] == args["files"]
+        lookup = dict(query="红色", tags=["红色"], include_parse_techniques=False)
+        assert call(alice, "find_edit_templates", **lookup)["templates"][0]["template_id"] == tid
+        assert call(bob, "find_edit_templates", **lookup)["templates"] == []
+        assert call(guest, "find_edit_templates", **lookup)["templates"] == []
+        for credential in (public, guest, bob):
+            for name, arguments in ((read, dict(template_id=tid)), (versions, dict(template_id=tid)),
+                (feedback, dict(version_id=vid, kind="check", entry={"what":"render", "result":"pass"}, request_id="c")),
+                (choose, dict(template_id=tid, version_id=vid, revision=0, reason="review", request_id="select"))):
+                assert isinstance(call(credential, name, **arguments), str)
+        note = dict(version_id=vid, kind="check", entry={"what": "render", "result": "pass"}, request_id="check")
+        assert call(alice, feedback, **note) == call(alice, feedback, **note)
+        default = dict(template_id=tid, version_id=vid, revision=0, reason="reviewed", request_id="default")
+        assert call(alice, choose, **default) == call(alice, choose, **default)
+        assert "TEMPLATE_CONFLICT" in call(alice, choose, **{**default, "request_id": "stale"})
+        full = call(alice, read, template_id=tid)["version"]
+        assert full["content_hash"] == exact["content_hash"] and full["check"][0]["reported_by"] == "client"
+        assert len(full["check"]) == 1 and full["evaluation"][-1]["kind"] == "default_selection"
+        next_args = {**args, "new_template": None, "template_id": tid, "parent_version_id": vid, "request_id": "next",
+                     "evaluation": {"kind": "revision_rationale", "changes": "shorter hold"}}
+        assert "TEMPLATE_NOT_FOUND" in call(bob, save, **next_args)
+        assert call(alice, save, **next_args)["version_no"] == 2
+        history = call(alice, versions, template_id=tid)
+        assert history["default_version_id"] == vid and len(history["versions"]) == 2
+        assert call(alice, read, template_id=tid)["version"]["successor_notes"][0]["changes"] == "shorter hold"
+
+
 def _conversation(sessions, owner_id: str, tenant_id: str) -> str:
     conversation_id = str(uuid4())
     with sessions.begin() as session:

@@ -5,6 +5,7 @@ from typing import NotRequired, TypedDict
 from engine.parsev2.observations import ASRResult, OCRResult
 from engine.parsev2.camera import SampledPan
 from engine.parsev2.schemas import VideoParseResult
+from engine.parsev2.edit_reference import ReferenceChunk
 
 from ..input import ParseInput
 from ..state import ChunkExecution
@@ -21,6 +22,6 @@ class ChunkState(TypedDict):
     camera_hints: NotRequired[list[SampledPan]]
     asr_result: NotRequired[ASRResult]
     ocr_result: NotRequired[OCRResult]
-    result: NotRequired[VideoParseResult]
+    result: NotRequired[VideoParseResult | ReferenceChunk]
     canvas: NotRequired[ParseContextCanvas]
     # 临时音视频、帧路径及调用器由 Task/Lease 的运行时上下文管理。

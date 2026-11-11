@@ -24,7 +24,7 @@ import { FOCUS_SEARCH_EVENT, loadConversations } from "../features/search/conver
 import { useUploads } from "../features/uploads/UploadProvider";
 import { Mascot } from "../shared/Mascot";
 import { useAuth } from "../features/auth/AuthProvider";
-import { errorMessage } from "../api/client";
+import { errorMessage, issuePersonalMcpToken } from "../api/client";
 import { useI18n } from "./i18n";
 import { useTheme } from "./theme";
 import { useWorkspace } from "./workspace";
@@ -69,10 +69,11 @@ function usePageEntrance(pathname: string) {
 function AccountControls({ onLogin, onSettings, mobile = false }: { onLogin: () => void; onSettings: () => void; mobile?: boolean }) {
   const { t, locale } = useI18n();
   const { theme, toggleTheme } = useTheme();
-  const { accountIdentity, accountStatus, accountError, retryAccount, sources, activeSource, selectSource, logout, canManage } = useAuth();
+  const { accountIdentity, accountConnection, accountStatus, accountError, retryAccount, sources, activeSource, selectSource, logout, canManage } = useAuth();
   const { mode } = useWorkspace();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<{ failure: unknown } | null>(null);
+  const [copied, setCopied] = useState(false);
   const signedIn = accountIdentity && !accountIdentity.isGuest;
   const loginUnavailable = accountIdentity?.emailLoginEnabled === false;
   const guestLabel = t(loginUnavailable ? "游客模式" : "未登录");
@@ -95,6 +96,16 @@ function AccountControls({ onLogin, onSettings, mobile = false }: { onLogin: () 
           <span className={styles.identityLabel}><strong>{accountIdentity.email || t("已登录")}</strong><small>{busy ? t("退出中…") : t("退出")}</small></span>
         </> : busy ? t("退出中…") : t("退出")}</button>}
     </div>
+    {signedIn && accountIdentity.mode === "cloud" && accountConnection ? <button type="button" className={styles.accountLink}
+      disabled={busy} onClick={async () => {
+        setBusy(true); setError(null); setCopied(false);
+        try {
+          const { accessToken } = await issuePersonalMcpToken(accountConnection);
+          await navigator.clipboard.writeText(accessToken);
+          setCopied(true);
+        } catch (failure) { setError({ failure }); }
+        finally { setBusy(false); }
+      }}>{t(copied ? "已复制个人 MCP 凭据" : "复制个人 MCP 凭据")}</button> : null}
     {sources.length > 1 ? <label><span>{t("资料来源")}</span><select className="field" aria-label={t("选择资料来源")}
       value={activeSource.key} onChange={(event) => selectSource(event.target.value)}>
       {sources.map((source) => <option key={source.key} value={source.key}>{t(source.kind === "local" ? "本机资料" : source.kind === "public" ? "公开资料" : "我的资料")}</option>)}

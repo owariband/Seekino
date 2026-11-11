@@ -44,7 +44,7 @@ Seekino recalls the clips you need, with the source video and time range, so you
 | Want to study a course without taking screenshots? | Ask while you watch; the AI knows where you are and what's confusing you |
 | Need your own "crash course route"? | Give your question; the AI "browses" the video's outline and tailors a route for you |
 | Need editing footage but don't want to scrub for it? | Seekino provides MCP, so your Claude Code fetches the clips you need; you just give a vague impression and review |
-| Need references for editing, but past results can't be reused? 🚧 | Seekino stores your past motion-effect analyses in depth and lets MCP "update your own editing reference experience", so your editing know-how compounds |
+| Want to reuse a visual technique? | Find source-linked references and save your own motion code, sources and feedback locally or in a personal Cloud library. |
 
 ### 1.2. Parsing support
 
@@ -262,7 +262,7 @@ The web interface and external tools use the same service APIs. Your tools can c
 | Track analysis tasks | `GET /api/jobs/video-parse/get`, `GET /api/jobs/video-parse/events` |
 | Retrieve footage | `POST /api/search`, returning source clips, time ranges and evidence. |
 | Find footage through Agent chat | `/api/agent/conversations/*` and `/api/agent/messages/*`, with ongoing conversations and streamed answers. |
-| Let an external agent fetch clips (MCP) | Streamable HTTP at `/mcp` (local library or published Cloud series, see [connection instructions](server/README.md#cloud-mcp)), tools `list_series`, `retrieve`, `browse_events`, and `read_evidence`. |
+| Let an external agent fetch clips (MCP) | Streamable HTTP at `/mcp` (local library or published Cloud series, see [connection instructions](server/README.md#cloud-mcp)), 11 tools for footage, visual references and personal templates, plus the editing skill. |
 
 After starting the service, inspect requests and responses in the [OpenAPI docs](http://127.0.0.1:9621/api/docs). See [Server](server/README.md) for integration details. The current scope field is `tenantId`. Video time fields use integer milliseconds relative to the original video, including fields that retain legacy `*Seconds` names; follow the current contract when integrating.
 

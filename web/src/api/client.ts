@@ -238,6 +238,10 @@ export function verifyEmailCode(email: string, code: string, connection = REMOTE
   }, accountContext(connection));
 }
 
+export function issuePersonalMcpToken(connection: ApiConnection): Promise<{ accessToken: string; expiresAt: number }> {
+  return requestJson("/api/auth/mcp-token?scope=personal", { method: "POST" }, accountContext(connection));
+}
+
 export function logoutIdentity(connection = REMOTE_CONNECTION ?? PRIMARY_CONNECTION): Promise<AuthIdentity> {
   return requestJson("/api/auth/logout", { method: "POST" }, accountContext(connection));
 }
