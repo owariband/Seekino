@@ -27,7 +27,7 @@
   <img src="https://img.shields.io/badge/Self--hosted-本地部署-6C5CE7" alt="Self-hosted" />
 </p>
 
-## 1. 我们 Seekino 的亮点
+## 1. Seekino 亮点
 
 > **看 PPT 看不进去？** 课程视频 116 min 望而却步，不知道里面哪些“知识”是自己想要的；想 3 倍速地找，总共也要 30+ min！
 >
