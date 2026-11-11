@@ -29,7 +29,7 @@ def document_lock(path: Path):
         yield
 
 
-def replace_document(path: Path, content: bytes, expected_revision: str) -> None:
+def replace_document(path: Path, content: bytes, expected_revision: str | None) -> None:
     temporary_path: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(mode="wb", prefix=f".{path.name}.", suffix=".tmp",
@@ -38,6 +38,10 @@ def replace_document(path: Path, content: bytes, expected_revision: str) -> None
             temporary.write(content)
             temporary.flush()
             os.fsync(temporary.fileno())
+        if expected_revision is None:
+            # Publish a complete, private first revision without overwriting a concurrent creator.
+            os.link(temporary_path, path)
+            return
         os.chmod(temporary_path, stat.S_IMODE(path.stat().st_mode))
         if revision(path.read_bytes()) != expected_revision:
             raise GlobalAgentSettingsConflictError("配置已更改，请刷新后再保存")

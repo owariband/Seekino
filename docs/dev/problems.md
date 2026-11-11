@@ -2801,11 +2801,15 @@ micrograd v5 共 146 块，整集 90 分 04.884 秒。调度反复锁取候选�
 
 合并版复测还发现，已抽取的 198 帧与一份音频在创建硬链接时会触发 200 次父行和 200 次子行加锁。五轮同输入比较中，在整批链接前和媒体交付前各校验一次，两种锁均降至 2 次，最后一个文件链接期间被暂停的任务在交付前被拦住。见[帧文件交付 TRD](../design/03-product-reassessment/parse-media-link-lease-trd.md)。
 
+11 月 8 日，MyGO 第 3 集单跑 14 分 58.684 秒可检索，24 块和 562 个事件逐一核对。四集负载下的吞吐仍待测。[各轮记录](../report/server/mq/parse-ready-dispatch/animation.md#dev-ep03-reruns)
+
 ### PARSE-DRAFT-01：SSE 控制检查逐事件续租，模型正文缺少中途草稿
 
 2026-11-07：核对实际调用链，正文由 Gateway 内存收集，完整校验后才进入正式结果；高频数据库写入来自 SSE `check_control → manager.check_active → _require_*_active → _heartbeat_child`，每次涉及父行锁及子任务续租。正文 buffer 与租约 heartbeat 是独立职责，不能靠新增 buffer 自动消除原回调的数据库访问。
 
-本次新增每调用独立草稿，以未保存的 UTF-8 正文字节数达到 1,024 或调用退出为保存条件。逐 SSE 回调只读取本地取消状态；周期续租、模型调用接纳和正式结果提交仍验证持久租约/版本。验收检查阈值前不写库、阈值及退出保存、失败/取消前缀、调用与租户隔离，以及模拟流中额外续租次数。真实并发和整集耗时另测，真实解析保持暂停。设计与证据见 [TRD](../design/03-product-reassessment/parse-output-drafts-trd.md)、[PR #64](https://github.com/owariband/Seekino/pull/64)；当前状态见 [工作台](workbench.html)。
+本次新增每调用独立草稿，以未保存的 UTF-8 正文字节数达到 1,024 或调用退出为保存条件。逐 SSE 回调只读取本地取消状态；周期续租、模型调用接纳和正式结果提交仍验证持久租约/版本。验收检查阈值前不写库、阈值及退出保存、失败/取消前缀、调用与租户隔离，以及模拟流中额外续租次数。初次交付时原任务保持暂停。后来另建 v5，隔离实例跑完 146 个索引块，414 份草稿进入终态。全程 90 分 04.884 秒，未达到 60 分钟的目标。[整集和取消实验](../report/server/service/parse-output-drafts-20261107.md#micrograd-v5)
+
+设计与证据见 [TRD](../design/03-product-reassessment/parse-output-drafts-trd.md)、[PR #64](https://github.com/owariband/Seekino/pull/64)；当前状态见 [工作台](workbench.html)。
 
 <a id="chat-layout-01"></a>
 ## CHAT-LAYOUT-01：对话历史浮层遮挡正文，初次提问的欢迎区与输入框分离
@@ -2869,3 +2873,5 @@ micrograd v5 共 146 块，整集 90 分 04.884 秒。调度反复锁取候选�
 ### CHAT-GUEST-01 · 游客问当前视频讲什么，读完证据后回答中断
 
 2026-11-10 23:21，公开课程游客用四次模型调用读取大纲和证据、提交片段，第五次调用被单轮上限拦截。已接受请求，13.977 秒后回答失败。验收核对相同调用序列能收尾、游客选项与实际预算一致，以及同一 IP 的查询额度耗尽后返回 429。[专项设计](../design/03-product-reassessment/guest-chat-turn-budget-trd.md) · [工作台](workbench.html)
+
+2026-11-11。移除游客上限后，普通云端预算仍读到 6/24。验收追加游客和普通用户默认及上界均为 100/100，管理员更新全局设置后可单独备份运行文件。[修正 #101](https://github.com/owariband/Seekino/pull/101)

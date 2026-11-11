@@ -75,7 +75,9 @@ API 并发：[2026-10-30 Kimi Code 10 路并发实测](gateway/kimi-concurrency-
 
 ## Server
 
-[2026-11-07 Parse 输出草稿与 SSE 续租解耦](server/service/parse-output-drafts-20261107.md)：1,024 字节或退出保存；模拟接收路径额外持久检查 69→0，941 项回归通过；真实并发与整集用时未测。
+11 月 7 日，micrograd v5 在隔离实例跑完 146 个索引块，用时 90 分 04.884 秒，414 份终态草稿都能对上模型调用。[草稿写入、整集计时与合并后的数据库回放](server/service/parse-output-drafts-20261107.md#micrograd-v5)
+
+11 月 8 日，MyGO 第 3 集单独冷跑，14 分 58.684 秒可检索，562 个事件逐一对上。[同集四次运行和对照条件](server/mq/parse-ready-dispatch/animation.md#dev-ep03-reruns)
 
 [PR #18 范围收口与现有任务交接](server/pr18-scope-handoff-20261103.md)：已验证的解析修复收口，后端查询与 Consumer 转 PR #30；保留同一 v11 任务、音频与 Chunk 成果。
 
