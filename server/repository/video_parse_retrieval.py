@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from copy import deepcopy
 
-from sqlalchemy import and_, exists, func, or_, select
+from sqlalchemy import Select, and_, exists, func, or_, select
 from sqlalchemy.orm import Session, aliased, load_only
 
 from ..model.dto.parseContentDTO import ChunkParseContentData
@@ -92,29 +92,51 @@ def list_indexed_chunk_rows(
     ) for row in rows]
 
 
-def list_published_timeline_chunks(
-    session: Session, *, workspace: str, series_id: str, task_status: str, phase: int, status: str,
-) -> list[PublishedTimelineChunk]:
-    """Read lightweight publication identities in viewing order, across encoder generations."""
+def _published_timeline_query(query: Select, workspace: str, task_status: str, phase: int, status: str) -> Select:
     newer = aliased(VideoParseTask)
-    array_length = func.json_array_length if session.get_bind().dialect.name == "sqlite" else func.json_length
-    rows = session.execute(select(
-        Video.id, VideoParseTask.id, VideoChunk.id, ChunkParseContent.version,
-        VideoParseTask.parse_config["indexing"]["index_generation"].as_integer(),
-        array_length(ChunkParseContent.content, "$.timeline"),
-    ).select_from(Series).join(Video, Video.series_id == Series.id).join(
+    return query.select_from(Series).join(Video, Video.series_id == Series.id).join(
         VideoParseTask, VideoParseTask.video_id == Video.id,
     ).join(ChunkParseTask, ChunkParseTask.video_task_id == VideoParseTask.id).join(
         VideoChunk, and_(VideoChunk.id == ChunkParseTask.chunk_id, VideoChunk.video_id == Video.id),
     ).join(ChunkParseContent, and_(ChunkParseContent.chunk_task_id == ChunkParseTask.id,
                                    ChunkParseContent.version == ChunkParseTask.indexed_content_version)).where(
-        Series.tenant_id == workspace, Series.id == series_id,
+        Series.tenant_id == workspace,
         VideoParseTask.status == task_status, VideoParseTask.is_deleted.is_(False),
         ChunkParseTask.phase == phase, ChunkParseTask.status == status,
         ~exists(select(newer.id).where(newer.video_id == Video.id, newer.is_deleted.is_(False),
                                        newer.version > VideoParseTask.version).correlate(Video, VideoParseTask)),
-    ).order_by(Video.episode_order, Video.id, VideoChunk.sequence_no, VideoChunk.id))
+    )
+
+
+def list_published_timeline_chunks(
+    session: Session, *, workspace: str, series_id: str, task_status: str, phase: int, status: str,
+) -> list[PublishedTimelineChunk]:
+    """Read lightweight publication identities in viewing order, across encoder generations."""
+    array_length = func.json_array_length if session.get_bind().dialect.name == "sqlite" else func.json_length
+    columns = select(
+        Video.id, VideoParseTask.id, VideoChunk.id, ChunkParseContent.version,
+        VideoParseTask.parse_config["indexing"]["index_generation"].as_integer(),
+        array_length(ChunkParseContent.content, "$.timeline"),
+    )
+    query = _published_timeline_query(columns, workspace, task_status, phase, status)
+    rows = session.execute(query.where(Series.id == series_id).order_by(
+        Video.episode_order, Video.id, VideoChunk.sequence_no, VideoChunk.id,
+    ))
     return [PublishedTimelineChunk(*row) for row in rows]
+
+
+def published_video_contents(
+    session: Session, *, workspace: str, video_id: str, task_status: str, phase: int, status: str,
+) -> list[dict] | None:
+    """Read all current Chunk contents and their coverage in one snapshot."""
+    columns = select(VideoParseTask.chunk_count, VideoChunk.sequence_no, ChunkParseContent.content)
+    query = _published_timeline_query(columns, workspace, task_status, phase, status)
+    rows = session.execute(query.where(
+        Video.id == video_id, ~video_deletion_pending(),
+    ).order_by(VideoChunk.sequence_no)).all()
+    if not rows or len(rows) != rows[0].chunk_count or any(row.sequence_no != i for i, row in enumerate(rows)):
+        return None
+    return [row.content for row in rows]
 
 
 def load_task_chunk_rows(

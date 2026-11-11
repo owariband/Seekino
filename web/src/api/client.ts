@@ -42,6 +42,7 @@ import type {
   VideoSummary,
   VideoParseTaskView,
   VideoSearchRequest,
+  VideoTextTimeline,
 } from "./contracts";
 
 export let TENANT_ID =
@@ -597,6 +598,10 @@ export function updateAgentGlobalSettings(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ values, revision }),
   });
+}
+
+export function getVideoTextTimeline(videoId: string, tenantId: string, signal?: AbortSignal): Promise<VideoTextTimeline> {
+  return requestJson(`/api/videos/text-timeline?${new URLSearchParams({ tenantId, videoId })}`, { signal });
 }
 
 export function getVideoChunk(videoChunkId: string, tenantId = TENANT_ID): Promise<VideoChunkEvidence> {

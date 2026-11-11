@@ -7,6 +7,8 @@ from functools import lru_cache
 from pathlib import Path
 from urllib.parse import urlencode
 
+from engine.parsev2.schemas import DialogueEvent, OnScreenTextEvent
+
 from ..config.media import ImageUploadConfig
 from ..constants.media import CLOUD_CLIP_MAX_MS, SERIES_IMAGE_ID_PREFIX
 from ..utils.validation import canonical_uuid
@@ -22,6 +24,8 @@ from ..model.dto.mediaDTO import (
     ParseExportSource,
     PlaybackMedia,
     VideoMedia,
+    VideoTextCue,
+    VideoTextTimeline,
     parse_export_event_types,
 )
 from ..repository.library import SeriesNotFoundError
@@ -72,6 +76,28 @@ class MediaService:
         self._parse_persistence = parse_persistence
         self._probe_playback = probe_playback or _cached_browser_playable
         self.image_upload_config = config or ImageUploadConfig()
+
+    def video_text_timeline(self, video_id: str, *, tenant_id: str) -> VideoTextTimeline:
+        if self._parse_persistence is None:
+            raise VideoParseConflictError("Video text is unavailable in this execution mode")
+        contents = self._parse_persistence.published_video_contents(video_id, tenant_id=tenant_id)
+        if contents is None:
+            return VideoTextTimeline(ready=False, cues=[])
+        cues: dict[tuple[int, int, str], VideoTextCue] = {}
+        for content in contents:
+            for event in content.timeline:
+                if isinstance(event, DialogueEvent):
+                    source, texts = "dialogue", [variant.text for variant in event.text_variants]
+                elif isinstance(event, OnScreenTextEvent):
+                    source, texts = "screen_text", [event.text]
+                else:
+                    continue
+                key = (event.start_seconds, event.end_seconds, source)
+                if key in cues:
+                    texts = [*cues[key].texts, *texts]
+                cues[key] = VideoTextCue(start_ms=event.start_seconds, end_ms=event.end_seconds, source=source,
+                                         texts=list(dict.fromkeys(texts)))
+        return VideoTextTimeline(ready=True, cues=[cues[key] for key in sorted(cues)])
 
     def export_parse_results(
         self, *, tenant_id: str, video_ids: Sequence[str] = (),
