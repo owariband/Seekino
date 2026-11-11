@@ -4,7 +4,7 @@ import asyncio
 import hashlib
 import logging
 import time
-from dataclasses import asdict, replace
+from dataclasses import asdict
 from queue import Empty
 from typing import AsyncIterator
 
@@ -126,16 +126,6 @@ def get_agent_message_options(request: Request) -> AgentMessageOptionsView:
     services = get_services(request)
     identity = get_identity(request)
     options = services.agent.message_options(owner_user_id=None if _managed_chat(identity) else identity.user_id)
-    if identity.mode == "cloud" and identity.is_guest:
-        cap = services.auth.config.guest_max_model_calls
-        def bounded(option, maximum):
-            ceiling = max(option.minimum, min(option.maximum, maximum))
-            return replace(option, default_value=min(option.default_value, ceiling), maximum=ceiling)
-        options = replace(
-            options,
-            max_model_calls_per_turn=bounded(options.max_model_calls_per_turn, cap),
-            max_tool_calls_per_turn=bounded(options.max_tool_calls_per_turn, cap * 2),
-        )
     return AgentMessageOptionsView.model_validate(options)
 
 
@@ -384,26 +374,14 @@ async def send_agent_message(
             source_scopes.setdefault(source, []).extend(selected)
         for source, selected in source_scopes.items():
             await run_in_threadpool(services.media.require_series_access, identity, selected, tenant_id=source)
-    max_model_calls = body.max_model_calls_per_turn
-    max_tool_calls = body.max_tool_calls_per_turn
-    if identity.mode == "cloud" and identity.is_guest:
-        options = service.message_options()
-        config = services.auth.config
-        max_model_calls = min(
-            max_model_calls or options.max_model_calls_per_turn.default_value,
-            config.guest_max_model_calls,
-        )
-        max_tool_calls = min(
-            max_tool_calls or options.max_tool_calls_per_turn.default_value,
-            config.guest_max_model_calls * 2,
-        )
     arguments = dict(
         tenant_id=body.tenant_id, source_tenant_id=source_tenant_id,
         owner_user_id=identity.user_id, content=body.content, series_ids=series_ids,
         reference=body.reference.model_dump(by_alias=True) if body.reference is not None else None,
         attachments=[item.model_dump(by_alias=True) for item in body.attachments],
         extra_context=body.extra_context, idempotency_key=idempotency_key, top_k=body.top_k,
-        max_model_calls_per_turn=max_model_calls, max_tool_calls_per_turn=max_tool_calls,
+        max_model_calls_per_turn=body.max_model_calls_per_turn,
+        max_tool_calls_per_turn=body.max_tool_calls_per_turn,
         max_loop_turns=None if identity.mode == "cloud" else body.max_loop_turns,
     )
     accepted = []
