@@ -43,12 +43,26 @@ In our editing tests, Claude Code used Seekino to find the 1.3 seconds where Ano
 
    For example: "Find the shots of Anon gritting her teeth in Seekino, check the sources, and save the clips to clips/."
 
-## Four tools your agent can use
+## Footage, visual references and private templates
 
 - `list_series` — See which series are in the library.
 - `retrieve` — Search clips with a description; returns the source video and time range.
 - `browse_events` — Walk through what happens in an episode, in order.
 - `read_evidence` — Read source context and supply start and end times in milliseconds to download an MP4 clip.
+
+- `find_edit_templates` finds visual techniques with playable original clips and your own templates. `get_style_card` presents the whole video and its exemplars.
+- `get_edit_template` reads exact or default revision files, sources and feedback. `list_edit_template_versions` lists revision history and lineage.
+- `save_edit_template_version` saves a revision, `append_edit_template_note` adds feedback or a client-reported check, and `set_default_edit_template_version` selects a default.
+
+## Use the editing skill and your personal Cloud library
+
+Sign in to Cloud, open your account menu, and select **Copy personal MCP token**. Set `SEEKINO_MCP_TOKEN` to the copied token in the terminal where you launch the client. This credential can read published footage and use your personal template library. Guest tokens can still fetch published footage. A local connection saves to your local library.
+
+Read `skill://seekino-editing-materials/SKILL.md` with MCP `resources/read`, or discover the guide and helper with `skills/list` and `skills/get`. To install the guide and the local cutout script for both Claude Code and Codex on the editing computer, run the following command.
+
+```sh
+npx skills add https://github.com/owariband/Seekino/tree/main/server/skills/seekino-editing-materials -a claude-code -a codex -g -y
+```
 
 ## Next
 

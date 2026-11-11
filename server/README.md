@@ -81,3 +81,15 @@ codex mcp add seekino_cloud --url "$SEEKINO_CLOUD/mcp" --bearer-token-env-var SE
 ```
 
 `list_series` 返回平台公开租户已发布且 READY 的系列。`browse_events` 返回 Event 引用，`retrieve` 用自然语言检索。先 `read_evidence(evidence_ref)` 核对来源，再给出 `start_ms` 与 `end_ms` 获取 `media.clip_url`。区间使用整数毫秒、左闭右开，每段最多 60 秒。链接最长有效 5 分钟，下载器可直接获取该 MP4，下载时服务端重新核对发布状态、证据版本和用户身份。检索与转码共用既有云端请求和并发额度。以不同名称添加本机端点即可在同一剪辑会话调用两个库。
+
+### 剪辑 Skill、风格参考与个人库
+
+连接后可用 `resources/read` 读取 `skill://seekino-editing-materials/SKILL.md`。支持 MCP Skills 扩展的客户端可通过 `skills/list` 和 `skills/get` 发现指引与随附的本机分层脚本。也可以给本机 Claude Code 和 Codex 一次安装。
+
+```sh
+npx skills add https://github.com/owariband/Seekino/tree/main/server/skills/seekino-editing-materials -a claude-code -a codex -g -y
+```
+
+用 `find_edit_templates` 搜索剪辑技法或自己的模板，`get_style_card` 读取整片风格并回看例证。用 `get_edit_template` 和 `list_edit_template_versions` 读取自己的版本、来源和反馈。通过 `save_edit_template_version` 保存完整代码与来源，`append_edit_template_note` 追加反馈或本机检查，`set_default_edit_template_version` 明确指定默认版本。
+
+本机可直接保存。在 Cloud 网页登录后，打开账号菜单，选择“复制个人 MCP 凭据”，在剪辑终端把它设为 `SEEKINO_MCP_TOKEN` 后启动客户端。该凭据可读取公开素材并访问自己的模板库。网页登录的程序化调用使用 `POST /api/auth/mcp-token?scope=personal`、当前会话 Cookie 和 CSRF 请求头。游客和默认签发的凭据仍可取公开素材。客户端首次调用时可先请它读取剪辑 Skill。

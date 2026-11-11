@@ -51,7 +51,9 @@ def test_2025_client_handshake_discovers_generated_schemas_and_structured_result
         response = client.post("/mcp", json={"jsonrpc": "2.0", "method": "notifications/initialized"})
         assert response.status_code == 202
         tools = {tool["name"]: tool for tool in _rpc(client, "tools/list").json()["result"]["tools"]}
-        assert set(tools) == {"list_series", "retrieve", "read_evidence", "browse_events"}
+        assert set(tools) == {"list_series", "retrieve", "read_evidence", "browse_events", "find_edit_templates", "get_style_card",
+                              "get_edit_template", "list_edit_template_versions", "save_edit_template_version",
+                              "append_edit_template_note", "set_default_edit_template_version"}
         assert all(tool["description"] and tool["outputSchema"] for tool in tools.values())
         schema = tools["retrieve"]["inputSchema"]
         assert schema["required"] == ["query"]
@@ -154,6 +156,39 @@ def test_transport_bounds_request_and_result_payloads():
         assert "RESULT_TOO_LARGE" in _call(client, "retrieve", {"query": "a"})["content"][0]["text"]
         response = _rpc(client, "tools/call", {"name": "retrieve", "arguments": {"query": "a" * 70000}})
         assert response.status_code == 413
+
+
+def test_modern_skills_manifest_and_legacy_resources_serve_identical_packaged_bytes():
+    import hashlib
+    from pathlib import Path
+
+    from mcp.shared.inbound import CLIENT_CAPABILITIES_META_KEY, NAME_BEARING_METHODS, PROTOCOL_VERSION_META_KEY
+
+    version = "2026-07-28"
+    capability = "io.modelcontextprotocol/skills"
+    uri = "skill://seekino-editing-materials/SKILL.md"
+    root = Path(__file__).resolve().parents[2] / "server/skills/seekino-editing-materials"
+    with _client() as client:
+        def modern(method, **params):
+            headers = {"Mcp-Method": method, "MCP-Protocol-Version": version}
+            if key := NAME_BEARING_METHODS.get(method):
+                headers["Mcp-Name"] = params[key]
+            meta = {PROTOCOL_VERSION_META_KEY: version, CLIENT_CAPABILITIES_META_KEY: {"extensions": {capability: {}}}}
+            return _rpc(client, method, {**params, "_meta": meta}, headers=headers).json()
+
+        assert capability in modern("server/discover")["result"]["capabilities"]["extensions"]
+        entry, = modern("skills/list")["result"]["skills"]
+        assert modern("skills/get", uri=uri)["result"]["skill"] == entry
+        assert modern("skills/get", uri=uri + "/absent")["error"]["code"] == -32602
+        assert entry["uri"] == uri and entry["frontmatter"]["name"] == root.name
+        resources = {item["uri"] for item in _rpc(client, "resources/list").json()["result"]["resources"]}
+        assert {r["uri"] for r in entry["resources"]} == resources
+        assert len(resources) == 2
+        for item in entry["resources"]:
+            contents, = _rpc(client, "resources/read", {"uri": item["uri"]}).json()["result"]["contents"]
+            raw = contents["text"].encode()
+            assert raw == (root / item["uri"].removeprefix(f"skill://{root.name}/")).read_bytes()
+            assert item["size"] == len(raw) and item["digest"] == "sha256:" + hashlib.sha256(raw).hexdigest()
 
 
 def test_media_absolute_url_cannot_be_supplied_by_service_result():

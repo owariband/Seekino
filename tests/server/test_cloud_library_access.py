@@ -283,7 +283,9 @@ def test_cloud_mcp_from_guest_registration_to_cookie_free_clip(cloud_library, tm
                                        "clientInfo": {"name": "editing-test", "version": "1"}})
         assert handshake.json()["result"]["serverInfo"]["name"] == "seekino"
         assert {t["name"] for t in rpc("tools/list", {}).json()["result"]["tools"]} == {
-            "list_series", "retrieve", "browse_events", "read_evidence"}
+            "list_series", "retrieve", "browse_events", "read_evidence", "find_edit_templates", "get_style_card",
+            "get_edit_template", "list_edit_template_versions", "save_edit_template_version",
+            "append_edit_template_note", "set_default_edit_template_version"}
         assert [v["series_id"] for v in call("list_series")["structuredContent"]["items"]] == [public]
         ranked = call("retrieve", query="scene")["structuredContent"]
         assert ranked["series_ids"] == [public] and ranked["warnings"] == []
