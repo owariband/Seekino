@@ -5067,9 +5067,9 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "type": "task",
    "status": "verifying",
    "priority": "P1",
-   "description": "允许已获准的游客问答继续读取证据并收尾，按 IP 保留每日请求额度。",
+   "description": "云端新回答默认可使用 100 次模型和 100 次工具调用，按 IP 保留每日请求额度。",
    "next": "核对 CPU 发布镜像、游客消息选项和公开课程的实际回答。",
-   "verification": "隔离 HTTP 与 Gateway 对照在第五次模型调用收尾。真实 Redis 验证同 IP 换身份、到期与并发控制。",
+   "verification": "隔离 HTTP 验证 100/100 默认与上界，配置升级只写独立文件。真实 Redis 验证同 IP 换身份、到期与并发控制。",
    "updatedAt": "2026-11-11",
    "tags": [
     "游客",
@@ -5089,6 +5089,11 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "label": "PR #99",
      "kind": "pr",
      "url": "https://github.com/owariband/Seekino/pull/99"
+    },
+    {
+     "label": "100/100 修正 #101",
+     "kind": "pr",
+     "url": "https://github.com/owariband/Seekino/pull/101"
     }
    ]
   },

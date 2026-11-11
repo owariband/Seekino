@@ -19,6 +19,8 @@
 核对供应商账户实际可用的模型或 endpoint；模板沿用项目已有 API 模型绑定，未做真实调用验收。
 cloud 要求 `supervisor_harness: deepagents`，不得绑定本机 Codex/Claude runtime；模型来源与
 样例索引的 embedding 模型、维度须匹配。当前根配置包含本机模型，不可直接用于云端。
+每条 Chat 回答的模型和工具预算默认各 100 次，默认可选上限也各为 100。生产全局 Agent 设置独立保存在 `/data/config/cloud/agent-runtime.yaml`。升级时首次读取会继承其他运行参数，管理员全局设置页可继续调整。模型连接和 API Key 使用原模型文件，按 IP 的每日查询额度使用鉴权环境变量。[配置说明](../../docs/model-config.md)
+
 Deep Agents checkpoint 与 MySQL schema 的初始化、已有数据库升级按
 [模型配置](../../docs/model-config.md#deep-agents-checkpoint-持久化)核对。
 
