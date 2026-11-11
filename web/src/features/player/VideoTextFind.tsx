@@ -5,7 +5,7 @@ import { errorMessage, getVideoTextTimeline } from "../../api/client";
 import { useI18n } from "../../app/i18n";
 import { formatTimecode } from "../../shared/format";
 import type { createVideoTextSearch } from "./videoTextSearch";
-import styles from "./watch.module.css";
+import styles from "./VideoTextFind.module.css";
 
 interface Props {
   videoId: string;
@@ -98,7 +98,7 @@ export function VideoTextFind({ videoId, tenantId, inputRef, canSeek, onSeek, on
             select(i + (event.key === "ArrowRight" ? 1 : -1));
           }}>
           <time>{formatTimecode(cue.startMs)}</time>
-          <small>{cue.source === "dialogue" ? t("台词") : t("画面文字")}</small><span>{text}</span>
+          <small>{cue.source === "dialogue" ? t("台词") : t("画面文字")}</small><span title={text}>{text}</span>
         </button>
       </li>)}
     </ol>}
