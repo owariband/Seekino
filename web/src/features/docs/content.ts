@@ -6,9 +6,6 @@ export { GITHUB_URL };
 const SETUP_GUIDE = `${GITHUB_URL}/blob/main/deploy/local-setup.md`;
 const README_EN = `${GITHUB_URL}/blob/main/README.en.md`;
 
-// Community links arrive later; [xxx] marks every spot still waiting for one.
-const COMMUNITY_PLACEHOLDER = "[xxx]";
-
 export const DOC_PAGES = ["start", "versions", "self-host", "agents", "roadmap"] as const;
 export type DocPageId = (typeof DOC_PAGES)[number];
 
@@ -23,7 +20,7 @@ export type DocBlock =
   | { kind: "compare"; columns: [string, string, string]; rows: [string, string, string][] }
   | { kind: "tools"; items: { name: string; body: string }[] }
   | { kind: "roadmap"; status: string; items: { title: string; body: string }[] }
-  | { kind: "channels"; items: { label: string; value: string; href?: string }[] }
+  | { kind: "channels"; communityLabel: string; items: { label: string; value: string; href?: string }[] }
   | { kind: "star"; text: string }
   | { kind: "links"; label: string; items: { label: string; href: string }[] }
   | { kind: "next"; items: { label: string; page: DocPageId }[] };
@@ -146,8 +143,7 @@ const zh: DocsContent = {
         ] },
         { kind: "p", text: "这些都还没有排期。你最想先要哪一个？来交流群告诉我们，你的意见可能直接影响我们先做哪一个。" },
         { kind: "h", text: "加入交流" },
-        { kind: "channels", items: [
-          { label: "交流群", value: COMMUNITY_PLACEHOLDER },
+        { kind: "channels", communityLabel: "交流群", items: [
           { label: "问题与建议", value: "GitHub Issues", href: `${GITHUB_URL}/issues` },
         ] },
         { kind: "star", text: "如果 Seekino 帮你省下了一次拖进度条，在 GitHub 上点个 Star 吧。" },
@@ -261,8 +257,7 @@ const en: DocsContent = {
         ] },
         { kind: "p", text: "None of these have dates yet. Which one do you want first? Tell us in the community group; one message from you can decide what we build next." },
         { kind: "h", text: "Join the community" },
-        { kind: "channels", items: [
-          { label: "Community group", value: COMMUNITY_PLACEHOLDER },
+        { kind: "channels", communityLabel: "Community group", items: [
           { label: "Bugs and ideas", value: "GitHub Issues", href: `${GITHUB_URL}/issues` },
         ] },
         { kind: "star", text: "If Seekino saved you one drag of the progress bar, give it a Star on GitHub." },

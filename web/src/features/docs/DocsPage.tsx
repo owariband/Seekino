@@ -2,6 +2,8 @@ import { ArrowRight, Check, Copy, ExternalLink, Search } from "lucide-react";
 import { useLayoutEffect, useRef, useState } from "react";
 import { Link, Navigate, NavLink, useParams } from "react-router";
 
+import type { RuntimeConfig } from "../../api/contracts";
+import { useWorkspace } from "../../app/workspace";
 import { useI18n } from "../../app/i18n";
 import { DOC_PAGES, docsContent, GITHUB_URL, type DocBlock, type DocPageId, type DocsContent } from "./content";
 import { GitHubMark } from "./GitHubMark";
@@ -22,7 +24,7 @@ function CodeBlock({ code, copy, copied }: { code: string; copy: string; copied:
   </div>;
 }
 
-function Block({ block, content }: { block: DocBlock; content: DocsContent }) {
+function Block({ block, content, community }: { block: DocBlock; content: DocsContent; community?: RuntimeConfig["community"] }) {
   switch (block.kind) {
     case "p": return <p className={styles.text}>{block.text}</p>;
     case "h": return <h2 className={styles.heading}>{block.text}</h2>;
@@ -58,10 +60,15 @@ function Block({ block, content }: { block: DocBlock; content: DocsContent }) {
       <div><h3>{item.title}</h3><span>{block.status}</span></div>
       <p>{item.body}</p>
     </li>)}</ul>;
-    case "channels": return <dl className={styles.channels}>{block.items.map((channel) => <div key={channel.label}>
-      <dt>{channel.label}</dt>
-      <dd>{channel.href ? <a href={channel.href} target="_blank" rel="noreferrer">{channel.value}</a> : channel.value}</dd>
-    </div>)}</dl>;
+    case "channels": {
+      const channels = community?.groupNumber
+        ? [{ label: block.communityLabel, value: community.groupNumber, href: community.joinUrl }, ...block.items]
+        : block.items;
+      return <dl className={styles.channels}>{channels.map((channel) => <div key={channel.label}>
+        <dt>{channel.label}</dt>
+        <dd>{channel.href ? <a href={channel.href} target="_blank" rel="noreferrer">{channel.value}</a> : channel.value}</dd>
+      </div>)}</dl>;
+    }
     case "star": return <a className={styles.star} href={GITHUB_URL} target="_blank" rel="noreferrer">
       <GitHubMark size={22} />
       <span><strong>owariband/Seekino</strong><small>{block.text}</small></span>
@@ -88,6 +95,7 @@ function scrollParent(node: HTMLElement | null): HTMLElement | null {
 
 export function DocsPage() {
   const { locale } = useI18n();
+  const { community } = useWorkspace();
   const params = useParams();
   const ref = useRef<HTMLElement>(null);
   const page = (params.page ?? "start") as DocPageId;
@@ -119,7 +127,7 @@ export function DocsPage() {
           <a className="button-secondary" href={GITHUB_URL} target="_blank" rel="noreferrer"><GitHubMark size={17} />{content.github}</a>
         </div> : null}
       </header>
-      <div className={styles.body}>{current.blocks.map((block, index) => <Block key={index} block={block} content={content} />)}</div>
+      <div className={styles.body}>{current.blocks.map((block, index) => <Block key={index} block={block} content={content} community={community} />)}</div>
     </article>
   </main>;
 }

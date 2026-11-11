@@ -11,6 +11,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+import yaml
 
 from tests.server.conftest import set_series_parse_status
 from fastapi.routing import APIRoute
@@ -2996,7 +2997,7 @@ def test_runtime_config_requires_exact_ppe_header(tmp_path, header_value, expect
         headers = {} if header_value is None else {"x-use-ppe": header_value}
         response = client.get("/api/system/runtime-config", headers=headers)
         assert response.status_code == 200, response.text
-        assert response.json() == {"displayMode": expected_mode}
+        assert response.json() == {"displayMode": expected_mode, "community": {"groupNumber": "", "joinUrl": ""}}
     finally:
         client.app.state.services.agent.close()
 
@@ -3019,10 +3020,44 @@ def test_runtime_config_is_public_uncached_and_request_scoped(tmp_path, auth_mod
         ]:
             response = client.get("/api/system/runtime-config", headers=headers)
             assert response.status_code == 200, response.text
-            assert response.json() == {"displayMode": expected_mode}
+            assert response.json() == {"displayMode": expected_mode, "community": {"groupNumber": "", "joinUrl": ""}}
             assert response.headers["Cache-Control"] == "private, no-store"
             assert response.headers["Vary"] == "x-use-ppe"
             assert "Set-Cookie" not in response.headers
+    finally:
+        client.app.state.services.agent.close()
+
+
+@pytest.mark.parametrize("community", [
+    None,
+    {},
+    {"group_number": "123456"},
+    {"group_number": "123456", "join_url": "https://example.com/join"},
+])
+@pytest.mark.parametrize("auth_mode", ["local", "cloud"])
+def test_runtime_config_exposes_community_from_yaml_to_guests(tmp_path, community, auth_mode):
+    from server.config.auth import AuthConfig
+
+    payload = yaml.safe_load(Path("config.yaml").read_text(encoding="utf-8"))
+    payload.pop("community", None)
+    if community is not None:
+        payload["community"] = community
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(yaml.safe_dump(payload, allow_unicode=True), encoding="utf-8")
+    config = load_config(config_path)
+    client, _, _ = _client(tmp_path)
+    client.app.state.services.community = config.community
+    client.app.state.auth_config = AuthConfig(
+        mode=auth_mode, secret_key="runtime-config-test-secret-key-32",
+    )
+    try:
+        response = client.get("/api/system/runtime-config")
+        assert response.status_code == 200, response.text
+        assert response.json()["community"] == {
+            "groupNumber": (community or {}).get("group_number", ""),
+            "joinUrl": (community or {}).get("join_url", ""),
+        }
+        assert "Set-Cookie" not in response.headers
     finally:
         client.app.state.services.agent.close()
 
@@ -3276,7 +3311,7 @@ def test_ui_cors_allows_stream_and_media_headers(tmp_path, monkeypatch):
         runtime_config = client.get("/api/system/runtime-config", headers={
             "Origin": "http://localhost:5173", "X-Use-PPE": "1",
         })
-        assert runtime_config.json() == {"displayMode": "debug"}
+        assert runtime_config.json() == {"displayMode": "debug", "community": {"groupNumber": "", "joinUrl": ""}}
         assert runtime_config.headers["Cache-Control"] == "private, no-store"
         assert runtime_config.headers["Access-Control-Allow-Origin"] == "http://localhost:5173"
         assert {part.strip().lower() for part in runtime_config.headers["Vary"].split(",")} == {

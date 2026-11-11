@@ -1,6 +1,6 @@
 # 1. 问题与现状
 
-需求：交流群入口统一由 `config.yaml` 配置并在运行时加载。提出日期：2026-11-11（Asia/Shanghai）。分支：`feat/community-config`；PR：待创建后回填。状态：初稿。
+需求：交流群入口统一由 `config.yaml` 配置并在运行时加载。提出日期：2026-11-11（Asia/Shanghai）。分支：`feat/community-config`；PR：[#103](https://github.com/owariband/Seekino/pull/103)。状态：实现完成，单测通过；本机浏览器与 Cloud 发布待验证。
 
 **背景与触发场景：** 推广阶段要把 Cloud 访客和 GitHub 读者引到交流群。[Cloud 使用文档](cloud-user-docs-trd.md) 的“未来计划”页有“交流群”一行，但值写死在前端：`web/src/features/docs/content.ts` 中 `COMMUNITY_PLACEHOLDER = "[xxx]"`，中英文各一处；`web/src/app/App.test.tsx` 还断言页面显示 `[xxx]`。
 
@@ -50,7 +50,9 @@ sequenceDiagram
 
 # 4. 对照实验与结果分析
 
-修改前后同一用例对照：`/docs` 未来计划页在（a）未配置、（b）配置群号两种情况下的渲染；游客身份下接口返回字段。结果待测。
+修改前后同一用例对照：`/docs` 未来计划页在（a）未配置、（b）配置群号两种情况下的渲染；游客身份下接口返回字段。
+
+2026-11-11 实现：复用公开的 `GET /api/system/runtime-config`（游客可读），响应新增 `community.groupNumber / joinUrl`；`config.yaml` 新增 `community` 段，缺省为空。验证：`npm --prefix web run typecheck` 通过；`npm --prefix web test` 643/643 通过（含已配置显示、未配置隐藏且不出现 `[xxx]`）；`pytest tests/server/test_api.py` 147 通过。浏览器实测待做。
 
 # 5. 试点验证与方案取舍
 

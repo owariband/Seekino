@@ -2,6 +2,11 @@
 # Legacy config files remain supported. See docs/model-config.md.
 config_version: 2
 
+# Public community contact shown on the docs page.
+community:
+  group_number: ""   # empty = the docs page hides the community row
+  join_url: ""       # optional invite link
+
 # Select the primary chat harness at startup; model bindings stay independent.
 supervisor_harness: deepagents
 # These existing model bindings can also answer an individual conversation.

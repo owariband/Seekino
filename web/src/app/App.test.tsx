@@ -445,7 +445,7 @@ describe("application shell", () => {
       const original = realUseAuth();
       return { ...original, canUpload: false, canManage: false, canConfigure: false };
     });
-    renderApp([apiSeries], { initialPath: "/docs" });
+    renderApp([apiSeries], { initialPath: "/docs", runtimeConfig: { displayMode: "release", community: { groupNumber: "123456", joinUrl: "https://example.com/join" } } });
     expect(await screen.findByRole("heading", { level: 1, name: "41 小时的课，你要的只是其中一段" })).toBeInTheDocument();
     for (const link of screen.getAllByRole("link", { name: "GitHub 仓库" })) {
       expect(link).toHaveAttribute("href", "https://github.com/owariband/Seekino");
@@ -454,7 +454,16 @@ describe("application shell", () => {
     expect(within(docsNav).getByRole("link", { name: "快速开始" })).toHaveAttribute("aria-current", "page");
     await userEvent.click(within(docsNav).getByRole("link", { name: "未来计划" }));
     expect(await screen.findByRole("heading", { level: 1, name: "说出一个名字，列出 TA 出场的每一秒" })).toBeInTheDocument();
-    expect(screen.getByText("[xxx]")).toBeInTheDocument();
+    expect(await screen.findByRole("link", { name: "123456" })).toHaveAttribute("href", "https://example.com/join");
+    expect(screen.queryByText(/\[x{3}\]/)).not.toBeInTheDocument();
+  });
+
+  it.each([undefined, { groupNumber: "", joinUrl: "https://example.com/join" }])("hides an unconfigured community row while keeping issues (%j)", async (community) => {
+    const { queryClient } = renderApp([apiSeries], { initialPath: "/docs/roadmap", runtimeConfig: { displayMode: "release", community } });
+    await waitFor(() => expect(queryClient.getQueryState(["runtime-config"])?.status).toBe("success"));
+    expect(screen.queryByText("交流群")).not.toBeInTheDocument();
+    expect(screen.queryByText(/\[x{3}\]/)).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /GitHub Issues/ })).toBeInTheDocument();
   });
 
   it("keeps normal settings in release and hides internal configuration", async () => {

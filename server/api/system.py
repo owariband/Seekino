@@ -4,6 +4,7 @@ from fastapi import Request, Response
 
 from ..utils.time import now_unix_time_ms
 from ..model.vo.systemVO import (
+    CommunityView,
     HealthComponentsView,
     HealthView,
     ParseConsumerHealthView,
@@ -17,6 +18,7 @@ def runtime_config(request: Request, response: Response) -> RuntimeConfigView:
     response.headers["Vary"] = "x-use-ppe"
     return RuntimeConfigView(
         display_mode="debug" if request.headers.get("x-use-ppe") == "1" else "release",
+        community=CommunityView(**get_services(request).community.model_dump()),
     )
 
 

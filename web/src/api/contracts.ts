@@ -1,6 +1,9 @@
 export type RuntimeMode = "checking" | "live" | "offline";
 export type DisplayMode = "release" | "debug";
-export interface RuntimeConfig { displayMode: DisplayMode }
+export interface RuntimeConfig {
+  displayMode: DisplayMode;
+  community: { groupNumber: string; joinUrl: string };
+}
 
 export interface AuthIdentity {
   userId: string;

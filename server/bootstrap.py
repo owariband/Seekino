@@ -14,7 +14,7 @@ from gateway.agent_model.context import ContextWindowPolicy
 from gateway.agent_model.deepagents import DeepAgentSessionStore
 from gateway.agent_model.factory import AgentModelFactory
 from gateway.config import (
-    ChatAPISourceConfig, ClaudeCodeModelSourceConfig, CodexModelSourceConfig, GatewayConfig, ModelBinding, load_config,
+    ChatAPISourceConfig, ClaudeCodeModelSourceConfig, CodexModelSourceConfig, CommunityConfig, GatewayConfig, ModelBinding, load_config,
 )
 from gateway.model_factory import GatewayClient
 from gateway.multimodal import adapter_capabilities
@@ -91,6 +91,7 @@ class ApplicationServices:
     mcp_retrieval: McpRetrievalService | None = None
     model_settings: ModelSettings | None = None
     supervisor_sessions: DeepAgentSessionStore | None = None
+    community: CommunityConfig = field(default_factory=CommunityConfig)
     _closed: bool = field(default=False, init=False, repr=False)
 
     def start(self) -> None:
@@ -589,6 +590,7 @@ def _build_application_services(
         agent=agent,
         model_settings=model_settings,
         supervisor_sessions=supervisor_sessions,
+        community=gateway_config.community,
         agent_attachments=agent_attachments,
         parse_consumer=parse_consumer,
         parse_usage=parse_usage,

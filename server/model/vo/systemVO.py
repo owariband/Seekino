@@ -6,8 +6,14 @@ from ...schema import ContractModel
 from .commonVO import UnixTimeMs
 
 
+class CommunityView(ContractModel):
+    group_number: str
+    join_url: str
+
+
 class RuntimeConfigView(ContractModel):
     display_mode: Literal["release", "debug"]
+    community: CommunityView
 
 
 class ParseConsumerHealthView(ContractModel):

@@ -484,6 +484,11 @@ ParseModelRole = Literal["vision", "transcription", "ocr", "embedding", "rerank"
 ModelRole = Literal["chat", "vision", "transcription", "ocr", "embedding", "rerank"]
 
 
+class CommunityConfig(BaseModel):
+    group_number: str = ""
+    join_url: str = ""
+
+
 class GatewayConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -500,6 +505,7 @@ class GatewayConfig(BaseModel):
     video_parser: VideoParseConfig
     multimodal_embedding: MultimodalEmbeddingConfig
     tracing: TracingConfig = Field(default_factory=TracingConfig)
+    community: CommunityConfig = Field(default_factory=CommunityConfig)
     query_hook: QueryHookConfig = Field(default_factory=QueryHookConfig)
     web_search: WebSearchConfig = Field(default_factory=WebSearchConfig)
     # Runtime tuning is validated by the Server, which owns its constraints.

@@ -24,6 +24,7 @@ import {
 import type {
   DisplayMode,
   RuntimeMode,
+  RuntimeConfig,
   SeriesCreateRequest,
   SeriesUpdateRequest,
   SeriesView,
@@ -36,6 +37,7 @@ import { useAuth } from "../features/auth/AuthProvider";
 interface WorkspaceContextValue {
   mode: RuntimeMode;
   displayMode: DisplayMode;
+  community?: RuntimeConfig["community"];
   series: SeriesSummary[];
   selectedSeries: SeriesView | null;
   selectedSeriesId: string | null;
@@ -137,6 +139,7 @@ export function WorkspaceProvider({ children }: PropsWithChildren) {
     () => ({
       mode,
       displayMode,
+      community: runtimeConfig.data?.community,
       series,
       selectedSeries,
       selectedSeriesId,
@@ -178,6 +181,7 @@ export function WorkspaceProvider({ children }: PropsWithChildren) {
     [
       error,
       displayMode,
+      runtimeConfig.data?.community,
       mode,
       queryClient,
       selectedSeries,
