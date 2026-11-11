@@ -65,9 +65,9 @@ Seekino 将视频转成可检索、可回看、可追溯来源的素材库。主
 
 ### 项目推送至 `main`
 
-- **`main` 只发布正式用户安装、运行、使用、升级或验证 Seekino 所需的文件。** 设计稿和 TRD、调研、实验脚本与数据、评测报告、开发日志、内部看板、Agent 工作指引及其他仅供开发使用的材料一律留在 `dev`。这条规则适用于仓库中的任何路径。
+- **`main` 只接收正式用户安装、运行、使用、升级或验证 Seekino 所必需的文件。非必需文件一律不随发布分支推送，也不合入 `main`。** 设计稿和 TRD、调研、实验脚本与数据、评测报告、开发日志、内部看板、Agent 工作指引及其他仅供开发使用的材料一律留在 `dev`。这条规则适用于仓库中的任何路径。
 - 从最新 `origin/main` 建立独立发布分支，从 `dev` 按文件选取本次用户交付所需的改动。沿用 `main` 的 `.gitignore`，保留 `dev` 自己的忽略规则。`dev → main` 作为单独发布 PR，由用户在 GitHub 完成合并。
-- 提交前核对 `git diff --cached --name-status`，合并前再逐项核对 `git diff --name-status origin/main...HEAD` 和发布 PR 的 Files changed。每个文件都应对应一项正式用户用途。发现内部文件时，先将它移出发布提交。在发布分支运行 `python3 .github/scripts/check_release_tree.py`，并确认 GitHub 的 `release-files` 检查通过。
+- 提交前用 `git diff --cached --name-status` 逐项核对。若说不清缺少某个文件会让正式用户无法完成哪项操作，就将它移出发布提交。合并前再核对 `git diff --name-status origin/main...HEAD` 和发布 PR 的 Files changed。在发布分支运行 `python3 .github/scripts/check_release_tree.py`，并确认 GitHub 的 `release-files` 检查通过。
 
 ## 6. 验证与交付
 
