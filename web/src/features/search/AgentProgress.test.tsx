@@ -46,23 +46,31 @@ describe("Agent execution timeline", () => {
     }
   });
 
-  it("drops the mascot once a live answer completes", () => {
-    const view = render(<AgentProgress message={message} steps={[]} />);
-    expect(view.container.querySelector("[data-kino]")).not.toBeNull();
-    view.rerender(<AgentProgress message={{ ...message, status: "COMPLETED", phase: null }} steps={[]} />);
-    expect(view.container.querySelector("[data-kino]")).toBeNull();
+  it("cheers once when a live answer completes, then falls asleep on the bubble", () => {
+    vi.useFakeTimers();
+    try {
+      const view = render(<AgentProgress message={message} steps={[]} />);
+      view.rerender(<AgentProgress message={{ ...message, status: "COMPLETED", phase: null }} steps={[]} />);
+      expect(view.container.querySelector("[data-kino]")).toHaveAttribute("data-kino-state", "happy");
+      act(() => { vi.advanceTimersByTime(4_000); });
+      expect(view.container.querySelector("[data-kino]")).toHaveAttribute("data-kino-state", "sleep");
+      view.rerender(<AgentProgress message={{ ...message, status: "COMPLETED", phase: null }} steps={[]} kinoAwake />);
+      expect(view.container.querySelector("[data-kino]")).toHaveAttribute("data-kino-state", "look");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
-  it("does not perch on an answer that was already settled", () => {
+  it("sleeps without a reaction on an answer that was already settled", () => {
     const view = render(<AgentProgress message={{ ...message, status: "COMPLETED", phase: null }} steps={[]} />);
-    expect(view.container.querySelector("[data-kino]")).toBeNull();
+    expect(view.container.querySelector("[data-kino]")).toHaveAttribute("data-kino-state", "sleep");
   });
 
   // The app renders inside StrictMode, which runs mount effects twice in development.
   it.each([false, true])("leaps from the previous bubble onto a new turn's bubble, then gets to work (strict mode: %s)", (strict) => {
     vi.useFakeTimers();
     try {
-      const settled = { ...message, messageId: "previous", status: "FAILED" as const, phase: null };
+      const settled = { ...message, messageId: "previous", status: "COMPLETED" as const, phase: null };
       const live = { ...message, messageId: "next" };
       const Thread = ({ next }: { next: boolean }) => <div data-kino-stage="">
         <article data-id="previous"><AgentProgress message={settled} steps={[]} kinoHost={!next} /></article>
