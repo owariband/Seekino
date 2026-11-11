@@ -88,10 +88,6 @@ agent_runtime:
   limits_enabled: true
   total_timeout_enabled: true
   max_loop_turns: 3
-  max_model_calls_per_turn: 4
-  maximum_model_calls_per_turn: 6
-  max_tool_calls_per_turn: 12
-  maximum_tool_calls_per_turn: 24
   max_output_tokens: 4096
   stage_timeout_seconds: 180
   supervisor_timeout_seconds: 480

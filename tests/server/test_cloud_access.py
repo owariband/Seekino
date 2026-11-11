@@ -4,6 +4,7 @@ import asyncio
 import json
 from dataclasses import dataclass, field, replace
 from io import BytesIO
+from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -17,6 +18,7 @@ from agent.chat.supervisor import SupervisorResult
 from server.api.app import create_app
 from server.api.agent import _agent_message_events
 from server.config.auth import AuthConfig
+from server.config.global_agent_settings import read_global_agent_settings
 from server.config.sse import SSEConfig
 from server.database import DatabaseEnvironment, create_database_engine, create_schema, create_session_factory
 from server.model.agent import AgentConversation, AgentMessage
@@ -81,7 +83,10 @@ class ModelRuntime:
 
 
 @pytest.fixture
-def cloud_api(tmp_path):
+def cloud_api(tmp_path, monkeypatch):
+    monkeypatch.setenv("SEEKINO_AUTH_MODE", "cloud")
+    monkeypatch.setenv("SEEKINO_AGENT_RUNTIME_CONFIG", str(tmp_path / "agent-runtime.yaml"))
+    config, _ = read_global_agent_settings(Path(__file__).resolve().parents[2] / "deploy/cloud/models.example.yaml")
     engine = create_database_engine(
         f"sqlite+pysqlite:///{tmp_path / 'cloud-access.sqlite'}", environment=DatabaseEnvironment.TEST,
     )
@@ -99,7 +104,7 @@ def cloud_api(tmp_path):
     runtime = ModelRuntime()
     agent_repository = AgentRepository(sessions)
     attachments = AgentAttachmentService(agent_repository, store, config=ImageUploadConfig())
-    agent = AgentChatService(agent_repository, library, runtime, attachments=attachments)
+    agent = AgentChatService(agent_repository, library, runtime, config=config, attachments=attachments)
     services = SimpleNamespace(
         auth=auth, library=library, agent=agent,
         agent_attachments=attachments,
@@ -532,9 +537,14 @@ def test_search_rechecks_personal_public_series_after_model_work(cloud_api):
         assert response.status_code == 404, response.text
 
 
-@pytest.mark.parametrize("requested", [{}, {"maxModelCallsPerTurn": 5, "maxToolCallsPerTurn": 9}])
+@pytest.mark.parametrize("requested", [
+    {}, {"maxModelCallsPerTurn": 5, "maxToolCallsPerTurn": 9},
+    {"maxModelCallsPerTurn": 100, "maxToolCallsPerTurn": 100},
+])
 def test_guest_turn_uses_shared_chat_budgets(cloud_api, requested):
     shared = cloud_api.services.agent.message_options()
+    assert shared.max_model_calls_per_turn.default_value == shared.max_model_calls_per_turn.maximum == 100
+    assert shared.max_tool_calls_per_turn.default_value == shared.max_tool_calls_per_turn.maximum == 100
     series_id, _ = _course(cloud_api)
     with TestClient(cloud_api.app) as client:
         guest = _guest(client)

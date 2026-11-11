@@ -1254,6 +1254,26 @@ def resolve_config_path(config_path: str | Path | None = None) -> Path:
     return Path(configured_path or _DEFAULT_CONFIG_PATH).expanduser().resolve()
 
 
+def resolve_agent_runtime_path(model_path: Path) -> Path | None:
+    configured = os.getenv("SEEKINO_AGENT_RUNTIME_CONFIG")
+    if not configured and os.getenv("SEEKINO_AUTH_MODE", "local").strip().lower() != "cloud":
+        return None
+    path = Path(configured).expanduser().resolve() if configured else model_path.with_name("agent-runtime.yaml")
+    if path == model_path:
+        raise ValueError("Agent runtime and model configuration must use separate files")
+    return path
+
+
+def standalone_agent_runtime(document: object) -> dict:
+    if (
+        not isinstance(document, dict)
+        or set(document) != {"agent_runtime"}
+        or not isinstance(document["agent_runtime"], dict)
+    ):
+        raise ValueError("独立 Agent 设置文件只接受 agent_runtime 映射")
+    return document["agent_runtime"]
+
+
 def load_config(config_path: str | Path | None = None) -> GatewayConfig:
     path = resolve_config_path(config_path)
     if not path.is_file():
@@ -1270,6 +1290,11 @@ def load_config(config_path: str | Path | None = None) -> GatewayConfig:
 
 
 def config_from_document(payload: Mapping, path: Path) -> GatewayConfig:
+    runtime_path = resolve_agent_runtime_path(path)
+    if runtime_path is not None and runtime_path.is_file():
+        runtime = standalone_agent_runtime(yaml.safe_load(runtime_path.read_bytes()))
+        # Model bindings inherit context and output values from the same Agent settings as Chat.
+        payload = {**payload, "agent_runtime": runtime}
     config = GatewayConfig.model_validate(payload)
     for name, source in config.model_sources.items():
         if isinstance(source, ChatSourceCredentials) and source.encrypted_api_key:

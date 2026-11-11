@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from pathlib import Path
 
@@ -942,6 +943,58 @@ def test_invalid_agent_execution_budget_is_rejected(monkeypatch, name, value):
     monkeypatch.setenv(name, value)
     with pytest.raises(ValueError):
         ServerSettings.from_environment()
+
+
+def test_cloud_chat_budgets_migrate_to_separate_runtime_settings(monkeypatch, tmp_path):
+    _clean_seekino_environment(monkeypatch)
+    model = Path(os.environ["SEEKINO_MODEL_CONFIG"])
+    runtime = tmp_path / "server" / "agent-runtime.yaml"
+    monkeypatch.setenv("SEEKINO_AUTH_MODE", "cloud")
+    monkeypatch.setenv("SEEKINO_AGENT_RUNTIME_CONFIG", str(runtime))
+    monkeypatch.setenv("SEEKINO_AGENT_MAX_MODEL_CALLS_PER_TURN", "6")
+    payload = yaml.safe_load(model.read_text())
+    payload["agent_runtime"] = {
+        "max_model_calls_per_turn": 6, "maximum_model_calls_per_turn": 12,
+        "max_tool_calls_per_turn": 24, "maximum_tool_calls_per_turn": 48,
+        "history_message_limit": 17, "execution_timeout_seconds": 200,
+    }
+    original = yaml.safe_dump(payload).encode()
+    model.write_bytes(original)
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        reads = list(pool.map(lambda _: read_global_agent_settings(model), range(8)))
+    config, revision = reads[0]
+    assert reads == [(config, revision)] * 8
+    assert (config.max_model_calls_per_turn, config.maximum_model_calls_per_turn) == (100, 100)
+    assert (config.max_tool_calls_per_turn, config.maximum_tool_calls_per_turn) == (100, 100)
+    assert config.history_message_limit == 17 and config.execution_timeout_seconds == 200
+    assert yaml.safe_load(runtime.read_bytes()) == {"agent_runtime": {
+        "history_message_limit": 17, "execution_timeout_seconds": 200,
+    }}
+    assert runtime.stat().st_mode & 0o777 == 0o600
+
+    saved, updated_revision = patch_global_agent_settings({
+        "max_tool_calls_per_turn": 90, "max_output_tokens": 4096,
+    }, revision, model)
+    assert saved.max_tool_calls_per_turn == 90 and saved.maximum_tool_calls_per_turn == 100
+    assert load_config(model).agent_runtime["max_output_tokens"] == 4096
+    assert model.read_bytes() == original
+    assert updated_revision != revision
+    with pytest.raises(GlobalAgentSettingsConflictError):
+        patch_global_agent_settings({"max_tool_calls_per_turn": 75}, revision, model)
+    payload["agent_runtime"]["max_model_calls_per_turn"] = 1
+    model.write_text(yaml.safe_dump(payload))
+    assert read_global_agent_settings(model) == (saved, updated_revision)
+
+
+def test_cloud_runtime_cannot_overwrite_model_document(monkeypatch):
+    _clean_seekino_environment(monkeypatch)
+    model = Path(os.environ["SEEKINO_MODEL_CONFIG"])
+    original = model.read_bytes()
+    monkeypatch.setenv("SEEKINO_AGENT_RUNTIME_CONFIG", str(model))
+    with pytest.raises(ValueError, match="separate files"):
+        read_global_agent_settings(model)
+    assert model.read_bytes() == original
 
 
 def test_global_agent_settings_yaml_overrides_environment_and_keeps_fallbacks(
