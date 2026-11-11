@@ -268,7 +268,7 @@ After starting the service, inspect requests and responses in the [OpenAPI docs]
 
 ## 3. Deployment
 
-Self-hosting is the way to run Seekino today; a cloud Docker deployment for the public demo is in progress.
+Browse published series on [Seekino Cloud](https://seekino.hypn0s.cloud) or follow the [Cloud MCP guide](https://seekino.hypn0s.cloud/docs/agents) to fetch clips from an editing tool. To work with your own footage, run Seekino locally using the steps below.
 
 
 The recommended first install runs **Web, API, video processing, MySQL and Elasticsearch in Docker**, with **DeepAgents** and API models by default. Local mode needs no application login.

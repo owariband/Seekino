@@ -262,7 +262,7 @@ Supervisor 按需调用工具：
 
 ## 3. 部署
 
-**当前可自托管，在线样例库尚未开放。** 首次安装推荐 **Docker 全栈 + API 模型**：Web、API、视频解析、MySQL 和 Elasticsearch 一起启动，默认使用 **DeepAgents**，不需要准备本地模型权重。
+公开系列可通过 [Seekino Cloud](https://seekino.hypn0s.cloud) 浏览，剪辑工具可按 [Cloud MCP 接入说明](https://seekino.hypn0s.cloud/docs/agents) 获取片段。要在自己的电脑上处理素材，首次安装推荐 **Docker 全栈 + API 模型**。Web、API、视频解析、MySQL 和 Elasticsearch 一起启动，默认使用 **DeepAgents**，不需要准备本地模型权重。
 
 ### 1. 准备环境
 
