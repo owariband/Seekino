@@ -53,7 +53,7 @@ def test_retrieve_uses_formal_events_fixed_tenant_and_millisecond_evidence():
     assert (item["start_ms"], item["end_ms"]) == (1, 4)
     assert item["event"]["start_ms"] == 1
     assert "seconds" not in json.dumps(result)
-    library.list_series.assert_called_once_with(tenant_id=inputs["tenant_id"], status="READY", limit=51)
+    library.list_series.assert_called_once_with(tenant_id=inputs["tenant_id"], offset=0, status="READY", limit=51)
     read = service.read_evidence(item["evidence_ref"])
     assert read["matched_event"]["description"] == "角色拿起蓝色杯子"
     assert read["content_version"] == 1
@@ -130,6 +130,35 @@ def test_camera_reference_is_indexed_then_resolved_from_version_pinned_evidence(
         **persistence.evidence.parse_provenance, "contentVersion": 2}})
     with pytest.raises(ValueError, match="EVIDENCE_STALE"):
         service.read_evidence(hit["evidence_ref"])
+
+
+def test_source_clip_ranges_are_video_relative_and_cloud_only_has_a_minute_cap():
+    from urllib.parse import parse_qs, urlsplit
+
+    service, persistence, _, media, *_ = _service()
+    persistence.evidence = persistence.evidence.model_copy(update={"duration_seconds": 81_000})
+    ref = service.retrieve("杯子")["items"][0]["evidence_ref"]
+    assert service.read_evidence(ref, cloud=True)["media"] == {"max_clip_ms": 60_000}
+    media.get_original.assert_not_called()
+    media.playback_view.assert_not_called()
+    for cloud, end in ((True, 61_000), (False, 61_001)):
+        clip = service.read_evidence(ref, start_ms=1000, end_ms=end, cloud=cloud)["media"]
+        assert set(clip) == {"clip_url", "mime_type", "start_ms", "end_ms"}
+        parsed = urlsplit(clip["clip_url"])
+        assert parsed.path == "/api/videos/clip"
+        assert parse_qs(parsed.query) == {"evidenceRef": [ref], "startMs": ["1000"], "endMs": [str(end)]}
+        assert (clip["start_ms"], clip["end_ms"], clip["mime_type"]) == (1000, end, "video/mp4")
+    media.get_original.reset_mock()
+    for start, end, reason in ((1000, 61_001, "CLIP_TOO_LONG"), (None, 1, "INVALID_CLIP_RANGE"),
+                               (0, None, "INVALID_CLIP_RANGE"), (42, 42, "INVALID_CLIP_RANGE"),
+                               (12, 10, "INVALID_CLIP_RANGE"), (-1, 10, "INVALID_CLIP_RANGE"),
+                               (80_000, 81_001, "INVALID_CLIP_RANGE"), (False, 50, "INVALID_CLIP_RANGE")):
+        with pytest.raises(ValueError, match=reason):
+            service.read_evidence(ref, start_ms=start, end_ms=end, cloud=True)
+    media.get_original.assert_not_called()
+    media.get_original.side_effect = MediaMissingError("missing")
+    missing = service.read_evidence(ref, start_ms=0, end_ms=1)
+    assert missing["media"]["clip_url"] is None and missing["warnings"]
 
 
 def test_stale_reference_rehydrates_before_media_access():

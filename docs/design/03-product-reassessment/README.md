@@ -62,6 +62,7 @@ hypnos 于 **2026-04-27 入职实习**，到这次面试复盘时已接近半年
 | [kimi-streaming-trd.md](kimi-streaming-trd.md) | 2026-10-30，长 Chunk 504 与历史流式成功记录 | 正式 Kimi 生成入口接入 Chat SSE，收齐后校验和执行工具 | 单独验证代码接入、流式接口兼容性、真实素材效果与部署 |
 | [model-streaming-trd.md](model-streaming-trd.md) | 2026-10-31，默认 stream 被 profile / 入口写死，temperature 缺少创建时配置 | 通用模型配置、默认 stream=true / temperature=0、Kimi 固定温度、独立 fallback、共享协议接收与 Parse 快照 | 承接 Kimi 接入修复；隔离 HTTP 验证与真实部署、供应商效果分开验收 |
 | [local-whisperx-asr-trd.md](local-whisperx-asr-trd.md) | 2026-10-29 本地 ASR；10-30 故障续版与 10-31 存储／GPU 测试 | 视频级 ASR／Summary 持久成果、Task／成果归类及 Turbo＋Metal 本地测试接线 | 存储与恢复隔离验证通过；Turbo＋Metal 正式 Gateway 短样本与完整 116 分 20 秒 ASR 均通过，业务库迁移、独立对齐及完整课程闭环待验 |
+| [cloud-public-mcp-trd.md](cloud-public-mcp-trd.md) | 2026-11-11，本机剪辑 Agent 取云端公开素材 | 同一 MCP SDK 挂载到 Cloud，按发布范围检索，下载有时限和区间限制的 MP4 | 游客身份、工具发现与真实取片分别验证 |
 | [mcp-access-trd.md](mcp-access-trd.md) | 2026-10-28，外部 Agent 素材库与演示需求 | 将首要交付收敛为 localhost MCP，Cloud 保留 Chat 与后续轻量 HTML 作品 | 区分协议与隔离测试、真实 Codex 连接、真实素材到作品；不把历史 Sandbox 探针当作已交付能力 |
 | [动画表情素材召回](anime-material-recall-trd.md) | 2026-11-08，五集盲评漏选爱音反应 | 剪辑 Agent 按画面表情找素材 | 单独核验语义排名、全量翻页与原片画面。 |
 | [上传视频自动判型](parse-pre-hook-router-trd.md) | 2026-11-09，CPU 普通上传需要自动选策略 | 沿用 Parse V2 及显式覆盖 | [#82](https://github.com/owariband/Seekino/pull/82) |

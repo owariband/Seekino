@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 import secrets
 import re
 import time
@@ -8,6 +10,7 @@ from typing import Any
 from redis.exceptions import RedisError
 
 from ..config.auth import AuthConfig
+from ..constants.auth import MCP_CLIP_TICKET_TTL_SECONDS
 from ..constants.identity import LOCAL_USER_ID
 from ..error.auth import AuthError, IdentityConflictError, IdentityDeniedError
 from ..model.dto.authDTO import AuthCredentials, AuthIdentity
@@ -100,6 +103,7 @@ class AuthService:
         self.repository = repository
         self.config = config
         self._signing_key = config.secret_key.encode("utf-8") or secrets.token_bytes(32)
+        self._mcp_key = hmac.digest(self._signing_key, b"seekino:cloud-mcp:v1", "sha256")
         self.redis = redis
         if config.mode == "cloud" and self.redis is None:
             raise ValueError("cloud authentication requires a caller-provided Redis client")
@@ -124,12 +128,44 @@ class AuthService:
         if self.config.mode == "local":
             return self.local_identity()
         payload = decode_auth_token(token, self._signing_key)
+        return self._active_identity(payload)
+
+    def _active_identity(self, payload: dict[str, Any]) -> AuthIdentity:
         user = self.repository.get_user(payload["sub"])
         if user is None or user.status != "ACTIVE" or user.auth_version != payload["auth_version"]:
             raise AuthError("登录状态已失效", code="AUTH_EXPIRED")
         if payload["auth_level"] != ("guest" if user.is_anonymous else "email"):
             raise AuthError("登录状态已失效", code="AUTH_EXPIRED")
         return self._identity(user)
+
+    def issue_mcp_token(self, session_token: str) -> tuple[str, int]:
+        """Exchange a validated Cloud session for public-library access until that session expires."""
+        payload = decode_auth_token(session_token, self._signing_key)
+        self._active_identity(payload)
+        payload["aud"] = "public-mcp"
+        return encode_auth_token(payload, self._mcp_key), payload["exp"]
+
+    def authenticate_mcp(self, token: str | None) -> AuthIdentity:
+        return self._active_identity(self._mcp_claims(token, "public-mcp"))
+
+    def _mcp_claims(self, token: str | None, audience: str) -> dict[str, Any]:
+        payload = decode_auth_token(token, self._mcp_key)
+        if self.config.mode != "cloud" or payload.get("aud") != audience:
+            raise AuthError("此凭据不能用于当前资源")
+        return payload
+
+    def issue_clip_ticket(self, token: str, evidence_ref: str, start_ms: int, end_ms: int) -> str:
+        payload = self._mcp_claims(token, "public-mcp")
+        payload.update(aud="public-mcp-clip", exp=min(payload["exp"], int(time.time()) + MCP_CLIP_TICKET_TTL_SECONDS),
+                       evidence=hashlib.sha256(evidence_ref.encode()).hexdigest(), start=start_ms, end=end_ms)
+        return encode_auth_token(payload, self._mcp_key)
+
+    def authenticate_clip(self, ticket: str, evidence_ref: str, start_ms: int, end_ms: int) -> AuthIdentity:
+        payload = self._mcp_claims(ticket, "public-mcp-clip")
+        if (payload.get("evidence") != hashlib.sha256(evidence_ref.encode()).hexdigest()
+                or (payload.get("start"), payload.get("end")) != (start_ms, end_ms)):
+            raise AuthError("片段凭据与请求的素材或区间不符", status_code=403, code="PERMISSION_DENIED")
+        return self._active_identity(payload)
 
     def create_guest(self, ip_address: str | None = None) -> AuthCredentials:
         if self.config.mode == "local":

@@ -97,6 +97,39 @@ def _app(service: AuthService) -> FastAPI:
     return app
 
 
+def test_mcp_credentials_are_scoped_expire_and_follow_account_revocation(cloud, monkeypatch):
+    service, _, _, _ = cloud
+    with TestClient(_app(service)) as client:
+        guest = client.post("/api/auth/guest").json()
+        assert client.post("/api/auth/mcp-token").status_code == 403
+        headers = {"X-CSRF-Token": guest["csrfToken"]}
+        reply = client.post("/api/auth/mcp-token", headers=headers)
+        assert reply.status_code == 200 and reply.headers["cache-control"] == "private, no-store"
+        token = reply.json()["accessToken"]
+        assert service.authenticate_mcp(token).user_id == guest["userId"]
+        with pytest.raises(AuthError):
+            service.authenticate(token)
+        with pytest.raises(AuthError):
+            service.authenticate_mcp(client.cookies[service.config.cookie_name])
+        ticket = service.issue_clip_ticket(token, "test-reference", 10, 100)
+        assert service.authenticate_clip(ticket, "test-reference", 10, 100).user_id == guest["userId"]
+        with pytest.raises(AuthError):
+            service.authenticate_mcp(ticket)
+        with pytest.raises(AuthError):
+            service.authenticate_clip(token, "test-reference", 10, 100)
+        import time
+        now = time.time()
+        with monkeypatch.context() as clock:
+            clock.setattr(time, "time", lambda: now + 301)
+            with pytest.raises(AuthError):
+                service.authenticate_clip(ticket, "test-reference", 10, 100)
+        assert client.post("/api/auth/logout", headers=headers).status_code == 200
+        with pytest.raises(AuthError):
+            service.authenticate_mcp(token)
+        with pytest.raises(AuthError):
+            service.authenticate_clip(ticket, "test-reference", 10, 100)
+
+
 def _conversation(sessions, owner_id: str, tenant_id: str) -> str:
     conversation_id = str(uuid4())
     with sessions.begin() as session:

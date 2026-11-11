@@ -46,10 +46,13 @@ def build_app(
     )
     mcp_service = getattr(services, "mcp_retrieval", None)
     mcp_app = None
-    if auth_config.mode == "local" and mcp_service is not None:
+    origins = resolved_settings.allowed_origins if resolved_settings else ()
+    if mcp_service is not None:
         from .mcp import create_mcp_app
 
-        mcp_app = create_mcp_app(mcp_service, auth_mode=auth_config.mode)
+        mcp_app = create_mcp_app(mcp_service, auth_mode=auth_config.mode, auth=getattr(services, "auth", None),
+                                 allowed_origins=origins,
+                                 maximum_concurrent=getattr(getattr(services, "agent", None), "active_maximum_concurrent_kicks", None))
 
     @asynccontextmanager
     async def application_lifespan(app):
@@ -83,7 +86,7 @@ def build_app(
         status_code = 500
         try:
             response = await call_next(request)
-            if app.state.auth_config.mode == "cloud" and request.url.path.startswith("/api/"):
+            if app.state.auth_config.mode == "cloud" and (request.url.path.startswith("/api/") or request.url.path == "/mcp"):
                 response.headers["Cache-Control"] = "private, no-store"
             status_code = response.status_code
             response.headers["X-Request-Id"] = request.state.request_id
@@ -96,7 +99,6 @@ def build_app(
                 (time.perf_counter() - started_at) * 1000,
             )
             request_id_context.reset(token)
-    origins = resolved_settings.allowed_origins if resolved_settings else ()
     if "*" in origins:
         raise ValueError("credentialed API requests require explicit allowed origins")
     if origins:

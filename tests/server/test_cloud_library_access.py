@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shutil
+import subprocess
 from datetime import timedelta
 from io import BytesIO
 from types import SimpleNamespace
@@ -32,7 +34,7 @@ from server.model.video import Series, SeriesVisibility, Video, VideoChunk
 from server.repository.library import LibraryRepository
 from server.service.video_parse_persistence import VideoParsePersistenceService
 from server.router.library import router as library_router
-from server.router.media import router as media_router
+from server.router.media import clip_router, router as media_router
 from server.router.search import router as search_router
 from server.schema import (
     AgentReply,
@@ -137,6 +139,7 @@ def cloud_library(seed_video, tmp_path):
     app.state.auth_config = auth.config
     app.include_router(library_router)
     app.include_router(media_router)
+    app.include_router(clip_router)
     app.include_router(search_router)
     register_exception_handlers(app)
     client = TestClient(app)
@@ -183,6 +186,133 @@ def _search(fixture, *, series_id=None, tenant_id=PUBLIC):
     return fixture.client.post("/api/search", headers={"X-CSRF-Token": "csrf"}, json={
         "tenantId": tenant_id, "query": "course", "seriesIds": [series_id or fixture.prepared.series_id],
     })
+
+
+@pytest.mark.skipif(not (shutil.which("ffmpeg") and shutil.which("ffprobe")), reason="clip encoding requires FFmpeg")
+def test_cloud_guest_can_download_one_minute_but_not_a_longer_unpublished_or_stale_clip(cloud_library, tmp_path):
+    from urllib.parse import parse_qs, urlsplit
+
+    from server.model.parse_content import ChunkParseContent
+    from server.model.task import ChunkParseTask
+    from server.service.mcp_retrieval import McpRetrievalService
+    from sqlalchemy import select
+
+    f = cloud_library
+    # The initial evidence is in the first 10 s. The requested file crosses the chunk boundary.
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=64x64:r=5:d=65",
+                    "-c:v", "libx264", str(f.source)], check=True)
+    with f.factory.begin() as session:
+        session.get(Video, f.prepared.video_id).duration_ms = 65_000
+    reader = McpRetrievalService(library=f.library, media=f.media, event_retrieval=None,
+                                 parse_persistence=VideoParsePersistenceService(f.factory), local_tenant_id=PUBLIC)
+    ref = reader.browse_events(f.prepared.series_id)["items"][0]["evidence_ref"]
+    url = reader.read_evidence(ref, start_ms=101, end_ms=60_101, cloud=True)["media"]["clip_url"]
+    response = f.client.get(url)
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "video/mp4" and response.headers["cache-control"] == "private, no-store"
+    clip = tmp_path / "download.mp4"
+    clip.write_bytes(response.content)
+    info = json.loads(subprocess.check_output(["ffprobe", "-v", "error", "-show_entries",
+        "stream=codec_name,nb_frames:format=start_time,duration", "-of", "json", str(clip)]))
+    assert info["streams"] == [{"codec_name": "h264", "nb_frames": "300"}]  # no invented audio on a silent source
+    # First source frame is at 200 ms, 99 ms into the selected timeline.
+    assert float(info["format"]["start_time"]) == .099
+    assert float(info["format"]["start_time"]) + float(info["format"]["duration"]) == pytest.approx(60)
+    query = {k: v[0] for k, v in parse_qs(urlsplit(url).query).items()}
+    reject = f.client.get("/api/videos/clip", params={**query, "endMs": "60102", "cloud": "false"})
+    assert reject.status_code == 400 and "CLIP_TOO_LONG" in reject.text
+    no_frame = f.client.get("/api/videos/clip", params={**query, "startMs": "101", "endMs": "190"})
+    assert no_frame.status_code == 400 and "INVALID_CLIP_RANGE" in no_frame.text
+
+    _login(f, "admin")
+    assert _visibility(f, "private").status_code == 200
+    _login(f, "guest")
+    assert f.client.get(url).status_code == 404
+    f.client.cookies.clear()
+    assert f.client.get(url).status_code == 401
+    _login(f, "admin")
+    with f.factory.begin() as session:
+        child = session.scalar(select(ChunkParseTask).where(ChunkParseTask.chunk_id == f.prepared.video_chunk_ids[0]))
+        content = session.scalar(select(ChunkParseContent).where(ChunkParseContent.chunk_task_id == child.id))
+        child.indexed_content_version = content.version = content.version + 1
+    assert f.client.get(url).status_code == 409
+
+
+@pytest.mark.skipif(not (shutil.which("ffmpeg") and shutil.which("ffprobe")), reason="clip encoding requires FFmpeg")
+def test_cloud_mcp_from_guest_registration_to_cookie_free_clip(cloud_library, tmp_path):
+    from urllib.parse import parse_qs, urlsplit
+
+    from server.api.app import build_app
+    from server.repository.identity import IdentityRepository
+    from server.service.auth import AuthService
+    from server.service.mcp_retrieval import McpRetrievalService
+
+    f = cloud_library
+    auth = AuthService(IdentityRepository(f.factory), f.auth.config, redis=f.auth.redis)
+    public = f.prepared.series_id
+    private, _ = _course(f, "Private draft", published=False)
+    other, _ = _course(f, "Another tenant", tenant_id="tenant-alice")
+    events = Mock()
+    events.search.return_value = SimpleNamespace(chunk_result=f.result, matches=[])
+    reader = McpRetrievalService(library=f.library, media=f.media, event_retrieval=events,
+                                 parse_persistence=VideoParsePersistenceService(f.factory),
+                                 local_tenant_id="local", public_tenant_id=PUBLIC)
+    origin = "https://cloud.example"
+    services = SimpleNamespace(auth=auth, mcp_retrieval=reader, media=f.media)
+    app = build_app(services, settings=SimpleNamespace(auth=auth.config, allowed_origins=(origin,), sse=SSEConfig()))
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=64x64:r=10:d=2",
+                    "-f", "lavfi", "-i", "sine=frequency=220:duration=2", "-c:v", "libx264",
+                    "-c:a", "aac", str(f.source)], check=True)
+    with TestClient(app, base_url=origin) as client:
+        def rpc(method, params):
+            return client.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
+
+        def call(tool, **arguments):
+            result = rpc("tools/call", {"name": tool, "arguments": arguments})
+            assert result.status_code == 200
+            return result.json()["result"]
+
+        client.headers["Accept"] = "application/json, text/event-stream"
+        assert rpc("tools/list", {}).status_code == 401
+        credential = client.post("/api/auth/mcp-token")
+        assert credential.status_code == 200 and not client.cookies
+        token = credential.json()["accessToken"]
+        client.headers["Authorization"] = "Bearer " + token
+        handshake = rpc("initialize", {"protocolVersion": "2025-06-18", "capabilities": {},
+                                       "clientInfo": {"name": "editing-test", "version": "1"}})
+        assert handshake.json()["result"]["serverInfo"]["name"] == "seekino"
+        assert {t["name"] for t in rpc("tools/list", {}).json()["result"]["tools"]} == {
+            "list_series", "retrieve", "browse_events", "read_evidence"}
+        assert [v["series_id"] for v in call("list_series")["structuredContent"]["items"]] == [public]
+        assert call("retrieve", query="scene")["structuredContent"]["series_ids"] == [public]
+        assert events.search.call_args.kwargs["series_ids"] == [public]
+        for unavailable in (private, other):
+            assert call("browse_events", series_id=unavailable)["isError"]
+            assert call("retrieve", query="scene", series_ids=[unavailable])["isError"]
+        assert events.search.call_count == 1
+        card = call("browse_events", series_id=public, limit=1)["structuredContent"]["items"][0]
+        ref = card["evidence_ref"]
+        assert call("read_evidence", evidence_ref=ref)["structuredContent"]["media"] == {"max_clip_ms": 60_000}
+        media = call("read_evidence", evidence_ref=ref, start_ms=0, end_ms=1000)["structuredContent"]["media"]
+        url = media["clip_url"]
+        assert url.startswith(origin + "/api/videos/clip?") and token not in url
+        params = {k: v[0] for k, v in parse_qs(urlsplit(url).query).items()}
+        del client.headers["Authorization"]
+        assert not client.cookies
+        response = client.get(url)
+        assert response.status_code == 200 and response.headers["content-type"] == "video/mp4"
+        clip = tmp_path / "public-clip.mp4"
+        clip.write_bytes(response.content)
+        streams = json.loads(subprocess.check_output(["ffprobe", "-v", "error", "-show_entries",
+            "stream=codec_name:format=duration", "-of", "json", str(clip)]))
+        assert {s["codec_name"] for s in streams["streams"]} == {"h264", "aac"}
+        assert float(streams["format"]["duration"]) == pytest.approx(1, abs=.05)
+        assert client.get("/api/videos/clip", params={**params, "endMs": 990}).status_code == 403
+        with f.factory.begin() as session:
+            session.get(Series, public).visibility = SeriesVisibility.PRIVATE
+        assert client.get(url).status_code == 404
+        client.headers["Authorization"] = "Bearer " + token
+        assert call("read_evidence", evidence_ref=ref)["isError"]
 
 
 def test_public_library_filters_before_count_and_pagination(cloud_library):

@@ -57,11 +57,17 @@ Seekino 将视频转成可检索、可回看、可追溯来源的素材库。主
 - 搜索代码与文档优先使用 `rg` / `rg --files`。先读实际调用点和相关测试，再决定实现；发现旧路径失效时从设计索引与当前源码定位，不把旧名称直接写入新代码。
 - 根据任务选用项目技能：调研看 [research](.agents/skills/research/SKILL.md)，需要压力检验方案时看 [grilling](.agents/skills/grilling/SKILL.md)，素材短片工作看 [seekino-short-video](.agents/skills/seekino-short-video/SKILL.md)。编码偏好在相关实现或审查中按需使用可用的 `hypnos-code`，纯文档修改无需自动加载。仅按适用条件使用，不因技能存在而扩大任务。
 - 服务重启、真实数据迁移或清理、commit 和 push 依照任务已有明确授权执行；文档中的计划和示例命令不构成操作授权。
-- 2026-10-30 起，每个 feature 或独立修复使用单独分支和 PR，默认向 `dev` 集成；并行工作使用独立 worktree，避免多个 chat 在同一工作区混写。`dev → main` 作为单独发布 PR，由用户在 GitHub 完成合并。发布需要保留 `main` 的 `.gitignore` 时，使用临时集成分支并核对文件与目标分支完全一致，不修改 `dev` 的忽略规则。
+- 2026-10-30 起，每个 feature 或独立修复使用单独分支和 PR，默认向 `dev` 集成；并行工作使用独立 worktree，避免多个 chat 在同一工作区混写。
 - 工作分支严格采用 `<type>/<short-description>` 命名，使用 `feat`、`fix`、`refactor`、`perf`、`docs`、`chore` 等规范类型；类型表达需求性质，描述标识具体需求。禁止使用 `claude/`、`codex/` 等 Agent 名称作为分支前缀。
 - Agent 身份在创建 PR 时于正文末尾署名一次即可，使用 `— Prepared by Codex` 或 `— Prepared by Claude`，按实际参与的 Agent 填写；完整示例见 [TRD Principle](docs/design/common/trd-principle.md)。
 - 每次 commit 的标题必须采用 `<type>: <summary>`，标题与正文之间留一空行，正文至少包含 `- problem:` 与 `- solution abstract:` 两项，其他细节按需增加 bullet。类型按本次提交的实际变更选择；完整格式与示例以 [TRD Principle](docs/design/common/trd-principle.md) 为准，提交前必须核对。
 - 默认使用中文沟通，保留代码和接口的原始名称。先说结论，再说明依据、变化与验证；遇到阻塞写清缺口和下一项可执行动作。
+
+### 项目推送至 `main`
+
+- **`main` 只发布正式用户安装、运行、使用、升级或验证 Seekino 所需的文件。** 设计稿和 TRD、调研、实验脚本与数据、评测报告、开发日志、内部看板、Agent 工作指引及其他仅供开发使用的材料一律留在 `dev`。这条规则适用于仓库中的任何路径。
+- 从最新 `origin/main` 建立独立发布分支，从 `dev` 按文件选取本次用户交付所需的改动。沿用 `main` 的 `.gitignore`，保留 `dev` 自己的忽略规则。`dev → main` 作为单独发布 PR，由用户在 GitHub 完成合并。
+- 提交前核对 `git diff --cached --name-status`，合并前再逐项核对 `git diff --name-status origin/main...HEAD` 和发布 PR 的 Files changed。每个文件都应对应一项正式用户用途。发现内部文件时，先将它移出发布提交。在发布分支运行 `python3 .github/scripts/check_release_tree.py`，并确认 GitHub 的 `release-files` 检查通过。
 
 ## 6. 验证与交付
 
