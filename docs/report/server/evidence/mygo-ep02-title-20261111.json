@@ -1,0 +1,152 @@
+{
+  "case": "MyGO E02 · 2026-11-11",
+  "timeUnit": "integer milliseconds from start of video",
+  "videoId": "39b12b93-ae8e-58ac-8071-3608c28e024c",
+  "parseTaskId": "12f38aeb-384e-4a4c-ae0d-f2333a160d41",
+  "sourceSHA256": "64dc6b106e3a23c648e965d586600002d23c34e4d8285cc489c4cdf2b84a1bf6",
+  "originalFrame": {
+    "timeMs": 152000,
+    "onScreen": "#2 もう誘わない",
+    "subtitle": "不会再邀请了",
+    "catalogue": "https://bang-dream.com/discographies/3576/"
+  },
+  "beforeCorrection": {
+    "understandDraft": {
+      "targetChunkSequence": 2,
+      "recognized": [
+        "月ノ森女子学園",
+        "夜遅くまで本読んじゃって"
+      ],
+      "recordedTitleCard": false
+    },
+    "separateDialogue": {
+      "chunkSequence": 14,
+      "startMs": 857500,
+      "excerpt": "もう誘わないし"
+    },
+    "timelineFields": [
+      "startMs",
+      "endMs",
+      "eventType",
+      "text",
+      "description"
+    ],
+    "selectedTimelineEvents": [
+      [
+        146166,
+        149166,
+        "ON_SCREEN_TEXT",
+        "月ノ森女子学園",
+        "校门右侧砖柱上挂着校名牌，写着“月ノ森女子学園”。"
+      ],
+      [
+        150500,
+        153500,
+        "SCENE",
+        "",
+        "長崎そよ提着书包走向教学楼的拱廊台阶，浅绿白发的若葉睦站在台阶一侧，抬头看向她。"
+      ],
+      [
+        150833,
+        153166,
+        "DIALOGUE",
+        "",
+        "对话继续，字幕为日语“夜遅くまで本読んじゃって”与中文“昨天看书看到很晚”。"
+      ]
+    ],
+    "digestChars": 39309,
+    "digestLimitChars": 300000,
+    "digestTruncated": false,
+    "summaryInspections": [
+      {
+        "startMs": 140500,
+        "endMsExclusive": 150500,
+        "requestedFramesMs": [
+          141750,
+          144250,
+          146750,
+          149250
+        ]
+      },
+      {
+        "startMs": 1411000,
+        "endMsExclusive": 1420002,
+        "requestedFramesMs": [
+          1412125,
+          1414375,
+          1416626,
+          1418876
+        ]
+      },
+      {
+        "startMs": 1290000,
+        "endMsExclusive": 1308000,
+        "requestedFramesMs": [
+          1293000,
+          1299000,
+          1305000
+        ]
+      },
+      {
+        "startMs": 342000,
+        "endMsExclusive": 356000,
+        "requestedFramesMs": [
+          344333,
+          349000,
+          353666
+        ]
+      }
+    ],
+    "titleEvidence": [
+      {
+        "chunkParseTaskId": "29ba26b3-ed2b-46c6-b3e2-a0edcf075c85",
+        "quote": "千早愛音向長崎そよ提出一起组乐队。"
+      },
+      {
+        "chunkParseTaskId": "29ba26b3-ed2b-46c6-b3e2-a0edcf075c85",
+        "quote": "長崎そよ面带微笑，答应千早愛音的邀请。"
+      }
+    ]
+  },
+  "operatorCorrection": {
+    "episode": 2,
+    "atUTC": "2026-11-11T07:16:39+00:00",
+    "title": "もう誘わない",
+    "oldTitle": "爱音与素世结成乐队，并向灯发出邀请",
+    "oldKind": "generated",
+    "newKind": "official",
+    "frameMs": 152000,
+    "frameSHA256": "f0ac945aac64338be09757e75597ee9ed595bdb6c2a0b8e427f52231288a892c",
+    "beforeContentVersion": 2,
+    "afterContentVersion": 3,
+    "siblingsSHA256": "290da0d731abc416a2b4205bc0ad386765b2d0d6996b0d9fbc767763e47d2fb7",
+    "method": "operator_reviewed_original_frame",
+    "siblingDigestCovers": [
+      "episode identity and order",
+      "description and cover",
+      "outline",
+      "other evidence and prior frames",
+      "parse task identity, status and version",
+      "per-chunk phase, status, indexed content version and source content version"
+    ]
+  },
+  "newGuestVerification": {
+    "at": "2026-11-11T07:35:39.327Z",
+    "guest": true,
+    "access": "public",
+    "http": 200,
+    "seriesId": "90d72272-eb0f-5067-ae63-4653240a0e13",
+    "videoId": "39b12b93-ae8e-58ac-8071-3608c28e024c",
+    "episode": 2,
+    "seriesTitle": "もう誘わない",
+    "playerTitle": "もう誘わない",
+    "url": "https://seekino.hypn0s.cloud/watch/90d72272-eb0f-5067-ae63-4653240a0e13/39b12b93-ae8e-58ac-8071-3608c28e024c?tenantId=platform-public&atSeconds=152000",
+    "observed": {
+      "timeMs": 152000,
+      "width": 1920,
+      "height": 1080
+    },
+    "readyCount": 13,
+    "otherTitlesChecked": 12
+  }
+}
