@@ -81,8 +81,7 @@ export function AgentProgress({ message, steps, reasoning = "", displayMode = "r
     });
   }
   const currentPhase = message.phase ?? visibleSteps.at(-1)?.phase ?? steps.at(-1)?.phase;
-  // Completed answers no longer host the sleeping mascot; only live or failed turns do.
-  const kino = kinoHost && !completed
+  const kino = kinoHost
     ? <ProgressMascot phase={processing ? currentPhase : null} settled={!processing} awake={kinoAwake} arriving={processing}
       farewell={farewell} onFarewellDone={() => setFarewell(null)} />
     : null;
@@ -127,6 +126,7 @@ export function AgentProgress({ message, steps, reasoning = "", displayMode = "r
 
   if (completed) {
     return <>
+      {kino}
       {hasReasoning ? reasoningPanel : <div role="status" aria-label={t("回答状态")} className={styles.completedRow}>
         <p>{t("已完成")}{durationLabel ? ` · ${t("用时")} ${durationLabel}` : ""}</p>
       </div>}
