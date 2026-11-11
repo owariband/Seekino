@@ -6,7 +6,7 @@ import type { VideoTextTimeline } from "../../api/contracts";
 // Character mappings keep a substring searchable even when a neighbour changes.
 const toSimplified = CustomConverter(traditionalCharacters);
 
-function videoTextKey(text: string): string {
+export function videoTextKey(text: string): string {
   return toSimplified(text.replace(/\s+/gu, "").toLowerCase());
 }
 

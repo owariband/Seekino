@@ -34,6 +34,12 @@ try {
     await page.keyboard.press(index === 0 ? "Meta+f" : "Control+f");
     await expect(input).toBeFocused();
     await expect(input).toHaveValue("");
+    const visuals = find.getByRole("switch", { name: "画面搜索" });
+    if (index === 0) {
+      await expect(visuals).toBeChecked();
+      await visuals.click();
+    }
+    await expect(visuals).not.toBeChecked();
     for (const query of ["高松燈", "高　松 灯"]) {
       await input.fill(query);
       if (!hits.length) await expect(find.getByText("没有匹配的文字")).toBeVisible();

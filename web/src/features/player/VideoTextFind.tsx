@@ -4,6 +4,8 @@ import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { errorMessage, getVideoTextTimeline } from "../../api/client";
 import { useI18n } from "../../app/i18n";
 import { formatTimecode } from "../../shared/format";
+import { useEpisodeVisualFind } from "./useEpisodeVisualFind";
+import { useWatchPreferences } from "./watchPreferences";
 import type { createVideoTextSearch } from "./videoTextSearch";
 import styles from "./VideoTextFind.module.css";
 
@@ -21,13 +23,19 @@ type TextIndex = {
   search: ReturnType<typeof createVideoTextSearch>;
 };
 
+function matchKey(match: { startMs: number; endMs: number; source: string }) {
+  return [match.startMs, match.endMs, match.source].join("/");
+}
+
 export function VideoTextFind({ videoId, tenantId, inputRef, canSeek, onSeek, onClose }: Props) {
   const { t, locale } = useI18n();
   const [query, setQuery] = useState("");
   const [index, setIndex] = useState<TextIndex | null>(null);
   const [failure, setFailure] = useState<Error | null>(null);
   const [attempt, setAttempt] = useState(0);
-  const [active, setActive] = useState(-1);
+  const { visualFind, setVisualFind } = useWatchPreferences();
+  const visual = useEpisodeVisualFind(videoId, tenantId, query, visualFind, attempt);
+  const [activeKey, setActiveKey] = useState<string | null>(null);
   const selectedRef = useRef<HTMLButtonElement>(null);
   const resultsRef = useRef<HTMLOListElement>(null);
 
@@ -36,7 +44,7 @@ export function VideoTextFind({ videoId, tenantId, inputRef, canSeek, onSeek, on
     const controller = new AbortController();
     setIndex(null);
     setFailure(null);
-    setActive(-1);
+    setActiveKey(null);
     Promise.all([getVideoTextTimeline(videoId, tenantId, controller.signal), import("./videoTextSearch")])
       .then(([timeline, { createVideoTextSearch }]) => {
         if (controller.signal.aborted) return;
@@ -46,7 +54,14 @@ export function VideoTextFind({ videoId, tenantId, inputRef, canSeek, onSeek, on
     return () => controller.abort();
   }, [tenantId, videoId, attempt]);
 
-  const matches = useMemo(() => index?.search(query) ?? [], [index, query]);
+  const matches = useMemo(() => {
+    const literal = (index?.search(query) ?? []).map(({ cue, text }) => ({
+      startMs: cue.startMs, endMs: cue.endMs, source: cue.source, text,
+    }));
+    return [...literal, ...visual.matches].sort((a, b) => a.startMs - b.startMs);
+  }, [index, query, visual.matches]);
+  const active = matches.findIndex(match => matchKey(match) === activeKey);
+  const label = visualFind ? t("查找文字或画面") : t("查找台词或画面文字");
 
   useEffect(() => {
     if (resultsRef.current?.contains(document.activeElement)) selectedRef.current?.focus({ preventScroll: true });
@@ -56,8 +71,9 @@ export function VideoTextFind({ videoId, tenantId, inputRef, canSeek, onSeek, on
   function select(position: number) {
     if (!canSeek || !matches.length) return;
     const next = (position + matches.length) % matches.length;
-    setActive(next);
-    onSeek(matches[next]!.cue.startMs);
+    const match = matches[next]!;
+    setActiveKey(matchKey(match));
+    onSeek(match.startMs);
   }
 
   const previous = () => select(active <= 0 ? matches.length - 1 : active - 1);
@@ -76,20 +92,32 @@ export function VideoTextFind({ videoId, tenantId, inputRef, canSeek, onSeek, on
       }
     }}>
     <div className={styles.textFindBar}>
-      <input ref={inputRef} value={query} onChange={event => { setQuery(event.target.value); setActive(-1); }}
-        aria-label={t("查找台词或画面文字")} placeholder={t("查找台词或画面文字")} />
-      {index?.ready && query.trim() ? <output aria-live="polite">{active < 0 ? matches.length : `${active + 1}/${matches.length}`}</output> : null}
+      <input ref={inputRef} value={query} onChange={event => { setQuery(event.target.value); setActiveKey(null); }}
+        aria-label={label} placeholder={label} />
+      {(index?.ready || matches.length > 0) && query.trim() ? <output aria-live="polite">{active < 0 ? matches.length : `${active + 1}/${matches.length}`}</output> : null}
       <button type="button" disabled={disabled} aria-label={t("上一处")} onClick={previous}><ChevronUp size={16} /></button>
       <button type="button" disabled={disabled} aria-label={t("下一处")} onClick={next}><ChevronDown size={16} /></button>
       <button type="button" aria-label={t("关闭片内查找")} onClick={onClose}><X size={16} /></button>
+    </div>
+    <div className={styles.findFilters}>
+      <button type="button" role="switch" aria-checked={visualFind} aria-label={t("画面搜索")}
+        onClick={() => setVisualFind(!visualFind)}>
+        <i aria-hidden="true" />{t("画面")}
+      </button>
     </div>
     {failure || index?.ready === false ? <div className={styles.textFindStatus} role="status">
       {failure ? errorMessage(failure, locale) : t("本集文字尚未就绪")}
       <button type="button" onClick={() => setAttempt(value => value + 1)}>{t("重试")}</button>
     </div> : !index ? <p className={styles.textFindStatus} role="status">{t("正在读取本集文字…")}</p>
-      : query.trim() && !matches.length ? <p className={styles.textFindStatus} role="status">{t("没有匹配的文字")}</p> : null}
+      : null}
+    {visual.timelineUnavailable || visual.semanticUnavailable ? <div className={styles.textFindStatus} role="status">
+      {visual.timelineUnavailable ? t("本集画面标注尚未就绪") : t("语义检索暂不可用")}
+      <button type="button" onClick={() => setAttempt(value => value + 1)}>{t("重试")}</button>
+    </div> : query.trim() && !matches.length && index?.ready ? <p className={styles.textFindStatus} role="status">
+      {visual.loading ? t("正在查找画面…") : visualFind ? t("没有匹配的结果") : t("没有匹配的文字")}
+    </p> : null}
     {matches.length > 0 && <ol className={styles.textFindResults} ref={resultsRef}>
-      {matches.map(({ cue, text }, i) => <li key={`${cue.startMs}-${cue.endMs}-${cue.source}`}>
+      {matches.map((match, i) => <li key={matchKey(match)}>
         <button type="button" aria-current={active === i ? "true" : undefined} disabled={!canSeek}
           ref={active === i ? selectedRef : undefined} onClick={() => select(i)}
           onKeyDown={event => {
@@ -97,8 +125,9 @@ export function VideoTextFind({ videoId, tenantId, inputRef, canSeek, onSeek, on
             event.preventDefault();
             select(i + (event.key === "ArrowRight" ? 1 : -1));
           }}>
-          <time>{formatTimecode(cue.startMs)}</time>
-          <small>{cue.source === "dialogue" ? t("台词") : t("画面文字")}</small><span title={text}>{text}</span>
+          <time>{formatTimecode(match.startMs)}</time>
+          <small>{{ dialogue: t("台词"), screen_text: t("画面文字"), visual: t("画面"), related: t("相关画面") }[match.source]}</small>
+          <span title={match.text}>{match.text}</span>
         </button>
       </li>)}
     </ol>}

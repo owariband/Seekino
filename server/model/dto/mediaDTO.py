@@ -6,7 +6,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from engine.parsev2.schemas import VideoParseResult
+from engine.parsev2.schemas import TimelineEvent, VideoParseResult
+from engine.rag.indexing.events import EventType
 
 from ...schema import ContractModel
 
@@ -42,6 +43,36 @@ class VideoTextCue(ContractModel):
 class VideoTextTimeline(ContractModel):
     ready: bool
     cues: list[VideoTextCue]
+
+
+class VideoVisualCue(ContractModel):
+    start_ms: int
+    end_ms: int
+    kind: EventType
+    description: str
+    visible_persons: list[str]
+
+    @classmethod
+    def from_event(cls, event: TimelineEvent) -> "VideoVisualCue":
+        return cls(start_ms=event.start_seconds, end_ms=event.end_seconds, kind=event.event_type,
+                   description=event.description, visible_persons=event.visible_persons)
+
+
+class VideoVisualTimeline(ContractModel):
+    ready: bool
+    cues: list[VideoVisualCue]
+
+
+class VideoVisualQuery(ContractModel):
+    tenant_id: str = Field(min_length=1, max_length=64)
+    video_id: str = Field(min_length=1, max_length=64)
+    query: str = Field(min_length=1, max_length=500)
+
+    @model_validator(mode="after")
+    def validate_query(self):
+        if not self.query.strip():
+            raise ValueError("query must contain text")
+        return self
 
 
 class ParseExportSource(BaseModel):

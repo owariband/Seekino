@@ -67,6 +67,37 @@
   .textFind button:hover:not(:disabled) { background: var(--surface-muted); }
 }
 
+.findFilters { display: flex; align-items: center; padding: 0 5px 3px; }
+.findFilters button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 24px;
+  padding: 0 4px;
+  color: var(--ink-soft);
+  font-size: .6875rem;
+}
+.findFilters i {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  width: 22px;
+  height: 12px;
+  padding-inline: 2px;
+  border: 1px solid var(--ink-soft);
+  border-radius: 8px;
+}
+.findFilters i::after {
+  content: "";
+  width: 6px;
+  height: 6px;
+  background: currentColor;
+  border-radius: 50%;
+  transition: transform var(--duration-fast) var(--ease-out);
+}
+.findFilters button[aria-checked="true"] { color: var(--teal-deep); }
+.findFilters button[aria-checked="true"] i { background: color-mix(in srgb, currentColor 15%, transparent); border-color: currentColor; }
+.findFilters button[aria-checked="true"] i::after { transform: translateX(10px); }
 .textFindStatus { margin: 0; padding: 3px 9px 7px; overflow: auto; color: var(--ink-soft); font-size: .75rem; }
 .textFindStatus button { margin-inline-start: 4px; padding: 2px 4px; text-decoration: underline; }
 .textFindResults {
@@ -120,10 +151,11 @@
   .textFindBar input { height: 40px; font-size: 1rem; }
   .textFindBar button { width: 32px; height: 44px; }
   .textFindResults button { min-height: 44px; }
+  .findFilters button { min-height: 32px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .textFind { animation: none; }
-  .textFindBar input, .textFind button, .textFindResults button::before { transition: none; }
+  .textFindBar input, .textFind button, .textFindResults button::before, .findFilters i::after { transition: none; }
 }
 @media (forced-colors: active) {
   .textFind { border-color: CanvasText; }

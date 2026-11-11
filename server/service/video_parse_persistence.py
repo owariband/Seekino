@@ -314,6 +314,7 @@ class VideoParsePersistenceService:
         tenant_id: str,
         require_sparse: bool = False,
         episode_order: int | None = None,
+        video_id: str | None = None,
         event_index: tuple[str, str] | None = None,
         video_chunk_ids: Sequence[str] | None = None,
     ) -> VideoParseRetrievalScope:
@@ -349,6 +350,7 @@ class VideoParsePersistenceService:
                 ordered_series_ids=ordered_series_ids,
                 workspace=workspace,
                 episode_order=episode_order,
+                video_id=canonical_uuid(video_id, "video_id") if video_id is not None else None,
                 event_index=event_index,
                 video_chunk_ids=video_chunk_ids,
             )
