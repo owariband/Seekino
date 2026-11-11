@@ -253,7 +253,8 @@ def test_cloud_mcp_from_guest_registration_to_cookie_free_clip(cloud_library, tm
     private, _ = _course(f, "Private draft", published=False)
     other, _ = _course(f, "Another tenant", tenant_id="tenant-alice")
     events = Mock()
-    events.search.return_value = SimpleNamespace(chunk_result=f.result, matches=[])
+    covered = f.result.model_copy(update={"partial": False, "warnings": ["本次检索覆盖第 1 集"]})
+    events.search.return_value = SimpleNamespace(chunk_result=covered, matches=[])
     reader = McpRetrievalService(library=f.library, media=f.media, event_retrieval=events,
                                  parse_persistence=VideoParsePersistenceService(f.factory),
                                  local_tenant_id="local", public_tenant_id=PUBLIC)
@@ -284,12 +285,16 @@ def test_cloud_mcp_from_guest_registration_to_cookie_free_clip(cloud_library, tm
         assert {t["name"] for t in rpc("tools/list", {}).json()["result"]["tools"]} == {
             "list_series", "retrieve", "browse_events", "read_evidence"}
         assert [v["series_id"] for v in call("list_series")["structuredContent"]["items"]] == [public]
-        assert call("retrieve", query="scene")["structuredContent"]["series_ids"] == [public]
+        ranked = call("retrieve", query="scene")["structuredContent"]
+        assert ranked["series_ids"] == [public] and ranked["warnings"] == []
         assert events.search.call_args.kwargs["series_ids"] == [public]
         for unavailable in (private, other):
             assert call("browse_events", series_id=unavailable)["isError"]
             assert call("retrieve", query="scene", series_ids=[unavailable])["isError"]
         assert events.search.call_count == 1
+        events.search.return_value.chunk_result = covered.model_copy(update={"partial": True, "warnings": ["internal detail"]})
+        partial = call("retrieve", query="scene")["structuredContent"]
+        assert partial["partial"] and partial["warnings"] == ["Results cover only part of the requested footage."]
         card = call("browse_events", series_id=public, limit=1)["structuredContent"]["items"][0]
         ref = card["evidence_ref"]
         assert call("read_evidence", evidence_ref=ref)["structuredContent"]["media"] == {"max_clip_ms": 60_000}
