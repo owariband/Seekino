@@ -50,9 +50,11 @@ def test_mcp_mount_runs_with_application_lifespan():
     assert events == ["started", "closed"]
 
 
-def test_cloud_app_does_not_mount_local_mcp():
+def test_cloud_mount_reports_missing_https_origin():
     with TestClient(build_app(services("cloud"))) as client:
-        assert client.post("/mcp", json={}).status_code == 404
+        response = client.post("/mcp", json={})
+        assert response.status_code == 503
+        assert response.json()["error"] == "MCP_UNAVAILABLE"
 
 
 def test_existing_application_without_mcp_still_runs_lifespan():

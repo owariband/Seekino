@@ -262,13 +262,13 @@ The web interface and external tools use the same service APIs. Your tools can c
 | Track analysis tasks | `GET /api/jobs/video-parse/get`, `GET /api/jobs/video-parse/events` |
 | Retrieve footage | `POST /api/search`, returning source clips, time ranges and evidence. |
 | Find footage through Agent chat | `/api/agent/conversations/*` and `/api/agent/messages/*`, with ongoing conversations and streamed answers. |
-| Let an external agent fetch clips (MCP) | Streamable HTTP at `/mcp` (local auth mode), tools `list_series`, `retrieve`, `browse_events`, and `read_evidence`. |
+| Let an external agent fetch clips (MCP) | Streamable HTTP at `/mcp` (local library or published Cloud series, see [connection instructions](server/README.md#cloud-mcp)), tools `list_series`, `retrieve`, `browse_events`, and `read_evidence`. |
 
 After starting the service, inspect requests and responses in the [OpenAPI docs](http://127.0.0.1:9621/api/docs). See [Server](server/README.md) for integration details. The current scope field is `tenantId`. Video time fields use integer milliseconds relative to the original video, including fields that retain legacy `*Seconds` names; follow the current contract when integrating.
 
 ## 3. Deployment
 
-Self-hosting is the way to run Seekino today; a cloud Docker deployment for the public demo is in progress.
+Browse published series on [Seekino Cloud](https://seekino.hypn0s.cloud) or follow the [Cloud MCP guide](https://seekino.hypn0s.cloud/docs/agents) to fetch clips from an editing tool. To work with your own footage, run Seekino locally using the steps below.
 
 
 The recommended first install runs **Web, API, video processing, MySQL and Elasticsearch in Docker**, with **DeepAgents** and API models by default. Local mode needs no application login.
