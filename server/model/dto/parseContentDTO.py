@@ -5,7 +5,34 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+from pydantic import BaseModel, ConfigDict, Field
+
+from engine.parsev2.edit_reference import SegmentID, TechniqueObservation
 from engine.parsev2.schemas import VideoParseResult
+
+
+class ReferenceKey(BaseModel):
+    """The versioned source identity shared by reference search, cards and media reads."""
+
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+    tenant_id: str = Field(min_length=1, max_length=64)
+    series_id: str = Field(min_length=1, max_length=64)
+    video_id: str = Field(min_length=1, max_length=64)
+    task_id: str = Field(min_length=1, max_length=64)
+    chunk_id: str = Field(min_length=1, max_length=64)
+    version: int = Field(gt=0)
+    generation: int = Field(gt=0)
+    segment_id: SegmentID
+    fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+@dataclass(frozen=True, slots=True)
+class PublishedReference:
+    key: ReferenceKey
+    observation: TechniqueObservation
+    source_filename: str
+    duration_ms: int
+    sequence_no: int
 
 
 @dataclass(kw_only=True)

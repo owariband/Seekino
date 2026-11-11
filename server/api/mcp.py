@@ -12,7 +12,7 @@ from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
-from pydantic import Field
+from pydantic import Field, ValidationError
 from starlette.applications import Starlette
 from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
@@ -20,27 +20,80 @@ from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from ..error.auth import AuthError
+from ..model.dto.editing_template import TemplateDetails, TemplateEvaluation
 from ..repository.library import SeriesNotFoundError
 from ..service.access import model_query
+from .mcp_skills import editing_skill
 
 if TYPE_CHECKING:
     from ..service.auth import AuthService
     from ..service.mcp_retrieval import McpRetrievalService
 
 _ERRORS = {
+    "PERSONAL_LIBRARY_REQUIRED": "Sign in to Cloud and copy a personal MCP token from the account menu.",
+    "TEMPLATE_NOT_FOUND": "No such template or version exists in your library.",
+    "TEMPLATE_CONFLICT": "Read the current revision and retry. Reuse a request_id only for identical input.",
+    "REFERENCE_INDEX_UNAVAILABLE": "Editing-reference search is unavailable on this instance.",
     "INVALID_ARGUMENT": "Check the tool arguments and their documented limits.",
     "EVENT_INDEX_NOT_READY": "The event index is not ready. Finish indexing before retrying.",
     "NO_SEARCHABLE_SERIES": "No searchable series are available in this library.",
     "SERIES_SELECTION_REQUIRED": "Use list_series and choose a smaller set of series_ids.",
     "INVALID_CURSOR": "The publication or filters changed, or the cursor is invalid. Restart from the first page.",
-    "EVIDENCE_STALE": "The source changed. Run retrieve again for current evidence.",
-    "INVALID_EVIDENCE_REF": "Use an evidence_ref returned by retrieve or read_evidence.",
+    "EVIDENCE_STALE": "The source changed. Repeat the search or open its current style card.",
+    "INVALID_EVIDENCE_REF": "Copy an evidence_ref from a search result, a style-card exemplar or read_evidence.",
     "EVIDENCE_SCOPE_MISMATCH": "This evidence is unavailable in the current library.",
     "INVALID_CLIP_RANGE": "Supply start_ms and end_ms together, with 0 <= start_ms < end_ms <= duration_ms.",
     "CLIP_TOO_LONG": "Cloud clips may be at most 60,000 milliseconds. Choose a shorter range.",
 }
 _MAX_RESULT_BYTES = 131072
+_SMALL_REQUEST = 65536
+_TEMPLATE_ENVELOPE = 8 * 1024 * 1024
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
+RequestId = Annotated[str, Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$",
+                                 description="A client-generated unique key; reuse only when retrying the same write.")]
+
+
+class _RequestSize:
+    """Permit larger source files only on the authenticated save operation."""
+
+    def __init__(self, app: ASGIApp, *, cloud: bool):
+        self.app, self.cloud = app, cloud
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send):
+        if scope["type"] != "http" or scope["method"] != "POST":
+            return await self.app(scope, receive, send)
+        identity = scope.get("state", {}).get("mcp_identity")
+        personal = not self.cloud or (identity is not None and getattr(identity, "editing_tenant_id", None))
+        limit = _TEMPLATE_ENVELOPE if personal else _SMALL_REQUEST
+        body = bytearray()
+        while True:
+            message = await receive()
+            if message["type"] == "http.disconnect":
+                return
+            if len(body) + len(message["body"]) > limit:
+                return await JSONResponse({"error": "REQUEST_TOO_LARGE"}, status_code=413)(scope, receive, send)
+            body.extend(message["body"])
+            if not message.get("more_body"):
+                break
+        if len(body) > _SMALL_REQUEST:
+            try:
+                rpc = json.loads(body)
+                is_save = rpc.get("method") == "tools/call" and rpc["params"].get("name") == "save_edit_template_version"
+            except (ValueError, KeyError, TypeError, AttributeError, RecursionError):
+                is_save = False
+            if not is_save:
+                return await JSONResponse({"error": "REQUEST_TOO_LARGE"}, status_code=413)(scope, receive, send)
+
+        pending = True
+
+        async def replay():
+            nonlocal pending
+            if pending:
+                pending = False
+                return {"type": "http.request", "body": bytes(body), "more_body": False}
+            return await receive()
+
+        await self.app(scope, replay, send)
 
 
 class _LocalOnly:
@@ -108,7 +161,7 @@ class _CloudPublic:
             authorization = request.headers.getlist("authorization")
             scheme, _, token = authorization[0].partition(" ") if len(authorization) == 1 else ("", "", "")
             if scheme.lower() != "bearer" or not token:
-                raise AuthError("请先通过 /api/auth/mcp-token 获取只读凭据")
+                raise AuthError("请先通过 /api/auth/mcp-token 获取 MCP 凭据")
             request.state.mcp_identity = await run_in_threadpool(self.auth.authenticate_mcp, token)
             request.state.mcp_token = token
             request.state.mcp_base_url = origin
@@ -125,8 +178,14 @@ def create_mcp_app(service: McpRetrievalService, *, auth_mode: str, auth: AuthSe
     """Build /mcp; compose this app's router.lifespan_context into the host lifespan."""
     server = MCPServer(
         "seekino",
+        extensions=[editing_skill()],
         instructions=(
-            "Search the available video library using retrieve. Results are indexed evidence, "
+            "For editing, read skill://seekino-editing-materials/SKILL.md with resources/read. "
+            "It explains shot selection, style references, local cutouts and saving feedback. "
+            "Local or signed-in personal credentials can save template versions, append notes and select defaults. "
+            "Find source performances with retrieve. For editing techniques and shot changes, use find_edit_templates, "
+            "play its media.play_url and inspect the source frames. get_style_card returns a whole-film card "
+            "with an evidence_ref for every exemplar. Read those references with read_evidence. Results are indexed evidence, "
             "not proof of unrecorded visual details. Use read_evidence for current source "
             "context and media URLs. All video times are integer milliseconds; intervals "
             "include start_ms and exclude end_ms. For editing, collect different candidate shots, "
@@ -140,6 +199,7 @@ def create_mcp_app(service: McpRetrievalService, *, auth_mode: str, auth: AuthSe
         ),
     )
     annotations = ToolAnnotations(read_only_hint=True, destructive_hint=False, open_world_hint=False)
+    writes = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=False)
 
     async def invoke(ctx: Context, method, **arguments: Any) -> dict[str, Any]:
         request = ctx.request_context.request
@@ -162,6 +222,8 @@ def create_mcp_app(service: McpRetrievalService, *, auth_mode: str, auth: AuthSe
             raise ToolError("EVIDENCE_SCOPE_MISMATCH: This series is unavailable in the public library.") from None
         except AuthError as exc:
             raise ToolError(f"{exc.code}: {exc}") from None
+        except ValidationError:
+            raise ToolError("INVALID_ARGUMENT: Check the template and note fields in the tool schema.") from None
         except ValueError as exc:
             code = str(exc).split(":", 1)[0]
             if code in _ERRORS:
@@ -170,8 +232,8 @@ def create_mcp_app(service: McpRetrievalService, *, auth_mode: str, auth: AuthSe
         except Exception:
             raise ToolError("RETRIEVAL_FAILED: Unable to complete this request.") from None
         result = dict(result)
-        if "media" in result:
-            media = dict(result["media"])
+        for item in ([result] if "media" in result else result.get("techniques", [])):
+            media = dict(item["media"])
             base_url = request.state.mcp_base_url
             for key in ("original_url", "playback_url", "clip_url"):
                 value = media.get(key)
@@ -182,12 +244,16 @@ def create_mcp_app(service: McpRetrievalService, *, auth_mode: str, auth: AuthSe
                             or (auth_mode == "cloud" and key != "clip_url")):
                         raise ToolError("RETRIEVAL_FAILED: Invalid media reference.")
                     if auth_mode == "cloud":
-                        ticket = auth.issue_clip_ticket(request.state.mcp_token, arguments["evidence_ref"],
-                                                        arguments["start_ms"], arguments["end_ms"])
+                        ticket = auth.issue_clip_ticket(request.state.mcp_token,
+                                                        item.get("evidence_ref") or arguments["evidence_ref"],
+                                                        media["start_ms"], media["end_ms"])
                         value += "&" + urlencode({"ticket": ticket})
                     media[key] = base_url + value
-            result["media"] = media
-        if len(json.dumps(result, ensure_ascii=False).encode("utf-8")) > _MAX_RESULT_BYTES:
+            if "segment_id" in item:
+                media["play_url"] = media["clip_url"] + "&inline=true" if media.get("clip_url") else None
+            item["media"] = media
+        result_limit = _TEMPLATE_ENVELOPE if method == getattr(service, "get_edit_template", None) else _MAX_RESULT_BYTES
+        if len(json.dumps(result, ensure_ascii=False).encode("utf-8")) > result_limit:
             raise ToolError("RESULT_TOO_LARGE: Narrow the query or request fewer results.")
         return result
 
@@ -230,6 +296,27 @@ def create_mcp_app(service: McpRetrievalService, *, auth_mode: str, auth: AuthSe
         )
 
     @server.tool(annotations=annotations, structured_output=True)
+    async def find_edit_templates(
+        query: Annotated[str, Field(min_length=1, max_length=2000)], ctx: Context,
+        series_ids: Annotated[list[str] | None, Field(min_length=1, max_length=32)] = None,
+        tags: Annotated[list[Annotated[str, Field(min_length=1, max_length=64)]] | None, Field(max_length=16)] = None,
+        include_parse_techniques: bool = True,
+        top_k: Annotated[int, Field(ge=1, le=8, strict=True)] = 5,
+    ) -> dict[str, Any]:
+        """Find editing techniques by natural language. Each source-checked observation has original
+        start/end milliseconds, shot steps and media.play_url for that interval. Choose whether to
+        borrow it after watching the original. series_ids scope source footage. tags filter private templates.
+        Set include_parse_techniques=false to search only your template library."""
+        return await invoke(ctx, service.find_edit_templates, query=query, series_ids=series_ids, tags=tags,
+                            include_parse_techniques=include_parse_techniques, top_k=top_k)
+
+    @server.tool(annotations=annotations, structured_output=True)
+    async def get_style_card(video_id: Annotated[str, Field(min_length=1, max_length=64)], ctx: Context) -> dict[str, Any]:
+        """Read the current whole-video Refine card and every exemplar. Each exemplar has a source
+        range and an evidence_ref accepted by read_evidence for playback and download."""
+        return await invoke(ctx, service.get_style_card, video_id=video_id)
+
+    @server.tool(annotations=annotations, structured_output=True)
     async def browse_events(
         series_id: Annotated[str, Field(min_length=1, max_length=64, description="An accessible ID from list_series.")],
         ctx: Context,
@@ -259,7 +346,8 @@ def create_mcp_app(service: McpRetrievalService, *, auth_mode: str, auth: AuthSe
         end_ms: Annotated[int | None, Field(gt=0, strict=True, description="Exclusive source end in milliseconds. "
                                            "May span adjacent events in the same video; Cloud limit: 60,000 ms per clip.")] = None,
     ) -> dict[str, Any]:
-        """Read current evidence and media for an opaque reference from retrieve or browse_events. Follow
+        """Read current evidence from retrieve, browse_events, find_edit_templates or get_style_card.
+        For an editing reference, omitting bounds returns the measured source clip, note and native-frame evidence. Follow
         next_evidence_ref to continue bounded context. A stale reference requires a new retrieval.
         Omit both bounds to review source context. Supply both to get a downloadable MP4 at media.clip_url
         for your chosen source range, with its original motion and audio when present.
@@ -268,6 +356,51 @@ def create_mcp_app(service: McpRetrievalService, *, auth_mode: str, auth: AuthSe
         """
         return await invoke(ctx, service.read_evidence, evidence_ref=evidence_ref,
                             start_ms=start_ms, end_ms=end_ms, cloud=auth_mode == "cloud")
+
+    @server.tool(annotations=annotations, structured_output=True)
+    async def get_edit_template(template_id: str, ctx: Context, version_id: str | None = None) -> dict[str, Any]:
+        """Read your exact saved code, source snapshots, evaluations and checks. Without a version ID,
+        return the explicit default or list versions if no default is selected."""
+        return await invoke(ctx, service.get_edit_template, template_id=template_id, version_id=version_id)
+
+    @server.tool(annotations=annotations, structured_output=True)
+    async def list_edit_template_versions(template_id: str, ctx: Context) -> dict[str, Any]:
+        """List revisions, lineage and the default of a template in your library."""
+        return await invoke(ctx, service.list_edit_template_versions, template_id=template_id)
+
+    @server.tool(annotations=writes, structured_output=True)
+    async def save_edit_template_version(
+        ctx: Context, request_id: RequestId, spec: dict, visual_requirements: dict | list, slots: list | dict,
+        params_schema: dict, files: dict[str, str], entry: str, runtime: dict, evaluation: TemplateEvaluation,
+        template_id: str | None = None, new_template: TemplateDetails | None = None, parent_version_id: str | None = None,
+        source_refs: Annotated[list[Annotated[str, Field(min_length=1, max_length=4096)]], Field(max_length=16)] = [],
+        check: dict | None = None,
+    ) -> dict[str, Any]:
+        """Save a revision in your local or personal Cloud library. Supply template_id or new_template
+        {name, description, tags}. files is a map of relative paths to text (1 MiB total); entry names one.
+        Include source evidence_refs from this connection. For a parent use evaluation.kind=revision_rationale
+        and describe changes. A save never selects a default. Reuse request_id on retry."""
+        return await invoke(ctx, service.save_edit_template_version, request_id=request_id, template_id=template_id,
+                            new_template=new_template.model_dump() if new_template else None, parent_version_id=parent_version_id, spec=spec,
+                            visual_requirements=visual_requirements, slots=slots, params_schema=params_schema,
+                            files=files, entry=entry, runtime=runtime, source_refs=source_refs,
+                            evaluation=evaluation.model_dump(exclude_none=True), check=check)
+
+    @server.tool(annotations=writes, structured_output=True)
+    async def append_edit_template_note(ctx: Context, version_id: str, kind: Literal["evaluation", "check"],
+                                        entry: dict, request_id: RequestId) -> dict[str, Any]:
+        """Append attributed usage feedback or a client-reported render check to your chosen version.
+        Separate user_feedback, agent_judgment, changes, verified and unverified. Reuse request_id on retry."""
+        return await invoke(ctx, service.append_edit_template_note, version_id=version_id, kind=kind,
+                            entry=entry, request_id=request_id)
+
+    @server.tool(annotations=writes, structured_output=True)
+    async def set_default_edit_template_version(ctx: Context, template_id: str, version_id: str,
+                                                revision: Annotated[int, Field(ge=0)], reason: str,
+                                                request_id: RequestId) -> dict[str, Any]:
+        """Select the default explicitly. Supply the template's current revision and your selection reason."""
+        return await invoke(ctx, service.set_default_edit_template_version, template_id=template_id,
+                            version_id=version_id, revision=revision, reason=reason, request_id=request_id)
 
     public_origins = {}
     for value in allowed_origins:
@@ -279,7 +412,7 @@ def create_mcp_app(service: McpRetrievalService, *, auth_mode: str, auth: AuthSe
     cloud = auth_mode == "cloud"
     app = server.streamable_http_app(
         streamable_http_path="/mcp", json_response=True, stateless_http=True,
-        max_request_body_size=65536,
+        max_request_body_size=_TEMPLATE_ENVELOPE,
         transport_security=TransportSecuritySettings(
             enable_dns_rebinding_protection=True,
             allowed_hosts=list(public_origins) if cloud else local_hosts,
@@ -287,6 +420,7 @@ def create_mcp_app(service: McpRetrievalService, *, auth_mode: str, auth: AuthSe
                 f"{scheme}://{host}" for scheme in ("http", "https") for host in local_hosts],
         ),
     )
+    app.add_middleware(_RequestSize, cloud=cloud)
     if cloud:
         app.add_middleware(_CloudPublic, auth=auth, origins=public_origins)
     else:

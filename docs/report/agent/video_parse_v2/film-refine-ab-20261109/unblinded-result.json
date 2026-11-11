@@ -1,0 +1,147 @@
+{
+  "vote": {
+    "vote": "02",
+    "verbatim": "02好，这个是哪个版本做的？有点让我觉得惊艳",
+    "specific_scene": null,
+    "channel": "Codex chat",
+    "received_before_public_reveal": true,
+    "recorded_utc": "2026-11-09T08:02:32.670776+00:00"
+  },
+  "chosen_arm": "B",
+  "blind_key_sha256": "37365630ecc4a1e751d52ce83a4c0115dddfabca6f6aed73b5fd1c2814313b99",
+  "audio_and_video_packet_hashes_matched": true,
+  "films": [
+    {
+      "film": "01",
+      "arm": "A",
+      "blind_sha256": "a66bae7aee8149fd6cedba18419a3dbe9c445a5cd545b604a16719529b013738",
+      "artist_export_sha256": "3b7585632aef457ab17ba6c8547ded457c2098f01863b2fa5d2d2ef8b89ee401",
+      "opened_references": [
+        {
+          "id": "R03",
+          "card": false
+        },
+        {
+          "id": "R04",
+          "card": false
+        },
+        {
+          "id": "R05",
+          "card": false
+        }
+      ],
+      "director_recorded_reference_use": {
+        "R03": {
+          "title": "女神异闻录5皇家版-开场",
+          "observations_used": [
+            [
+              167,
+              1300,
+              "红黑硬边几何序列/逐帧硬切 → 开场卡片与红黑压屏"
+            ],
+            [
+              12200,
+              13133,
+              "合掌→星芒→眼睛 → 把情绪收在一只眼睛/星芒上"
+            ],
+            [
+              30833,
+              32467,
+              "连续推近到主体再切 → 结果→原片→眼睛的推镜节奏"
+            ],
+            [
+              82833,
+              84067,
+              "从纹理推到抽象图形 → 课程卡隧道的透视/纹理处理"
+            ]
+          ],
+          "rejected": "游戏角色、Persona UI、原声、剧情；红黑只作为章节冲击色，不覆盖 Seekino 的真实界面。"
+        },
+        "R04": {
+          "title": "For Anon Tokyo",
+          "observations_used": "粉/奶白/黑描边、漫画分格、贴纸人物、星形转场 → 爱音的世界与开场/沙发/结尾的色彩。",
+          "rejected": "具体镜头、字幕、原曲、角色素材。"
+        },
+        "R05": {
+          "title": "两分钟看MyGO-爱音篇",
+          "observations_used": "爱音特写的情绪读法、粉色与黑色的对比、表演节奏的参考。",
+          "rejected": "具体镜头与剪辑点。"
+        }
+      },
+      "first_playable_s": 1714.21,
+      "final_export_s": 2212.83,
+      "delivery_s": 2371.41,
+      "queries": 7,
+      "samples": {
+        "contact": 10,
+        "cutout": 2,
+        "frame": 13,
+        "frames": 7
+      },
+      "renders_started": {
+        "stills": 7,
+        "final": 5
+      },
+      "tokens": {
+        "inputTokens": 1043588,
+        "outputTokens": 300271,
+        "cacheReadTokens": 58214272,
+        "cacheWriteTokens": 0,
+        "totalTokens": 59558131
+      },
+      "reported_model_messages": 234,
+      "estimated_cny": "6.81791488"
+    },
+    {
+      "film": "02",
+      "arm": "B",
+      "blind_sha256": "bd6aac9eeac370acf9c4560f317b560b49e41edb2c7e18c1370d0f3c155b67dc",
+      "artist_export_sha256": "b9c6a2e53943b2afafd029f5925768694b546517a1f9396b0a231454fcb5c385",
+      "opened_references": [
+        {
+          "id": "R03",
+          "card": true
+        }
+      ],
+      "director_recorded_reference_use": {
+        "used": [
+          "R03 女神异闻录5皇家版-开场"
+        ],
+        "observations_that_changed_the_cut": [
+          "R03 seg-0000167: pure red field, black hard-edged wedges, stepped hard cuts → the film's red/black stage and its 2-frame diagonal shard covers on every section cut.",
+          "R03 style card: halftone dots + radial speed lines → the dot screen on every graphic field and the radial lines behind the teeth close-up and the result card.",
+          "R03 seg-0012200: star-burst flash on the beat → the teal landing ring, the lens sparkle and the white flash at 25.10.",
+          "R03 'stepped zoom via cuts' (逐级硬切拉远) → the title slams at 1.22× and settles in 3 steps rather than easing smoothly."
+        ],
+        "rejected": [
+          "Purple / magenta / neon-green palette and the P5 characters and masks (they would fight Anon and Kino).",
+          "The game's soundtrack and any P5 audio.",
+          "Smooth cinematic cameras and long dissolves — the reference's language is hard cuts."
+        ]
+      },
+      "first_playable_s": 1336.41,
+      "final_export_s": 2025.13,
+      "delivery_s": 2100.1,
+      "queries": 5,
+      "samples": {
+        "contact": 2,
+        "frame": 6,
+        "cutout": 3
+      },
+      "renders_started": {
+        "stills": 12,
+        "final": 9
+      },
+      "tokens": {
+        "inputTokens": 820683,
+        "outputTokens": 187967,
+        "cacheReadTokens": 40295040,
+        "cacheWriteTokens": 0,
+        "totalTokens": 41303690
+      },
+      "reported_model_messages": 223,
+      "estimated_cny": "3.06450428"
+    }
+  ],
+  "scope": "One film per condition. Both directors used official DeepSeek Flash at max; timing includes technical recovery and project-rate costs vary by time band. The selected film is an owner preference for this trial."
+}

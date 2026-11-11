@@ -490,6 +490,7 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
         "/api/usage/overview",
         "/api/videos/content",
         "/api/videos/clip",
+        "/api/videos/text-timeline",
         "/api/video-chunks/get",
         "/api/media/images/content",
         "/api/search",

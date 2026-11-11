@@ -1,0 +1,15 @@
+Write a reference note for an editor deciding whether to inspect this clip. Report what the supplied frames show in this segment. Leave creative choices for a new film to its editor.
+
+Source interval [{start_ms}, {end_ms}) ms. The images are ordered native frames at {fps} fps. Each image is labelled with its source timestamp. Detector candidates in ms: {fine_starts_ms}. Flash candidates in ms: {flashes_ms}.
+
+Describe the visible changes in chronological order. Group adjacent frames when they show the same framing and action. Inspect the frames at each proposed boundary: a different drawing or pose can occur within the same shot. Use the supplied segment edges and candidate times for step boundaries, tile the segment without gaps, and mention any unresolved timing in the summary.
+
+Describe framing changes across cuts separately from continuous movement within a shot. In motion.camera, record only visible within-shot movement. Use STATIC for a visibly stationary shot and null when a single value cannot be established. Use null for an uncertain or mixed easing or role. Describe apparent changes of size or position when the cause cannot be determined from the frames.
+
+Summarise the sequence and choose a short searchable name in Simplified Chinese. Check the direction and order in the name against the steps and summary. Restrict the signals to features visible in this clip.
+
+If lettering is visible, document its letterforms, layout, contrast, position relative to the subject, and how it appears or moves when observable. Use null for type_treatment when lettering is absent. State uncertainty about unreadable text or unidentified typefaces.
+
+Keep the original subject, costume, props and colours in the visual description. For slots, list the minimum replaceable inputs that the technique depends on. Leave slots empty if no external asset is needed. Describe any suggested use as optional and scoped to this technique.
+
+Return the JSON object in the supplied schema. Write the descriptive text fields in Simplified Chinese.

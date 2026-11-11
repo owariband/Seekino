@@ -19,6 +19,7 @@ class AuthIdentity:
     auth_version: int
     auth_level: Literal["guest", "email", "local"]
     mode: Literal["local", "cloud"]
+    editing_tenant_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -1,0 +1,20 @@
+{
+  "captured_at_utc": "2026-11-09T04:19:56.949+00:00",
+  "registered_tool_read_path": "/style_card",
+  "actual_card_paths": {
+    "E3": "/style_card",
+    "Weekend": "/members/0/style_card"
+  },
+  "registered_B_answers_before_recovery": {
+    "E3": 12,
+    "Weekend": 0
+  },
+  "provider_calls_before_recovery": 32,
+  "weekend_missing_top_level_style_card": true,
+  "weekend_returned_observations": 7,
+  "weekend_unique_input_picks": 3,
+  "original_response_id": "7c627c8c-6d23-4ea4-a33f-4888edfe6e5e",
+  "original_output_text_sha256": "d4afc207ed3192996eacc8dd9581a5c3a9affbf0a31b634d6b6619dbfddc15cf",
+  "recovered_card_sha256": "c7bf044dea81ea68f1b0d266712a4dd6473ef9ad6bc01fc277a1e7d614f5cd7c",
+  "plan": "Use the unique automatically generated nested card verbatim for the six outstanding Weekend B editorial requests. Reuse all prior A decisions. Preserve the original response and contract failure. Send no further Refine request. Weekend B is a diagnostic of selection with the recovered card; altered request order precludes an A/B latency inference on this panel."
+}

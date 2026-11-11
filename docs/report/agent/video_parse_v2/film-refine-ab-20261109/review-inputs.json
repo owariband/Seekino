@@ -1,0 +1,219 @@
+{
+  "revision": "review-v1",
+  "status": "awaiting owner review; no film edit sessions started",
+  "source_e5_local_commit": "14238dd0",
+  "director_prompt": {
+    "path": "editor-brief.txt",
+    "bytes": 2471,
+    "sha256": "edf941de66574fde7a4fa2d048be98a3d67e79f6b9b2958078b1fdd322d6c883"
+  },
+  "conditions": {
+    "both": "same prompt, notes, reference videos, MCP permissions, local media tools and host source ranges",
+    "A": "raw notes",
+    "B": "same raw notes; append only the automatic card on P5R reference access"
+  },
+  "notes": {
+    "path": "docs/report/agent/video_parse_v2/refine-ab-20261109/inputs-E3.json",
+    "bytes": 38317,
+    "sha256": "2f80c1409a74b47d7d4f8fb98cabd3f477eb60debdb259cb593b38e691f19b3a",
+    "count": 8,
+    "origin": "E3c 8-pick panel"
+  },
+  "extra_B": {
+    "file": {
+      "path": "reference-card.json",
+      "bytes": 4395,
+      "sha256": "e483595b842aa10bc64d02649a5b0c84ad3ad028c88669011a3a9759d0e222f2"
+    },
+    "source": {
+      "path": "docs/report/agent/video_parse_v2/refine-ab-20261109/run-deepseek-02/calls/E3-refine.json",
+      "bytes": 17791,
+      "sha256": "cd70a81b4523fb4b73f6f4d5e58d2c106edb525cbecfedddbf8e0e6b2a7cd515"
+    },
+    "json_pointer": "/answer/style_card",
+    "compact_object_sha256": "7c6b115cf5b7e0ce72b04dee970e8511924302d3189fa68643e6f8336fe0a066",
+    "signal_count": 8
+  },
+  "references": [
+    {
+      "path": "assets/女神异闻录3Reload-开场.mp4",
+      "bytes": 29648493,
+      "sha256": "2216633cd76c9306d0836c6cb3d3cce1fbedb9e2a4ae9f0f259131a33676577e"
+    },
+    {
+      "path": "assets/女神异闻录4-OP.mp4",
+      "bytes": 8963146,
+      "sha256": "0831e9a565b59f2dd2fbf163ca25b68165528916ffd48dbed1d0906eeec7e865"
+    },
+    {
+      "path": "assets/女神异闻录5皇家版-开场.mp4",
+      "bytes": 33921917,
+      "sha256": "4eff047da8cae2ec5b9b449531264db027fc382b076cfeaf3a851f332a75b959"
+    },
+    {
+      "path": "assets/anon_ref/For Anon Tokyo.mp4",
+      "bytes": 7758090,
+      "sha256": "0d77aab491b9bd277bc21402b262b7f614f8426897e7a69055f6b104586fb0fa"
+    },
+    {
+      "path": "assets/anon_ref/两分钟看MyGO-爱音篇.mp4",
+      "bytes": 16044639,
+      "sha256": "ccb3a660460311601f5a6096e760b9576e512bc6111e5b6a109bb7b1d37bc648"
+    },
+    {
+      "path": "assets/anon_ref/属于我的蒙娜丽莎.mp4",
+      "bytes": 5909687,
+      "sha256": "e29a6fd01f7c329537e58c26ec63250ae2582112907e259e67ce59198b4a5068"
+    },
+    {
+      "path": "assets/anon_ref/快使用恋爱笔记.mp4",
+      "bytes": 37618459,
+      "sha256": "cb5e5378446dbb56fd462b3422bdf6596dc63dba487407c4d72b2a711b08049a"
+    },
+    {
+      "path": "assets/anon_ref/最佳僚机爱音.mp4",
+      "bytes": 29836131,
+      "sha256": "6f82a489f9983a181a1136baac6408b6db022bfee76164851ade231ff5821293"
+    },
+    {
+      "path": "assets/anon_ref/爱音的不心动挑战.mp4",
+      "bytes": 16277856,
+      "sha256": "a45f59b753c8a9555d07a6e6e2a4afc84299746d7d6ba8a5447dad1ca658266f"
+    },
+    {
+      "path": "assets/anon_ref/谁家Anon.mp4",
+      "bytes": 20672080,
+      "sha256": "1cd8e63016e1791955e85e113ea031797b750db27b968a51a6761e7b316b5cbd"
+    }
+  ],
+  "character_library": {
+    "historical_published_episode_versions": {
+      "1": 1,
+      "2": 1,
+      "3": 1,
+      "4": 3,
+      "5": 1
+    },
+    "evidence": {
+      "path": "outputs/verification/anime-material-recall-20261108/run-evidence.json",
+      "bytes": 5077,
+      "sha256": "327d72b561595aef47991d150b922088441bb6ee7401f4157b03a74cd0bafa71"
+    },
+    "fresh_mcp_readback": "pending immediately before dispatch; no service was started for review"
+  },
+  "shared_audio": {
+    "path": "outputs/verification/anon-weekend-abc-20261107/shared/music/Weekend.mp3",
+    "bytes": 9340536,
+    "sha256": "4248224ba09b5b1adb552af2e08a657ffb240ec3d6bfea99f7b49474ca464683"
+  },
+  "shared_product_course_font_files": [
+    {
+      "path": "outputs/verification/anon-weekend-abc-20261107/shared/product/kino-idle.svg",
+      "bytes": 3889,
+      "sha256": "da9a88b1387375d14aaac424f242e24e608569c7e6d9bc899d3747a8420963c2"
+    },
+    {
+      "path": "outputs/verification/anon-weekend-abc-20261107/shared/product/kino-seek.svg",
+      "bytes": 3916,
+      "sha256": "e17e9e1a0c2608f01e3d11803963d305a6bae6ab7e7ab10bd77c3e26d749276e"
+    },
+    {
+      "path": "outputs/verification/anon-weekend-abc-20261107/shared/product/kino.svg",
+      "bytes": 1935,
+      "sha256": "e09400557cdc4cceb1536e91a4124a7635398570cf33482a633e6126de3de486"
+    },
+    {
+      "path": "outputs/verification/anon-weekend-abc-20261107/shared/product/logo.svg",
+      "bytes": 2210,
+      "sha256": "4e5c67beeaa20033fcea456e779d60bac238cfba8cf6dbf46f55677fc194e220"
+    },
+    {
+      "path": "outputs/verification/anon-weekend-abc-20261107/shared/product/pb01-answer.png",
+      "bytes": 370397,
+      "sha256": "1a0937b77757c19c52fd6bc7770b011fb63f26e14f2c6934fa4c0fc376302a51"
+    },
+    {
+      "path": "outputs/verification/anon-weekend-abc-20261107/shared/product/pb01-seek.png",
+      "bytes": 383463,
+      "sha256": "eefccb4e73d81f50f62f0e1ebf78f2f586c5c04fa4dbcfc82bf3b241bfee9a6e"
+    },
+    {
+      "path": "outputs/verification/anon-weekend-abc-20261107/shared/product/pb02-card1.png",
+      "bytes": 374492,
+      "sha256": "497773dcbb91620ff01ff452c08683864f34ea2902f7e56d3c770b7532870d18"
+    },
+    {
+      "path": "outputs/verification/anon-weekend-abc-20261107/shared/product/product-facts.json",
+      "bytes": 7009,
+      "sha256": "2b2d73a26c9debea655ce95cfb4964c3dbba414587edd517ef732684788749b2"
+    },
+    {
+      "path": "outputs/verification/anon-weekend-abc-20261107/shared/product/search-results.jpg",
+      "bytes": 153753,
+      "sha256": "b1442bfd2807a77e4505e45fe13e22955a78c4ed6450713c6d0bd62ee8df62f3"
+    },
+    {
+      "path": "outputs/verification/anon-weekend-abc-20261107/shared/product/watch-chat.jpg",
+      "bytes": 240559,
+      "sha256": "5f2cb8da6771c3a3806c1872cd561c337dd01131fbecac0ed54f7435e52e02b3"
+    },
+    {
+      "path": "outputs/verification/anon-weekend-abc-20261107/shared/courses/G01.mp4",
+      "bytes": 268543,
+      "sha256": "70de55d98f247f4557504ac4157ec663b9cbfd5ecf2f2ad4ad27ba5527ce9f0e"
+    },
+    {
+      "path": "outputs/verification/anon-weekend-abc-20261107/shared/courses/G02.mp4",
+      "bytes": 118750,
+      "sha256": "4efe131e3e8718d4320d8087ad55cb1a86e53ea21157fdc8df622ad7bc770d2d"
+    },
+    {
+      "path": "outputs/verification/anon-weekend-abc-20261107/shared/courses/I01.mp4",
+      "bytes": 492854,
+      "sha256": "0eb23b28304bf622ddcf43c0f8e0edcd267586dbe68ec1457af01a21cb5feeb4"
+    },
+    {
+      "path": "outputs/verification/anon-weekend-abc-20261107/shared/courses/N01.mp4",
+      "bytes": 397413,
+      "sha256": "3e2c34ba22371487113636362c29f9e369e935d18a3f65d4c07b0313310ad681"
+    },
+    {
+      "path": "outputs/verification/anon-weekend-abc-20261107/shared/courses/T01.mp4",
+      "bytes": 451462,
+      "sha256": "bda55ce20a36b7ef9cbca7ddd130bd0bf419d33b57c95b9b6f02e03efe409950"
+    },
+    {
+      "path": "outputs/verification/anon-weekend-abc-20261107/shared/courses/sources.json",
+      "bytes": 1129,
+      "sha256": "657a58ba0bd73803f54154feca4097045be5cb017324cb5babb247866eeb1782"
+    },
+    {
+      "path": "outputs/verification/anon-weekend-abc-20261107/shared/fonts/OFL-SmileySans.txt",
+      "bytes": 4422,
+      "sha256": "9401f4050f1b66c26b6ccdc8b0e14a3c1cc37aac122eda84386f25854a9bec72"
+    },
+    {
+      "path": "outputs/verification/anon-weekend-abc-20261107/shared/fonts/SmileySans-Oblique.woff2",
+      "bytes": 1150924,
+      "sha256": "731f22973349404b15a88a99ef3b5dd4104c0965c23b7e485c1f11e84fea99e2"
+    }
+  ],
+  "local_tools": {
+    "compositor_skill": {
+      "path": "outputs/verification/anon-weekend-abc-20261107/tools/motion-showreel/SKILL.md",
+      "bytes": 32386,
+      "sha256": "1f4c26afebac69aa2b6a8e61c3440c636c686623161f74905143993bcf4af343"
+    },
+    "cutout_script": {
+      "path": "outputs/verification/ep04-local-cutout-20261108/split_frame.py",
+      "bytes": 2840,
+      "sha256": "8258a4f8ff015bf4a883d0324a95b81da9ede3eaca73c49bdb28118620cd3aa1"
+    },
+    "cutout_weights": {
+      "path": "outputs/local-models/skytnt-anime-seg/isnetis.onnx",
+      "bytes": 176069933,
+      "sha256": "f15622d853e8260172812b657053460e20806f04b9e05147d49af7bed31a6e99"
+    }
+  },
+  "distribution": "Host-only manifest including repository/archival paths. Directors see neutral mounted inputs, never this manifest or the parent directories."
+}
