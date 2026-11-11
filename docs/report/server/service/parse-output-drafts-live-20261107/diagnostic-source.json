@@ -1,0 +1,7 @@
+{
+  "head": "50c0f621f081c47b77e6dd5ecabfd52cf4f3fe71",
+  "diagnostic_source_commit": "fe1fe70f",
+  "overlay_sha256": "7b7ac224e06af75c59bd200904764518a8f18d720f53fe5db74f754d45d06c67",
+  "diagnostics_sha256": "719a0007bd0eb5013d734d0884195372d65d8dfcd8fb6f0f906b92b1611faa61",
+  "addition": "Observation-only heartbeat transaction/hold instrumentation"
+}
