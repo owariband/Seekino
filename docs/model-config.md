@@ -32,6 +32,8 @@ model_roles:
 
 服务器根据生效配置识别可用于回答的绑定。设置页能看到缺少凭证的来源，聊天中的选择器只显示可执行项。管理员可以指定新对话默认模型，也可以在输入框里只切换当前对话。每轮发送时按该会话的引用解析配置，正在执行的请求保留开始时的目标。删除已用模型后，管理者可在聊天框重新选模。
 
+云端 Chat 的单轮模型和工具默认各 100 次，可选上限各 100 次，默认值定义在 [Server 常量](../server/constants/agent.py)。云端全局 Agent 设置保存在独立的 `agent-runtime.yaml` 中，生产 Compose 通过 `SEEKINO_AGENT_RUNTIME_CONFIG` 指向 `/data/config/cloud/agent-runtime.yaml`。首次升级只迁移模型文件中其他已知运行参数，后续从全局 Agent 设置页修改时写入独立文件。每 IP 的请求额度仍由 `SEEKINO_AUTH_QUERY_LIMIT_GUEST` 和 `SEEKINO_AUTH_QUERY_WINDOW_SECONDS` 配置。
+
 cloud 中的游客与普通账号使用部署默认模型。模型服务的读写、测试以及全局 Agent 参数接口需要管理员身份。公共聊天接口保留消息额度与状态，返回通用默认标记，并隐去实际模型名称。历史版本写过的个人连接仅用于其原所有者已有会话的兼容读取。
 
 ## 网页搜索配置

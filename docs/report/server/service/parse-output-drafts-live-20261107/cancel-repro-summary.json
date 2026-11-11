@@ -1,0 +1,48 @@
+{
+  "import_worktree": "outputs/worktrees/parse-drafts-verification-20261107",
+  "timeout_seconds": 2,
+  "cancel_after_text_seconds": 0.15,
+  "sample_count": 8,
+  "groups": [
+    {
+      "transport": "http",
+      "interrupt_first": false,
+      "n": 2,
+      "reader_exit_ms": [
+        1846.502,
+        1847.942
+      ],
+      "max_cancel_return_ms": 0.0939170004130574
+    },
+    {
+      "transport": "http",
+      "interrupt_first": true,
+      "n": 2,
+      "reader_exit_ms": [
+        0.141,
+        0.112
+      ],
+      "max_cancel_return_ms": 0.14870800077915192
+    },
+    {
+      "transport": "https",
+      "interrupt_first": false,
+      "n": 2,
+      "reader_exit_ms": [
+        1847.158,
+        1848.473
+      ],
+      "max_cancel_return_ms": 0.14620799993281253
+    },
+    {
+      "transport": "https",
+      "interrupt_first": true,
+      "n": 2,
+      "reader_exit_ms": [
+        0.296,
+        0.283
+      ],
+      "max_cancel_return_ms": 0.1342089999525342
+    }
+  ]
+}
