@@ -8,7 +8,8 @@
     "timeMs": 152000,
     "onScreen": "#2 もう誘わない",
     "subtitle": "不会再邀请了",
-    "catalogue": "https://bang-dream.com/discographies/3576/"
+    "catalogue": "https://bang-dream.com/discographies/3576/",
+    "publisherEpisodePage": "https://note.com/bushiroad_pr/n/n084089b1d42c"
   },
   "beforeCorrection": {
     "understandDraft": {
@@ -148,5 +149,135 @@
     },
     "readyCount": 13,
     "otherTitlesChecked": 12
+  },
+  "seasonReview": {
+    "verifiedAtUTC": "2026-11-11T08:02:37.103Z",
+    "publicWatchToSeries": true,
+    "publicSeriesAndApiTitlesCompared": 13,
+    "originalTitleCardsRead": 13,
+    "playerTitleAndTimeChecks": 5,
+    "readyPlaybackAndIndex": 13,
+    "displayContentVersionForFiveCorrections": [
+      2,
+      3
+    ],
+    "modelCallsForFiveCorrections": 0,
+    "catalogueTypography": [
+      {
+        "episode": 4,
+        "public": "一生だよ!?",
+        "licensed": "一生だよ！？"
+      }
+    ],
+    "episodes": [
+      {
+        "episode": 1,
+        "publicTitle": "羽丘の不思議ちゃん",
+        "episodeCardMs": 950062,
+        "licensedCatalogue": "https://animestore.docomo.ne.jp/animestore/ci_pc?partId=26423001&workId=26423"
+      },
+      {
+        "episode": 2,
+        "publicTitle": "もう誘わない",
+        "episodeCardMs": 152000,
+        "licensedCatalogue": "https://animestore.docomo.ne.jp/animestore/ci_pc?partId=26423002&workId=26423",
+        "previousTitle": "爱音与素世结成乐队，并向灯发出邀请",
+        "previousKind": "generated",
+        "correctedAtUTC": "2026-11-11T07:16:39+00:00",
+        "frameSHA256": "f0ac945aac64338be09757e75597ee9ed595bdb6c2a0b8e427f52231288a892c",
+        "preservedDataSHA256": "290da0d731abc416a2b4205bc0ad386765b2d0d6996b0d9fbc767763e47d2fb7",
+        "verifiedPlayer": "https://seekino.hypn0s.cloud/watch/90d72272-eb0f-5067-ae63-4653240a0e13/39b12b93-ae8e-58ac-8071-3608c28e024c?tenantId=platform-public&atSeconds=152000"
+      },
+      {
+        "episode": 3,
+        "publicTitle": "CRYCHIC",
+        "episodeCardMs": 107500,
+        "licensedCatalogue": "https://animestore.docomo.ne.jp/animestore/ci_pc?partId=26423003&workId=26423"
+      },
+      {
+        "episode": 4,
+        "publicTitle": "一生だよ!?",
+        "episodeCardMs": 175500,
+        "licensedCatalogue": "https://animestore.docomo.ne.jp/animestore/ci_pc?partId=26423004&workId=26423"
+      },
+      {
+        "episode": 5,
+        "publicTitle": "逃げてない！",
+        "episodeCardMs": 167866,
+        "licensedCatalogue": "https://animestore.docomo.ne.jp/animestore/ci_pc?partId=26423005&workId=26423"
+      },
+      {
+        "episode": 6,
+        "publicTitle": "なんで今更",
+        "episodeCardMs": 232000,
+        "licensedCatalogue": "https://animestore.docomo.ne.jp/animestore/ci_pc?partId=26423006&workId=26423",
+        "previousTitle": "なんて今更",
+        "previousKind": "official",
+        "correctedAtUTC": "2026-11-11T07:57:59+00:00",
+        "frameSHA256": "c39b8dc53d9859a7d2c247bca30ab9703e80ebe0dad0264dee8ac4a9397ab617",
+        "preservedDataSHA256": "9ed89bf937dbcc594eca0328f090a43a43c0f8e3471bc2396250d90c09f011cf",
+        "verifiedPlayer": "https://seekino.hypn0s.cloud/watch/90d72272-eb0f-5067-ae63-4653240a0e13/74a9238c-697e-53b2-aba2-b735bbd07490?tenantId=platform-public&atSeconds=232000"
+      },
+      {
+        "episode": 7,
+        "publicTitle": "今日のライブが終わっても",
+        "episodeCardMs": 208375,
+        "licensedCatalogue": "https://animestore.docomo.ne.jp/animestore/ci_pc?partId=26423007&workId=26423"
+      },
+      {
+        "episode": 8,
+        "publicTitle": "どうして",
+        "episodeCardMs": 131000,
+        "licensedCatalogue": "https://animestore.docomo.ne.jp/animestore/ci_pc?partId=26423008&workId=26423",
+        "previousTitle": "素世向祥子道歉，CRYCHIC复活被拒",
+        "previousKind": "generated",
+        "correctedAtUTC": "2026-11-11T07:57:59+00:00",
+        "frameSHA256": "e1264913142f03b07642983fe7ddb7dd76d4dc5c2fa2ca092474aa49ab11d1e7",
+        "preservedDataSHA256": "8189a4adf99a79a3f95dd685794aa896d7b1d39e30ebee7b96e8e585d493a324",
+        "verifiedPlayer": "https://seekino.hypn0s.cloud/watch/90d72272-eb0f-5067-ae63-4653240a0e13/1752243e-6b35-5a79-92b4-72491d604d9e?tenantId=platform-public&atSeconds=131000"
+      },
+      {
+        "episode": 9,
+        "publicTitle": "解散",
+        "episodeCardMs": 480000,
+        "licensedCatalogue": "https://animestore.docomo.ne.jp/animestore/ci_pc?partId=26423009&workId=26423",
+        "previousTitle": "爽世坦言利用爱音，乐队分崩离析",
+        "previousKind": "generated",
+        "correctedAtUTC": "2026-11-11T07:57:59+00:00",
+        "frameSHA256": "23b0b77fa788d97698787d321fa19c9f930dec7bd0641e572665cafc4df50f93",
+        "preservedDataSHA256": "eb5855e5f1f3d431e8ca5caa713f6db5ff34e84895a25651a8a63ae27e2377fa",
+        "verifiedPlayer": "https://seekino.hypn0s.cloud/watch/90d72272-eb0f-5067-ae63-4653240a0e13/a9323632-4419-599d-9a65-00cfe9442bf9?tenantId=platform-public&atSeconds=480000"
+      },
+      {
+        "episode": 10,
+        "publicTitle": "ずっと迷子",
+        "episodeCardMs": 44600,
+        "licensedCatalogue": "https://animestore.docomo.ne.jp/animestore/ci_pc?partId=26423010&workId=26423"
+      },
+      {
+        "episode": 11,
+        "publicTitle": "それでも",
+        "episodeCardMs": 200625,
+        "licensedCatalogue": "https://animestore.docomo.ne.jp/animestore/ci_pc?partId=26423011&workId=26423"
+      },
+      {
+        "episode": 12,
+        "publicTitle": "It’s my go!!!!!",
+        "episodeCardMs": 155000,
+        "licensedCatalogue": "https://animestore.docomo.ne.jp/animestore/ci_pc?partId=26423012&workId=26423",
+        "previousTitle": "MyGO!!!!!首场Live与乐队名诞生",
+        "previousKind": "generated",
+        "correctedAtUTC": "2026-11-11T07:57:59+00:00",
+        "frameSHA256": "e418547d2ee800d67b5de39a6ef51c425d04c390437abdca969f119f6d55f8d5",
+        "preservedDataSHA256": "0dc70e5011d030a951dfa193b4b0172b5ea08498534cccfaafa75c92142256ee",
+        "verifiedPlayer": "https://seekino.hypn0s.cloud/watch/90d72272-eb0f-5067-ae63-4653240a0e13/e3cbc659-847f-5069-9794-61ddd91a3c55?tenantId=platform-public&atSeconds=155000"
+      },
+      {
+        "episode": 13,
+        "publicTitle": "信じられるのは我が身ひとつ",
+        "episodeCardMs": 690312,
+        "licensedCatalogue": "https://animestore.docomo.ne.jp/animestore/ci_pc?partId=26423014&workId=26423"
+      }
+    ]
   }
 }
