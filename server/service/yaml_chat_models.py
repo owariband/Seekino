@@ -19,6 +19,12 @@ from ..model.dto.personal_model import (
     ModelRoleView, PersonalModelConnectionView, PersonalModelOption, PersonalModelSettingsView,
 )
 
+
+# Protocols whose servers list their models. openai_audio is excluded: whisper.cpp and WhisperX-style
+# transcription servers have no /v1/models, so the button could only ever fail there.
+DISCOVERABLE_PROTOCOLS = frozenset({"openai_chat", "openai_responses", "anthropic_messages", "gemini",
+                                    "ollama_embedding", "openai_vision", "llama_cpp_embedding"})
+
 MODEL_ROLES: tuple[ModelRole, ...] = ("chat", "vision", "transcription", "ocr", "embedding", "rerank")
 
 
@@ -98,8 +104,7 @@ class YamlChatModels:
                 protocol=protocol, base_url=getattr(source, "base_url", ARK_OPENAI_BASE_URL if protocol == "ark" else ""),
                 editable=isinstance(source, (ChatAPISourceConfig, OpenAIModelSourceConfig, ArkModelSourceConfig,
                                              OpenAIAudioSourceConfig, OllamaEmbeddingSourceConfig)),
-                discoverable=protocol in {"openai_chat", "openai_responses", "anthropic_messages", "gemini",
-                                          "openai_audio", "ollama_embedding", "openai_vision", "llama_cpp_embedding"},
+                discoverable=protocol in DISCOVERABLE_PROTOCOLS,
                 has_api_key=bool(getattr(source, "encrypted_api_key", None) or (key_name and self._environ.get(key_name, "").strip())),
                 model_kinds=model_kinds, models=[], supports_vision=False, revision=0,
             )

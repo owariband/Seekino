@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-10T16:16:05+08:00",
+ "updatedAt": "2026-11-11T12:50:11+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 35,
+ "revision": 36,
  "categories": [
   {
    "id": "parse",
@@ -4688,9 +4688,9 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "status": "verifying",
    "priority": "P1",
    "description": "按块和窗口的已提交状态领取，移除逐个 SSE 的 MySQL 续租并及时释放失效请求。",
-   "next": "用保留的任务核验剩余窗口的完成情况。20 分钟指标需要同条件从零到完成的计时，四集并发吞吐另测。",
-   "verification": "相同 9,071 个事件的流控制 SQL 降为 0。MyGO 第 3 集到达 10/10/1，但模型报错后最终失败，20 分钟指标未通过。 已备 198 帧及音频的交付中，整集和块行锁各从 200 次降到 2 次，最后一个文件链接后失租的交付被拦截。",
-   "updatedAt": "2026-11-07",
+   "next": "同配置再测四集并发吞吐和 micrograd 全程，另查模型停止输出后的槽位占用。",
+   "verification": "回放 9,071 个 SSE 事件时流控制 SQL 为 0。198 帧加音频的交付中，父行和子行各从 200 次加锁降到 2 次，最后一次链接后失租仍会拦住交付。11 月 8 日 MyGO 第 3 集单跑 14 分 58.684 秒可检索，24 个索引块、562 个事件均已核对。",
+   "updatedAt": "2026-11-11",
    "tags": [
     "解析调度",
     "索引"
@@ -4707,17 +4707,17 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
     },
     {
      "label": "TRD",
-     "url": "https://github.com/owariband/Seekino/blob/perf/parse-ready-dispatch/docs/design/03-product-reassessment/parse-ready-dispatch-trd.md",
+     "url": "https://github.com/owariband/Seekino/blob/dev/docs/design/03-product-reassessment/parse-ready-dispatch-trd.md",
      "kind": "trd"
     },
     {
      "label": "动画实跑",
-     "url": "https://github.com/owariband/Seekino/blob/perf/parse-ready-dispatch/docs/report/server/mq/parse-ready-dispatch/animation.md",
+     "url": "https://github.com/owariband/Seekino/blob/dev/docs/report/server/mq/parse-ready-dispatch/animation.md#dev-ep03-reruns",
      "kind": "report"
     },
     {
      "label": "验证记录",
-     "url": "https://github.com/owariband/Seekino/blob/perf/parse-ready-dispatch/docs/report/server/mq/parse-ready-dispatch/README.md",
+     "url": "https://github.com/owariband/Seekino/blob/dev/docs/report/server/mq/parse-ready-dispatch/README.md",
      "kind": "source"
     },
     {
@@ -4764,9 +4764,9 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "status": "verifying",
    "priority": "P1",
    "description": "模型正文新增独立调用草稿，1024 UTF-8 字节或调用退出保存；移除逐 SSE 持久续租。",
-   "next": "部署时按现有 init-db 流程初始化草稿表。两项改动同时启用后的整集耗时与多集吞吐仍待实测。",
-   "verification": "初版 941 项隔离回归通过。与 #70 联合验证时，1,548 项相关回归和 31 项真实 MySQL 用例通过。9,071 个 SSE 事件产生 30 次中途草稿保存和 2 次结束保存，流回调父行加锁及续租更新均为 0。",
-   "updatedAt": "2026-11-07",
+   "next": "部署时按现有 init-db 流程初始化草稿表。#64 和 #70 合并版仍待同配置 micrograd 整集和多集吞吐对照。草稿版单跑未达到稳定 10 路或整集 60 分钟。",
+   "verification": "初版 941 项隔离回归通过。与 #70 联合验证时，1,548 项相关回归和 31 项真实 MySQL 用例通过。9,071 个 SSE 事件产生 30 次中途草稿保存和 2 次结束保存，流回调父行加锁及续租更新均为 0。草稿版 v5 整集 90 分 04.884 秒，146 个索引块和 414 份终态草稿已核对。",
+   "updatedAt": "2026-11-11",
    "tags": [
     "草稿",
     "租约",
@@ -5057,6 +5057,71 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "label": "剪辑参考主设计 #50",
      "kind": "design",
      "url": "https://github.com/owariband/Seekino/pull/50"
+    }
+   ]
+  },
+  {
+   "id": "CHAT-GUEST-01",
+   "title": "游客观看问答使用云端 Chat 单轮预算",
+   "category": "chat",
+   "type": "task",
+   "status": "verifying",
+   "priority": "P1",
+   "description": "允许已获准的游客问答继续读取证据并收尾，按 IP 保留每日请求额度。",
+   "next": "核对 CPU 发布镜像、游客消息选项和公开课程的实际回答。",
+   "verification": "隔离 HTTP 与 Gateway 对照在第五次模型调用收尾。真实 Redis 验证同 IP 换身份、到期与并发控制。",
+   "updatedAt": "2026-11-11",
+   "tags": [
+    "游客",
+    "观看问答"
+   ],
+   "related": [
+    "MOD-CHAT"
+   ],
+   "branch": "fix/guest-chat-turn-budget",
+   "links": [
+    {
+     "label": "游客单轮预算设计与验证",
+     "kind": "trd",
+     "url": "https://github.com/owariband/Seekino/blob/dev/docs/design/03-product-reassessment/guest-chat-turn-budget-trd.md"
+    },
+    {
+     "label": "PR #99",
+     "kind": "pr",
+     "url": "https://github.com/owariband/Seekino/pull/99"
+    }
+   ]
+  },
+  {
+   "id": "WATCH-KINO-01",
+   "title": "观看页通过 Kino 打开浮窗并可停靠",
+   "category": "chat",
+   "type": "requirement",
+   "status": "done",
+   "priority": "P1",
+   "description": "桌面通过可拖动的 Kino 打开悬浮陪看，切换停靠并记住选择，窄屏沿用底部抽屉。",
+   "next": "发布记录跟随 main 的独立 PR。",
+   "verification": "1440 px 浮窗保持播放器宽度，刷新保留停靠，网页全屏和 390 px 抽屉通过真实 Chrome 回归。641 项单测和正式构建通过。",
+   "updatedAt": "2026-11-10",
+   "tags": [
+    "播放",
+    "对话"
+   ],
+   "related": [
+    "MOD-CHAT",
+    "SETTINGS-UI-01"
+   ],
+   "branch": "feat/watch-kino-panel",
+   "links": [
+    {
+     "label": "Kino 浮窗设计与验收",
+     "kind": "trd",
+     "url": "https://github.com/owariband/Seekino/blob/dev/docs/design/03-product-reassessment/watch-kino-entry-trd.md"
+    },
+    {
+     "label": "PR #96",
+     "kind": "pr",
+     "url": "https://github.com/owariband/Seekino/pull/96"
     }
    ]
   },

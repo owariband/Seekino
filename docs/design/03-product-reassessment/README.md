@@ -34,6 +34,10 @@ hypnos 于 **2026-04-27 入职实习**，到这次面试复盘时已接近半年
 | [parse-output-drafts-trd.md](parse-output-drafts-trd.md) | 2026-11-07，SSE 逐事件续租与模型正文草稿需求澄清 | 内存累积正文，每 1,024 新字节或退出时保存独立调用草稿；续租继续由周期心跳驱动 | PR #64；隔离验证与真实解析效果分别验收 |
 | [docker-web-assets-trd.md](docker-web-assets-trd.md) | 2026-11-06，CPU 构建暴露发布 Logo 软链接缺失 | 保留构建目录关系、限制发布资源输入，并验证 main 部署来源 | 设计与证据见正文；当前状态见工作台 DEPLOY-01 |
 | [cloud-guest-without-smtp-trd.md](cloud-guest-without-smtp-trd.md) | 2026-11-06，SMTP 留空导致整个 cloud API 无法启动 | 游客启动与邮件能力分离，未配置邮件时明确拒绝邮箱认证 | 当前状态见工作台 DEPLOY-02 |
+| [cloud-user-docs-trd.md](cloud-user-docs-trd.md) | 2026-11-10，Cloud 访客看不到两版区别、部署方式与 GitHub 入口，比赛需要真实用户却缺少转化落点 | 站内 `/docs` 使用文档与顶栏 GitHub 入口；API 文档迁到 `/api/docs` | 初稿 |
+| [apple-style-refresh-trd.md](apple-style-refresh-trd.md) | 2026-11-10，推广前界面不够简约高级：圆体标题、等宽大写小标签、绿灰色调 | Apple 式视觉层：SF / 自托管 Inter、中性色板、磨砂顶栏、胶囊按钮；不改布局 | 待评审 |
+| [model-discovery-feedback-trd.md](model-discovery-feedback-trd.md) | 2026-11-10，“获取模型列表”结果不可见，whisper.cpp 必然 404 | 内联结果与模型 chip、防重复；无列表的服务给出中性说明 | 初稿 |
+| [sticky-docs-trd.md](sticky-docs-trd.md) | 2026-11-10，欢迎卡片与文档准确但抓不住首次访客 | 按 SUCCESs 重写，`/docs` 拆为快速开始等多页 | 初稿 |
 | [smtp-login-availability-trd.md](smtp-login-availability-trd.md) | 2026-11-07，邮件未配置仍展示验证码表单，用户填写后才知道不可用 | 由账号服务传递可用能力，空配置展示游客模式和未开放说明 | 当前状态见工作台 DEPLOY-04；依赖 #62，随 #63 发布 |
 | [cloud-docker-deploy-trd.md](cloud-docker-deploy-trd.md) | 2026-11-06，简历筛选需要公开演示，但云服务器上没有任何服务 | 用 Docker 在 4C8G 服务器部署发布后的 `main`，迁移演示数据，经公网 HTTPS 提供观看、检索与问答 | 初稿；实施与验收待进行 |
 | [chat-stream-snapshot-coalescing-trd.md](chat-stream-snapshot-coalescing-trd.md) | 2026-11-05，长回答流式交付途中被判为慢消费者并断开 | 合并缓冲中相邻的未发送快照，持续读取的客户端不再收到中断 | 初稿；实验待测 |
@@ -111,5 +115,7 @@ hypnos 于 **2026-04-27 入职实习**，到这次面试复盘时已接近半年
 - [聊天页顶栏与公开范围](chat-header-scope-trd.md)，2026-11-08。游客视角下的紧凑导航、选择器空态与独立聊天侧栏。
 - [个人模型服务](personal-model-connections-trd.md) 记录生效 YAML 的管理接口、凭证掩码、cloud 权限和会话选模。依赖设置工作区 #72。
 - [模型注册与用途](model-registry-roles-trd.md) 延伸 #74，将同一组注册模型接入聊天、解析和检索。
+- [游客观看问答的执行预算](guest-chat-turn-budget-trd.md) 记录第五次模型调用中断的复现，以及按 IP 计数的独立验收。
+- [观看页 Kino 入口与悬浮陪看窗](watch-kino-entry-trd.md) 记录桌面浮窗、停靠、全屏和手机抽屉的实测。
 - [设置工作区](settings-workspace-trd.md) 记录会话内打开设置、设备偏好、管理员配置和设计样稿对照。
 - [对话回答模型与输入区](chat-composer-models-trd.md) 记录会话级模型选择、附件位置和侧栏调宽。状态见[工作台](../../dev/workbench.html) CHAT-COMPOSER-02。

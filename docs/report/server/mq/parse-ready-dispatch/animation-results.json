@@ -392,5 +392,109 @@
   "tests": {
     "parse_gateway": 1116,
     "real_mysql": 30
+  },
+  "merged_dev_reruns": {
+    "before_frame_fix": {
+      "task": "4ae7c101-0720-4396-91c2-9b5a1f2f3d6c",
+      "commit": "19054aada3d5a66bf7aca9820be18d613a928480",
+      "terminal_state": "PARSING_FAILED",
+      "submitted_to_final_failure_s": 1009.538,
+      "idle_sleep_s": 535,
+      "manual_recovery_gap_s": 183.414,
+      "committed": {
+        "understand": 16,
+        "refine": 6,
+        "index": 4
+      },
+      "es": {
+        "chunks": 4,
+        "events": 98,
+        "verified_event_ids": 98,
+        "missing_event_ids": 0,
+        "extra_event_ids": 0
+      }
+    },
+    "after_frame_fix": {
+      "task": "1d6ca661-ff8e-44f6-9d41-1584f80606aa",
+      "commit": "6e14c79d03776490d3759b87e3aed3b98163d82b",
+      "submitted_sgt": "2026-11-07T23:55:23.679+08:00",
+      "searchable_sgt": "2026-11-08T00:10:22.363+08:00",
+      "submitted_to_searchable_s": 898.684,
+      "terminal_state": "COMPLETE",
+      "sample_peaks": {
+        "understand": 10,
+        "refine": 10,
+        "index": 1
+      },
+      "checks": {
+        "understood": 24,
+        "total_chunks": 24,
+        "refined": 22,
+        "total_windows": 22,
+        "indexed": 24.0,
+        "es": {
+          "chunks": 24,
+          "events": 562,
+          "verified_event_ids": 562,
+          "missing_event_ids": 0,
+          "extra_event_ids": 0
+        },
+        "summary": "COMPLETE",
+        "remaining_child_leases": 0
+      },
+      "summary_complete_first_observed_sgt": "2026-11-08T00:12:10.668129+08:00",
+      "last_refine_to_index_complete_s": 15.178,
+      "estimated_cny_for_priced_calls": "1.73305412",
+      "priced_calls": 70,
+      "unpriced_calls": 23,
+      "last_window": {
+        "start_sequence": 10,
+        "stalled_call": "3dadc2fc-e115-4f16-ab66-ab9e101dd43d",
+        "received_sse": 1395,
+        "seconds_after_last_sse": 553.378,
+        "next_lease_call": "497330c7-87da-4607-a4c2-7b1199eebfc9",
+        "next_call_elapsed_s": 24.427
+      },
+      "reasoning_effort_by_stage": {
+        "understand": {
+          "none": 34
+        },
+        "refine": {
+          "none": 49
+        },
+        "summarize": {
+          "high": 10
+        }
+      }
+    },
+    "concurrent_preview": {
+      "commit": "50c0f621",
+      "port": 19641,
+      "pid": 7054,
+      "paused_parent_groups": [
+        {
+          "status": "PARSING",
+          "paused": "true",
+          "leased": 0,
+          "n": 5
+        }
+      ],
+      "observed_work_in_preview_schema": {
+        "active_videos": [
+          {
+            "status": "PARSING",
+            "n": 5
+          }
+        ],
+        "active_chunks": [],
+        "active_refine": [
+          {
+            "n": 0
+          }
+        ]
+      },
+      "statement_sample_s": 4.11,
+      "selects_by_server_pid": 149
+    }
   }
 }

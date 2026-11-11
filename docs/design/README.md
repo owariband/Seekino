@@ -109,6 +109,7 @@ Event / Sub-Chunk 的实施入口是 [sub-chunk-trd.md](02-agent-harness/sub-chu
 | 模型注册与用途 | [model-registry-roles-trd.md](03-product-reassessment/model-registry-roles-trd.md) | 具名连接、按模型登记能力、六个用途的 YAML 绑定与权限。 |
 | 设置工作区 | [settings-workspace-trd.md](03-product-reassessment/settings-workspace-trd.md) | 分类设置、保留聊天草稿、共享 Kino 偏好及 Flash 与 Pro 同题对照。 |
 | 对话回答模型与输入区 | [chat-composer-models-trd.md](03-product-reassessment/chat-composer-models-trd.md) | 当前对话保存回答模型，输入面板支持附件，桌面历史可调宽。依赖 #67。 |
+| 观看页 Kino 入口 | [watch-kino-entry-trd.md](03-product-reassessment/watch-kino-entry-trd.md) | 打开悬浮陪看、停靠与位置记忆，窄屏使用底部抽屉。 |
 | 观看回答交付 | [watch-answer-delivery-trd.md](03-product-reassessment/watch-answer-delivery-trd.md) | 修复：实时证据不提交视频卡、失败表述准确、回答长度与用户可见术语受控（LOOP-06 / C22 / C25）。 |
 | 对话延迟创建 | [chat-lazy-conversation-trd.md](03-product-reassessment/chat-lazy-conversation-trd.md) | 修复：打开页面、新对话、删除补位不再创建空对话，首次发送时才创建；实现完成，待合并。 |
 | Chat 正文流式与真实 FTT | [chat-streaming-trd.md](03-product-reassessment/chat-streaming-trd.md) | 承接课程 PRD：正文增量交付、调用来源、浏览器采证及非流式/缓冲反例；关联 #18 / #25。 |
@@ -140,7 +141,10 @@ Event / Sub-Chunk 的实施入口是 [sub-chunk-trd.md](02-agent-harness/sub-chu
 | 首页明暗主题切换 | [theme-transition-trd.md](03-product-reassessment/theme-transition-trd.md) | 全站换色、首页封面亮度及减弱动态效果。 |
 | Series 共享 | [series-sharing-trd.md](02-agent-harness/series-sharing-trd.md) | 专项 TRD：Series 共享、团队范围与访问合同。 |
 | Docker 发布资源与 main 构建 | [docker-web-assets-trd.md](03-product-reassessment/docker-web-assets-trd.md) | PNG/SVG 软链接的构建输入、镜像验证和 CPU 源码提交对齐；关联云部署 PR #57。 |
+| 游客观看问答的执行预算 | [guest-chat-turn-budget-trd.md](03-product-reassessment/guest-chat-turn-budget-trd.md) | 每 IP 的请求额度与单条回答的模型、工具调用分别核验。 |
 | 云端无 SMTP 的游客启动 | [cloud-guest-without-smtp-trd.md](03-product-reassessment/cloud-guest-without-smtp-trd.md) | 邮件能力可选，游客身份仍保留签名、Redis、CSRF 与权限校验。 |
+| Cloud 使用文档与推广入口 | [cloud-user-docs-trd.md](03-product-reassessment/cloud-user-docs-trd.md) | `/docs` 归站内用户文档，Swagger 迁到 `/api/docs`。 |
+| Apple 式视觉刷新 | [apple-style-refresh-trd.md](03-product-reassessment/apple-style-refresh-trd.md) | 字体改为 SF / 自托管 Inter，标签去等宽，中性色板与磨砂顶栏。 |
 | SMTP 决定登录入口 | [smtp-login-availability-trd.md](03-product-reassessment/smtp-login-availability-trd.md) | 身份接口传递邮件能力；未配置时提前说明登录注册尚未开放，保留游客体验。 |
 | Local / Cloud | [local-cloud-trd.md](02-agent-harness/local-cloud-trd.md) | 运行形态设计：身份、配置归属、本地接入和云端部署边界。 |
 | 项目管理工作台 | [management-workbench-trd.md](03-product-reassessment/management-workbench-trd.md) | 单文件离线管理工作台：里程碑概览、课程闭环地图、验收门槛与四列看板，统一模块、需求、任务，关联 PR/TRD 和历史证据；2026-11-02 看板版本保留在同一 TRD。 |

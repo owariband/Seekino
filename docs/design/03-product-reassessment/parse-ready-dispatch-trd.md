@@ -60,3 +60,5 @@ MyGO 第 3 集补充对照使用相同的 9,071 个 SSE 事件，原版每轮 9,
 # 6. 问题闭环
 
 实现已进入 [PR #70](https://github.com/owariband/Seekino/pull/70)。在 146 块冷索引试点中，两次用时 347.069 秒及 332.441 秒，4,520 次本地 embedding 完成，146/146 内容版本相符，子租约全部释放，ES 可见 2,307 个事件。micrograd 同上游模型的整集用时仍待验证。动画单集的逐事件锁竞争已在回放中消除，20 分钟完成目标此次未通过。本次已知模型费用估算为 ¥1.18381824，另有 49 个请求缺计费数据。多集负载与部署后效果仍待验证。[索引验证](../../report/server/mq/parse-ready-dispatch/README.md) · [动画验证](../../report/server/mq/parse-ready-dispatch/animation.md) · [Devlog](../../dev/devlog.md#devlog-mygo-stream-lock-20261107) · [工作台](../../dev/workbench.html)
+
+11 月 7 日晚至 8 日再跑同一集。`19054aad` 因第 9 号块对白重复而失败。后来 `6e14c79d` 用了 14 分 58.684 秒完成整集索引，562 个事件 ID 全部相符。20 分钟目标在这次单集、3 FPS、10/10/1 并发的冷跑中达到。四集同时提交的吞吐仍待同负载对照。[配置、失败经过与费用](../../report/server/mq/parse-ready-dispatch/animation.md#dev-ep03-reruns)

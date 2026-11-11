@@ -39,7 +39,6 @@ class AuthConfig:
     concurrent_queries_guest: int = 1
     concurrent_queries_user: int = 3
     query_lease_seconds: int = 600
-    guest_max_model_calls: int = 4
     admin_emails: tuple[str, ...] = ()
     smtp: SMTPConfig = field(default_factory=SMTPConfig)
     public_library_only: bool = False
@@ -67,7 +66,6 @@ class AuthConfig:
             "guest_window_seconds", "guest_limit_per_ip",
             "query_window_seconds", "query_limit_guest", "query_limit_user",
             "concurrent_queries_guest", "concurrent_queries_user", "query_lease_seconds",
-            "guest_max_model_calls",
         ):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
@@ -85,7 +83,6 @@ class AuthConfig:
             "guest_window_seconds", "guest_limit_per_ip",
             "query_window_seconds", "query_limit_guest", "query_limit_user",
             "concurrent_queries_guest", "concurrent_queries_user", "query_lease_seconds",
-            "guest_max_model_calls",
         ):
             values[name] = int(os.getenv(f"SEEKINO_AUTH_{name.upper()}", str(getattr(defaults, name))))
         def enabled(name: str, default: bool) -> bool:
