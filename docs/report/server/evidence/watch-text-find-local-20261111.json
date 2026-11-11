@@ -1,0 +1,67 @@
+{
+  "date": "2026-11-11",
+  "environment": "localhost, isolated TEST database and MyGO source MP4s",
+  "queries": [
+    "高松燈",
+    "高　松 灯"
+  ],
+  "episodes": [
+    {
+      "episode": 1,
+      "videoId": "96ae348a-d049-5db9-9271-b71d141348a5",
+      "publishedCueCount": 386,
+      "timelineRequestsWhileSearching": 1,
+      "hits": [
+        {
+          "source": "dialogue",
+          "publishedStartMs": 301166,
+          "observedPlayerMs": 301166
+        }
+      ]
+    },
+    {
+      "episode": 2,
+      "videoId": "b7993872-d90f-538f-9eca-4de0511e2f5f",
+      "publishedCueCount": 388,
+      "timelineRequestsWhileSearching": 1,
+      "hits": [
+        {
+          "source": "dialogue",
+          "publishedStartMs": 680820,
+          "observedPlayerMs": 680820
+        },
+        {
+          "source": "screen_text",
+          "publishedStartMs": 1320000,
+          "observedPlayerMs": 1320000
+        }
+      ]
+    }
+  ],
+  "frameChecks": [
+    {
+      "episode": 2,
+      "atMs": 680820,
+      "observed": "中文字幕显示「你说的灯是高松灯吗？」"
+    },
+    {
+      "episode": 2,
+      "atMs": 1318000,
+      "observed": "演职员表第一行可见「高松 燈」"
+    },
+    {
+      "episode": 2,
+      "atMs": 1320000,
+      "observed": "播放器到达本地已发布的画面文字起点，此帧没有显示「高松 燈」"
+    }
+  ],
+  "screenTextControl": {
+    "episode": 2,
+    "query": "监　督 柿本",
+    "source": "screen_text",
+    "text": "監督 柿本 広大",
+    "publishedStartMs": 130166,
+    "observedPlayerMs": 130166,
+    "observedFrame": "原片同一帧显示「監督 柿本広大」"
+  }
+}

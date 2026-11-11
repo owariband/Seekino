@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse, Response
 from .context import get_identity, get_services
 from .library import read_series
 from ..service.access import is_series_member, require_tenant_write, series_access
-from ..model.dto.mediaDTO import ParseExportOptions, ParseExportRequest, parse_export_event_types
+from ..model.dto.mediaDTO import ParseExportOptions, ParseExportRequest, VideoTextTimeline, parse_export_event_types
 from ..repository.library import SeriesNotFoundError
 from ..model.vo.searchVO import VideoChunkEvidenceView
 from .search import evidence_view
@@ -60,6 +60,17 @@ def get_video_content(
     )
     return FileResponse(media.path, media_type=media.media_type, content_disposition_type="inline",
                         headers={"Cache-Control": "private, no-store"} if identity.mode == "cloud" else None)
+
+
+def get_video_text_timeline(
+    request: Request, response: Response, video_id: str = Query(alias="videoId"),
+    tenant_id: str = Query(alias="tenantId"),
+) -> VideoTextTimeline:
+    services = get_services(request)
+    video = services.library.get_video(video_id, tenant_id=tenant_id)
+    read_series(request, video.series_id, tenant_id=tenant_id)
+    response.headers["Cache-Control"] = "private, no-store"
+    return services.media.video_text_timeline(video_id, tenant_id=tenant_id)
 
 
 def get_image_content(

@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-11T12:28:20+08:00",
+ "updatedAt": "2026-11-11T16:46:00+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 35,
+ "revision": 36,
  "categories": [
   {
    "id": "parse",
@@ -5198,6 +5198,33 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
     {
      "label": "PR #87",
      "url": "https://github.com/owariband/Seekino/pull/87",
+     "kind": "pr"
+    }
+   ]
+  },
+  {
+   "id": "WATCH-FIND-01",
+   "title": "在当前视频按台词和画面文字跳转",
+   "category": "search",
+   "type": "requirement",
+   "status": "verifying",
+   "priority": "P1",
+   "description": "观看页支持混合繁简、字间空格和逐处跳转，同一事件的对白译文共用一个位置。",
+   "next": "发布后用新游客会话在 MyGO 第一集核对命中列表和播放器实际位置。",
+   "verification": "localhost 的 MyGO E01 命中 05:01.166，E02 命中 11:20.820 和 22:00.000，Chrome 实际跳转时间逐项相符，每集只读一次。E02 片尾姓名在 21:58.000 的原帧可见，22:00.000 已消失。接口用例覆盖切集、授权撤回和旧版失效。",
+   "updatedAt": "2026-11-11",
+   "tags": ["片内查找", "繁简匹配"],
+   "related": ["MOD-SEARCH", "MOD-LIBRARY"],
+   "branch": "feat/watch-text-find",
+   "links": [
+    {
+     "label": "视频内文字查找设计与验收",
+     "url": "https://github.com/owariband/Seekino/blob/feat/watch-text-find/docs/design/03-product-reassessment/watch-text-find-trd.md",
+     "kind": "trd"
+    },
+    {
+     "label": "PR #105",
+     "url": "https://github.com/owariband/Seekino/pull/105",
      "kind": "pr"
     }
    ]

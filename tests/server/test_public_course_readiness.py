@@ -3,20 +3,12 @@
 import json
 import os
 from copy import deepcopy
-from pathlib import Path
-import socket
-import subprocess
-from threading import Thread
-from time import monotonic, sleep
 from types import SimpleNamespace
 from uuid import uuid4
 
 import httpx
 import pytest
-import uvicorn
 from elastic_transport import ConnectionError as ElasticConnectionError
-from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
@@ -37,6 +29,7 @@ from server.service.video_parse_persistence import INDEX_EMBEDDINGS_DETAIL_KEY, 
 from server.service.video_retrieval import RetrievalIndexConsistencyError, VideoParseRetrievalService
 from tests.server.test_agent_chat_service import _DirectSupervisorModel, _QueryModel, _WebSearcherStub
 from tests.server.test_cloud_access import _conversation, _guest, cloud_api
+from tests.server.watch_browser import run_watch_browser
 from tests.server.test_video_retrieval_service import FakeQueryEmbedder
 from tests.server.test_video_event_retrieval import _fixture as event_search_fixture
 
@@ -415,37 +408,10 @@ def test_event_publication_is_verified_per_video(public_course, issue):
                     reason="Requires built web/dist, ffmpeg/ffprobe and Playwright Chromium")
 def test_public_course_watch_browser(public_course):
     course = public_course
-    web = Path(__file__).resolve().parents[2] / "web"
-    dist = web / "dist"
-    assert (dist / "index.html").is_file(), "Run npm --prefix web run build first"
-    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=160x90:rate=5",
-                    "-t", "20", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(course.source)], check=True)
-    # Use the production codec probe and live HTTP Range responses for this check.
     course.api.services.media = MediaService(course.api.services.library, course.api.store)
     course.api.services.parse_consumer = None
-    app = course.api.app
-    app.mount("/assets", StaticFiles(directory=dist / "assets"), name="web-assets")
-
-    @app.get("/{path:path}", include_in_schema=False)
-    def spa(path: str):
-        return FileResponse(dist / "index.html")
-
-    with socket.socket() as listener:
-        listener.bind(("127.0.0.1", 0))
-        port = listener.getsockname()[1]
-        server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error"))
-        thread = Thread(target=server.run, kwargs={"sockets": [listener]}, daemon=True)
-        thread.start()
-        try:
-            deadline = monotonic() + 10
-            while not server.started and thread.is_alive() and monotonic() < deadline:
-                sleep(.02)
-            assert server.started
-            subprocess.run(["node", "tests/public-course-readiness.mjs", f"http://127.0.0.1:{port}",
-                            course.series_id, course.episodes[-1].video_id], cwd=web, check=True, timeout=120)
-        finally:
-            server.should_exit = True
-            thread.join(10)
+    run_watch_browser(course.api.app, course.source, "public-course-readiness.mjs",
+                      course.series_id, course.episodes[-1].video_id)
     assert len(course.model.turns) == 8 and course.model.turns[-1][1]
     assert len(course.index.requests) == 2
     assert all({task.video_id for task in request.scope.tasks} == {e.video_id for e in course.episodes[:7]}

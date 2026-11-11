@@ -1,4 +1,4 @@
-import { Maximize, Minimize, Pause, Play, RotateCcw, RotateCw, Volume2, VolumeX } from "lucide-react";
+import { Maximize, Minimize, Pause, Play, RotateCcw, RotateCw, Search, Volume2, VolumeX } from "lucide-react";
 import { forwardRef, type KeyboardEvent, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
 
 import { errorMessage, mediaUrl } from "../../api/client";
@@ -6,6 +6,7 @@ import type { VideoSummary } from "../../api/contracts";
 import { episodeLabel, formatTimecode } from "../../shared/format";
 import { playbackProgressStorageKey, readVideoProgress, saveVideoProgress } from "./playbackProgress";
 import { useI18n } from "../../app/i18n";
+import { VideoTextFind } from "./VideoTextFind";
 import styles from "./watch.module.css";
 
 interface VideoPlayerProps {
@@ -35,6 +36,8 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(funct
   const { t, locale } = useI18n();
   const mediaRef = useRef<HTMLVideoElement>(null);
   const playerRef = useRef<HTMLDivElement>(null);
+  const findInputRef = useRef<HTMLInputElement>(null);
+  const [findOpen, setFindOpen] = useState(false);
   const positionRef = useRef(0);
   const durationRef = useRef(video.durationSeconds);
   const progressReadyRef = useRef(false);
@@ -55,6 +58,20 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(funct
   const [keyboardFocus, setKeyboardFocus] = useState(false);
   const playbackUrl = video.playbackStatus === "READY" ? mediaUrl(video.playbackUrl) : null;
   const mediaKey = `${video.videoId}:${atSeconds ?? "history"}:${playbackUrl ?? "none"}`;
+
+  useEffect(() => {
+    if (!playbackUrl) return;
+    const openFind = (event: globalThis.KeyboardEvent) => {
+      if (event.defaultPrevented || event.isComposing || event.altKey || event.shiftKey
+          || !(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "f") return;
+      event.preventDefault();
+      setFindOpen(true);
+      findInputRef.current?.focus();
+      findInputRef.current?.select();
+    };
+    window.addEventListener("keydown", openFind, true);
+    return () => window.removeEventListener("keydown", openFind, true);
+  }, [playbackUrl]);
 
   useEffect(() => {
     setControlsVisible(true);
@@ -216,6 +233,7 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(funct
   };
 
   const onKeyboard = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return;
     if (event.target instanceof HTMLElement && event.target.closest("button, input, select")) return;
     const key = event.key.toLowerCase();
     if (key === " " || key === "k") togglePlay();
@@ -266,6 +284,9 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(funct
         />
         {!playing ? <button className={styles.videoPlayerCenterPlay} type="button" onClick={togglePlay} aria-label={t("播放视频")}><Play size={28} fill="currentColor" /></button> : null}
       </div>
+      {findOpen && <VideoTextFind key={`${video.tenantId}:${video.videoId}`} videoId={video.videoId}
+        tenantId={video.tenantId} inputRef={findInputRef} canSeek={mediaReady} onSeek={seekTo}
+        onClose={() => { setFindOpen(false); playerRef.current?.focus(); }} />}
       <div className={styles.videoPlayerControls}>
         <input
           className={styles.videoPlayerTimeline}
@@ -285,6 +306,8 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(funct
           <button className={styles.videoPlayerSkip} type="button" disabled={!mediaReady} onClick={() => seekTo(positionRef.current + 10_000)} aria-label={t("前进 10 秒")}><RotateCw size={18} /><small>10s</small></button>
           <time>{formatTimecode(currentSeconds)} / {formatTimecode(durationSeconds)}</time>
           <div className={styles.videoPlayerControlSpacer} />
+          <button type="button" aria-label={t("在本视频中查找")} title={t("在本视频中查找")}
+            aria-expanded={findOpen} onClick={() => { setFindOpen(true); findInputRef.current?.focus(); }}><Search size={18} /></button>
           <button type="button" onClick={() => { const media = mediaRef.current; if (media) { media.muted = !media.muted; if (!media.muted && media.volume === 0) media.volume = 0.5; setMuted(media.muted); setVolume(media.volume); } }} aria-label={muted || volume === 0 ? t("取消静音") : t("静音")}>
             {muted || volume === 0 ? <VolumeX size={18} /> : <Volume2 size={18} />}
           </button>
