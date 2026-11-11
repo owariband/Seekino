@@ -600,5 +600,6 @@ def _build_application_services(
         mcp_retrieval=McpRetrievalService(
             library=library, media=media, event_retrieval=event_retrieval,
             parse_persistence=parse_persistence, local_tenant_id=settings.auth.local_tenant_id,
-        ) if settings.auth.mode == "local" else None,
+            public_tenant_id=settings.auth.public_tenant_id if settings.auth.mode == "cloud" else None,
+        ),
     )

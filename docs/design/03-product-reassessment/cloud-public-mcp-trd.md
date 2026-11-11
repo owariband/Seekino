@@ -1,6 +1,6 @@
 # 1. 问题与现状
 
-2026-11-11，剪辑者希望在本机 Claude Code 或 Codex 的同一会话里使用 Seekino Cloud 上的 MyGO 和本地素材。分支 `feat/cloud-public-mcp`，目标 `dev`，PR 创建后回填。[本机 MCP](mcp-access-trd.md) 已经使用 Python SDK 注册四个工具。Cloud 启动跳过检索服务与协议应用，公网 Nginx 也只将 `/api` 和 `/healthz` 转给后端。文档的添加命令指向安装者自己的回环地址。
+2026-11-11，剪辑者希望在本机 Claude Code 或 Codex 的同一会话里使用 Seekino Cloud 上的 MyGO 和本地素材。分支 `feat/cloud-public-mcp`，目标 `dev`，[PR #106](https://github.com/owariband/Seekino/pull/106)。[本机 MCP](mcp-access-trd.md) 已经使用 Python SDK 注册四个工具。Cloud 启动跳过检索服务与协议应用，公网 Nginx 也只将 `/api` 和 `/healthz` 转给后端。文档的添加命令指向安装者自己的回环地址。
 
 公开目录曾通过普通游客会话列出 MyGO 的 13 集，第一集播放端点响应字节范围请求。这个结果只验证了 Web 取材基础。本机协议测试验证了工具发现，同时复现 Cloud 模式不可用。
 
@@ -31,4 +31,12 @@ Cloud 首版面向配置的公共租户（含平台发布的 MyGO）。用户沿
 
 # 6. 结果验收与闭环
 
-以本机协议兼容性、云端协议及访问范围、真实 MyGO 取片三个结果分别判断。初稿阶段已验证基线，实施、发布和公网试点待验证。验收证据关联[工作台](../../dev/workbench.html)及 [devlog](../../dev/devlog.md)。
+以本机协议兼容性、云端协议及访问范围、真实 MyGO 取片三个结果分别判断。已实现并通过隔离回归，生产待发布。验收证据关联[工作台](../../dev/workbench.html)及 [devlog](../../dev/devlog.md)。
+
+2026-11-11 验证所用基线为 `6ac788f8`。Cloud 通过 `POST /api/auth/mcp-token` 为普通游客或现有会话签发专用 Bearer，账号版本和到期时间均沿用身份系统。平台发布状态和 READY 条件在检索、证据和取片时校验。片段下载凭据绑定来源和区间，最长有效 300 秒。无浏览器 Cookie 的下载器已在隔离环境取得 H.264/AAC 1 秒 MP4；旧链接在下架后返回 404。
+
+| 验收环境 | 结果 |
+| --- | --- |
+| Python 协议、认证、媒体、应用装配及常规 API 回归 | 353 通过，7 项依赖真实 Redis 的用例跳过 |
+| 真实已部署的 Web 播放 API | 普通游客找到公开 MyGO 全 13 集，EP04 的 939188–943901 ms 样片经 FFprobe 确认为 H.264 + AAC、4.713 秒 |
+| 公网新 MCP | 部署前握手仍为 405 HTML，待发布后实测 |
