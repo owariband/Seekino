@@ -4,8 +4,8 @@
 
 <h1 align="center">Seekino</h1>
 
-<p align="center"><strong>Parse a video once. Find, jump and ask inside it like text, forever after.</strong></p>
-<p align="center">A personal video library: natural-language and image search, clip-level answers, and every result traced back to the original timestamp.</p>
+<p align="center"><strong>Ctrl+F for video</strong></p>
+<p align="center">AI video search: search what you see like text, and jump straight to that second.</p>
 
 <p align="center">
   English · <a href="README.md">简体中文</a>
@@ -30,7 +30,7 @@
 - **Courses:** one sentence, and you find the point you want in a dozen seconds, with no speed-watching
 - **Editing:** one piece of footage, parsed once and reused again and again, building your personal editing library
 
-Seekino gives you flexible video positioning: it recalls the clips you need, with the source video and time range, so you can always check against the original.
+Seekino recalls the clips you need, with the source video and time range, so you can always check against the original.
 
 <p align="center">
   <img src="docs/architecture/fig01.png" width="960" alt="From remembering a moment to a verifiable clip" />
