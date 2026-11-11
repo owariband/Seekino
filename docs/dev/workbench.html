@@ -5234,6 +5234,38 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "url": "https://github.com/owariband/Seekino/pull/106"
     }
    ]
+  },
+  {
+   "id": "CLOUD-EMBEDDING-01",
+   "title": "GPU 离线时 Cloud Chat 仍可检索",
+   "category": "search",
+   "type": "requirement",
+   "status": "verifying",
+   "priority": "P0",
+   "description": "查询向量走本机 Qwen，解析索引按 Cloud 配置优先 GPU、回退 CPU。",
+   "next": "核对 CPU 实例状态和公网两条原问题的最终回答。",
+   "verification": "云上查询和文档回退均返回 1024 维；公网 MyGO 已受理，随后 HTTPS 与 SSH 超时。",
+   "updatedAt": "2026-11-11",
+   "tags": [
+    "检索",
+    "Cloud"
+   ],
+   "related": [
+    "MOD-CHAT"
+   ],
+   "branch": "fix/cloud-embedding-routing",
+   "links": [
+    {
+     "label": "设计与验收",
+     "kind": "trd",
+     "url": "https://github.com/owariband/Seekino/blob/fix/cloud-embedding-routing/docs/design/03-product-reassessment/cloud-embedding-routing-trd.md"
+    },
+    {
+     "label": "PR #112",
+     "kind": "pr",
+     "url": "https://github.com/owariband/Seekino/pull/112"
+    }
+   ]
   }
  ]
 }</script>

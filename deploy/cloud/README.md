@@ -60,6 +60,8 @@ model_sources:
       - http://127.0.0.1:18845
 ```
 
+已经使用管理设置的 Cloud 实例可把生效模型文件保存在数据卷 `/data/config/cloud/models.yaml`。修改 API 容器的 `SEEKINO_MODEL_CONFIG` 所指文件，并核对通过该配置构造的查询和文档调用。长文档回退时，示例云机将 `models.embedding.request_timeout_seconds` 配为 360 秒。
+
 [Cloud Compose 示例](compose.embedding.example.yaml) 使用 llama.cpp b12283，与 API 共享 loopback。CPU 副本限两核、1600 MiB，使用同一份 Qwen3-Embedding-0.6B-Q8_0.gguf（SHA-256 `06507c7b42688469c4e7298b0a1e16deff06caf291cf0a5b278c308249c3e439`）。设置 `SEEKINO_EMBEDDING_GGUF` 为宿主机权重路径，镜像须提供 llama-server 入口和 Python 健康检查。替换 API 时用同一条 Compose 命令更新 `api embedding`。GPU 启动后，由原有转发提供 API 内的 18843；只有这个端点实际可达才会接手文档。
 
 

@@ -2879,3 +2879,7 @@ micrograd v5 共 146 块，整集 90 分 04.884 秒。调度反复锁取候选�
 ### MCP-CLOUD-01 · Cloud 启动跳过 MCP，剪辑端无法获取已公开的系列
 
 2026-11-11，Cloud Web 能读取 MyGO 的 13 集，公网 MCP 握手却返回 405 HTML。启动装配仅构造本机检索服务，公网代理也未转发协议入口。验收须从标准客户端列出平台公开系列、核对版本化证据并下载带音视频的指定区间，另核对私有系列、下架和本机兼容性。[专项设计](../design/03-product-reassessment/cloud-public-mcp-trd.md) · [工作台](workbench.html)
+
+### CLOUD-EMBEDDING-01 · GPU 离线时检索丢失查询向量
+
+Cloud 两次游客验收在 Qwen 查询编码阶段失败，分别耗时 396 秒和 123 秒。GPU 离线时，本机同权重副本现已通过查询和文档回退调用。真实 MyGO 重放遇到整站 HTTPS 与 SSH 超时，尚未取得最终答案。验收要求两条原题均返回可回看的片段并且检索工具成功。[设计与实测](../design/03-product-reassessment/cloud-embedding-routing-trd.md) · [工作台](workbench.html)
