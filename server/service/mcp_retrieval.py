@@ -141,9 +141,10 @@ class McpRetrievalService:
             truncated |= card["evidence_truncated"]
         next_offset = offset + len(items)
         more = next_offset < len(found.matches)
-        warnings = [str(value)[:500] for value in result.warnings[:8]]
-        if self._public and warnings:
-            warnings = ["Some retrieval channels were unavailable."]
+        if self._public:
+            warnings = ["Results cover only part of the requested footage."] if result.partial else []
+        else:
+            warnings = [str(value)[:500] for value in result.warnings[:8]]
         if truncated:
             warnings.append("Inspect source media for abbreviated details. Follow next_cursor for more ranked results when present.")
         return {
