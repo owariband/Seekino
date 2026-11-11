@@ -12,7 +12,7 @@ from ..constants.identity import LOCAL_USER_ID
 from ..model.identifiers import derive_series_id
 from ..model.dto.libraryDTO import SeriesState, VideoData, VideoSummaryState
 from ..model.video import SeriesVisibility
-from ..repository.library import LibraryRepository, VideoEpisodeOrderConflictError
+from ..repository.library import LibraryRepository, SeriesNotFoundError, VideoEpisodeOrderConflictError
 from ..storage.artifact import ArtifactStore
 from ..utils.validation import canonical_uuid, normalize_language_tag_hint, require_nonempty_text
 from ..utils.time import now_utc
@@ -245,6 +245,11 @@ class LibraryService:
             require_nonempty_text(tenant_id, "tenant_id"),
             owner_user_id=owner_user_id,
         )
+
+    def require_public_ready_series(self, series_id: str, *, tenant_id: str, owner_user_id: str) -> None:
+        series = self.get_series(series_id, tenant_id=tenant_id, owner_user_id=owner_user_id)
+        if series.visibility != SeriesVisibility.PUBLIC or not series.publisher_active or series.status != "READY":
+            raise SeriesNotFoundError("当前公开素材库中没有此系列")
 
     def get_video(
         self,

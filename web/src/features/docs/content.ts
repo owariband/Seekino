@@ -6,6 +6,16 @@ export { GITHUB_URL };
 const SETUP_GUIDE = `${GITHUB_URL}/blob/main/deploy/local-setup.md`;
 const README_EN = `${GITHUB_URL}/blob/main/README.en.md`;
 
+const pageOrigin = typeof window === "undefined" ? "" : window.location.origin;
+const cloudOrigin = /^https:\/\/[a-z0-9.-]+(?::[0-9]+)?$/i.test(pageOrigin)
+  ? pageOrigin : "https://your-seekino-cloud.example";
+const cloudToken = [
+  `SEEKINO_CLOUD='${cloudOrigin}'`,
+  'SEEKINO_MCP_TOKEN=$(curl -fsS -X POST "$SEEKINO_CLOUD/api/auth/mcp-token" | python3 -c \'import json,sys; print(json.load(sys.stdin)["accessToken"])\') && export SEEKINO_MCP_TOKEN',
+].join("\n");
+const claudeCloud = `claude mcp add --transport http seekino_cloud "$SEEKINO_CLOUD/mcp" --header 'Authorization: Bearer \${SEEKINO_MCP_TOKEN}'`;
+const codexCloud = 'codex mcp add seekino_cloud --url "$SEEKINO_CLOUD/mcp" --bearer-token-env-var SEEKINO_MCP_TOKEN';
+
 // Community links arrive later; [xxx] marks every spot still waiting for one.
 const COMMUNITY_PLACEHOLDER = "[xxx]";
 
@@ -85,10 +95,10 @@ const zh: DocsContent = {
           ["搜索、观看、追问", "支持", "支持"],
           ["账号", "游客即可使用；登录后保存对话", "本机使用，无需注册"],
           ["模型与费用", "平台提供", "自选 Ark、DeepSeek、Kimi 等，费用走你自己的账户，每次调用都记录 token"],
-          ["让 Claude Code / Codex 取素材", "暂不开放", "支持"],
+          ["让 Claude Code / Codex 取素材", "平台公开系列，可下载最多 60 秒的片段", "本机素材库"],
           ["数据在哪", "平台服务器", "视频和数据库都留在你的电脑上"],
         ] },
-        { kind: "p", text: "Cloud 服务器规格有限，所以上传、个人资料库和 Agent 接入暂时只在本地版提供。" },
+        { kind: "p", text: "上传和个人资料库目前在本地版提供。" },
         { kind: "next", items: [{ label: "部署本地版", page: "self-host" }] },
       ],
     },
@@ -119,8 +129,10 @@ const zh: DocsContent = {
       blocks: [
         { kind: "h", text: "接入" },
         { kind: "steps", items: [
-          { title: "在电脑上直接运行 Seekino", body: "Agent 接入只接受本机连接，需要以宿主机方式运行 API：按 README 的“宿主机开发”准备好环境，执行 ./start.sh。" },
-          { title: "把 Seekino 加给你的 Agent", body: "任选一个。", code: "claude mcp add --transport http seekino http://127.0.0.1:9621/mcp\n# 或\ncodex mcp add seekino --url http://127.0.0.1:9621/mcp" },
+          { title: "获取 Cloud 只读凭据", body: "在 Cloud 站点复制命令，到剪辑终端运行。游客可读取已发布的平台系列，凭据到期后重跑这一步。", code: cloudToken },
+          { title: "Claude Code 接入 Cloud", body: "使用 Claude 时运行，然后从这个终端打开 Claude Code。", code: claudeCloud },
+          { title: "Codex 接入 Cloud", body: "使用 Codex 时运行，然后从这个终端打开 Codex。", code: codexCloud },
+          { title: "同时使用本机素材", body: "在宿主机启动本地 API，再为正在使用的客户端添加第二个服务。", code: "claude mcp add --transport http seekino_local http://127.0.0.1:9621/mcp\n# 或\ncodex mcp add seekino_local --url http://127.0.0.1:9621/mcp" },
           { title: "像交代同事一样说", body: "例如：“在 Seekino 里找出 Anon 咬牙切齿的镜头，核对来源后把片段存到 clips/。”" },
         ] },
         { kind: "h", text: "Agent 能用的四个工具" },
@@ -128,7 +140,7 @@ const zh: DocsContent = {
           { name: "list_series", body: "看看素材库里有哪些系列。" },
           { name: "retrieve", body: "用一句描述检索片段，返回原片与时间范围。" },
           { name: "browse_events", body: "按时间顺序浏览一集里发生了什么。" },
-          { name: "read_evidence", body: "核对某个片段的上下文，并拿到原片的下载地址。" },
+          { name: "read_evidence", body: "核对原片上下文。给出起止毫秒后，可取得该区间的 MP4 下载地址。" },
         ] },
         { kind: "next", items: [{ label: "接下来要做什么", page: "roadmap" }] },
       ],
@@ -141,7 +153,6 @@ const zh: DocsContent = {
         { kind: "roadmap", status: "计划中", items: [
           { title: "人物出场全量列举", body: "说出一个角色，列出 TA 在整部作品里出现的每一段。" },
           { title: "Cloud 个人资料库", body: "登录后直接在 Cloud 上传、解析自己的视频，不用自己部署。" },
-          { title: "Cloud 接入 Agent", body: "用访问令牌把 Cloud 上的素材库接入 Claude Code / Codex。" },
           { title: "剪辑参考复用", body: "记住解析过的运镜和动效，让 Agent 下次剪辑直接用上。" },
         ] },
         { kind: "p", text: "这些都还没有排期。你最想先要哪一个？来交流群告诉我们，你的意见可能直接影响我们先做哪一个。" },
@@ -200,10 +211,10 @@ const en: DocsContent = {
           ["Search, watch, ask", "Yes", "Yes"],
           ["Account", "Use it as a guest; sign in to keep your conversations", "Runs on your machine, no sign-up"],
           ["Models and cost", "Provided by the platform", "Your choice of Ark, DeepSeek, Kimi and more; billed to your own account, with tokens recorded for every call"],
-          ["Footage for Claude Code / Codex", "Not available yet", "Yes"],
+          ["Footage for Claude Code / Codex", "Public series and clips up to 60 seconds", "Local video library"],
           ["Where your data lives", "Platform servers", "Videos and databases stay on your computer"],
         ] },
-        { kind: "p", text: "The Cloud server has limited capacity, so uploads, personal libraries and agent access are Local-only for now." },
+        { kind: "p", text: "Uploads and personal video libraries are available in the Local version." },
         { kind: "next", items: [{ label: "Deploy the Local version", page: "self-host" }] },
       ],
     },
@@ -234,8 +245,10 @@ const en: DocsContent = {
       blocks: [
         { kind: "h", text: "Connect" },
         { kind: "steps", items: [
-          { title: "Run Seekino directly on your computer", body: "Agent access only accepts local connections, so the API has to run on the host: set up host development as described in the README, then run ./start.sh." },
-          { title: "Add Seekino to your agent", body: "Pick one.", code: "claude mcp add --transport http seekino http://127.0.0.1:9621/mcp\n# or\ncodex mcp add seekino --url http://127.0.0.1:9621/mcp" },
+          { title: "Get a Cloud read token", body: "Copy from your Cloud site and run in your editing terminal. Guests can read published platform series. Run it again when the token expires.", code: cloudToken },
+          { title: "Connect Claude Code to Cloud", body: "Run this if you use Claude, then start Claude Code in this terminal.", code: claudeCloud },
+          { title: "Connect Codex to Cloud", body: "Run this if you use Codex, then start Codex in this terminal.", code: codexCloud },
+          { title: "Also use local footage", body: "Start the local API on your computer and add this second server to your client.", code: "claude mcp add --transport http seekino_local http://127.0.0.1:9621/mcp\n# or\ncodex mcp add seekino_local --url http://127.0.0.1:9621/mcp" },
           { title: "Ask the way you'd brief a colleague", body: "For example: \"Find the shots of Anon gritting her teeth in Seekino, check the sources, and save the clips to clips/.\"" },
         ] },
         { kind: "h", text: "Four tools your agent can use" },
@@ -243,7 +256,7 @@ const en: DocsContent = {
           { name: "list_series", body: "See which series are in the library." },
           { name: "retrieve", body: "Search clips with a description; returns the source video and time range." },
           { name: "browse_events", body: "Walk through what happens in an episode, in order." },
-          { name: "read_evidence", body: "Check a clip's context and get a download link for the original." },
+          { name: "read_evidence", body: "Read source context and supply start and end times in milliseconds to download an MP4 clip." },
         ] },
         { kind: "next", items: [{ label: "What's next", page: "roadmap" }] },
       ],
@@ -256,7 +269,6 @@ const en: DocsContent = {
         { kind: "roadmap", status: "Planned", items: [
           { title: "Every appearance of a character", body: "Name a character and get every part of the series they appear in." },
           { title: "Personal libraries on Cloud", body: "Sign in to upload and parse your own videos on Cloud, with nothing to deploy." },
-          { title: "Agents on Cloud", body: "Connect your Cloud library to Claude Code / Codex with an access token." },
           { title: "Reusable editing references", body: "Remember the camera moves and motion Seekino has parsed, so an agent can reuse them in the next edit." },
         ] },
         { kind: "p", text: "None of these have dates yet. Which one do you want first? Tell us in the community group; one message from you can decide what we build next." },

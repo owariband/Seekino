@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-11T12:28:20+08:00",
+ "updatedAt": "2026-11-11T18:21:50+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 35,
+ "revision": 36,
  "categories": [
   {
    "id": "parse",
@@ -5199,6 +5199,39 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "label": "PR #87",
      "url": "https://github.com/owariband/Seekino/pull/87",
      "kind": "pr"
+    }
+   ]
+  },
+  {
+   "id": "MCP-CLOUD-01",
+   "title": "剪辑机通过公网 MCP 获取平台公开片段",
+   "category": "creation",
+   "type": "requirement",
+   "status": "verifying",
+   "priority": "P1",
+   "description": "让本机 Agent 同时连接公开系列和本机库。",
+   "next": "按 main 发布流程验证公网握手和 MyGO 取片。",
+   "verification": "隔离验证四个工具、范围授权和 H.264/AAC 下载。线上 Web 样片已取回，公网 MCP 待发布。",
+   "updatedAt": "2026-11-11",
+   "tags": [
+    "MCP",
+    "剪辑"
+   ],
+   "related": [
+    "B15",
+    "MOD-CREATION"
+   ],
+   "branch": "feat/cloud-public-mcp",
+   "links": [
+    {
+     "label": "Cloud MCP TRD",
+     "kind": "trd",
+     "url": "https://github.com/owariband/Seekino/blob/dev/docs/design/03-product-reassessment/cloud-public-mcp-trd.md"
+    },
+    {
+     "label": "PR #106",
+     "kind": "pr",
+     "url": "https://github.com/owariband/Seekino/pull/106"
     }
    ]
   }
