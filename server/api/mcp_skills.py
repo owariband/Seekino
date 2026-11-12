@@ -1,7 +1,6 @@
 """Publish packaged editing guides and supporting files through MCP Resources and SEP-2640."""
 
 from hashlib import sha256
-from importlib.resources import files
 from pathlib import Path
 
 import yaml
@@ -22,18 +21,15 @@ class EditingSkill(Extension):
         self._resources = []
         self.entries = []
         packages = {
-            "seekino-editing-materials": ("SKILL.md", "scripts/split_frame.py", "camera/viewport-v1.mjs"),
+            "seekino-editing-materials": ("SKILL.md", "scripts/split_frame.py"),
             "video-shotcraft": ("SKILL.md", "LICENSE", "UPSTREAM.json"),
         }
-        mime_types = {".md": "text/markdown", ".py": "text/x-python", ".mjs": "text/javascript", ".json": "application/json"}
+        mime_types = {".md": "text/markdown", ".py": "text/x-python", ".json": "application/json"}
         for name, filenames in packages.items():
             manifest = []
             guide = None
             for filename in filenames:
-                # Expose the canonical portable engine module without copying its implementation.
-                source = (files("engine.parsev2").joinpath("viewport-v1.mjs") if filename == "camera/viewport-v1.mjs"
-                          else directory / name / filename)
-                raw = source.read_bytes()
+                raw = (directory / name / filename).read_bytes()
                 uri = f"skill://{name}/{filename}"
                 resource = TextResource(uri=uri, name=filename,
                                         mime_type=mime_types.get(Path(filename).suffix, "text/plain"), text=raw.decode("utf-8"))

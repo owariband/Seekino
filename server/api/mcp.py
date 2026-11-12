@@ -181,7 +181,7 @@ def create_mcp_app(service: McpRetrievalService, *, auth_mode: str, auth: AuthSe
         extensions=[editing_skill()],
         instructions=(
             "For editing, read skill://seekino-editing-materials/SKILL.md with resources/read. "
-            "It explains shot selection, style references, camera speed curves, local cutouts and saving feedback. Read skill://video-shotcraft/SKILL.md for the upstream shot library and complete local installation. "
+            "It explains shot selection, style and motion references, local cutouts and saving feedback. Read skill://video-shotcraft/SKILL.md for the upstream shot library and complete local installation. "
             "Templates belong to series. All series viewers share versions and feedback. Editors with a write-capable credential can contribute. "
             "Find source performances with retrieve. For editing techniques and shot changes, use find_edit_templates, "
             "play its media.play_url and inspect the source frames. get_style_card returns a whole-film card "

@@ -14,7 +14,7 @@ This MCP entry publishes the guide, license and pinned upstream metadata. Instal
 npx skills add https://github.com/Vincentwei1021/video-shotcraft/tree/6700db2ba80572ebc777b99d72049679fed9840c -a claude-code -a codex -g -y
 ```
 
-Use Seekino MCP for authorized footage, source references and series-shared templates. Seekino's editing guide offers camera timing references and suggestions, including an optional Gaussian-shaped velocity curve at `skill://seekino-editing-materials/camera/viewport-v1.mjs`. Consider it according to the shot's intent, rhythm and source material; the guide documents parameters and units. Upstream motion helpers already support velocity-driven stretch, smear and blur. Consider those treatments when they fit the shot, with intensity derived from current speed.
+Use Seekino MCP for authorized footage, source references and series-shared templates. Seekino's editing guide offers motion references and suggestions, including bell-shaped speed and S-shaped position. Author the motion in the editing project's code according to the shot's intent, rhythm and source material. Upstream motion helpers already support velocity-driven stretch, smear and blur; reuse or adapt them when they fit the shot, with intensity derived from current speed.
 
 The full upstream code, media and rendering dependencies retain their own notices and terms. Source, licensing and installation details are in `UPSTREAM.json` and `LICENSE` in this MCP package. If you find the project useful, consider starring the upstream repository.
 <!-- Seekino integration end -->
