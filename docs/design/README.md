@@ -114,6 +114,7 @@ Event / Sub-Chunk 的实施入口是 [sub-chunk-trd.md](02-agent-harness/sub-chu
 | 观看回答交付 | [watch-answer-delivery-trd.md](03-product-reassessment/watch-answer-delivery-trd.md) | 修复：实时证据不提交视频卡、失败表述准确、回答长度与用户可见术语受控（LOOP-06 / C22 / C25）。 |
 | 对话延迟创建 | [chat-lazy-conversation-trd.md](03-product-reassessment/chat-lazy-conversation-trd.md) | 修复：打开页面、新对话、删除补位不再创建空对话，首次发送时才创建；实现完成，待合并。 |
 | Chat 正文流式与真实 FTT | [chat-streaming-trd.md](03-product-reassessment/chat-streaming-trd.md) | 承接课程 PRD：正文增量交付、调用来源、浏览器采证及非流式/缓冲反例；关联 #18 / #25。 |
+| 聊天页前端性能 | [chat-frontend-performance-trd.md](03-product-reassessment/chat-frontend-performance-trd.md) | 连接状态与传输收尾、历史 Markdown 渲染隔离、滚动及 Kino 的同条件对照；对应 #126，当前执行状态见工作台 CHAT-PERF-01。 |
 | Chat 模型重试提示 | [设计](03-product-reassessment/chat-model-retry-status-trd.md) | 首次响应超时后的重试次数与恢复反馈。 |
 | Chat 工具与证据交付 | [agent-chat-delivery-contract.md](01-mvp/agent-chat-delivery-contract.md) | 交付合同与演进记录：Query / Evaluator、业务工具、证据核准及答案交付；Event 工具结合 Sub-Chunk TRD 阅读。 |
 | 网页搜索供应商 | [deepseek-web-search-trd.md](03-product-reassessment/deepseek-web-search-trd.md) | 主 TRD：可选免 key DDGS / DeepSeek API、查询边界、错误处理与真实入口验证。 |

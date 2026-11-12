@@ -99,6 +99,10 @@ Chat 正文流式与计量：[2026-11-01 实施与隔离验收](server/chat-stre
 - [model-usage-handoff-20261008.md](server/model-usage-handoff-20261008.md)
 - [user-tenant-handoff-20261010.md](server/user-tenant-handoff-20261010.md)
 
+## Web
+
+[2026-11-12 聊天页重复解析与连接状态验收](web/chat-frontend-performance-20261112.md)：同生产构建和固定 SSE 下对照历史 Markdown 执行次数、输入与 DOM 观察延迟、Kino 状态和滚动；包含 658 项单测及一个在基线同样失败的布局断言，真实线上效果另验。
+
 ## 维护约定
 
 1. 新报告放到与实际负责模块对应的路径，如 docs/report/gateway/bridge/；不要在代码模块下重新建立 report_docs。
