@@ -65,6 +65,16 @@ a.episode:hover > strong { color: var(--teal-deep); }
 .state { display: grid; justify-items: center; gap: 16px; text-align: center; margin: 0; padding: 48px var(--series-gutter); color: var(--ink-soft); }
 .empty { color: var(--ink-soft); font-size: .9rem; }
 @media (max-width: 1100px) { .episodeGrid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
-@media (max-width: 760px) { .hero { min-height: 560px; padding-bottom: 70px; } .heroContent { width: 100%; padding-top: 190px; } .hero::before { background: linear-gradient(0deg, #10251f 8%, rgb(5 16 13 / 85%) 38%, rgb(5 16 13 / 8%) 82%); } .hero h1 { font-size: clamp(2.4rem, 8vw, 3.5rem); } .overview { grid-template-columns: minmax(0, 1fr); gap: 12px; padding-top: 12px; padding-bottom: 32px; } .episodeGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px 16px; } .previewPlay { opacity: 1; width: 36px; height: 36px; } }
-@media (max-width: 480px) { .meta { font-size: .78rem; } .actions { gap: 10px; } .play, .browse { min-height: 46px; padding-inline: 18px; font-size: .85rem; } .episodeGrid { grid-template-columns: minmax(0, 1fr); } .episode > strong { font-size: .9rem; } .episodes h2 { font-size: 1.5rem; } }
+@media (max-width: 760px) { .hero { min-height: 560px; padding-bottom: 70px; } .heroContent { width: 100%; padding-top: 190px; } .hero::before { background: linear-gradient(0deg, #10251f 8%, rgb(5 16 13 / 85%) 38%, rgb(5 16 13 / 8%) 82%); } .hero h1 { font-size: clamp(2.4rem, 8vw, 3.5rem); } .overview { grid-template-columns: minmax(0, 1fr); gap: 12px; padding-top: 12px; padding-bottom: 32px; } .episodeGrid { grid-template-columns: minmax(0, 1fr); gap: 14px; } }
+@media (max-width: 760px) {
+  .episode { grid-template-columns: clamp(112px, 32vw, 128px) minmax(0, 1fr); grid-template-rows: min-content 1fr; gap: 4px 12px; }
+  .preview { grid-column: 1; grid-row: 1 / span 2; width: 100%; }
+  .episode > strong { grid-column: 2; grid-row: 1; min-width: 0; font-size: .88rem; line-height: 1.4; }
+  .episode > small { grid-column: 2; grid-row: 2; align-self: start; min-width: 0; overflow-wrap: anywhere; }
+  .episodeNumber { top: 5px; bottom: auto; left: 5px; padding: 2px 5px; }
+  .duration { top: auto; bottom: 5px; right: 5px; padding: 2px 5px; }
+  .previewPlay { top: 5px; right: 5px; width: 24px; height: 24px; padding-left: 0; opacity: 1; }
+  .previewPlay svg { width: 12px; height: 12px; }
+}
+@media (max-width: 480px) { .meta { font-size: .78rem; } .actions { gap: 10px; } .play, .browse { min-height: 46px; padding-inline: 18px; font-size: .85rem; } .episodes h2 { font-size: 1.5rem; } }
 @media (prefers-reduced-motion: reduce) { .previewPlay { transition: none; } }

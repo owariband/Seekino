@@ -101,6 +101,8 @@ Chat 正文流式与计量：[2026-11-01 实施与隔离验收](server/chat-stre
 
 ## Web
 
+[2026-11-12 移动端文档入口与选集密度](web/mobile-docs-episodes-20261112/README.md)：指定Claude Opus 5.5的mini源码指导、DS Flash实施及9场景同条件截图；390px下13集总高减少67.67%，真实Cloud与真机效果待发布后验证。
+
 [2026-11-12 聊天页重复解析与连接状态验收](web/chat-frontend-performance-20261112.md)：同生产构建和固定 SSE 下对照历史 Markdown 执行次数、输入与 DOM 观察延迟、Kino 状态和滚动；包含 658 项单测及一个在基线同样失败的布局断言，真实线上效果另验。
 
 ## 维护约定

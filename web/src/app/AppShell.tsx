@@ -223,8 +223,8 @@ export function AppShell() {
             <ArrowUpFromLine size={19} strokeWidth={1.7} aria-hidden="true" /><span>{canUpload ? activeCount > 0 ? `${overallProgress}%` : t("上传") : t(!signedIn ? "上传" : "我的资料")}</span>
             {canUpload && activeCount > 0 ? <i style={{ width: `${overallProgress}%` }} aria-hidden="true" /> : null}
           </button>
-          <NavLink className={styles.iconButton} to="/docs" aria-label={t("使用文档")} title={t("使用文档")}>
-            <BookOpen size={20} strokeWidth={1.7} aria-hidden="true" />
+          <NavLink className={clsx(styles.iconButton, styles.docsLink)} to="/docs" aria-label={t("使用文档")} title={t("使用文档")}>
+            <BookOpen size={20} strokeWidth={1.7} aria-hidden="true" /><span className={styles.docsLabel}>{t("文档")}</span>
           </NavLink>
           <a className={styles.iconButton} href={GITHUB_URL} target="_blank" rel="noreferrer" aria-label={t("GitHub 仓库")} title={t("GitHub 仓库")}>
             <GitHubMark size={19} />

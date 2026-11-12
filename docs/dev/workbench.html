@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-12T14:15:33+08:00",
+ "updatedAt": "2026-11-12T16:17:26+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 44,
+ "revision": 45,
  "categories": [
   {
    "id": "parse",
@@ -5456,6 +5456,48 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "label": "发布 PR #128",
      "url": "https://github.com/owariband/Seekino/pull/128",
      "kind": "pr"
+    }
+   ]
+  },
+  {
+   "id": "MOBILE-UI-01",
+   "title": "手机文档入口与剧集列表密度",
+   "category": "library",
+   "type": "requirement",
+   "status": "verifying",
+   "priority": "P1",
+   "description": "手机顶栏隐藏使用文档，系列选集沿用全宽大图，首次引导与连续选集困难。限定现有文档入口与760px以下选集布局，保留青瓷风格、桌面网格及播放合同。",
+   "next": "评审PR #129与截图；合并并按独立main发布流程交付后，再用实际手机和Cloud素材核对入口与选集效果。",
+   "verification": "DS Flash实施4个前端展示文件，保留青瓷与桌面网格。76项相关单测、8项浏览器回归、类型与构建通过；9场景同条件对照：390px单集70.19px，13集3342.20→1080.44px（减少67.67%），600px列表窗口2→7整集；文档69.52×44px直接可见，零横向溢出/JS异常/意外API。未合并、未发布，未验证真机与真实Cloud播放。",
+   "updatedAt": "2026-11-12",
+   "tags": [
+    "UI",
+    "移动端"
+   ],
+   "related": [
+    "MOD-LIBRARY"
+   ],
+   "branch": "fix/mobile-docs-episodes",
+   "links": [
+    {
+     "label": "PR #129",
+     "kind": "pr",
+     "url": "https://github.com/owariband/Seekino/pull/129"
+    },
+    {
+     "label": "TRD",
+     "kind": "trd",
+     "url": "https://github.com/owariband/Seekino/blob/fix/mobile-docs-episodes/docs/design/03-product-reassessment/mobile-docs-episodes-trd.md"
+    },
+    {
+     "label": "报告与截图",
+     "kind": "source",
+     "url": "https://github.com/owariband/Seekino/blob/fix/mobile-docs-episodes/docs/report/web/mobile-docs-episodes-20261112/README.md"
+    },
+    {
+     "label": "devlog",
+     "kind": "source",
+     "url": "https://github.com/owariband/Seekino/blob/fix/mobile-docs-episodes/docs/dev/devlog.md#devlog-mobile-docs-episodes-20261112"
     }
    ]
   }

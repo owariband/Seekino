@@ -147,6 +147,7 @@ Event / Sub-Chunk 的实施入口是 [sub-chunk-trd.md](02-agent-harness/sub-chu
 | 游客观看问答的执行预算 | [guest-chat-turn-budget-trd.md](03-product-reassessment/guest-chat-turn-budget-trd.md) | 每 IP 的请求额度与单条回答的模型、工具调用分别核验。 |
 | 云端无 SMTP 的游客启动 | [cloud-guest-without-smtp-trd.md](03-product-reassessment/cloud-guest-without-smtp-trd.md) | 邮件能力可选，游客身份仍保留签名、Redis、CSRF 与权限校验。 |
 | Cloud 使用文档与推广入口 | [cloud-user-docs-trd.md](03-product-reassessment/cloud-user-docs-trd.md) | `/docs` 归站内用户文档，Swagger 迁到 `/api/docs`。 |
+| 移动端文档与紧凑选集 | [mobile-docs-episodes-trd.md](03-product-reassessment/mobile-docs-episodes-trd.md) | 手机首屏文档入口、左图右文选集与同条件密度对照；关联 #129。 |
 | Apple 式视觉刷新 | [apple-style-refresh-trd.md](03-product-reassessment/apple-style-refresh-trd.md) | 字体改为 SF / 自托管 Inter，标签去等宽；中性色板的后续恢复见下一项。 |
 | 青瓷背景配色恢复 | [restore-celadon-palette-trd.md](03-product-reassessment/restore-celadon-palette-trd.md) | 恢复 PR #90 前的背景、表面和文字配色，保留字体、动效与菜单。 |
 | SMTP 决定登录入口 | [smtp-login-availability-trd.md](03-product-reassessment/smtp-login-availability-trd.md) | 身份接口传递邮件能力；未配置时提前说明登录注册尚未开放，保留游客体验。 |
