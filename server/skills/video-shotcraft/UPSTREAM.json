@@ -1,0 +1,10 @@
+{
+  "repository": "https://github.com/Vincentwei1021/video-shotcraft",
+  "commit": "6700db2ba80572ebc777b99d72049679fed9840c",
+  "author": "Vincentwei1021",
+  "license": "Apache-2.0",
+  "skill_sha256": "9e6b2d68f50cae3d5405178d35d2bd305ee2045691fa726b63bae3ab8bb62e6b",
+  "license_sha256": "b2ce9877a55547ada9b870150664d1468ff777e67cc9888806a73927d31c5771",
+  "complete_install_command": "npx skills add https://github.com/Vincentwei1021/video-shotcraft/tree/6700db2ba80572ebc777b99d72049679fed9840c -a claude-code -a codex -g -y",
+  "packaging": "Upstream guide plus a marked Seekino integration note. Complete rendering resources install from the pinned upstream repository."
+}

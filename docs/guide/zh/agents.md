@@ -66,6 +66,18 @@
 npx skills add https://github.com/owariband/Seekino/tree/main/server/skills/seekino-editing-materials -a claude-code -a codex -g -y
 ```
 
+## 镜头库与运动参考
+
+MCP 还提供 `skill://video-shotcraft/SKILL.md`，保留上游原指引、Apache-2.0 许可证和固定版本信息。在剪辑机上完整安装后，Agent 可以读取其镜头卡、demo、模板和工作台，供剪辑时参考。
+
+```sh
+npx skills add https://github.com/Vincentwei1021/video-shotcraft/tree/6700db2ba80572ebc777b99d72049679fed9840c -a claude-code -a codex -g -y
+```
+
+Seekino 剪辑指引提供镜头运动的参考和建议，由 Agent 根据镜头意图、节奏与素材判断如何运用。高斯形速度曲线是可选择的一种方式：起步慢，中段快，到达时静止。通过 `resources/read` 读取 `skill://seekino-editing-materials/camera/viewport-v1.mjs` 可取得可移植模块；选择 `velocity_curve: {kind: "gaussian", sigma: 0.18}` 后可调节快段的集中程度。未选择时沿用原有运动参数。
+
+拉伸、拖影等处理也按镜头需要选用，可以用模块返回的瞬时速度或上游辅助函数控制强度，制作与渲染在本机完成。喜欢这套镜头库，欢迎给 [video-shotcraft](https://github.com/Vincentwei1021/video-shotcraft) 点一个 Star。
+
 ## 接下来
 
 - [接下来要做什么](./roadmap.md)

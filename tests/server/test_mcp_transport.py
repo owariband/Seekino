@@ -166,8 +166,7 @@ def test_modern_skills_manifest_and_legacy_resources_serve_identical_packaged_by
 
     version = "2026-07-28"
     capability = "io.modelcontextprotocol/skills"
-    uri = "skill://seekino-editing-materials/SKILL.md"
-    root = Path(__file__).resolve().parents[2] / "server/skills/seekino-editing-materials"
+    project = Path(__file__).resolve().parents[2]
     with _client() as client:
         def modern(method, **params):
             headers = {"Mcp-Method": method, "MCP-Protocol-Version": version}
@@ -177,18 +176,42 @@ def test_modern_skills_manifest_and_legacy_resources_serve_identical_packaged_by
             return _rpc(client, method, {**params, "_meta": meta}, headers=headers).json()
 
         assert capability in modern("server/discover")["result"]["capabilities"]["extensions"]
-        entry, = modern("skills/list")["result"]["skills"]
-        assert modern("skills/get", uri=uri)["result"]["skill"] == entry
-        assert modern("skills/get", uri=uri + "/absent")["error"]["code"] == -32602
-        assert entry["uri"] == uri and entry["frontmatter"]["name"] == root.name
+        entries = modern("skills/list")["result"]["skills"]
+        assert {entry["frontmatter"]["name"] for entry in entries} == {"seekino-editing-materials", "video-shotcraft"}
         resources = {item["uri"] for item in _rpc(client, "resources/list").json()["result"]["resources"]}
-        assert {r["uri"] for r in entry["resources"]} == resources
-        assert len(resources) == 2
-        for item in entry["resources"]:
-            contents, = _rpc(client, "resources/read", {"uri": item["uri"]}).json()["result"]["contents"]
-            raw = contents["text"].encode()
-            assert raw == (root / item["uri"].removeprefix(f"skill://{root.name}/")).read_bytes()
-            assert item["size"] == len(raw) and item["digest"] == "sha256:" + hashlib.sha256(raw).hexdigest()
+        assert {item["uri"] for entry in entries for item in entry["resources"]} == resources
+        assert len(resources) == 6
+        for entry in entries:
+            name = entry["frontmatter"]["name"]
+            assert entry["uri"] == f"skill://{name}/SKILL.md"
+            assert modern("skills/get", uri=entry["uri"])["result"]["skill"] == entry
+            for item in entry["resources"]:
+                contents, = _rpc(client, "resources/read", {"uri": item["uri"]}).json()["result"]["contents"]
+                raw = contents["text"].encode()
+                filename = item["uri"].removeprefix(f"skill://{name}/")
+                source = (project / "engine/parsev2/viewport-v1.mjs" if filename == "camera/viewport-v1.mjs"
+                          else project / "server/skills" / name / filename)
+                assert raw == source.read_bytes()
+                assert item["size"] == len(raw) and item["digest"] == "sha256:" + hashlib.sha256(raw).hexdigest()
+        assert modern("skills/get", uri="skill://video-shotcraft/absent")["error"]["code"] == -32602
+
+
+def test_upstream_skill_keeps_its_pinned_guide_and_license():
+    import hashlib
+    import json
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2] / "server/skills/video-shotcraft"
+    metadata = json.loads((root / "UPSTREAM.json").read_text())
+    guide = (root / "SKILL.md").read_text()
+    original = re.sub(r"\n<!-- Seekino integration start -->.*?<!-- Seekino integration end -->\n", "", guide, flags=re.S)
+    assert hashlib.sha256(original.encode()).hexdigest() == metadata["skill_sha256"]
+    assert hashlib.sha256((root / "LICENSE").read_bytes()).hexdigest() == metadata["license_sha256"]
+    assert metadata["license"] == "Apache-2.0"
+    assert metadata["repository"] == "https://github.com/Vincentwei1021/video-shotcraft"
+    assert re.fullmatch(r"[0-9a-f]{40}", metadata["commit"])
+    assert "/tree/" + metadata["commit"] in metadata["complete_install_command"]
 
 
 def test_media_absolute_url_cannot_be_supplied_by_service_result():

@@ -38,6 +38,39 @@ function measuredProgress(u, points, easing) {
     + width * s * v * (v * tangent(segment) - s * tangent(segment + 1));
 }
 
+// Complementary error function on x >= 0 (Abramowitz and Stegun 7.1.26).
+// Keep the small tail directly; subtracting erf values loses precision near the shot edges.
+function erfcPositive(x) {
+  if (x === 0) return 1;
+  const t = 1 / (1 + 0.3275911 * x);
+  const series = t * (0.254829592 + t * (-0.284496736 + t * (1.421413741 +
+    t * (-1.453152027 + t * 1.061405429))));
+  return series * Math.exp(-x * x);
+}
+
+// Authored bell-shaped travel: progress is unitless and velocity is progress per millisecond.
+export function gaussianMotionAt(elapsedMs, durationMs, sigma = 0.18) {
+  if (!Number.isFinite(elapsedMs) || !Number.isFinite(durationMs) || durationMs <= 0 ||
+      !Number.isFinite(sigma) || sigma < 0.05 || sigma > 0.5) {
+    throw new RangeError(
+      "A gaussian motion requires finite time, positive duration and sigma in [0.05, 0.5]");
+  }
+  if (elapsedMs <= 0) return {progress: 0, velocity_per_ms: 0};
+  if (elapsedMs >= durationMs) return {progress: 1, velocity_per_ms: 0};
+  const u = elapsedMs / durationMs;
+  const scale = sigma * Math.sqrt(Math.PI / 2);
+  const spread = Math.sqrt(2) * sigma;
+  const baseline = Math.exp(-0.5 * (0.5 / sigma) ** 2);
+  const tail = erfcPositive(0.5 / spread);
+  const total = 2 * (scale * (1 - tail) - baseline * 0.5);
+  const halfTime = Math.min(u, 1 - u);
+  const mass = scale * (erfcPositive((0.5 - halfTime) / spread) - tail) - baseline * halfTime;
+  const halfProgress = Math.min(0.5, Math.max(0, mass / total));
+  const progress = u <= 0.5 ? halfProgress : 1 - halfProgress;
+  const velocity = (Math.exp(-0.5 * ((halfTime - 0.5) / sigma) ** 2) - baseline) / total / durationMs;
+  return {progress, velocity_per_ms: velocity};
+}
+
 export function cameraAt(elapsedMs, params, world, viewport) {
   const {duration_ms, easing, from, to} = params;
   const positive = n => Number.isFinite(n) && n > 0;
@@ -60,7 +93,13 @@ export function cameraAt(elapsedMs, params, world, viewport) {
     case "EASE_IN_OUT": p = (1 - Math.cos(u * Math.PI)) / 2; break;
     default: throw new RangeError("Unsupported easing");
   }
-  if (params.progress_samples) p = measuredProgress(u, params.progress_samples, easing);
+  const curve = params.velocity_curve;
+  if (curve !== undefined) {
+    if (!curve || curve.kind !== "gaussian") throw new RangeError("Unsupported velocity curve");
+    p = gaussianMotionAt(elapsedMs, duration_ms, curve.sigma).progress;
+  } else if (params.progress_samples) {
+    p = measuredProgress(u, params.progress_samples, easing);
+  }
   const aspect = viewport.width / viewport.height;
   const fitWidth = Math.min(world.width, world.height * aspect);
   const fitHeight = fitWidth / aspect;

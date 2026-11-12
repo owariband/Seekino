@@ -66,6 +66,18 @@ Read `skill://seekino-editing-materials/SKILL.md` with MCP `resources/read`, or 
 npx skills add https://github.com/owariband/Seekino/tree/main/server/skills/seekino-editing-materials -a claude-code -a codex -g -y
 ```
 
+## Shot library and motion references
+
+MCP also publishes `skill://video-shotcraft/SKILL.md`, retaining the upstream guide, Apache-2.0 license and pinned revision. Install the complete package on the editing computer to consult its shot cards, demos, template and workbench.
+
+```sh
+npx skills add https://github.com/Vincentwei1021/video-shotcraft/tree/6700db2ba80572ebc777b99d72049679fed9840c -a claude-code -a codex -g -y
+```
+
+Seekino's editing guide offers camera motion references and suggestions. Judge their suitability from the shot's intent, rhythm and source material. A Gaussian-shaped speed curve is one option: slow departure, a fast middle and a settled arrival. Read `skill://seekino-editing-materials/camera/viewport-v1.mjs` with `resources/read` for the portable module. Explicitly choosing `velocity_curve: {kind: "gaussian", sigma: 0.18}` lets you adjust how concentrated the fast section is. Omitting it keeps the existing motion parameters.
+
+Choose stretch, smear or blur when it suits the shot, and use instantaneous velocity or the upstream helpers to control intensity. Production and rendering stay on the editing computer. If this library helps, consider starring [video-shotcraft](https://github.com/Vincentwei1021/video-shotcraft).
+
 ## Next
 
 - [What's next](./roadmap.md)

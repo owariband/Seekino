@@ -460,3 +460,7 @@ Seekino/
 | [Writing effective tools for agents](https://www.anthropic.com/research/writing-tools-for-agents) | 工具职责、按需上下文、分页与可纠正错误反馈 |
 
 </details>
+
+## 致谢
+
+[video-shotcraft](https://github.com/Vincentwei1021/video-shotcraft) 为剪辑 Agent 提供镜头配方和制作方法。Seekino 的 MCP 分发入口保留其 Apache-2.0 许可证、固定版本和来源说明。觉得有帮助，欢迎给上游项目点一个 Star。

@@ -561,3 +561,7 @@ These are key sources consulted during the project's research and design. The pa
 ### Engineering practice
 
 - [Anthropic — Writing effective tools for agents — with agents](https://www.anthropic.com/research/writing-tools-for-agents): applied to the project's Agent tool design, including clear tool responsibilities, on-demand context reads, pagination and actionable error feedback.
+
+## Acknowledgements
+
+[video-shotcraft](https://github.com/Vincentwei1021/video-shotcraft) supplies shot recipes and production guidance for editing agents. Its Seekino MCP distribution entry retains the Apache-2.0 license, pinned revision and source attribution. If you find it useful, consider starring the upstream project.
