@@ -60,7 +60,7 @@ export function createVisualIndex(cues: VideoVisualCue[], knownPersons: string[]
   }
   const names = [...aliases.keys()].sort((a, b) => b.length - a.length);
 
-  return (query: string) => {
+  return (query: string, requirePeople?: (visible: string[]) => boolean) => {
     let rest = phraseKey(query);
     const groups: Set<string>[] = [];
     for (const name of names) {
@@ -77,7 +77,8 @@ export function createVisualIndex(cues: VideoVisualCue[], knownPersons: string[]
     const terms = [...segmenter.segment(rest)].filter(part => part.isWordLike && !particles.has(part.segment))
       .map(part => part.segment);
     const personOnly = groups.length > 0 && terms.length === 0;
-    const hasPeople = (visible: string[]) => groups.every(group => visible.some(name => group.has(name)));
+    const hasPeople = (visible: string[]) => (!requirePeople || requirePeople(visible))
+      && groups.every(group => visible.some(name => group.has(name)));
     const accepts = (cue: VideoVisualCue) => sceneKinds.has(cue.kind) && hasPeople(cue.visiblePersons.map(phraseKey));
     const matches: VisualMatch[] = [];
     let allowSemantic = false;
@@ -91,6 +92,6 @@ export function createVisualIndex(cues: VideoVisualCue[], knownPersons: string[]
       matches.push({ startMs: cue.startMs, endMs: cue.endMs, source: "visual",
         text: description ? cue.description : cue.visiblePersons.join("、") });
     }
-    return { matches: mergeVisualMatches(matches), personOnly, allowSemantic, accepts };
+    return { matches: mergeVisualMatches(matches), personOnly, allowSemantic, accepts, hasPeople };
   };
 }

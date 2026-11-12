@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 
 from ..api import media
-from ..model.dto.mediaDTO import ParseExportOptions, VideoTextTimeline, VideoVisualTimeline
+from ..model.dto.mediaDTO import ParseExportOptions, VideoFindTerms, VideoTextTimeline, VideoVisualTimeline
 from ..model.vo.searchVO import VideoChunkEvidenceView
 
 router = APIRouter()
@@ -16,6 +16,8 @@ router.add_api_route("/api/videos/visual-timeline", media.get_video_visual_timel
                      response_model=VideoVisualTimeline)
 router.add_api_route("/api/videos/visual-search", media.search_video_visuals, methods=["POST"],
                      response_model=VideoVisualTimeline)
+router.add_api_route("/api/videos/find-query", media.interpret_video_query, methods=["POST"],
+                     response_model=VideoFindTerms)
 clip_router.add_api_route("/api/videos/clip", media.get_video_clip, methods=["GET"])
 router.add_api_route("/api/media/images/content", media.get_image_content, methods=["GET"])
 router.add_api_route("/api/video-chunks/get", media.get_video_chunk, methods=["GET"], response_model=VideoChunkEvidenceView)

@@ -67,7 +67,7 @@
   .textFind button:hover:not(:disabled) { background: var(--surface-muted); }
 }
 
-.findFilters { display: flex; align-items: center; padding: 0 5px 3px; }
+.findFilters { display: flex; flex-wrap: wrap; align-items: center; gap: 0 4px; padding: 0 5px 3px; }
 .findFilters button {
   display: inline-flex;
   align-items: center;
@@ -100,6 +100,8 @@
 .findFilters button[aria-checked="true"] i::after { transform: translateX(10px); }
 .textFindStatus { margin: 0; padding: 3px 9px 7px; overflow: auto; color: var(--ink-soft); font-size: .75rem; }
 .textFindStatus button { margin-inline-start: 4px; padding: 2px 4px; text-decoration: underline; }
+.findTerms { flex: 0 1 auto; min-height: 0; margin: 0; padding: 0 9px 6px; overflow: auto; overflow-wrap: anywhere; color: var(--ink-soft); font-size: .75rem; line-height: 1.4; }
+.findTerms strong { color: var(--ink); font-weight: 500; }
 .textFindResults {
   min-height: 0;
   max-height: 128px;

@@ -107,6 +107,11 @@ export interface VideoVisualTimeline {
   knownPersons?: string[];
 }
 
+export interface VideoFindTerms {
+  query: string;
+  synonyms: string[];
+}
+
 export interface VideoTextTimeline {
   ready: boolean;
   cues: { startMs: number; endMs: number; source: "dialogue" | "screen_text"; texts: string[] }[];

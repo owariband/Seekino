@@ -5236,6 +5236,26 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    ]
   },
   {
+   "id": "WATCH-FIND-03",
+   "title": "智能识别当前集搜索中的网络用语",
+   "category": "search",
+   "type": "requirement",
+   "status": "verifying",
+   "priority": "P1",
+   "description": "观看页保留普通语义候选，开启智能搜索后用默认聊天模型解释网络梗，显示并搜索近义表达。",
+   "next": "等待上游画面搜索 PR 合并，再将智能搜索集成至 dev 并在发布环境复验。",
+   "verification": "本地实片普通搜索有五个相关候选；智能搜索有两处标注含不满，首条跳到 11:02.150。核对了繁简空格、否定和字面输入。",
+   "updatedAt": "2026-11-12",
+   "tags": ["片内查找", "智能搜索"],
+   "related": ["WATCH-FIND-02", "MOD-SEARCH"],
+   "branch": "feat/watch-smart-find",
+   "links": [
+    {"label": "智能搜索设计与验收", "kind": "trd", "url": "https://github.com/owariband/Seekino/blob/feat/watch-smart-find/docs/design/03-product-reassessment/watch-smart-find-trd.md"},
+    {"label": "本地实测记录", "kind": "report", "url": "https://github.com/owariband/Seekino/blob/feat/watch-smart-find/docs/report/server/evidence/watch-smart-find-local-20261112.json"},
+    {"label": "PR #125", "kind": "pr", "url": "https://github.com/owariband/Seekino/pull/125"}
+   ]
+  },
+  {
    "id": "WATCH-FIND-02",
    "title": "观看页可切换的单集人物出镜与场景搜索",
    "category": "search",

@@ -1,0 +1,149 @@
+{
+  "date": "2026-11-12",
+  "environment": "localhost, isolated MyGO E02, Chrome, DeepSeek Flash as the configured default chat model",
+  "episode": "b7993872-d90f-538f-9eca-4de0511e2f5f",
+  "ordinary": {
+    "chatCalls": 0,
+    "semanticQuery": "红温",
+    "relatedCount": 5,
+    "leadingResults": [
+      {
+        "time": "21:02",
+        "source": "相关画面",
+        "text": "镜头特写一双紫红色眼睛，随后切到黄昏时分的城市高楼与天空。"
+      },
+      {
+        "time": "01:40",
+        "source": "相关画面",
+        "text": "要楽奈弹奏红色吉他，神情专注。"
+      }
+    ]
+  },
+  "smart": {
+    "input": "红温",
+    "interpretation": {
+      "query": "生气",
+      "synonyms": [
+        "恼火",
+        "愤怒",
+        "不耐烦",
+        "不满"
+      ]
+    },
+    "elapsedMsFromToggleToInterpretation": 1380,
+    "searchRequests": [
+      [
+        "find-query",
+        "红温"
+      ],
+      [
+        "visual-search",
+        "生气"
+      ]
+    ],
+    "visualAnnotationCount": 2,
+    "relatedCount": 5,
+    "annotationResults": [
+      {
+        "time": "11:02",
+        "source": "画面",
+        "text": "长崎爽世闭眼微笑站在一旁，千早爱音回头露出不满的表情，画面下方出现对话字幕。"
+      },
+      {
+        "time": "15:41",
+        "source": "画面",
+        "text": "祥子皱眉，带着不满与责备的神情直视对方。"
+      }
+    ],
+    "firstSeekMs": 662150,
+    "firstFrameSubtitle": "態度好差"
+  },
+  "controls": [
+    {
+      "input": "红色吉他",
+      "status": 200,
+      "latencyMs": 1231,
+      "output": {
+        "query": "红色吉他",
+        "synonyms": []
+      }
+    },
+    {
+      "input": "爱音没红温",
+      "status": 200,
+      "latencyMs": 578,
+      "output": {
+        "query": "爱音没生气",
+        "synonyms": [
+          "爱音没有生气",
+          "爱音不生气",
+          "爱音没恼火"
+        ]
+      }
+    },
+    {
+      "input": "显卡温度过高",
+      "status": 200,
+      "latencyMs": 1035,
+      "output": {
+        "query": "显卡温度过高",
+        "synonyms": []
+      }
+    },
+    {
+      "input": "社死",
+      "status": 200,
+      "latencyMs": 882,
+      "output": {
+        "query": "当众出丑",
+        "synonyms": [
+          "公开丢脸",
+          "尴尬到极点",
+          "当众尴尬",
+          "丢人现眼"
+        ]
+      }
+    },
+    {
+      "input": "紅 溫",
+      "status": 200,
+      "latencyMs": 719,
+      "output": {
+        "query": "生氣",
+        "synonyms": [
+          "惱火",
+          "憤怒",
+          "不耐煩",
+          "不滿"
+        ]
+      }
+    }
+  ],
+  "mobile": {
+    "viewport": [
+      390,
+      844
+    ],
+    "panelWidth": 210,
+    "resultListHeight": 91,
+    "interpretation": {
+      "query": "生氣",
+      "synonyms": [
+        "惱火",
+        "憤怒",
+        "不耐煩",
+        "不滿"
+      ]
+    },
+    "firstSelection": [
+      "11:02",
+      "画面"
+    ]
+  },
+  "reopenSmartOff": true,
+  "kimiTrial": {
+    "model": "k3.1-pro",
+    "providerStatus": 429,
+    "interpretationStatus": 503
+  }
+}

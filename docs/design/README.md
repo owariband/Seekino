@@ -112,6 +112,7 @@ Event / Sub-Chunk 的实施入口是 [sub-chunk-trd.md](02-agent-harness/sub-chu
 | 观看页 Kino 入口 | [watch-kino-entry-trd.md](03-product-reassessment/watch-kino-entry-trd.md) | 打开悬浮陪看、停靠与位置记忆，窄屏使用底部抽屉。 |
 | 视频内文字查找 | [watch-text-find-trd.md](03-product-reassessment/watch-text-find-trd.md) | 按台词与画面文字逐处跳转，支持繁简混排与字间空白。 |
 | 片内画面查找 | [watch-visual-find-trd.md](03-product-reassessment/watch-visual-find-trd.md) | 在当前一集查找出镜人物与场景，可关闭画面结果。 |
+| 片内智能搜索 | [watch-smart-find-trd.md](03-product-reassessment/watch-smart-find-trd.md) | 选择用默认聊天模型解释网络用语，并用释义查当前集。 |
 | 观看回答交付 | [watch-answer-delivery-trd.md](03-product-reassessment/watch-answer-delivery-trd.md) | 修复：实时证据不提交视频卡、失败表述准确、回答长度与用户可见术语受控（LOOP-06 / C22 / C25）。 |
 | 对话延迟创建 | [chat-lazy-conversation-trd.md](03-product-reassessment/chat-lazy-conversation-trd.md) | 修复：打开页面、新对话、删除补位不再创建空对话，首次发送时才创建；实现完成，待合并。 |
 | Chat 正文流式与真实 FTT | [chat-streaming-trd.md](03-product-reassessment/chat-streaming-trd.md) | 承接课程 PRD：正文增量交付、调用来源、浏览器采证及非流式/缓冲反例；关联 #18 / #25。 |
