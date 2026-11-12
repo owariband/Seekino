@@ -72,6 +72,101 @@ async function mockService(page: Page, guest = true, { displayMode = "release", 
   return { conversations, requests, unexpected, errors };
 }
 
+type DrawerFrame = {
+  open: boolean;
+  width: number;
+  transform: string;
+  backdropColor: string;
+  contentMounted: boolean;
+  transformDuration: number | null;
+};
+
+/** Clicks the native drawer control through Playwright, then freezes its actual CSS transitions at the halfway point. */
+async function freezeDrawerTransition(page: Page, action: "open" | "close"): Promise<DrawerFrame> {
+  if (action === "open") {
+    await page.getByRole("button", { name: "打开侧边栏", exact: true }).click();
+  } else {
+    await page.getByRole("dialog", { name: "手机导航", exact: true })
+      .getByRole("button", { name: "关闭侧边栏", exact: true }).click();
+  }
+  return page.evaluate(async (action) => {
+    const dialog = document.querySelector<HTMLDialogElement>("#mobile-navigation");
+    if (!dialog) throw new Error("Mobile drawer is missing");
+    const expectedOpen = action === "open";
+    const nextFrame = () => new Promise<number>((resolve) => requestAnimationFrame(resolve));
+    for (let attempt = 0; attempt < 10 && dialog.open !== expectedOpen; attempt += 1) await nextFrame();
+    if (dialog.open !== expectedOpen) throw new Error(`Mobile drawer did not ${action}`);
+    // Let the transition clock advance so the backdrop has left fully transparent.
+    await nextFrame();
+    await nextFrame();
+
+    const drawerAnimations = () => {
+      const animations = new Set<Animation>([
+        ...dialog.getAnimations({ subtree: true }),
+        ...document.getAnimations(),
+      ]);
+      return [...animations].filter((animation) => {
+        const effect = animation.effect;
+        return effect instanceof KeyframeEffect && effect.target === dialog;
+      });
+    };
+    const isTransform = (animation: Animation) =>
+      "transitionProperty" in animation && (animation as CSSTransition).transitionProperty === "transform";
+    let animations = drawerAnimations();
+    for (let attempt = 0; attempt < 10 && !animations.some(isTransform); attempt += 1) {
+      await nextFrame();
+      animations = drawerAnimations();
+    }
+    for (const animation of animations) {
+      animation.pause();
+      animation.currentTime = Number(animation.effect?.getComputedTiming().duration ?? 0) / 2;
+    }
+    const transformTransition = animations.find(isTransform);
+    return {
+      open: dialog.open,
+      width: dialog.getBoundingClientRect().width,
+      transform: getComputedStyle(dialog).transform,
+      backdropColor: getComputedStyle(dialog, "::backdrop").backgroundColor,
+      contentMounted: dialog.firstElementChild !== null,
+      transformDuration: transformTransition ? Number(transformTransition.effect?.getComputedTiming().duration ?? 0) : null,
+    };
+  }, action);
+}
+
+async function finishDrawerAnimations(page: Page) {
+  await page.evaluate(() => {
+    const dialog = document.querySelector<HTMLDialogElement>("#mobile-navigation");
+    if (!dialog) return;
+    const animations = new Set<Animation>([
+      ...dialog.getAnimations({ subtree: true }),
+      ...document.getAnimations(),
+    ]);
+    for (const animation of animations) {
+      const effect = animation.effect;
+      if (!(effect instanceof KeyframeEffect) || effect.target !== dialog) continue;
+      try {
+        animation.finish();
+      } catch {
+        // A superseded transition is already gone.
+      }
+    }
+  });
+}
+
+function translateX(transform: string): number {
+  if (transform === "none") return 0;
+  const matrix = transform.match(/matrix(3d)?\(([^)]+)\)/);
+  if (!matrix) throw new Error(`Unexpected transform: ${transform}`);
+  const values = matrix[2]!.split(",").map(Number);
+  return matrix[1] ? values[12]! : values[4]!;
+}
+
+function alphaOf(color: string): number {
+  const channels = color.match(/rgba?\(([^)]+)\)/)?.[1].split(/[ ,/]+/).map(Number);
+  if (!channels) throw new Error(`Unexpected color: ${color}`);
+  return channels.length === 4 ? channels[3]! : 1;
+}
+
 const compactSeries: SeriesView = {
   seriesId: "compact-series", tenantId: "local-default", name: "紧凑选集测试系列",
   description: "用于验证手机选集行高与整行链接。",
@@ -103,7 +198,7 @@ const compactSeries: SeriesView = {
 test.use({ viewport: { width: 390, height: 844 } });
 
 for (const width of [320, 390]) {
-  test(`keeps the docs entry visible, labelled and tappable at ${width}px`, async ({ page }, testInfo) => {
+  test(`shows the docs entry as an icon-only 44px target at ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 844 });
     const mock = await mockService(page);
     await page.goto("/watch");
@@ -111,21 +206,29 @@ for (const width of [320, 390]) {
     const docsLink = header.getByRole("link", { name: "使用文档", exact: true });
     await expect(docsLink).toBeVisible();
     const linkBounds = (await docsLink.boundingBox())!;
-    const labelBounds = (await docsLink.getByText("文档", { exact: true }).boundingBox())!;
-    expect(linkBounds.width).toBeGreaterThanOrEqual(44);
-    expect(linkBounds.height).toBeGreaterThanOrEqual(44);
-    expect(labelBounds.width).toBeGreaterThan(1);
-    expect(labelBounds.height).toBeGreaterThan(1);
+    expect(linkBounds.width).toBeCloseTo(44, 1);
+    expect(linkBounds.height).toBeCloseTo(44, 1);
+    expect((await docsLink.textContent())?.trim()).toBe("");
+    await expect(docsLink).toHaveAttribute("aria-label", "使用文档");
+    await expect(docsLink).toHaveAttribute("title", "使用文档");
     expect(linkBounds.x + linkBounds.width).toBeLessThanOrEqual(width + 1);
     for (const control of [header.getByRole("button", { name: "打开侧边栏", exact: true }), header.getByRole("link", { name: "搜索名场面", exact: true })]) {
       const bounds = (await control.boundingBox())!;
       expect(bounds.width).toBeGreaterThanOrEqual(44);
       expect(bounds.height).toBeGreaterThanOrEqual(44);
     }
+    const trigger = header.getByRole("button", { name: "打开侧边栏", exact: true });
+    await trigger.click();
+    const drawer = page.getByRole("dialog", { name: "手机导航", exact: true });
+    const drawerDocs = drawer.getByRole("link", { name: "使用文档", exact: true });
+    await expect(drawerDocs).toBeVisible();
+    await expect(drawerDocs).toContainText("使用文档");
+    await drawer.getByRole("button", { name: "关闭侧边栏", exact: true }).click();
+    await expect(drawer).toBeHidden();
     expect(await header.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
-    testInfo.annotations.push({ type: "docs entry dimensions", description: `${width}px viewport: link ${linkBounds.width}×${linkBounds.height}, label ${labelBounds.width}×${labelBounds.height}` });
-    await testInfo.attach(`docs-entry-${width}`, { body: JSON.stringify({ width, link: linkBounds, label: labelBounds }), contentType: "application/json" });
+    testInfo.annotations.push({ type: "docs entry dimensions", description: `${width}px viewport: icon-only link ${linkBounds.width}×${linkBounds.height}` });
+    await testInfo.attach(`docs-entry-${width}`, { body: JSON.stringify({ width, link: linkBounds }), contentType: "application/json" });
     await docsLink.click();
     await expect(page).toHaveURL(/\/docs$/);
     await expect(page.getByRole("heading", { level: 1, name: "41 小时的课，你要的只是其中一段", exact: true })).toBeVisible();
@@ -292,6 +395,99 @@ test("keeps focus in the drawer and preserves the draft when dismissed", async (
   await page.getByRole("button", { name: "打开账号菜单", exact: true }).click();
   await expect(page.getByRole("region", { name: "当前账号", exact: true })).toBeVisible();
   await expect(input).toHaveValue("保留这段还没发送的草稿");
+  expect(mock.unexpected).toEqual([]);
+  expect(mock.errors).toEqual([]);
+});
+
+test("slides the mobile drawer in and out and keeps its content until the close transition finishes", async ({ page }, testInfo) => {
+  const mock = await mockService(page);
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.goto("/watch");
+  const header = page.getByRole("banner", { name: "全站导航", exact: true });
+  await expect(header).toBeVisible();
+  // Wait for the first data-backed render so the initial location effect cannot reset the open state.
+  await expect(page.getByText("公开资料里还没有视频。", { exact: true })).toBeVisible();
+  const drawer = page.getByRole("dialog", { name: "手机导航", exact: true });
+
+  const entering = await freezeDrawerTransition(page, "open");
+  await testInfo.attach("drawer-entering-frame", { body: JSON.stringify(entering), contentType: "application/json" });
+  expect(entering.open).toBe(true);
+  expect(entering.contentMounted).toBe(true);
+  expect(entering.transformDuration).toBe(240);
+  expect(alphaOf(entering.backdropColor)).toBeGreaterThan(0);
+  expect(alphaOf(entering.backdropColor)).toBeLessThan(0.35);
+  const enterX = translateX(entering.transform);
+  expect(enterX).toBeGreaterThan(-entering.width);
+  expect(enterX).toBeLessThan(0);
+  await finishDrawerAnimations(page);
+  await expect(drawer).toBeVisible();
+  expect(translateX(await drawer.evaluate((element) => getComputedStyle(element).transform))).toBe(0);
+
+  await page.evaluate(() => {
+    (document.querySelector("#mobile-navigation")!.firstElementChild as HTMLElement & { drawerRetained?: boolean }).drawerRetained = true;
+  });
+
+  const exiting = await freezeDrawerTransition(page, "close");
+  await testInfo.attach("drawer-exiting-frame", { body: JSON.stringify(exiting), contentType: "application/json" });
+  expect(exiting.open).toBe(false);
+  expect(exiting.contentMounted).toBe(true);
+  expect(exiting.transformDuration).toBe(180);
+  expect(alphaOf(exiting.backdropColor)).toBeGreaterThan(0);
+  expect(alphaOf(exiting.backdropColor)).toBeLessThan(0.35);
+  const exitX = translateX(exiting.transform);
+  expect(exitX).toBeGreaterThan(-exiting.width);
+  expect(exitX).toBeLessThan(0);
+  expect(await page.locator("#mobile-navigation").evaluate((element) => element.childElementCount)).toBe(1);
+
+  // While the retained mobile panel is still in the top layer, only the desktop account panel may own the id.
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.evaluate(() => document.querySelector<HTMLButtonElement>('button[aria-label="打开账号菜单"]')?.click());
+  await expect(header.getByRole("region", { name: "当前账号", exact: true })).toBeVisible();
+  expect(await page.locator("#seekino-account-panel").count()).toBe(1);
+  expect(await header.getByRole("button", { name: "打开账号菜单", exact: true }).getAttribute("aria-controls")).toBe("seekino-account-panel");
+
+  // Reopening during the close transition reverses it without unmounting the content.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.evaluate(() => document.querySelector<HTMLButtonElement>('button[aria-label="打开侧边栏"]')?.click());
+  await expect(drawer).toBeVisible();
+  expect(await page.evaluate(() =>
+    Boolean((document.querySelector("#mobile-navigation")?.firstElementChild as (HTMLElement & { drawerRetained?: boolean }) | null)?.drawerRetained))).toBe(true);
+  await finishDrawerAnimations(page);
+  await expect(drawer).toBeVisible();
+
+  await freezeDrawerTransition(page, "close");
+  await finishDrawerAnimations(page);
+  await expect.poll(() => page.locator("#mobile-navigation").evaluate((element) => element.childElementCount)).toBe(0);
+  await expect(drawer).toBeHidden();
+  expect(mock.unexpected).toEqual([]);
+  expect(mock.errors).toEqual([]);
+});
+
+test("closes the drawer with no motion when reduced motion is requested", async ({ page }) => {
+  const mock = await mockService(page);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("/watch");
+  const drawer = page.getByRole("dialog", { name: "手机导航", exact: true });
+  await page.getByRole("button", { name: "打开侧边栏", exact: true }).click();
+  await expect(drawer).toBeVisible();
+  const motion = await drawer.evaluate((element) => ({
+    animations: element.getAnimations({ subtree: true }).length,
+    duration: getComputedStyle(element).transitionDuration,
+    backdropDuration: getComputedStyle(element, "::backdrop").transitionDuration,
+  }));
+  expect(motion.animations).toBe(0);
+  expect(motion.duration).toBe("0s");
+  expect(motion.backdropDuration).toBe("0s");
+
+  await drawer.getByRole("button", { name: "关闭侧边栏", exact: true }).click();
+  await expect(drawer).toBeHidden();
+  await expect.poll(() => page.locator("#mobile-navigation").evaluate((element) => element.childElementCount)).toBe(0);
+
+  await page.setViewportSize({ width: 1280, height: 900 });
+  const header = page.getByRole("banner", { name: "全站导航", exact: true });
+  await header.getByRole("button", { name: "打开账号菜单", exact: true }).click();
+  await expect(header.getByRole("region", { name: "当前账号", exact: true })).toBeVisible();
+  expect(await page.locator("#seekino-account-panel").count()).toBe(1);
   expect(mock.unexpected).toEqual([]);
   expect(mock.errors).toEqual([]);
 });

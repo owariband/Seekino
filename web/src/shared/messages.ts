@@ -81,7 +81,6 @@ export const englishMessages: Readonly<Record<string, string>> = {
   "分片上传网络连接中断": "The upload connection was interrupted",
   "资料库": "Library",
   "使用文档": "Docs",
-  "文档": "Docs",
   "获取到的模型": "Fetched models",
   "获取到 {total} 个模型，{registered} 个已注册": "Found {total} models, {registered} already registered",
   "该服务不提供模型列表，请手动填写模型 ID。": "This service doesn't provide a model list. Please enter model IDs manually.",

@@ -1,0 +1,35 @@
+{
+  "requested_model": "anthropic/claude-opus-5.5",
+  "returned_model": "anthropic/claude-opus-5.5",
+  "id": "gen-1794472946-pYi0PonED5FwEDv9SEr6",
+  "provider": "Claude Platform on AWS",
+  "usage": {
+    "prompt_tokens": 15840,
+    "completion_tokens": 7932,
+    "total_tokens": 23772,
+    "cost": 0.222,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 0,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.222,
+      "upstream_inference_prompt_cost": 0.06336,
+      "upstream_inference_completions_cost": 0.15864
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 2890,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "finish_reason": "stop",
+  "seconds": 74.02,
+  "source_files": [
+    "web/src/app/AppShell.tsx",
+    "web/src/app/app-shell.module.css"
+  ]
+}

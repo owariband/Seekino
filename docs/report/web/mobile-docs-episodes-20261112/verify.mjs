@@ -5,6 +5,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { resolve, extname, sep } from 'node:path';
 const [repo, buildPath, outputPath, mode = 'baseline'] = process.argv.slice(2);
+assert(['baseline', 'fixed', 'fixed-icon'].includes(mode), 'Use baseline, fixed (first iteration) or fixed-icon');
 const { chromium } = createRequire(resolve(repo, 'web/package.json'))('@playwright/test');
 const dist = resolve(buildPath), out = resolve(outputPath);
 await mkdir(out, { recursive: true });
@@ -78,6 +79,7 @@ try {
     const docsBox = await docs.boundingBox();
     const docsTextVisible = await docs.evaluate(el => [...el.querySelectorAll('span')].some(span => {
       const r=span.getBoundingClientRect(), s=getComputedStyle(span); return r.width>10 && r.height>10 && s.clipPath==='none'; }));
+    const docsIconOnly = await docs.evaluate(el => el.textContent.trim() === '');
     const metrics = await page.locator('#series-episodes ol').evaluate(el => {
       const rows=[...el.children].map(li=>{
         const row=li.firstElementChild, r=row.getBoundingClientRect(), p=row.firstElementChild.getBoundingClientRect();
@@ -97,13 +99,15 @@ try {
     await page.screenshot({ path:resolve(out, `${stem}.png`) });
     let navigated=false;
     if (docsVisible) { await docs.click(); await page.waitForURL('**/docs'); navigated=true; }
-    const result={ width,locale,theme,docsVisible,docsTextVisible,docsBox,navigated,...metrics,errors,unexpected };
+    const result={ width,locale,theme,docsVisible,docsTextVisible,docsIconOnly,docsBox,navigated,...metrics,errors,unexpected };
     results.push(result);
-    if (mode==='fixed') {
+    if (mode==='fixed' || mode==='fixed-icon') {
       assert.equal(metrics.overflow,false,`${stem}: no overflow`);
       assert.deepEqual(errors,[],`${stem}: no JS errors`); assert.deepEqual(unexpected,[],`${stem}: no unexpected APIs`);
       if (width<=760) {
-        assert(docsVisible && docsTextVisible && navigated,`${stem}: visible textual docs link navigates`);
+        assert(docsVisible && navigated,`${stem}: visible docs link navigates`);
+        assert(mode==='fixed-icon' ? docsIconOnly && !docsTextVisible : docsTextVisible,
+          `${stem}: docs matches the accepted iteration`);
         assert(docsBox.width>=44 && docsBox.height>=44,`${stem}: docs touch target`);
         assert.equal(metrics.columns,1,`${stem}: one list column`);
         assert(metrics.rows.every(r=>r.height<=100),`${stem}: compact row <=100px`);

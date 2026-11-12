@@ -2,7 +2,33 @@
 
 [PR #129](https://github.com/owariband/Seekino/pull/129) · [TRD](../../../design/03-product-reassessment/mobile-docs-episodes-trd.md) · [工作台](../../../dev/workbench.html) `MOBILE-UI-01`。
 
-手机顶栏现在直接显示“文档 / Docs”；系列选集在 760px 以下使用左图右文的紧凑行，761px 以上沿用原网格。保留青瓷色板、Hero、抽屉、排序、原播放链接、观看位置与不可播放状态；`SeriesPage.tsx`、API、持久化和媒体时间合同没有修改。
+当前方案：手机顶栏只显示书本图标，展开的导航内显示“使用文档”；侧栏240ms滑入、180ms滑出，遮罩同步淡变。系列选集在760px及以下使用左图右文紧凑行，761px以上沿用原网格。保留青瓷色板、Hero、排序、原播放链接、观看位置与不可播放状态；`SeriesPage.tsx`、API、持久化和媒体时间合同没有修改。
+
+<a id="icon-and-drawer-motion"></a>
+## 第二轮：纯图标入口与导航抽屉运动（当前方案）
+
+本地预览后，反馈明确顶栏不需要“文档”短文字，文字只保留在展开导航内；此前的外显短标签方案撤销。导航抽屉原来没有进出过渡，关闭又立即卸载内容，直接加滑出CSS会出现空白面板，因此本轮同时处理视觉与内容生命周期。
+
+再次请求OpenRouter `anthropic/claude-opus-5.5`，返回模型精确匹配，完整设计见[顾问原始输出](opus-motion-design.md)，[调用元数据](opus-motion.json)记录23,772 tokens、$0.222。采用240ms、`var(--ease-out)`的左侧进入和180ms、`cubic-bezier(.4,0,1,1)`的退出；遮罩透明度0↔0.35同步变化，不对每个菜单项另加动画。原生dialog配合`@starting-style`和`display`/`overlay`离散过渡保留退出期间的top layer，这与[Chrome官方dialog动效指导](https://developer.chrome.com/docs/modern-web-guidance/guides/ui-behaviors/animate-to-from-top-layer)一致。
+
+实际实现采用一个`drawerMounted`标志保留退出内容，关闭时根据真实transform CSS transition的`Animation.finished`清理；没有过渡或减少动态效果时立即清理，取消也会收敛。旧回调检查dialog仍关闭且没有新的transform过渡，避免快速重开时卸载新内容。手机账号区不再输出桌面专属固定ID，原生焦点、Esc、背景与路由关闭、会话查询启用条件保持不变。顶栏移除短标签及闲置翻译，保留原`aria-label`/`title`和44×44点击区域。
+
+| 本轮检查 | 实际结果 | 证据 |
+| --- | --- | --- |
+| 顶栏文档 | 仅图标，44×44px；文本为空，可访问名称和title保留；抽屉内显示文字 | 320/390px回归；[9场景布局原始记录](icon-only.json) |
+| 进入中间帧 | 240ms，320px宽面板在半程采样时X=-21.0893px，遮罩alpha=0.325，内容存在 | [动画帧记录](motion-results.json) |
+| 退出中间帧 | 180ms，采样时X=-103.941px，遮罩alpha=0.235；关闭状态仍保留内容，结束后卸载 | 同上 |
+| 原有功能与重开 | Esc/遮罩/关闭按钮/路由/历史切换、焦点与草稿、桌面账号ID唯一、退出中途重开均通过 | 12项浏览器回归 |
+| reduced-motion | 面板与backdrop时长均为0s，无运行动画；关闭后内容卸载 | 专项浏览器用例 |
+| 选集与桌面护栏 | 原9场景结果保持，390px每集70.19px，13集1080.44px；桌面网格不变 | [本轮布局记录](icon-only.json) |
+
+验证使用production build与本机Chrome。76项相关单测、typecheck与build通过；定向浏览器12 passed、0 flaky。新动画用例最初在页面尚未稳定时用`evaluate`程序化点击失败；改为等待可观察的首屏数据和Playwright locator点击，再暂停真实过渡采样，原有半程/内容/重开断言全部保留。失败trace与完整原始报告留在`outputs/verification/mobile-docs-episodes-20261112/`，[摘要](motion-results.json)保留实际帧值和12项结果。
+
+本机[4190预览](http://127.0.0.1:4190/watch)已提供本轮构建，用户可刷新检查。尚未验证Safari、Firefox或iOS/Android真机；不支持这些CSS能力时的浏览器行为也未实测，不声明全部浏览器均有动画效果。未部署Cloud或合并PR。
+
+![当前390px图标入口和选集](icon-only-390.png)
+
+下方为首轮短文字方案及其原始证据，保留历史，不作为当前顶栏外观。
 
 ## 同条件结果
 
@@ -28,6 +54,8 @@
 [英文深色截图](after-390-en-dark.png)。完整宽度截图保留在本工作树 `outputs/verification/mobile-docs-episodes-20261112/`。
 
 ## Claude mini 源码指导与采用范围
+
+以下代码为首轮历史方案；本轮已删除`docsLabel`及短翻译，当前图标入口与CSS运动设计见上方第二轮和[顾问输出](opus-motion-design.md)。
 
 按请求使用 OpenRouter `anthropic/claude-opus-5.5`，两次响应的返回模型都精确匹配，没有切换模型。首轮输入为六张用户截图与 `AppShell.tsx`、顶栏 CSS、`SeriesPage.tsx`、选集 CSS；答复在代码段达到输出上限。第二轮只发送必要 CSS 和已选方案，低 effort 补齐 mini patch。两次共 66,938 tokens（含图片与推理），OpenRouter 报告费用合计 $0.42644；这不是产品运行成本。原始调用元数据见 [首轮](opus-initial.json)、[补全](opus-mini.json)。
 

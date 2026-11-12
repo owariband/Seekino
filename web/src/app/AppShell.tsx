@@ -45,6 +45,9 @@ const managementLinks = [
 
 const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
 
+const isTransformTransition = (animation: Animation): animation is CSSTransition =>
+  "transitionProperty" in animation && (animation as CSSTransition).transitionProperty === "transform";
+
 export type WatchPanelLayout = { open: boolean; width: number; resizing: boolean };
 
 /** Fades the new page up into place when the path changes. Runs on the existing content node,
@@ -78,7 +81,8 @@ function AccountControls({ onLogin, onSettings, mobile = false }: { onLogin: () 
   const loginUnavailable = accountIdentity?.emailLoginEnabled === false;
   const guestLabel = t(loginUnavailable ? "游客模式" : "未登录");
   const loginLabel = t(loginUnavailable ? "登录 / 注册（暂未开放）" : "登录");
-  return <section id="seekino-account-panel" className={styles.account} aria-label={t("当前账号")}>
+  // Only the desktop popover owns the id referenced by the avatar's aria-controls; the drawer copy may outlive it.
+  return <section id={mobile ? undefined : "seekino-account-panel"} className={styles.account} aria-label={t("当前账号")}>
     {!mobile ? <header><strong>{signedIn ? accountIdentity.email || t("已登录") : guestLabel}</strong><span>{t("账号与资料来源")}</span></header> : null}
     <div className={styles.accountAction}>
       {accountStatus === "unconfigured" ? <span title={t("连接账号服务后，可登录并访问远端资料")}>{t("未连接账号服务")}</span>
@@ -127,6 +131,8 @@ export function AppShell() {
   const { t, locale } = useI18n();
   const [accountOpen, setAccountOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  // Keeps the drawer content rendered while its native close transition plays out.
+  const [drawerMounted, setDrawerMounted] = useState(false);
   const mobileMenuRef = useRef<HTMLDialogElement>(null);
   const [watchPanelLayout, setWatchPanelLayout] = useState<WatchPanelLayout>({ open: false, width: 440, resizing: false });
   const accountRef = useRef<HTMLDivElement>(null);
@@ -156,11 +162,28 @@ export function AppShell() {
     setMobileMenuOpen(false);
   };
 
+  /** Drops retained drawer content once the native close transition has actually finished. */
+  const releaseDrawerContent = (dialog: HTMLDialogElement) => {
+    const transitions = (dialog.getAnimations?.() ?? []).filter(isTransformTransition);
+    if (!transitions.length) {
+      setDrawerMounted(false);
+      return;
+    }
+    void Promise.allSettled(transitions.map((animation) => animation.finished)).then(() => {
+      // A rapid reopen keeps the current content; the next close schedules its own release.
+      if (dialog.open) return;
+      if ((dialog.getAnimations?.() ?? []).some((animation) =>
+        isTransformTransition(animation) && animation.playState !== "finished")) return;
+      setDrawerMounted(false);
+    });
+  };
+
   useEffect(() => { setAccountOpen(false); setMobileMenuOpen(false); }, [location.key]);
   useEffect(() => {
     if (!mobileMenuOpen) return;
+    setDrawerMounted(true);
     const dialog = mobileMenuRef.current!;
-    dialog.showModal();
+    if (!dialog.open) dialog.showModal();
     const desktop = window.matchMedia("(min-width: 761px)");
     const closeOnDesktop = () => { if (desktop.matches) setMobileMenuOpen(false); };
     desktop.addEventListener("change", closeOnDesktop);
@@ -224,7 +247,7 @@ export function AppShell() {
             {canUpload && activeCount > 0 ? <i style={{ width: `${overallProgress}%` }} aria-hidden="true" /> : null}
           </button>
           <NavLink className={clsx(styles.iconButton, styles.docsLink)} to="/docs" aria-label={t("使用文档")} title={t("使用文档")}>
-            <BookOpen size={20} strokeWidth={1.7} aria-hidden="true" /><span className={styles.docsLabel}>{t("文档")}</span>
+            <BookOpen size={20} strokeWidth={1.7} aria-hidden="true" />
           </NavLink>
           <a className={styles.iconButton} href={GITHUB_URL} target="_blank" rel="noreferrer" aria-label={t("GitHub 仓库")} title={t("GitHub 仓库")}>
             <GitHubMark size={19} />
@@ -251,9 +274,15 @@ export function AppShell() {
       </div>
       <div id="watch-side-panel-host" className={styles.panelHost} />
       <dialog id="mobile-navigation" ref={mobileMenuRef} className={styles.mobileDrawer} aria-label={t("手机导航")}
-        onClose={() => setMobileMenuOpen(false)}
+        onClose={() => {
+          const dialog = mobileMenuRef.current;
+          // A close event queued before a rapid reopen must not hide the new drawer or release its content.
+          if (dialog?.open) return;
+          setMobileMenuOpen(false);
+          if (dialog) releaseDrawerContent(dialog);
+        }}
         onClick={(event) => { if (event.target === event.currentTarget) closeMobileMenu(); }}>
-        {mobileMenuOpen ? <div className={styles.drawerContent}>
+        {mobileMenuOpen || drawerMounted ? <div className={styles.drawerContent}>
           <header className={styles.drawerHeader}>
             <NavLink className={styles.brand} to="/watch" aria-label={t("Seekino 首页")} onClick={closeMobileMenu}>
               <strong>Seek<span className={styles.brandI}>i</span>no</strong>
