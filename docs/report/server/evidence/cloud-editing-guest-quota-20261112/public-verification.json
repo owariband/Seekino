@@ -1,0 +1,35 @@
+{
+  "verified_at_utc": "2026-11-12T14:08:07.401215+00:00",
+  "public_mcp": {
+    "protocol_version": "2025-06-18",
+    "sample": "MyGO published video, 0-1000 ms",
+    "read_evidence": "passed",
+    "download_auth": "signed URL only, no Cookie or Bearer",
+    "statuses": [200, 200, 200, 200],
+    "bytes_each": 700776,
+    "elapsed_seconds": [1.362, 1.199, 1.231, 1.296],
+    "elapsed_scope": "clip generation, network download and ffprobe",
+    "sha256_each": "d8569cc3a5ba6bab8673b4c38cd7f8afd9768a068de8adf9420ccd3313da6dc4",
+    "width": 1920,
+    "height": 1080,
+    "video_codec": "h264",
+    "audio_codec": "aac",
+    "duration_seconds": 1.001
+  },
+  "isolated_redis": {
+    "isolation": "temporary container, no network, tmpfs only, removed after verification",
+    "source": "server.service.access._ADMIT_QUERY",
+    "seeded_count": 20,
+    "old_limit": 20,
+    "old_result": [0, 86400],
+    "new_limit": 10000,
+    "new_result": [1, 0],
+    "count_after_new_admission": 21,
+    "four_concurrent_admitted": true,
+    "fifth_result": [0, 5],
+    "rejected_request_spent_budget": false,
+    "result": "passed"
+  },
+  "configuration_tests": {"passed": 3, "deselected": 39},
+  "full_editing_task": "not verified"
+}

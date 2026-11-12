@@ -2938,3 +2938,12 @@ micrograd v5 共 146 块，整集 90 分 04.884 秒。调度反复锁取候选�
 2026-11-12。剪辑素材库首轮 8 支公开视频中 4 支完成，P4、《人是猫》《快使用恋爱笔记》因动作时间分段未命中检测候选或未铺满区间被拒，P5R 因逐段 JSON 少外层右括号被拒。冻结的九条动作响应和三条 JSON 响应经过既有 observe_segments 入口回放，基线为 0/12 接收，不涉及新模型调用。进一步审计发现风格卡锚点只允许检测位置、有观察就必须有风格信号、Refine 必须全量复述且恰好一次等同类门槛；这些限制与来源归属、视频范围及租约版本不同。
 
 验收要求：保持原始中文和动作时间，12 条真实失败响应进入既有解析链路；合法的非切点动作/风格锚点、空风格卡和部分 Refine 更新可以提交并由 MCP 回源；外部来源、越界、过期版本仍被拒绝。真实模型批量完成率与业务质量另行记录，不由离线回放推定。设计与证据见 [TRD](../design/03-product-reassessment/reference-model-judgment-trd.md)，当前状态只维护在 [工作台](workbench.html) 的 EDIT-REFERENCE-02。
+
+
+### MCP-QUOTA-01 · 检索与下载共用游客日预算，连续取材中途被拒
+
+2026-11-12。宣传片剪辑取得 3 段后下载返回 `QUERY_LIMITED`，另外 9 个镜头虽已有来源仍无法继续。`model_query` 把 MCP 检索与片段下载计入同一游客 IP 预算，错误也可能代表并发已占满；更换 Cookie 不增加同 IP 次数。
+
+验收要求：沿用原身份、资料权限、证据版本和片段时长合同，通过已有游客环境变量放宽日次数及并发；已达旧阈值的计数在新阈值下能够准入，公开 MCP 可实际取得独立 MP4。
+
+本次配置核对、隔离 Redis 对照和 4 次真实下载通过；完整剪辑任务、长期负载和成本未验证。当前状态见[工作台](workbench.html)，依据见[TRD](../design/03-product-reassessment/cloud-editing-guest-quota-trd.md)、[报告](../report/server/cloud-editing-guest-quota-20261112.md)、[devlog](devlog.md#devlog-cloud-editing-quota-20261112)和 [PR #142](https://github.com/owariband/Seekino/pull/142)。

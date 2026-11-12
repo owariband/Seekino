@@ -123,6 +123,7 @@ Event / Sub-Chunk 的实施入口是 [sub-chunk-trd.md](02-agent-harness/sub-chu
 | 外部 Agent MCP 接入 | [mcp-access-trd.md](03-product-reassessment/mcp-access-trd.md) | 主 TRD：localhost 工具发现、Event 召回、版本化证据与媒体取用；外部 Agent 承担制作。 |
 | 剪辑双召回 | [主设计与实现](03-product-reassessment/editing-skill-style-reference-trd.md) | [#50](https://github.com/owariband/Seekino/pull/50) 从剧本召回可剪表演和有原片依据的剪辑手法。模板库待跨片复用验收后决定。 |
 | 云端公开系列 MCP | [cloud-public-mcp-trd.md](03-product-reassessment/cloud-public-mcp-trd.md) | 公网原生工具发现、公开素材检索与可直接下载的片段。 |
+| Cloud 游客连续取材额度 | [cloud-editing-guest-quota-trd.md](03-product-reassessment/cloud-editing-guest-quota-trd.md) | 检索与取片共用游客 IP 预算，通过已有配置放宽日次数及并发。 |
 | 动画表情素材召回 | [E4 专项](03-product-reassessment/anime-material-recall-trd.md) | 动画表情提示词、整集对照与 MCP 全量素材浏览。 |
 | 剧本双召回与原片取用 | [同一个 MCP 的整体验收](03-product-reassessment/mcp-edit-references-trd.md) | 从剧本找表演、查手法、取用两类原片，随 #50 向 dev 交付。 |
 | 剪辑参考解析 | [代表片段与全片风格卡](03-product-reassessment/edit-reference-profile-trd.md) | 参考档案使用原片帧与独立手法索引。 |

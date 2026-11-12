@@ -21,6 +21,13 @@ cloud 要求 `supervisor_harness: deepagents`，不得绑定本机 Codex/Claude 
 样例索引的 embedding 模型、维度须匹配。当前根配置包含本机模型，不可直接用于云端。
 每条 Chat 回答的模型和工具预算默认各 100 次，默认可选上限也各为 100。生产全局 Agent 设置独立保存在 `/data/config/cloud/agent-runtime.yaml`。升级时首次读取会继承其他运行参数，管理员全局设置页可继续调整。模型连接和 API Key 使用原模型文件，按 IP 的每日查询额度使用鉴权环境变量。[配置说明](../../docs/model-config.md)
 
+MCP 检索与片段下载也共用游客 IP 的每日额度。环境模板将 `SEEKINO_AUTH_QUERY_LIMIT_GUEST`
+设为 `10000`，`SEEKINO_AUTH_CONCURRENT_QUERIES_GUEST` 设为 `4`，便于连续取材。
+`QUERY_LIMITED` 可能表示日次数耗尽或并发占满；更换 Cookie 不会重置同 IP 的次数。
+已有部署需在私有环境文件中显式设置并重新创建 API，普通 `restart` 不会加载新的容器环境。
+保留当前镜像和完整 Compose 覆盖文件，仅重建 API；不要为解除额度清空 Redis。
+登录用户及全局容量仍按原配置控制。
+
 Deep Agents checkpoint 与 MySQL schema 的初始化、已有数据库升级按
 [模型配置](../../docs/model-config.md#deep-agents-checkpoint-持久化)核对。
 
