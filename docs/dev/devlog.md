@@ -5704,9 +5704,9 @@ MCP 工具从四个增至十一个。一次保存的 70 KiB 文本在重试后�
 
 **方案候选**　完成文字和思考区可以保持紧凑。最新回复继续保留原来的 Kino 组件，就能沿用它已有的庆祝、睡眠、唤醒与跳跃，无需重写动画。
 
-**方案验证**　本地 Chrome 用模拟消息流连续完成两轮问答，有、无思考文字各一次。两轮都能看到庆祝后入睡；输入追问时醒来，发送后跳到新回复。重开历史只在最新回复直接入睡。[回归用例](../../web/src/features/search/AgentProgress.test.tsx) · [PR #118](https://github.com/owariband/Seekino/pull/118)
+**方案验证**　本地 Chrome 用模拟消息流连续完成两轮问答，有、无思考文字各一次。两轮都能看到庆祝后入睡。发出追问时醒来，新回复出现时起跳。重开历史只在最新回复直接入睡。[回归用例](../../web/src/features/search/AgentProgress.test.tsx) · [PR #118](https://github.com/owariband/Seekino/pull/118)
 
-**指标对比**　关注的是每个动作出现在哪条回复上。改前，成功后有 0 只 Kino；改后，最新回复有 1 只，旧回复有 0 只。实时和历史两种完成态均已用浏览器验证；线上体验待发布后核对。
+**指标对比**　关注的是每个动作出现在哪条回复上。改前，成功后有 0 只 Kino；改后，最新回复有 1 只，旧回复有 0 只。11 月 12 日 10:27，公网 Chrome 游客的两轮真实回答都先庆祝再入睡。追问时 Kino 从第一条回复跳到第二条，刷新后直接睡在第二条回复上。[发布 PR #122](https://github.com/owariband/Seekino/pull/122)
 
 <a id="devlog-watch-seekbar-20261111"></a>
 ## 2026-11-11：浏览器的原生进度轨道在视频上留下浅色描边
@@ -5718,3 +5718,5 @@ MCP 工具从四个增至十一个。一次保存的 70 KiB 文本在重试后�
 **方案验证**　本地 Chrome 用同一段视频核对桌面和模拟触屏、明暗主题，比较修改前后的截图，并实际拖动及使用方向键跳转。[播放器代码](../../web/src/features/player/VideoPlayer.tsx) · [PR #118](https://github.com/owariband/Seekino/pull/118)
 
 **指标对比**　轨道上下原来各有 1 个 CSS 像素的描边，改后均为 0；内部色带仍是 6 个 CSS 像素。移除描边后仍能看清播放位置，也能继续拖动和键盘跳转。
+
+11 月 12 日，公网 Chrome 在 Karpathy 第一集拖动进度条，色带和视频实际位置均为 37.83%。按 Home 键回到起点，媒体分段请求返回 HTTP 206。[发布 PR #122](https://github.com/owariband/Seekino/pull/122)
