@@ -147,12 +147,12 @@
 }
 
 .home { --home-gutter: clamp(20px, 5vw, 96px); width: 100%; max-width: none; padding: 0 0 64px; }
-.hero { position: relative; isolation: isolate; display: flex; min-height: 520px; height: min(54vw, 720px); align-items: center; overflow: hidden; padding: 64px var(--home-gutter) 100px; color: #f3f8f5; background: #10251f; }
+.hero { position: relative; isolation: isolate; display: flex; min-height: 520px; height: min(54vw, 720px); align-items: center; overflow: hidden; padding: 64px var(--home-gutter) 100px; color: #f3f8f5; background: var(--hero-base); }
 .heroFrame { position: absolute; z-index: -3; inset: 0 0 -22%; }
-.hero::before { position: absolute; z-index: -2; inset: 0; background: linear-gradient(90deg, rgb(5 16 13 / 92%), rgb(5 16 13 / 62%) 36%, rgb(5 16 13 / 8%) 78%); content: ""; }
+.hero::before { position: absolute; z-index: -2; inset: 0; background: linear-gradient(90deg, color-mix(in srgb, var(--hero-shade) 92%, transparent), color-mix(in srgb, var(--hero-shade) 62%, transparent) 36%, color-mix(in srgb, var(--hero-shade) 8%, transparent) 78%); content: ""; }
 /* Fading a dark frame into the light canvas leaves a grey haze; end on a deeper tone with a clean edge instead.
    Mixing the two bottom tones with the page progress keeps the blend in step with the palette. */
-.hero::after { position: absolute; z-index: -1; right: 0; bottom: 0; left: 0; height: 150px; background: linear-gradient(0deg, color-mix(in srgb, rgb(5 16 13 / 72%), var(--canvas) var(--night-mix)), transparent); content: ""; }
+.hero::after { position: absolute; z-index: -1; right: 0; bottom: 0; left: 0; height: 150px; background: linear-gradient(0deg, var(--hero-bottom), transparent); content: ""; }
 .heroContent { width: min(620px, 55%); padding-block: 16px; }
 .heroKicker { display: inline-flex; align-items: center; color: #b6e4d7; font-size: .9rem; font-weight: 600; }
 .heroContent h2 { margin: 14px 0 20px; font: 700 clamp(2.5rem, 5vw, 5rem)/1.05 var(--display); letter-spacing: -.022em; overflow-wrap: anywhere; }
@@ -227,7 +227,7 @@
 .homeEmpty, .homeError { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 12px 16px; margin: 0; padding: 40px 28px; color: var(--ink-soft); font-size: .85rem; text-align: center; }
 .homeEmpty a { color: var(--teal-deep); font-weight: 600; }
 .homeError { color: var(--red); }
-@media (max-width: 760px) { .hero { min-height: 590px; height: auto; align-items: end; padding: 230px var(--home-gutter) 70px; } .heroFrame { bottom: 130px; } .hero::before { background: linear-gradient(0deg, #10251f 12%, rgb(5 16 13 / 88%) 40%, rgb(5 16 13 / 4%) 85%); } .hero::after { height: 80px; } .heroContent { width: 100%; } .heroContent h2 { margin: 14px 0; font-size: clamp(2rem, 8vw, 3.5rem); } .heroContent > p { margin: 16px 0 22px; font-size: .85rem; -webkit-line-clamp: 2; } .heroMeta { font-size: .72rem; } .heroPlay, .heroBrowse { padding-inline: 18px; font-size: .8rem; } .heroProgress { margin-top: 22px; } }
+@media (max-width: 760px) { .hero { min-height: 590px; height: auto; align-items: end; padding: 230px var(--home-gutter) 70px; } .heroFrame { bottom: 130px; } .hero::before { background: linear-gradient(0deg, var(--hero-base) 12%, color-mix(in srgb, var(--hero-shade) 88%, transparent) 40%, color-mix(in srgb, var(--hero-shade) 4%, transparent) 85%); } .hero::after { height: 80px; } .heroContent { width: 100%; } .heroContent h2 { margin: 14px 0; font-size: clamp(2rem, 8vw, 3.5rem); } .heroContent > p { margin: 16px 0 22px; font-size: .85rem; -webkit-line-clamp: 2; } .heroMeta { font-size: .72rem; } .heroPlay, .heroBrowse { padding-inline: 18px; font-size: .8rem; } .heroProgress { margin-top: 22px; } }
 @media (max-width: 580px) { .homeGrid { gap: 24px; } .seriesCards { grid-auto-columns: 76%; gap: 16px; } .seriesCards strong { font-size: .9rem; } .seriesCards small { font-size: .7rem; } .homeEpisode { grid-template-columns: 46px minmax(0, 1fr) auto; gap: 10px; padding-inline: 8px; } .homeEpisodeNumber { font-size: .68rem; } .coverFallback { padding: 15px; gap: 12px; } }
 @media (prefers-reduced-motion: reduce) { .seriesCover, .sidePanel[data-open="false"], .videoPlayerControls { transition: none; } }
 
