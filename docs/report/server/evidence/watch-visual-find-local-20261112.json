@@ -1,0 +1,86 @@
+{
+  "date": "2026-11-12",
+  "source": "MyGO 第 2 集，本机隔离 MySQL、Elasticsearch、llama.cpp Qwen3-Embedding-0.6B 和真实 MP4",
+  "indexedChunks": 24,
+  "publishedEvents": 559,
+  "projectedVisualCues": 480,
+  "visiblePerson": "千早愛音",
+  "browser": {
+    "videoId": "b7993872-d90f-538f-9eca-4de0511e2f5f",
+    "sceneSeeks": [
+      776666,
+      847999,
+      847999,
+      776666
+    ],
+    "exactSeeks": [
+      680820,
+      1320000
+    ],
+    "nameAppearances": 248,
+    "nameSemanticRequests": 0,
+    "disabledRequestsAfterReload": 0,
+    "semanticFirst": {
+      "query": "肩背乐器包在街道上走",
+      "eventStartMs": 845166,
+      "seekMs": 847999
+    },
+    "displayedSuggestions": 5,
+    "panelWidth": 210,
+    "mobileToggle": true
+  },
+  "verifiedFrames": [
+    {
+      "query": "爱音看手机",
+      "rangeMs": [
+        774833,
+        778500
+      ],
+      "seekMs": 776666,
+      "observation": "爱音坐在沙发上看手机。镜头起点仍是空房间。"
+    },
+    {
+      "query": "肩背乐器包在街道上走",
+      "rangeMs": [
+        845166,
+        850833
+      ],
+      "seekMs": 847999,
+      "observation": "爱音背着吉他包和一名女生在人行道上走。"
+    }
+  ],
+  "semanticApiSamples": [
+    {
+      "query": "房间里低头刷手机",
+      "elapsedMs": 2940,
+      "ready": true,
+      "firstEventStartMs": 826500,
+      "verifiedEventStartMs": 774833,
+      "rank": 2
+    },
+    {
+      "query": "爱音背着吉他包走路",
+      "elapsedMs": 1026,
+      "ready": true,
+      "firstEventStartMs": 845166,
+      "verifiedEventStartMs": 845166,
+      "rank": 1
+    },
+    {
+      "query": "肩背乐器包在街道上走",
+      "elapsedMs": 676,
+      "ready": true,
+      "firstEventStartMs": 845166,
+      "verifiedEventStartMs": 845166,
+      "rank": 1
+    },
+    {
+      "query": "月球上穿着太空服的宇航员",
+      "elapsedMs": 645,
+      "ready": true,
+      "firstEventStartMs": 909000,
+      "observation": "首条是鞋袜特写。相似性不能确定画面里有宇航员。"
+    }
+  ],
+  "release": "development PR; local pilot"
+}
