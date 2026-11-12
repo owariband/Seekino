@@ -324,6 +324,20 @@ Verification will cover two independently issued guest tokens sharing an author'
 
 The superseded November 11 owner-private implementation shipped in #119. The subsequent guest-private proposal in #121 added guest ownership, login transfer and per-guest limits. The November 12 clarification replaces those access rules with series sharing. The guest-owned proposal is retained in Git history as a rejected direction.
 
+### Third-party Skill and authored camera timing added on November 12
+
+The editing client also needs video-shotcraft, supplied by Vincentwei1021 under Apache-2.0. Seekino will publish a second discoverable Skill entry through the existing MCP Skills extension and legacy Resources. The package retains the upstream license, author, repository and pinned commit, and prominently identifies any Seekino installation note. The entry provides the complete upstream local-install command so the client receives its referenced cards, demos, helpers and rendering workflow. Rendering remains on the editing computer. The README credits the project and invites a voluntary Star. Third-party audio, screenshots and Remotion retain their respective terms.
+
+The existing motion-showreel comparison is ConardLi/garden-skills at 2b9a8934. Seekino already exposes cosine ease-in/out and measured monotone position interpolation. video-shotcraft has velocity-driven stretch/smear/blur helpers and nonlinear frame remapping. The open question is the exact support and prominence of a configurable Gaussian-shaped speed curve in both guides. Survey their instructions and implementation before reporting a gap.
+
+For newly authored continuous pans and pushes, provide a Gaussian-shaped velocity option in the existing portable camera module. Normalize its integral to exact start and end positions. Subtract the common finite-interval boundary speed so the move begins and ends at rest. Expose sigma, default 0.18, with a numerically validated range 0.05–0.5. Expose instantaneous fractional velocity per millisecond for optional speed-linked treatment. Position has an S shape. A logistic curve has a similar shape but does not have an exactly Gaussian derivative.
+
+The new authoring parameter is explicit and preserves the original source observations and measured samples. A caller selecting the authored velocity profile overrides the sampled trajectory for its new composition. Without that parameter the existing source replay behavior remains. The editing guide recommends the Gaussian-shaped option for this requested smooth camera style. When stretch, smear or blur is requested, derive its intensity from instantaneous speed using the upstream helper and normalize it to the artwork; position easing alone does not geometrically distort an image.
+
+Acceptance will verify two Skill entries, legacy resource access, exact packaged file digests, complete pinned local installation for both clients, and source/attribution notices. Numerical checks compare positions to Python math.erf, require monotone and symmetric travel, exact endpoints, zero boundary velocity and a central speed maximum. Existing observed and measured replay tests remain regression guards. A standalone curve comparison will show position, speed and the same camera move at equal durations. These checks are pending implementation.
+
+Continue in #121 and the corresponding #123 release draft. This increment adds Skill distribution files, one camera-module option, client instructions and their verification. It changes no database contract. Production deployment follows review.
+
 ## 3.6 Rejected options
 
 | Option | Why not |
