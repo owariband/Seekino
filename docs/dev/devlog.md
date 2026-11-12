@@ -27,6 +27,7 @@
 
 | 记录 | 原问题编号 |
 |---|---|
+| [2026-11-12：字体改版连带替换整套色板，原有青瓷背景消失](#devlog-celadon-palette-20261112) | WEB-PALETTE-01 |
 | [2026-11-12：状态更新重跑历史 Markdown，放大聊天输入与流式卡顿](#devlog-chat-frontend-performance-20261112) | CHAT-PERF-01；PR #126，同版本组件与生产构建对照 |
 | [2026-11-11：完成状态移除了 Kino，回答结束时看不到庆祝和睡觉](#devlog-kino-perch-20261111) | CHAT-KINO-01 |
 | [2026-11-11：浏览器的原生进度轨道在视频上留下浅色描边](#devlog-watch-seekbar-20261111) | WATCH-SEEK-01 |
@@ -178,6 +179,25 @@
 | [日期未明确（2026-10-23归档）：当前播放窗口的按需理解与复用](#devlog-history-60) | 独立实验/设计 |
 
 </details>
+
+<a id="devlog-celadon-palette-20261112"></a>
+## 2026-11-12：字体改版连带替换整套色板，原有青瓷背景消失
+
+### 问题与现状
+
+Apple 式视觉刷新以字体和界面质感为出发点，同时将全站灰绿色背景换成中性灰白／纯黑。11 月 10 日的 `cee43f96` 和 PR #90 引入颜色替换，随后随 #93 进入 main；11 月 12 日要求恢复原有配色。影响范围包括页面画布、面板、文字、顶栏及首页／系列页遮罩，不能只改一个背景色。问题编号 WEB-PALETTE-01，[原始改版](../design/03-product-reassessment/apple-style-refresh-trd.md)保留当时方案和代价。
+
+### 方案候选
+
+从 `cee43f96^` 恢复颜色与背景声明，继续使用既有色板和 `--night-mix`。保留字体、字号、布局、圆角、动效、菜单与后续功能；整体 revert #90 会带走这些改进，因此未采用。代码集中在 4 个既有 CSS 文件，不增加主题机制或额外配置。
+
+### 方案验证
+
+生产构建与 2 项主题单测通过；现有首页封面同步渐变及减弱动态效果浏览器用例通过。Chrome 隔离 fixture 验证首页、系列页、助手、设置页的日夜主题，覆盖 390px 和 1440px，共 16 个页面状态，画布、顶栏、卡片、文字和 Hero 精确色值通过，保存 16 张截图和 4 份计算样式 JSON。对 CSS diff 排除配色声明后，其余内容相同。证据路径、命令与失败的临时脚本口径修正见[恢复 TRD](../design/03-product-reassessment/restore-celadon-palette-trd.md)。未调用真实模型、写业务数据或验证远端部署。
+
+### 指标对比
+
+本次衡量用户能直接看到的大面积配色和既有交互保留情况，不涉及模型耗时或 token。白天画布从 `#f5f5f7` 恢复为 `#e4eae5`，黑夜从 `#000000` 恢复为 `#121816`；Hero 从 `#0b0b0c` 恢复为 `#10251f`。代价是恢复原有色彩氛围，同时保留新字体及动效。实现与本地验证通过，main 发布和真实环境加载分别记录，[PR #127](https://github.com/owariband/Seekino/pull/127) 跟踪开发交付，[发布 PR #128](https://github.com/owariband/Seekino/pull/128) 只含 4 个 CSS，发布构建与 release-files 通过；状态以[工作台](workbench.html)为准。
 
 <a id="devlog-chat-frontend-performance-20261112"></a>
 ## 2026-11-12：状态更新重跑历史 Markdown，放大聊天输入与流式卡顿
