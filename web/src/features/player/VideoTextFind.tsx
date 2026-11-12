@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronUp, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent, type RefObject } from "react";
 
 import { errorMessage, getVideoTextTimeline } from "../../api/client";
 import { useI18n } from "../../app/i18n";
@@ -92,6 +92,10 @@ export function VideoTextFind({ videoId, tenantId, inputRef, canSeek, onSeek, on
   const next = () => select(active + 1);
   const disabled = !canSeek || matches.length === 0;
 
+  function keepTypingFocus(event: MouseEvent<HTMLButtonElement>) {
+    if (event.button === 0 && document.activeElement === inputRef.current) event.preventDefault();
+  }
+
   return <section className={styles.textFind} role="search" aria-label={t("在本视频中查找")}
     onKeyDown={event => {
       if (event.nativeEvent.isComposing || event.keyCode === 229) return;
@@ -112,14 +116,14 @@ export function VideoTextFind({ videoId, tenantId, inputRef, canSeek, onSeek, on
       <button type="button" aria-label={t("关闭片内查找")} onClick={onClose}><X size={16} /></button>
     </div>
     <div className={styles.findFilters}>
-      <button type="button" role="switch" aria-checked={visualFind} aria-label={t("画面搜索")}
+      <button type="button" role="switch" aria-checked={visualFind} aria-label={t("画面搜索")} onMouseDown={keepTypingFocus}
         onClick={event => {
           setVisualFind(!visualFind);
           if (event.detail > 0) inputRef.current?.focus();
         }}>
         <i aria-hidden="true" />{t("画面")}
       </button>
-      <button type="button" role="switch" aria-checked={smartFind} aria-label={t("智能搜索")}
+      <button type="button" role="switch" aria-checked={smartFind} aria-label={t("智能搜索")} onMouseDown={keepTypingFocus}
         onClick={event => {
           setSmartFind(!smartFind);
           setActiveKey(null);

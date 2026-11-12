@@ -37,7 +37,22 @@ try {
     const visuals = find.getByRole("switch", { name: "画面搜索" });
     if (index === 0) {
       await expect(visuals).toBeChecked();
-      await visuals.click();
+      const smart = find.getByRole("switch", { name: "智能搜索" });
+      await expect(input).toHaveCSS("box-shadow", "none");
+      for (const toggle of [smart, visuals]) {
+        await toggle.hover();
+        await page.mouse.down();
+        await expect(input).toBeFocused();
+        await page.mouse.up();
+        await expect(input).toBeFocused();
+      }
+      await expect(smart).toBeChecked();
+      await visuals.focus();
+      await page.keyboard.press("Tab");
+      await expect(smart).toBeFocused();
+      await page.keyboard.press("Space");
+      await expect(smart).not.toBeChecked();
+      await expect(smart).toBeFocused();
     }
     await expect(visuals).not.toBeChecked();
     for (const query of ["高松燈", "高　松 灯"]) {
