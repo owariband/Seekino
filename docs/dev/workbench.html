@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-12T20:25:13.887090+08:00",
+ "updatedAt": "2026-11-12T22:16:13.088831+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 53,
+ "revision": 54,
  "categories": [
   {
    "id": "parse",
@@ -5626,6 +5626,44 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "label": "冻结回放与完整链路证据",
      "kind": "evidence",
      "url": "https://github.com/owariband/Seekino/blob/fix/reference-model-judgment/docs/report/agent/video_parse_v2/reference-model-judgment-20261112/README.md"
+    }
+   ]
+  },
+  {
+   "id": "MCP-QUOTA-01",
+   "title": "放宽游客共享取材额度，恢复 Cloud 剪辑下载",
+   "category": "creation",
+   "type": "task",
+   "status": "done",
+   "priority": "P0",
+   "description": "检索和片段下载共用游客 IP 日预算，连续取材时会触发 QUERY_LIMITED；本次只放宽游客配置并验证真实取片。",
+   "next": "原剪辑任务继续取剩余镜头；完整成片与长期成本由相应任务验收。配置样例和公开记录随 #142 集成 dev。",
+   "verification": "配置相关 3 passed；环境样例解析为 10000/4。独立 Redis 对照已达 20 次时旧阈值拒绝、新阈值接纳，4 路准入和第5路拒绝不扣额。公开 MCP 到无Cookie下载器连续4次HTTP 200，1080p H.264/AAC短片有效。API重新加载与健康已核对，运行快照仅留私有证据。",
+   "updatedAt": "2026-11-12",
+   "tags": [
+    "MCP",
+    "游客额度"
+   ],
+   "related": [
+    "MCP-CLOUD-01",
+    "EDIT-CLIP-01"
+   ],
+   "branch": "fix/cloud-editing-guest-quota",
+   "links": [
+    {
+     "label": "PR #142",
+     "kind": "pr",
+     "url": "https://github.com/owariband/Seekino/pull/142"
+    },
+    {
+     "label": "游客取材额度 TRD",
+     "kind": "trd",
+     "url": "https://github.com/owariband/Seekino/blob/fix/cloud-editing-guest-quota/docs/design/03-product-reassessment/cloud-editing-guest-quota-trd.md"
+    },
+    {
+     "label": "配置与真实取片验证",
+     "kind": "evidence",
+     "url": "https://github.com/owariband/Seekino/blob/fix/cloud-editing-guest-quota/docs/report/server/cloud-editing-guest-quota-20261112.md"
     }
    ]
   }
