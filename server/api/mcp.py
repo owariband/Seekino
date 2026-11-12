@@ -30,8 +30,8 @@ if TYPE_CHECKING:
     from ..service.mcp_retrieval import McpRetrievalService
 
 _ERRORS = {
-    "PERSONAL_LIBRARY_REQUIRED": "Sign in to Cloud and copy a personal MCP token from the account menu.",
-    "TEMPLATE_NOT_FOUND": "No such template or version exists in your library.",
+    "PERSONAL_LIBRARY_REQUIRED": "Copy an editing write token from the account menu and choose a series you can edit.",
+    "TEMPLATE_NOT_FOUND": "No accessible series template or version exists.",
     "TEMPLATE_CONFLICT": "Read the current revision and retry. Reuse a request_id only for identical input.",
     "REFERENCE_INDEX_UNAVAILABLE": "Editing-reference search is unavailable on this instance.",
     "INVALID_ARGUMENT": "Check the tool arguments and their documented limits.",
@@ -182,7 +182,7 @@ def create_mcp_app(service: McpRetrievalService, *, auth_mode: str, auth: AuthSe
         instructions=(
             "For editing, read skill://seekino-editing-materials/SKILL.md with resources/read. "
             "It explains shot selection, style references, local cutouts and saving feedback. "
-            "Local or signed-in personal credentials can save template versions, append notes and select defaults. "
+            "Templates belong to series. All series viewers share versions and feedback. Editors with a write-capable credential can contribute. "
             "Find source performances with retrieve. For editing techniques and shot changes, use find_edit_templates, "
             "play its media.play_url and inspect the source frames. get_style_card returns a whole-film card "
             "with an evidence_ref for every exemplar. Read those references with read_evidence. Results are indexed evidence, "
@@ -305,7 +305,7 @@ def create_mcp_app(service: McpRetrievalService, *, auth_mode: str, auth: AuthSe
     ) -> dict[str, Any]:
         """Find editing techniques by natural language. Each source-checked observation has original
         start/end milliseconds, shot steps and media.play_url for that interval. Choose whether to
-        borrow it after watching the original. series_ids scope source footage. tags filter private templates.
+        borrow it after watching the original. series_ids scope source footage. tags filter series-shared templates.
         Set include_parse_techniques=false to search only your template library."""
         return await invoke(ctx, service.find_edit_templates, query=query, series_ids=series_ids, tags=tags,
                             include_parse_techniques=include_parse_techniques, top_k=top_k)
@@ -359,13 +359,13 @@ def create_mcp_app(service: McpRetrievalService, *, auth_mode: str, auth: AuthSe
 
     @server.tool(annotations=annotations, structured_output=True)
     async def get_edit_template(template_id: str, ctx: Context, version_id: str | None = None) -> dict[str, Any]:
-        """Read your exact saved code, source snapshots, evaluations and checks. Without a version ID,
+        """Read saved code, source snapshots, evaluations and checks shared by a series you can view. Without a version ID,
         return the explicit default or list versions if no default is selected."""
         return await invoke(ctx, service.get_edit_template, template_id=template_id, version_id=version_id)
 
     @server.tool(annotations=annotations, structured_output=True)
     async def list_edit_template_versions(template_id: str, ctx: Context) -> dict[str, Any]:
-        """List revisions, lineage and the default of a template in your library."""
+        """List shared revisions, lineage and the default of a template in a series you can view."""
         return await invoke(ctx, service.list_edit_template_versions, template_id=template_id)
 
     @server.tool(annotations=writes, structured_output=True)
@@ -373,15 +373,16 @@ def create_mcp_app(service: McpRetrievalService, *, auth_mode: str, auth: AuthSe
         ctx: Context, request_id: RequestId, spec: dict, visual_requirements: dict | list, slots: list | dict,
         params_schema: dict, files: dict[str, str], entry: str, runtime: dict, evaluation: TemplateEvaluation,
         template_id: str | None = None, new_template: TemplateDetails | None = None, parent_version_id: str | None = None,
+        series_id: Annotated[str | None, Field(min_length=1, max_length=64, description="Required for a new template. All viewers of this series share the saved version.")] = None,
         source_refs: Annotated[list[Annotated[str, Field(min_length=1, max_length=4096)]], Field(max_length=16)] = [],
         check: dict | None = None,
     ) -> dict[str, Any]:
-        """Save a revision in your local or personal Cloud library. Supply template_id or new_template
+        """Save a revision in a series you can edit. For a new template supply series_id and new_template; for a revision supply template_id. new_template is
         {name, description, tags}. files is a map of relative paths to text (1 MiB total); entry names one.
         Include source evidence_refs from this connection. For a parent use evaluation.kind=revision_rationale
         and describe changes. A save never selects a default. Reuse request_id on retry."""
         return await invoke(ctx, service.save_edit_template_version, request_id=request_id, template_id=template_id,
-                            new_template=new_template.model_dump() if new_template else None, parent_version_id=parent_version_id, spec=spec,
+                            new_template=new_template.model_dump() if new_template else None, parent_version_id=parent_version_id, series_id=series_id, spec=spec,
                             visual_requirements=visual_requirements, slots=slots, params_schema=params_schema,
                             files=files, entry=entry, runtime=runtime, source_refs=source_refs,
                             evaluation=evaluation.model_dump(exclude_none=True), check=check)

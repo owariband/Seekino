@@ -246,12 +246,9 @@ class MediaService:
         identity_key = reference if reference else ref.identity
         tenant_id, series_id = identity_key.tenant_id, identity_key.series_id
         cloud = identity.mode == "cloud"
-        if public_only:
-            if not cloud or tenant_id != identity.public_tenant_id:
-                raise SeriesNotFoundError("当前公开素材库中没有此系列")
-            self._library.require_public_ready_series(series_id, tenant_id=tenant_id,
-                                                      owner_user_id=identity.user_id)
-        elif cloud:
+        if public_only and not cloud:
+            raise SeriesNotFoundError("当前公开素材库中没有此系列")
+        if cloud:
             series = self._library.get_series(series_id, tenant_id=tenant_id, owner_user_id=identity.user_id)
             series_access(identity, series)
         elif tenant_id != identity.tenant_id:
@@ -273,9 +270,9 @@ class MediaService:
         validate_clip_range(start_ms, end_ms, duration_ms=duration_ms, cloud=cloud)
         source = self.get_original(video_id, tenant_id=tenant_id, video=video)
         _encode_source_clip(source.path, destination, start_ms, end_ms, cloud=cloud)
-        if public_only:
-            self._library.require_public_ready_series(series_id, tenant_id=tenant_id,
-                                                      owner_user_id=identity.user_id)
+        if cloud:
+            series = self._library.get_series(series_id, tenant_id=tenant_id, owner_user_id=identity.user_id)
+            series_access(identity, series)
 
     def thumbnail_view(
         self, video_id: str, *, tenant_id: str, video: VideoSummaryState | None = None,

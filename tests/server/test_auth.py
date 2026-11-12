@@ -130,86 +130,85 @@ def test_mcp_credentials_are_scoped_expire_and_follow_account_revocation(cloud, 
             service.authenticate_clip(ticket, "test-reference", 10, 100)
 
 
-def test_personal_mcp_library_through_http_is_persistent_idempotent_and_owner_scoped(cloud):
-    from dataclasses import replace
+def test_series_shared_templates_follow_visibility_through_http(cloud):
     from server.api.mcp import create_mcp_app
     from server.database import create_schema
+    from server.model.video import Series, SeriesVisibility
     from server.repository.editing_template import EditingTemplateRepository
+    from server.repository.library import LibraryRepository
+    from server.service.library import LibraryService
     from server.service.mcp_retrieval import McpRetrievalService
 
     auth, _, _, sessions = cloud
     create_schema(sessions.kw["bind"])
-    auth.config = replace(auth.config, public_library_only=True)
+    library = LibraryService(LibraryRepository(sessions))
+
+    def editor(email):
+        account = auth.verify_email_code(auth.create_guest().identity, email, "123456")
+        with TestClient(_app(auth)) as web:
+            web.cookies.set(auth.config.cookie_name, account.token)
+            response = web.post("/api/auth/mcp-token?scope=personal", headers={"X-CSRF-Token": account.csrf_token})
+            assert response.status_code == 200
+            return account, response.json()["accessToken"]
+
+    alice, alice_token = editor("editor-a@example.com")
+    bob, bob_token = editor("editor-b@example.com")
+    shared = library.create_series(tenant_id=alice.identity.tenant_id, name="Shared references")
+    private = library.create_series(tenant_id=alice.identity.tenant_id, name="Private draft")
+    with sessions.begin() as session:
+        session.get(Series, shared.series_id).visibility = SeriesVisibility.PUBLIC
     origin = "https://editing.example.com"
-    service = McpRetrievalService(library=None, media=None, event_retrieval=None, parse_persistence=None,
+    service = McpRetrievalService(library=library, media=None, event_retrieval=None, parse_persistence=None,
                                   local_tenant_id="local", public_tenant_id=auth.config.public_tenant_id,
                                   editing_repository=EditingTemplateRepository(sessions))
     app = create_mcp_app(service, auth_mode="cloud", auth=auth, allowed_origins=(origin,))
-    def token(email):
-        account = auth.verify_email_code(auth.create_guest().identity, email, "123456")
-        assert account.identity.tenant_id is None  # public-only deployments still give members a private editing library
-        with TestClient(_app(auth)) as web:
-            web.cookies.set(auth.config.cookie_name, account.token)
-            assert web.post("/api/auth/mcp-token?scope=personal").status_code == 403
-            result = web.post("/api/auth/mcp-token?scope=personal", headers={"X-CSRF-Token": account.csrf_token})
-            assert result.status_code == 200
-            return result.json()["accessToken"], auth.issue_mcp_token(account.token)[0]
-
-    alice, public = token("editor-a@example.com")
-    bob, _ = token("editor-b@example.com")
-    with TestClient(_app(auth)) as web:
-        denied = web.post("/api/auth/mcp-token?scope=personal")
-        assert denied.status_code in (401, 403) and not web.cookies
-        guest = web.post("/api/auth/mcp-token").json()["accessToken"]
-    args = dict(request_id="first", new_template={"name": "红色切入", "tags": ["红色"]},
-                spec={"fps": 24}, visual_requirements={"palette": "red"}, slots=[], params_schema={},
-                files={"enter.js": "a" * 70000}, entry="enter.js", runtime={"engine": "browser"},
-                evaluation={"agent_judgment": "reviewed the first render"}, source_refs=[])
     headers = {"Accept": "application/json, text/event-stream", "MCP-Protocol-Version": "2025-06-18"}
+    with TestClient(_app(auth)) as web:
+        guests = [web.post("/api/auth/mcp-token").json()["accessToken"] for _ in range(2)]
+    args = dict(request_id="first", series_id=shared.series_id, new_template={"name":"红色切入", "tags":["红色"]},
+                spec={"fps":24}, visual_requirements={}, slots=[], params_schema={}, files={"enter.js":"a" * 70000},
+                entry="enter.js", runtime={}, evaluation={"context":"first render"}, source_refs=[])
     with TestClient(app, base_url=origin, headers=headers) as client:
         def call(credential, tool, **arguments):
-            response = client.post("/mcp", headers={"Authorization": "Bearer " + credential},
-                json={"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": tool, "arguments": arguments}})
+            response = client.post("/mcp", headers={"Authorization":"Bearer " + credential},
+                json={"jsonrpc":"2.0", "id":1, "method":"tools/call", "params":{"name":tool,"arguments":arguments}})
             assert response.status_code == 200
             result = response.json()["result"]
             return result["content"][0]["text"] if result.get("isError") else result["structuredContent"]
 
-        save, read, versions = "save_edit_template_version", "get_edit_template", "list_edit_template_versions"
-        feedback, choose = "append_edit_template_note", "set_default_edit_template_version"
-        for read_only in (guest, public):
-            assert "PERSONAL_LIBRARY_REQUIRED" in call(read_only, save, **{**args, "files": {"enter.js": "text"}})
-        first = call(alice, save, **args)
-        assert isinstance(first, dict), first
-        assert first == call(alice, save, **args) and first["version_no"] == 1
-        assert "TEMPLATE_CONFLICT" in call(alice, save, **{**args, "files": {"enter.js": "different"}})
-        tid, vid = first["template_id"], first["version_id"]
-        assert call(alice, read, template_id=tid)["default_version_id"] is None
-        exact = call(alice, read, template_id=tid, version_id=vid)["version"]
-        assert exact["files"] == args["files"]
-        lookup = dict(query="红色", tags=["红色"], include_parse_techniques=False)
-        assert call(alice, "find_edit_templates", **lookup)["templates"][0]["template_id"] == tid
-        assert call(bob, "find_edit_templates", **lookup)["templates"] == []
-        assert call(guest, "find_edit_templates", **lookup)["templates"] == []
-        for credential in (public, guest, bob):
-            for name, arguments in ((read, dict(template_id=tid)), (versions, dict(template_id=tid)),
-                (feedback, dict(version_id=vid, kind="check", entry={"what":"render", "result":"pass"}, request_id="c")),
-                (choose, dict(template_id=tid, version_id=vid, revision=0, reason="review", request_id="select"))):
-                assert isinstance(call(credential, name, **arguments), str)
-        note = dict(version_id=vid, kind="check", entry={"what": "render", "result": "pass"}, request_id="check")
-        assert call(alice, feedback, **note) == call(alice, feedback, **note)
-        default = dict(template_id=tid, version_id=vid, revision=0, reason="reviewed", request_id="default")
-        assert call(alice, choose, **default) == call(alice, choose, **default)
-        assert "TEMPLATE_CONFLICT" in call(alice, choose, **{**default, "request_id": "stale"})
-        full = call(alice, read, template_id=tid)["version"]
-        assert full["content_hash"] == exact["content_hash"] and full["check"][0]["reported_by"] == "client"
-        assert len(full["check"]) == 1 and full["evaluation"][-1]["kind"] == "default_selection"
-        next_args = {**args, "new_template": None, "template_id": tid, "parent_version_id": vid, "request_id": "next",
-                     "evaluation": {"kind": "revision_rationale", "changes": "shorter hold"}}
-        assert "TEMPLATE_NOT_FOUND" in call(bob, save, **next_args)
-        assert call(alice, save, **next_args)["version_no"] == 2
-        history = call(alice, versions, template_id=tid)
-        assert history["default_version_id"] == vid and len(history["versions"]) == 2
-        assert call(alice, read, template_id=tid)["version"]["successor_notes"][0]["changes"] == "shorter hold"
+        saved = call(alice_token, "save_edit_template_version", **args)
+        assert isinstance(saved, dict), saved
+        assert call(alice_token, "save_edit_template_version", **args) == saved
+        tid, vid = saved["template_id"], saved["version_id"]
+        assert call(alice_token, "set_default_edit_template_version", template_id=tid, version_id=vid,
+                    revision=0, reason="reviewed", request_id="default")["revision"] == 1
+        lookup = dict(query="红色", include_parse_techniques=False)
+        for reader in [*guests, bob_token, alice_token]:
+            full = call(reader, "get_edit_template", template_id=tid)["version"]
+            assert full["files"] == args["files"] and full["author"] == alice.identity.user_id
+            assert call(reader, "list_edit_template_versions", template_id=tid)["versions"][0]["version_id"] == vid
+            assert call(reader, "find_edit_templates", **lookup)["templates"][0]["series_id"] == shared.series_id
+        for outsider in [*guests, bob_token]:
+            assert isinstance(call(outsider, "append_edit_template_note", version_id=vid, kind="check",
+                                   entry={"what":"render", "result":"pass"}, request_id="note"), str)
+            assert isinstance(call(outsider, "save_edit_template_version", **{**args, "files":{"enter.js":"x"}}), str)
+        note = dict(version_id=vid, kind="check", entry={"what":"render", "result":"pass"}, request_id="note")
+        assert call(alice_token, "append_edit_template_note", **note) == call(alice_token, "append_edit_template_note", **note)
+        draft = call(alice_token, "save_edit_template_version", **{**args, "series_id":private.series_id, "request_id":"draft"})
+        for outsider in [*guests, bob_token]:
+            assert isinstance(call(outsider, "get_edit_template", template_id=draft["template_id"], version_id=draft["version_id"]), str)
+        with sessions.begin() as session:
+            session.get(Series, shared.series_id).visibility = SeriesVisibility.PRIVATE
+        for outsider in [*guests, bob_token]:
+            assert call(outsider, "find_edit_templates", **lookup)["templates"] == []
+            assert isinstance(call(outsider, "get_edit_template", template_id=tid, version_id=vid), str)
+            assert isinstance(call(outsider, "list_edit_template_versions", template_id=tid), str)
+        assert call(alice_token, "get_edit_template", template_id=tid)["version"]["files"] == args["files"]
+        with sessions.begin() as session:
+            session.get(Series, shared.series_id).visibility = SeriesVisibility.PUBLIC
+            session.get(User, alice.identity.user_id).status = "DISABLED"
+        assert call(guests[0], "find_edit_templates", **lookup)["templates"] == []
+        assert isinstance(call(guests[0], "get_edit_template", template_id=tid), str)
 
 
 def _conversation(sessions, owner_id: str, tenant_id: str) -> str:

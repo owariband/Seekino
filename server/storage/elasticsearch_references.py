@@ -20,9 +20,11 @@ class ElasticsearchReferenceStore:
     def search(self, query, *, tenant_id, task_ids, size):
         if not task_ids or not self.client.indices.exists(index=self.index_name):
             return []
+        filters = [{"terms": {"task_id": list(task_ids)}}]
+        if tenant_id is not None:
+            filters.append({"term": {"tenant_id": tenant_id}})
         result = self.client.search(index=self.index_name, size=size, source_excludes=["text"],
-                                    query={"bool": {"must": [{"match": {"text": query}}],
-                                           "filter": [{"term": {"tenant_id": tenant_id}}, {"terms": {"task_id": list(task_ids)}}]}},
+                                    query={"bool": {"must": [{"match": {"text": query}}], "filter": filters}},
                                     sort=["_score", {"segment_id": "asc"}, {"task_id": "asc"}])
         return [hit["_source"] for hit in result["hits"]["hits"]]
 

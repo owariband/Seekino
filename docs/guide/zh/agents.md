@@ -43,20 +43,22 @@
 
    例如：“在 Seekino 里找出 Anon 咬牙切齿的镜头，核对来源后把片段存到 clips/。”
 
-## 选片、风格和个人模板工具
+## 选片、风格和 series 共享模板工具
 
 - `list_series` — 看看素材库里有哪些系列。
 - `retrieve` — 用一句描述检索片段，返回原片与时间范围。
 - `browse_events` — 按时间顺序浏览一集里发生了什么。
 - `read_evidence` — 核对原片上下文。给出起止毫秒后，可取得该区间的 MP4 下载地址。
 
-- `find_edit_templates` 检索带原片区间的剪辑技法与自己的模板。用 `get_style_card` 查看整片风格和例证。
+- `find_edit_templates` 检索带原片区间的剪辑技法和可见 series 的共享模板。用 `get_style_card` 查看整片风格和例证。
 - `get_edit_template` 读取指定或默认版本的代码、来源与反馈。`list_edit_template_versions` 列出版本和派生关系。
-- `save_edit_template_version` 保存新版本，`append_edit_template_note` 追加反馈或本机渲染检查，`set_default_edit_template_version` 明确选择默认版本。
+- `save_edit_template_version` 指定 `series_id` 保存新版本，`append_edit_template_note` 追加反馈或本机渲染检查，`set_default_edit_template_version` 明确选择默认版本。
 
-## 使用剪辑 Skill 与个人 Cloud 库
+## 使用剪辑 Skill 与 series 共享模板
 
-在 Cloud 登录后，打开账号菜单，选择“复制个人 MCP 凭据”。在剪辑终端将它设为 `SEEKINO_MCP_TOKEN`，再启动客户端。个人凭据可读取平台公开素材，并访问该账号自己的剪辑模板。游客凭据仍可取公开素材，本机连接可直接保存到本机。
+模板、版本与反馈归属 series。任何有权查看该 series 的人都能读取，不受作者或游客身份影响。换一枚有效游客凭据仍能找回同一公开 series 的模板。创建模板时传入 series_id，已有版本按模板 ID 读取。
+
+写入沿用 series 的编辑权限。Cloud 编辑者可登录后从账号菜单选择“复制剪辑写入凭据”，或通过当前会话 Cookie、CSRF 请求头和 `POST /api/auth/mcp-token?scope=personal` 领取写入凭据。本机沿用本地权限。
 
 在 MCP 上用 `resources/read` 读取 `skill://seekino-editing-materials/SKILL.md`，也可以用 `skills/list` 和 `skills/get` 发现完整文件清单。要在剪辑机上同时给 Claude Code 和 Codex 安装指引与本机分层脚本，可以运行下面的命令。
 

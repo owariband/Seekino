@@ -1,4 +1,4 @@
-"""Owner-scoped templates and their independently reproducible revisions."""
+"""Series-shared templates and their independently reproducible revisions."""
 
 from sqlalchemy import JSON, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
@@ -13,6 +13,7 @@ class EditTemplate(BaseModel):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     tenant_id: Mapped[str] = mapped_column(String(64))
+    series_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("series.id", ondelete="CASCADE"), index=True)
     creator_id: Mapped[str] = mapped_column(String(64))
     name: Mapped[str] = mapped_column(String(160))
     description: Mapped[str] = mapped_column(Text)
