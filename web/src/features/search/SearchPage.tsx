@@ -1,6 +1,6 @@
 import { markChatTextRendered } from "../../api/chatDelivery";
 import { ArrowUp, ChevronDown, ChevronRight, History, PanelLeft, PanelLeftClose, LoaderCircle, Play, Plus, SlidersHorizontal, Square, Trash2, TriangleAlert, X } from "lucide-react";
-import { Children, createContext, forwardRef, type FormEvent, type ReactNode, useCallback, useEffect, useId, useContext, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
+import { Children, createContext, forwardRef, memo, type FormEvent, type ReactNode, useCallback, useEffect, useId, useContext, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
 import Markdown, { type Components, defaultUrlTransform } from "react-markdown";
 import { Link, useInRouterContext, useLocation, useNavigate } from "react-router";
@@ -25,8 +25,9 @@ import { PersonalModelSelect } from "../settings/PersonalModelSelect";
 import { SettingsLink } from "../settings/SettingsLink";
 import { usePublishChatSettings } from "../settings/activeChatSettings";
 import { explainHit } from "./explain";
-import { useAgentConversation } from "./useAgentConversation";
+import { useAgentConversation, type AgentProgressEvent } from "./useAgentConversation";
 import { AGENT_ATTACHMENT_ACCEPT, useAgentAttachments } from "./useAgentAttachments";
+import { useThreadFollow } from "./useThreadFollow";
 import styles from "./search.module.css";
 
 type MessageOptionOverrides = Omit<AgentMessageRunOptions, "topK">;
@@ -240,7 +241,8 @@ const answerComponents: Components = {
   table: ({ children }) => <div className={styles.answerTable}><table>{children}</table></div>,
 };
 
-function MarkdownAnswer({ markdown, conversationId, messageId }: { markdown: string; conversationId: string; messageId: string }) {
+// A stable memo boundary: unchanged Markdown keeps its committed tree while the turn updates.
+const MarkdownAnswer = memo(function MarkdownAnswer({ markdown, conversationId, messageId }: { markdown: string; conversationId: string; messageId: string }) {
   const element = useRef<HTMLDivElement>(null);
   useEffect(() => {
     // Observe committed, visible DOM on the next frame; this is separate from
@@ -257,7 +259,7 @@ function MarkdownAnswer({ markdown, conversationId, messageId }: { markdown: str
       <Markdown remarkPlugins={[remarkGfm, remarkBreaks]} skipHtml urlTransform={defaultUrlTransform} components={answerComponents}>{markdown}</Markdown>
     </div>
   );
-}
+});
 
 function ToolRow({ block, message, displayMode }: { block: ToolBlock; message: AgentMessageView; displayMode: DisplayMode }) {
   const { t } = useI18n();
@@ -318,6 +320,64 @@ function VideoBlockCard({ message, block, hit, displayMode, selected, onOpenVide
   );
 }
 
+type MessageRowProps = {
+  message: AgentMessageView;
+  steps: AgentProgressEvent[];
+  reasoning: string;
+  displayMode: DisplayMode;
+  kinoHost: boolean;
+  kinoAwake: boolean;
+  selectedChunkId: string | null;
+  series: SeriesSummary[];
+  onOpenVideo?: SearchPageProps["onOpenVideo"];
+  onSelect: (selection: { conversationId: string; messageId: string; chunkId: string }) => void;
+};
+
+const EMPTY_STEPS: AgentProgressEvent[] = [];
+
+// Kept at module scope so typing and one bubble's updates do not re-render every historical answer.
+const MessageRow = memo(function MessageRow({
+  message, steps, reasoning, displayMode, kinoHost, kinoAwake, selectedChunkId, series, onOpenVideo, onSelect,
+}: MessageRowProps) {
+  const { t, locale } = useI18n();
+  return (
+    <article className={message.role === "USER" ? styles.userMessage : styles.agentMessage}>
+      {message.role === "USER" ? (
+        <div>
+          {message.attachments?.length ? <div className={styles.messageAttachments} aria-label={t("消息图片")}>
+            {message.attachments.map((attachment, index) => <MessageAttachment key={`${attachment.mediaUri}:${attachment.previewUrl}`} attachment={attachment} index={index} />)}
+          </div> : null}
+          <p>{message.content}</p>
+          {displayMode === "debug" && message.seriesIds.length ? <small className={styles.messageScope}>{t("可用视频范围：")}{message.seriesIds.map((id) => series.find((item) => item.seriesId === id)?.name ?? id).join(locale === "en" ? ", " : "、")}</small> : null}
+        </div>
+      ) : (
+        <div>
+          <AgentProgress message={message} steps={steps} reasoning={reasoning} displayMode={displayMode}
+            kinoHost={kinoHost} kinoAwake={kinoAwake} />
+          {message.status === "FAILED" ? <p className={styles.messageError} role="alert">{message.lastError?.message || t("本次回答未完成")}</p> : null}
+          {!message.content && message.status === "COMPLETED" && !message.searchResult ? <p className={styles.messageError}>{t("未生成回答")}</p> : null}
+          <SearchCoverage result={message.searchResult} displayMode={displayMode} />
+          {messageRenderBlocks(message).map((block, index) => {
+            if (block.type === "markdown") return <MarkdownAnswer key={`markdown:${index}`} markdown={block.markdown} conversationId={message.conversationId} messageId={message.messageId} />;
+            if (block.type === "tool") return <ToolRow key={`tool:${block.callId}`} block={block} message={message} displayMode={displayMode} />;
+            const hit = message.searchResult?.hits.find((item) => item.evidence.videoChunkId === block.videoChunkId);
+            if (!hit) return null;
+            const selected = selectedChunkId === hit.evidence.videoChunkId;
+            return <VideoBlockCard key={`video:${block.videoChunkId}`} message={message} block={block} hit={hit} displayMode={displayMode} selected={selected} onOpenVideo={onOpenVideo} onSelect={onSelect} />;
+          })}
+          {message.status === "PROCESSING" && message.modelRetry ? <ModelRetryRow retry={message.modelRetry} /> : null}
+          {message.status === "COMPLETED" && message.searchResult && !message.searchResult.hits.length ? (
+            <p className={styles.candidateEmpty}>
+              <Kino state="think" width={38} scale={2} ground={false} />
+              <span>{t(emptyVideoMessage(message.searchResult))}</span>
+            </p>
+          ) : null}
+        </div>
+      )}
+    </article>
+  );
+});
+
 export function RoutedSearchPage() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -341,8 +401,9 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
   const localeRef = useRef(locale);
   localeRef.current = locale;
   const { mode, displayMode, series: workspaceSeries, isLoading: workspaceLoading, error: workspaceError } = useWorkspace();
-  const series = suppliedSeries ? [suppliedSeries, ...workspaceSeries.filter((item) => item.seriesId !== suppliedSeries.seriesId
-    && (!captureExtraContext || item.tenantId === suppliedSeries.tenantId))] : workspaceSeries;
+  const series = useMemo(() => suppliedSeries ? [suppliedSeries, ...workspaceSeries.filter((item) => item.seriesId !== suppliedSeries.seriesId
+    && (!captureExtraContext || item.tenantId === suppliedSeries.tenantId))] : workspaceSeries,
+  [suppliedSeries, workspaceSeries, captureExtraContext]);
   const { canConfigure, canManage, activeSource, scopeKey } = useAuth();
   const optionScope = scopeKey ?? "";
   const requiresExplicitScope = activeSource.kind === "public" || Boolean(suppliedSeries && suppliedSeries.tenantId !== TENANT_ID);
@@ -438,8 +499,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
   const focusAfterMutationRef = useRef<"composer" | "picker" | null>(null);
   const conversationListRequestRef = useRef(0);
   const wasSearchingRef = useRef(false);
-  const threadRef = useRef<HTMLDivElement>(null);
-  const followThread = useRef(true);
+  const { threadRef, follow: followThread, onScroll: onThreadScroll, scrollToBottomIfFollowing } = useThreadFollow();
 
   useImperativeHandle(ref, () => ({
     focusComposer: () => composerRef.current?.focus({ preventScroll: true }),
@@ -463,7 +523,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
     return () => document.removeEventListener("pointerdown", closeOutside);
   }, []);
   const {
-    conversationId, messages, progress, reasoning, loading, searching, cancelling = false, error,
+    conversationId, messages, progress, reasoning, loading, searching, connecting = false, cancelling = false, error,
     modelId: storedModelId = DEFAULT_CHAT_MODEL_ID, modelSaving = false, modelError = null,
     clear: clearConversation, ensureConversationId, applyDraftDefault, selectModel, send, stop,
   } = useAgentConversation(requestedConversationId);
@@ -485,9 +545,10 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
   const creatingConversation = preparingAttachments || (searching && !conversationId);
   usePublishChatSettings(canConfigure === true, { modelId, modelSaving, modelError, selectModel,
     loading: loading || creatingConversation || mode !== "live" });
-  const connecting = searching && !messages.some((message) => message.status === "PROCESSING");
   // Kino perches on the newest assistant bubble and leaps to the next one when a new turn starts.
   const kinoHostId = messages.findLast((message) => message.role === "ASSISTANT")?.messageId ?? null;
+  // Timestamp links and display mode are the same for every answer; a stable value keeps memoized rows still.
+  const seekContext = useMemo(() => ({ onSeek: onSeekCurrent, displayMode }), [onSeekCurrent, displayMode]);
   const attachments = useAgentAttachments(conversationId);
   const [pendingFiles, setPendingFiles] = useState<{ conversationId: string; files: File[] } | null>(null);
   useEffect(() => {
@@ -658,14 +719,14 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
   }, [conversationId, error, messages, refreshConversations, searching]);
 
   useEffect(() => {
-    if (followThread.current && threadRef.current) threadRef.current.scrollTop = threadRef.current.scrollHeight;
-  }, [messages, searching]);
+    scrollToBottomIfFollowing();
+  }, [messages, searching, scrollToBottomIfFollowing]);
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
     if (!canSend) return;
     const extraContext = captureExtraContext?.() ?? null;
-    followThread.current = true;
+    followThread();
     setConversationStatus(t("正在发送问题"));
     const options: AgentMessageRunOptions = displayMode === "debug" && messageOptionOverrides
       ? { ...messageOptionOverrides, maxLoopTurns: messageOptionOverrides.maxLoopTurns || undefined }
@@ -706,11 +767,11 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
       composerRef.current?.focus();
       return;
     }
-    followThread.current = true;
+    followThread();
     focusAfterMutationRef.current = "composer";
     setConversationStatus(t("正在打开对话：{value0}", { value0: conversation.title }));
     setRequestedConversationId(nextConversationId);
-  }, [closeConversationPicker, conversationId, creatingConversation, deletingConversationId, t]);
+  }, [closeConversationPicker, conversationId, creatingConversation, deletingConversationId, followThread, t]);
 
   useEffect(() => {
     if (!navigation || consumedNavigationRef.current === navigation.key || creatingConversation || deletingConversationId) return;
@@ -737,7 +798,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
     setConfirmingDeleteId(null);
     setConversationActionError(null);
     clearConversation();
-    followThread.current = true;
+    followThread();
     focusAfterMutationRef.current = "composer";
     setRequestedConversationId("");
     setConversationStatus(t("已新建对话"));
@@ -763,7 +824,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
       if (deletingCurrentConversation) {
         clearConversation();
         const next = remaining[0];
-        followThread.current = true;
+        followThread();
         focusAfterMutationRef.current = "composer";
         setRequestedConversationId(next?.conversationId ?? "");
         closeConversationPicker();
@@ -1006,8 +1067,11 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
       ) : <p role={messageOptionsError ? "alert" : "status"}>{messageOptionsError ? t("暂时无法读取设置：{value0}", { value0: messageOptionsError }) : t("正在读取服务端限制…")}</p>}
     </div>
   </details> : null;
-  const sendControl = searching ? (
-    <button className={styles.sendButton} type="button" disabled={cancelling || !messages.some((message) => message.role === "ASSISTANT" && message.status === "PROCESSING")} onClick={() => void stop?.()} aria-label={cancelling ? t("正在停止") : t("停止生成")} title={cancelling ? t("正在停止") : t("停止生成")}>
+  // Only a real running answer can be stopped. While a finished turn is still closing its POST,
+  // the composer stays visible but disabled, matching the hook's own send guard.
+  const canStop = messages.some((message) => message.role === "ASSISTANT" && message.status === "PROCESSING");
+  const sendControl = canStop ? (
+    <button className={styles.sendButton} type="button" disabled={cancelling} onClick={() => void stop?.()} aria-label={cancelling ? t("正在停止") : t("停止生成")} title={cancelling ? t("正在停止") : t("停止生成")}>
       {cancelling ? <LoaderCircle size={18} className={styles.spinning} aria-hidden="true" /> : <Square size={16} aria-hidden="true" />}
     </button>
   ) : (
@@ -1119,10 +1183,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
 
       <div className={selectedHit && !onOpenVideo ? `${styles.workspace} ${styles.withEvidence}` : styles.workspace}>
         <section className={styles.agentPanel} aria-label={t("与 Seekino 助手对话")}>
-          <div className={styles.thread} ref={threadRef} data-kino-stage="" onScroll={(event) => {
-            const thread = event.currentTarget;
-            followThread.current = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 80;
-          }}>
+          <div className={styles.thread} ref={threadRef} data-kino-stage="" onScroll={onThreadScroll}>
             {showWelcome ? (
               <div className={styles.welcome}>
                 <Kino interactive perch dozeAfterMs={45_000} width={64} scale={3} title={t("戳一戳 Kino")} />
@@ -1136,42 +1197,24 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
                 </div>
               </div>
             ) : null}
-            {messages.map((message) => (
-              <article key={message.messageId} className={message.role === "USER" ? styles.userMessage : styles.agentMessage}>
-                {message.role === "USER" ? (
-                  <div>
-                    {message.attachments?.length ? <div className={styles.messageAttachments} aria-label={t("消息图片")}>
-                      {message.attachments.map((attachment, index) => <MessageAttachment key={`${attachment.mediaUri}:${attachment.previewUrl}`} attachment={attachment} index={index} />)}
-                    </div> : null}
-                    <p>{message.content}</p>
-                    {displayMode === "debug" && message.seriesIds.length ? <small className={styles.messageScope}>{t("可用视频范围：")}{message.seriesIds.map((id) => series.find((item) => item.seriesId === id)?.name ?? id).join(locale === "en" ? ", " : "、")}</small> : null}
-                  </div>
-                ) : (
-                  <div>
-                    <AgentProgress message={message} steps={progress[message.messageId] ?? []} reasoning={reasoning[message.messageId] ?? ""} displayMode={displayMode}
-                      kinoHost={message.messageId === kinoHostId} kinoAwake={connecting} />
-                    {message.status === "FAILED" ? <p className={styles.messageError} role="alert">{message.lastError?.message || t("本次回答未完成")}</p> : null}
-                    {!message.content && message.status === "COMPLETED" && !message.searchResult ? <p className={styles.messageError}>{t("未生成回答")}</p> : null}
-                    <SearchCoverage result={message.searchResult} displayMode={displayMode} />
-                    {messageRenderBlocks(message).map((block, index) => {
-                      if (block.type === "markdown") return <SeekContext.Provider key={`markdown:${index}`} value={{ onSeek: onSeekCurrent, displayMode }}><MarkdownAnswer markdown={block.markdown} conversationId={message.conversationId} messageId={message.messageId} /></SeekContext.Provider>;
-                      if (block.type === "tool") return <ToolRow key={`tool:${block.callId}`} block={block} message={message} displayMode={displayMode} />;
-                      const hit = message.searchResult?.hits.find((item) => item.evidence.videoChunkId === block.videoChunkId);
-                      if (!hit) return null;
-                      const selected = selection?.messageId === message.messageId && selectedHit?.evidence.videoChunkId === hit.evidence.videoChunkId;
-                      return <VideoBlockCard key={`video:${block.videoChunkId}`} message={message} block={block} hit={hit} displayMode={displayMode} selected={selected} onOpenVideo={onOpenVideo} onSelect={setSelection} />;
-                    })}
-                    {message.status === "PROCESSING" && message.modelRetry ? <ModelRetryRow retry={message.modelRetry} /> : null}
-                    {message.status === "COMPLETED" && message.searchResult && !message.searchResult.hits.length ? (
-                      <p className={styles.candidateEmpty}>
-                        <Kino state="think" width={38} scale={2} ground={false} />
-                        <span>{t(emptyVideoMessage(message.searchResult))}</span>
-                      </p>
-                    ) : null}
-                  </div>
-                )}
-              </article>
-            ))}
+            <SeekContext.Provider value={seekContext}>
+              {messages.map((message) => {
+                const kinoHost = message.messageId === kinoHostId;
+                return <MessageRow
+                  key={message.messageId}
+                  message={message}
+                  steps={progress[message.messageId] ?? EMPTY_STEPS}
+                  reasoning={reasoning[message.messageId] ?? ""}
+                  displayMode={displayMode}
+                  kinoHost={kinoHost}
+                  kinoAwake={kinoHost && connecting}
+                  selectedChunkId={selection?.messageId === message.messageId ? selectedHit?.evidence.videoChunkId ?? null : null}
+                  series={series}
+                  onOpenVideo={onOpenVideo}
+                  onSelect={setSelection}
+                />;
+              })}
+            </SeekContext.Provider>
             {loading || connecting ? <p className={styles.connectionState} role="status">{kinoHostId ? null : <Kino state="loading" width={38} scale={2} ground={false} delayed perch />}{loading ? t("正在恢复会话…") : t("正在连接助手…")}</p> : null}
             {error && !messages.some((message) => message.status === "FAILED" && message.lastError?.message === error) ? <p ref={conversationFailureRef} className={`${styles.messageError} ${styles.conversationError}`} role="alert" tabIndex={-1}><Kino state="oops" width={38} scale={2} ground={false} /><span>{error}</span></p> : null}
           </div>

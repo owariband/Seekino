@@ -787,6 +787,100 @@ describe("Conversation state", () => {
     expect(result.current.error).toBeNull();
   });
 
+  it("keeps an interrupted turn in recovery instead of reporting a new connection", async () => {
+    const { result } = await ready();
+    const stream = await send(result);
+    act(() => stream.emit({ type: "answer.interrupted", occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 2, error: { code: "STREAM_INTERRUPTED", message: "订阅中断，正在恢复" } }));
+    expect(result.current.sending).toBe(true);
+    expect(result.current.connecting).toBe(false);
+    expect(result.current.searching).toBe(true);
+    expect(result.current.messages[1]?.status).toBe("PROCESSING");
+    expect(result.current.error).toBe("订阅中断，正在恢复");
+    act(() => stream.finish());
+    await waitFor(() => expect(result.current.sending).toBe(false));
+  });
+
+  it.each(["COMPLETED", "FAILED"] as const)("leaves the connecting phase when a %s terminal arrives before EOF", async (status) => {
+    const { result } = await ready();
+    act(() => { void result.current.send("query"); });
+    await waitFor(() => expect(streams.has("conv-A")).toBe(true));
+    const stream = streams.get("conv-A")!;
+    expect(result.current.sending).toBe(true);
+    expect(result.current.connecting).toBe(true);
+    act(() => stream.emit(started("conv-A")));
+    expect(result.current.connecting).toBe(false);
+
+    const error = { code: "AGENT_MODEL_ERROR", message: "模型失败" };
+    const final = status === "FAILED"
+      ? message("conv-A", { status: "FAILED", lastError: error })
+      : message("conv-A", { status: "COMPLETED", content: "回答" });
+    const base = { occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 2, ...messagePair(final) };
+    const terminal: AgentAnswerEvent = status === "FAILED"
+      ? { ...base, type: "answer.failed", error }
+      : { ...base, type: "answer.completed" };
+    act(() => stream.emit(terminal));
+    expect(result.current.sending).toBe(true);
+    expect(result.current.connecting).toBe(false);
+    expect(result.current.messages[1]?.status).toBe(status);
+
+    act(() => { void result.current.send("next"); });
+    expect(streamAgentMessage).toHaveBeenCalledOnce();
+    act(() => stream.finish());
+    await waitFor(() => expect(result.current.sending).toBe(false));
+    expect(result.current.connecting).toBe(false);
+  });
+
+  it("keeps connecting off when a trusted snapshot completes the message before the POST closes", async () => {
+    const { result } = await ready();
+    const stream = await send(result);
+    const completed = message("conv-A", { status: "COMPLETED", phase: null, content: "快照完成", version: 2 });
+    act(() => snapshots.get("conv-A")!({ type: "messages", occurredAt: now, conversationId: "conv-A", messages: [completed] }));
+    expect(result.current.sending).toBe(true);
+    expect(result.current.connecting).toBe(false);
+    expect(result.current.messages[1]?.status).toBe("COMPLETED");
+    act(() => stream.finish());
+    await waitFor(() => expect(result.current.sending).toBe(false));
+  });
+
+  it("does not let a previous turn's late reconciliation overwrite the next turn", async () => {
+    const { result } = await ready();
+    const first = await send(result);
+    let rejectReconcile!: (error: Error) => void;
+    vi.mocked(listAgentMessages).mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectReconcile = reject; }));
+    act(() => {
+      first.emit({
+        ...started("conv-A"), type: "answer.completed", sequence: 2,
+        assistantMessage: message("conv-A", { status: "COMPLETED", phase: null, content: "第一轮" }),
+      } as AgentAnswerEvent);
+      first.finish();
+    });
+    await waitFor(() => expect(result.current.sending).toBe(false));
+
+    act(() => { void result.current.send("second"); });
+    await waitFor(() => expect(streamAgentMessage).toHaveBeenCalledTimes(2));
+    const second = streams.get("conv-A")!;
+    const nextStarted = {
+      ...started("conv-A"), type: "answer.started" as const, messageId: "assistant-second",
+      userMessage: message("conv-A", { messageId: "user-second", role: "USER", sequenceNo: 2, status: "COMPLETED", content: "second" }),
+      assistantMessage: message("conv-A", { messageId: "assistant-second", sequenceNo: 3 }),
+    };
+    act(() => {
+      second.emit(nextStarted);
+      second.emit({ ...nextStarted, type: "answer.completed", sequence: 2,
+        assistantMessage: { ...nextStarted.assistantMessage, status: "COMPLETED", version: 2, content: "第二轮" } });
+      second.finish();
+    });
+    await waitFor(() => expect(result.current.sending).toBe(false));
+    expect(result.current.error).toBeNull();
+
+    await act(async () => {
+      rejectReconcile(new Error("late refresh"));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(result.current.sending).toBe(false);
+    expect(result.current.error).toBeNull();
+  });
+
   it("marks a model failure as failed and never manufactures completed content", async () => {
     const { result } = await ready();
     const stream = await send(result);
