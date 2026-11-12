@@ -458,5 +458,60 @@
     ],
     "rawEvidenceDirectory": "outputs/verification/chat-frontend-performance-20261112/",
     "cloudDeployed": false
+  },
+  "cloudRelease": {
+    "deployedAtUtc": "2026-11-12T05:43:26+00:00",
+    "url": "https://seekino.hypn0s.cloud/search",
+    "baseMainCommit": "49ea05900f666c81f924b3b7f94da82ee342fef0",
+    "runtimeFileCount": 3,
+    "webImage": "seekino-web:chat-perf-1392bfa8-20261112",
+    "webImageId": "sha256:9d8ea2407970398d5363d4d36ab7d9f5e423a3537a24be3e2403e64bf0665c93",
+    "webHealth": "healthy",
+    "apiUnchanged": true,
+    "apiHealth": "healthy",
+    "indexSha256": "91679ed96da8dd10d2362bc951b4907362bdde9710d682a35120ac3cbd323ca5",
+    "searchAsset": "assets/SearchPage-kj1Oevhk.js",
+    "artifactFiles": 48,
+    "candidateValidation": {
+      "chatTestsPassed": 132,
+      "typecheck": "passed",
+      "build": "passed",
+      "releaseTreePaths": 816,
+      "releaseAssets": 28,
+      "replayHistorySizes": [
+        1,
+        20,
+        60
+      ],
+      "replayAssertions": "passed"
+    },
+    "publicSmoke": {
+      "turns": [
+        {
+          "status": "completed",
+          "deltas": 42,
+          "domGrowthBeforeTerminal": 42,
+          "terminationMs": 7556.1,
+          "connectingAfterTerminal": false
+        },
+        {
+          "status": "completed",
+          "deltas": 8,
+          "domGrowthBeforeTerminal": 8,
+          "terminationMs": 3529.7,
+          "connectingAfterTerminal": false
+        }
+      ],
+      "pageErrors": 0,
+      "unexpectedApiFailures": 0,
+      "expectedAnonymousAuth401": 1,
+      "kinoSleepObservedAfterEachTurn": true,
+      "certifiedFtt": false
+    },
+    "previousWebImage": "seekino-web:main-49ea0590",
+    "rollbackScript": "/home/ubuntu/seekino-cloud-runtime/releases/chat-perf-1392bfa8-20261112/rollback.py",
+    "mainBranchChanged": false,
+    "additionalPrCreated": false,
+    "rawEvidenceDirectory": "outputs/verification/chat-frontend-performance-20261112/"
   }
 }

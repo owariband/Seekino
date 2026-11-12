@@ -1,6 +1,6 @@
 # 聊天页重复解析与连接状态：前端性能验收
 
-2026-11-12。PR [#126](https://github.com/owariband/Seekino/pull/126)，分支 `perf/chat-frontend`，目标 `dev`。设计见[主 TRD](../../design/03-product-reassessment/chat-frontend-performance-trd.md)，当前执行状态见[工作台](../../dev/workbench.html)的 `CHAT-PERF-01`。本报告记录本机隔离验证，不代表云端已经部署或真实用户延迟已经达标。
+2026-11-12。PR [#126](https://github.com/owariband/Seekino/pull/126)，分支 `perf/chat-frontend`，目标 `dev`。设计见[主 TRD](../../design/03-product-reassessment/chat-frontend-performance-trd.md)，当前执行状态见[工作台](../../dev/workbench.html)的 `CHAT-PERF-01`。本报告分别记录隔离性能对照、本地冒烟和 13:43（UTC+8）的公网发布验收；隔离对照数据不代表真实用户延迟已经达标。
 
 ## 问题与改动
 
@@ -73,7 +73,19 @@ Kino 的三次 progress 到状态属性更新，在 60 条历史下分别从 43.
 
 通过真实页面发送一条无需视频检索的通用知识问题：收到 100 个 `answer.delta`、79 次正文 DOM 增长观察，最终 `answer.completed`；观测到 1 次 `answer.model.completed`，请求终止耗时约 4.59 秒。结束后无“正在连接助手”及停止按钮，页面 JS 异常为 0；点击 Kino 后观测到 `jump`。这些验证了本机入口可用，不代表回答质量、所有动作的物理绘制或线上性能已经验收。没有独立供应商 trace，因此不认证 FTT。
 
-原始过程保存在 `outputs/verification/chat-frontend-performance-20261112/local-chat-smoke.json`、`local-chat-completed.png`，初次不可用、Kimi 额度和 256 token 截断分别保留。运行 PID 与日志在 `outputs/local-services/chat-frontend-preview.pid.json`、`chat-frontend-api.pid.json` 及同名前缀日志，临时模型配置为 `/private/tmp/seekino-chat-frontend-local-runtime.yaml`。仅本机部署，云端未部署。
+原始过程保存在 `outputs/verification/chat-frontend-performance-20261112/local-chat-smoke.json`、`local-chat-completed.png`，初次不可用、Kimi 额度和 256 token 截断分别保留。运行 PID 与日志在 `outputs/local-services/chat-frontend-preview.pid.json`、`chat-frontend-api.pid.json` 及同名前缀日志，临时模型配置为 `/private/tmp/seekino-chat-frontend-local-runtime.yaml`。该轮仅做本机部署；后续公网发布见下一节。
+
+## 公网前端发布（2026-11-12 13:43，UTC+8）
+
+公开入口为 [Seekino 聊天页](https://seekino.hypn0s.cloud/search)。线上前端原为 main `49ea0590`，本次在该基线上仅应用 `SearchPage.tsx`、`useAgentConversation.ts`、`useThreadFollow.ts` 三个运行文件，逐文件与 PR #126 的已验证实现核对 SHA-256。没有发布 dev 的其他差异，也没有推送或合并 main；仍沿用同一个需求 PR。
+
+发布目录独立安装 main 锁定依赖，类型检查、132 项现有聊天回归和生产构建通过；发布树检查核对 816 个已跟踪路径、28 个发布资产。最终 dist 再通过 1/20/60 条历史的固定 SSE 回放，每场景 100 个增量；连接终态、发送禁用、上滚保持、返回底部及 Kino 收尾护栏均通过。首轮误从仓库根目录启动 Vitest，未加载 jsdom，改用 `npm --prefix web test -- ...` 后通过，未修改断言。
+
+服务器接收 1.55 MB 静态包，验证包哈希及 48 个文件哈希，在原 Nginx 镜像上叠加 dist，形成 `seekino-web:chat-perf-1392bfa8-20261112`。镜像 ID 为 `sha256:9d8ea2407970398d5363d4d36ab7d9f5e423a3537a24be3e2403e64bf0665c93`。保留原有十份 Compose 组合，再追加仅指定 Web 镜像的覆盖文件；只重建 Web，API 的容器 ID、启动时间和镜像均与发布前一致。Nginx 配置检查、Web/API 健康状态与运行中 index 哈希通过。首轮传输中断后，以带保活的 SSH 重传同一包并重新校验，未使用残缺文件发布。
+
+公网 Chrome 再核对 index 与 SearchPage 脚本哈希，确认实际提供新产物。一个新游客会话连续两轮真实聊天均完成，分别收到 42 / 8 个正文增量、42 / 8 次终态前正文 DOM 增长观察，单次请求终止约 7.56 / 3.53 秒；两轮都没有残留连接提示或停止按钮，且分别等到 Kino 回到 sleep。页面 JS 异常为 0。初次采证把匿名访问 `/api/auth/me` 的 401 一并计为接口失败；`AuthProvider.readIdentity` 明确捕获该状态并创建游客，后续两轮已正常完成，因此将这一条保留为预期游客引导响应，非预期接口失败为 0。原始分类记录保留，不重复消耗模型调用。这些仍不是物理绘制、认证 FTT、真实手机或长媒体历史的验收。
+
+原始上线回执、浏览器记录与截图在 `outputs/verification/chat-frontend-performance-20261112/production-deployment.json`、`production-smoke.json`、`production-chat.png`；发布候选回放为 `release-browser.json`。服务器发布与回滚材料位于 `/home/ubuntu/seekino-cloud-runtime/releases/chat-perf-1392bfa8-20261112/`，旧镜像 `seekino-web:main-49ea0590` 保留，`rollback.py` 复用原 Compose 组合，仅恢复 Web。后续 main 正式发布需包含这三个文件的补丁。
 
 ## 复跑与交付边界
 
@@ -88,4 +100,4 @@ SEEKINO_TEST_BROWSER_CHANNEL=chrome node web/tests/chat-frontend-performance.mjs
 
 浏览器回放需要允许本机 loopback 监听。前端全量中的远端代理测试同样需要该能力；受限沙箱中的 EPERM 不是业务接口失败，不应修改测试绕过它。
 
-本次采用前端状态、渲染和滚动修复，交付于唯一 PR #126。代码、本机隔离验证和上述真实聊天冒烟完成；云端未部署，真实使用中的卡顿幅度仍需发布后验收。
+本次采用前端状态、渲染和滚动修复，交付于唯一 PR #126。代码、隔离对照、本地真实聊天和公网两轮冒烟已完成；前端已上线，真实设备、长媒体历史与很长会话侧栏仍需复测。
