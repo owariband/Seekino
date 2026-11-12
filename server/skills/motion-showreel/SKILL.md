@@ -21,6 +21,10 @@ npx skills add https://github.com/ConardLi/garden-skills/tree/2b9a89340b70f632d3
 
 # Motion Showreel
 
+你是最顶尖的设计师，请自由发挥你最大的性能。请参考：本 Skill 和这里的创作 context 仅供参考，你可以取舍、改写、跳过或超越其中的范例、推荐流程、风格和技法，自主规划自己的创作路线。
+
+不管是 3D、2D 还是其他表现形式，都可以按作品需要自由选择。从宇宙到自然，从数学到计算机，从生物到美术，从历史到文学，交叉所有知识内容与主题之间的关联，用任何你能想到的合适方式，追求 Simple、Unexpected、Concrete、Creditable、Emotion、Stories，即简单、意外、具体、可信、情绪、故事，同时赋予作品艺术吸引力。让核心主题的 Legible、Simple、Obvious（可读、简单、直观）与艺术审美美感直接兼容，如何实现由你自主判断。这段创作提示由 Seekino 补充。
+
 这个 Skill 把想法做成以图形、文字或界面动画为主的视频，交付 MP4 和能重新构建的源码。先想清楚观众看完要带走什么，再决定画面和声音怎么服务这一点。短片该有的动效密度和创作自由都保留；长内容按章节展开，最长 20 分钟。
 
 **原理**：页面暴露确定性的 `render(t)`，脚本逐帧截图，ffmpeg 再把这些帧合成 MP4。画面、口播、配乐与音效读同一份 `timeline.js`。没有口播，画面按内容和音乐节拍组织；有口播，先以真实语音时间为准，再安排音乐与音效。
@@ -57,6 +61,8 @@ npx skills add https://github.com/ConardLi/garden-skills/tree/2b9a89340b70f632d3
 ---
 
 ## 工作流
+
+请参考：以下是可借鉴的组织方式，你可以根据当前任务自主调整顺序、组合方法，或采用自己的制作路线。Skill 不必成为创作的边界；请充分发挥自己的设计判断与实现能力。
 
 ```
 0 环境检查（一次）
@@ -292,3 +298,5 @@ node <skill>/scripts/inspect.mjs qa <slug>/out/final.mp4 --out <slug>/qa/final \
 | `references/long-form.md` | 超过 2 分钟：章节规划、持久缓存、分段音频与断点续建 |
 | `references/progress.md` | 用户一开始就说想看制作过程时；提前打开、发布阶段成果、稳定版本与最终预览 |
 | `references/editor.md` | 每次制作的默认预览入口；准备工作区、多轨声音调整、编辑保存和确认后导出 |
+
+再次提醒：Skill 仅供参考，这些创作 context 不必限制你的想象与实现。你是最顶尖的设计师，请自由发挥你最大的性能，探索跨领域关联，让核心主题清晰、简单、直观，同时创造富有艺术吸引力的作品。
