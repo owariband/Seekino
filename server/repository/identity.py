@@ -7,8 +7,7 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
-from ..constants.identity import LOCAL_USER_ID, guest_editing_tenant
-from ..model.editing_template import EditTemplate
+from ..constants.identity import LOCAL_USER_ID
 from ..error.auth import IdentityConflictError, IdentityDeniedError
 from ..model.agent import AgentConversation
 from ..model.tenant import Tenant
@@ -82,12 +81,9 @@ class IdentityRepository:
                         self._transfer_conversations(session, guest_id, target.id)
                     tenant = session.scalar(select(Tenant).where(Tenant.owner_id == target.id, Tenant.type == "personal"))
                     if tenant is None:
-                        tenant = Tenant(id=str(uuid4()), owner_id=target.id, type="personal", name="个人资料")
-                        session.add(tenant)
+                        session.add(Tenant(id=str(uuid4()), owner_id=target.id, type="personal", name="个人资料"))
                     elif tenant.status != "ACTIVE":
                         raise IdentityDeniedError("personal tenant is unavailable")
-                    session.execute(update(EditTemplate).where(EditTemplate.tenant_id == guest_editing_tenant(guest_id),
-                                       EditTemplate.creator_id == guest_id).values(tenant_id=tenant.id, creator_id=target.id))
                     target.last_login_time = now_utc()
                     target.login_channel = "email"
                     session.flush()

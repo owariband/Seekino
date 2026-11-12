@@ -23,7 +23,6 @@ from server.config.auth import AuthConfig
 from server.caller.redis import create_redis_client, close_redis_client
 from server.config.email import SMTPConfig
 from server.constants.identity import LOCAL_USER_ID
-from server.model.editing_template import EditTemplate
 from server.database import Base
 from server.model.agent import AgentConversation
 from server.model.tenant import Tenant
@@ -70,7 +69,7 @@ def identities(tmp_path):
     def enforce_foreign_keys(connection, _):
         connection.execute("PRAGMA foreign_keys=ON")
 
-    Base.metadata.create_all(engine, tables=[User.__table__, Tenant.__table__, AgentConversation.__table__, EditTemplate.__table__])
+    Base.metadata.create_all(engine, tables=[User.__table__, Tenant.__table__, AgentConversation.__table__])
     sessions = sessionmaker(engine, expire_on_commit=False)
     yield IdentityRepository(sessions), sessions
     engine.dispose()
@@ -177,26 +176,6 @@ def test_personal_mcp_library_through_http_is_persistent_idempotent_and_owner_sc
 
         save, read, versions = "save_edit_template_version", "get_edit_template", "list_edit_template_versions"
         feedback, choose = "append_edit_template_note", "set_default_edit_template_version"
-        # Native guest editing works without a browser cookie, email, or access to another guest.
-        with TestClient(_app(auth)) as web:
-            guest_editor = web.post("/api/auth/mcp-token?scope=editing").json()["accessToken"]
-            another_guest = web.post("/api/auth/mcp-token?scope=editing").json()["accessToken"]
-            assert not web.cookies and auth.authenticate_mcp(guest_editor).is_guest
-        guest_saved = call(guest_editor, save, **args)
-        assert call(guest_editor, save, **args) == guest_saved
-        gid, gvid = guest_saved["template_id"], guest_saved["version_id"]
-        assert call(guest_editor, read, template_id=gid, version_id=gvid)["version"]["files"] == args["files"]
-        for outsider in (guest, public, another_guest, alice):
-            assert isinstance(call(outsider, read, template_id=gid, version_id=gvid), str)
-        assert call(guest_editor, feedback, version_id=gvid, kind="check", entry={"what":"fps", "result":"pass"}, request_id="check")["version_id"] == gvid
-        assert call(guest_editor, choose, template_id=gid, version_id=gvid, revision=0, reason="plays", request_id="default")["revision"] == 1
-        guest_identity = auth.authenticate_mcp(guest_editor)
-        signed = auth.verify_email_code(guest_identity, "editor-a@example.com", "123456")
-        moved = auth.issue_mcp_token(signed.token, scope="editing")[0]
-        assert call(moved, read, template_id=gid)["version"]["version_id"] == gvid
-        assert call(moved, read, template_id=gid)["version"]["author"] == guest_identity.user_id
-        with pytest.raises(AuthError):
-            auth.authenticate_mcp(guest_editor)
         for read_only in (guest, public):
             assert "PERSONAL_LIBRARY_REQUIRED" in call(read_only, save, **{**args, "files": {"enter.js": "text"}})
         first = call(alice, save, **args)
@@ -231,40 +210,6 @@ def test_personal_mcp_library_through_http_is_persistent_idempotent_and_owner_sc
         history = call(alice, versions, template_id=tid)
         assert history["default_version_id"] == vid and len(history["versions"]) == 2
         assert call(alice, read, template_id=tid)["version"]["successor_notes"][0]["changes"] == "shorter hold"
-
-
-def test_browser_guest_edits_follow_its_login_and_retries_at_capacity(cloud):
-    from server.database import create_schema
-    from server.repository.editing_template import EditingTemplateRepository
-
-    auth, _, _, sessions = cloud
-    create_schema(sessions.kw["bind"])
-    repository = EditingTemplateRepository(sessions)
-    with TestClient(_app(auth)) as web:
-        browser_guest = web.post("/api/auth/guest").json()
-        assert web.post("/api/auth/mcp-token?scope=editing").status_code == 403
-        token = web.post("/api/auth/mcp-token?scope=editing", headers={"X-CSRF-Token":browser_guest["csrfToken"]}).json()["accessToken"]
-        editor = auth.authenticate_mcp(token)
-        scope = (editor.editing_tenant_id, editor.user_id)
-        args = dict(template_id=None, new_template={"name":"cut"}, parent_version_id=None, check=None,
-                    evaluation={"context":"first cut"}, source_refs=[], resolve_source=None,
-                    content={"files":{"a":"x"}, "entry":"a","runtime":{},"spec":{},"slots":[],"params_schema":{},"visual_requirements":{}})
-        for i in range(32):
-            saved = repository.save(*scope, **args, request_id=str(i))
-        assert repository.save(*scope, **args, request_id=str(i)) == saved
-        with pytest.raises(ValueError, match="GUEST_LIBRARY_FULL"):
-            repository.save(*scope, **args, request_id="one-more")
-        note = dict(kind="evaluation", entry={"context":"review"}, version_id=saved["version_id"])
-        for i in range(63):
-            repository.append(*scope, **note, request_id=str(i))
-        assert repository.append(*scope, **note, request_id=str(i)) == saved
-        with pytest.raises(ValueError, match="GUEST_LIBRARY_FULL"):
-            repository.append(*scope, **note, request_id="one-more")
-        member = auth.verify_email_code(editor, "new-member@example.com", "123456")
-        identified = auth.authenticate_mcp(auth.issue_mcp_token(member.token, scope="personal")[0])
-        assert identified.user_id == editor.user_id and identified.editing_tenant_id != editor.editing_tenant_id
-        result = repository.read(identified.editing_tenant_id, identified.user_id, saved["template_id"], saved["version_id"])
-        assert len(result["version"]["evaluation"]) == 64
 
 
 def _conversation(sessions, owner_id: str, tenant_id: str) -> str:

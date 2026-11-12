@@ -56,8 +56,8 @@ class McpRetrievalService:
     def _editing_scope(self, viewer):
         if self._public:
             self._public_owner(viewer)
-            if not viewer.editing_tenant_id:
-                raise ValueError("PERSONAL_LIBRARY_REQUIRED: Use a Cloud editing credential.")
+            if viewer.is_guest or not viewer.editing_tenant_id:
+                raise ValueError("PERSONAL_LIBRARY_REQUIRED: Use a personal Cloud credential.")
             return viewer.editing_tenant_id, viewer.user_id
         return self._tenant_id, LOCAL_USER_ID
 
@@ -69,7 +69,7 @@ class McpRetrievalService:
         if self._public:
             self._public_owner(viewer)
         templates = []
-        if self._editing is not None and (not self._public or viewer.editing_tenant_id):
+        if self._editing is not None and (not self._public or (viewer.editing_tenant_id and not viewer.is_guest)):
             templates = self._editing.search(*self._editing_scope(viewer), query=query.strip(), limit=top_k, tags=tags)
         if not include_parse_techniques:
             return {"techniques": [], "templates": templates}
