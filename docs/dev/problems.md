@@ -2923,3 +2923,11 @@ micrograd v5 共 146 块，整集 90 分 04.884 秒。调度反复锁取候选�
 验收边界：输入与思考更新不重解析未变化的历史正文；单消息只解析变化块；终态不显示连接中或无效停止，发送按钮与实际守卫一致；旧请求晚到不能污染已经结束的新回合；用户上滚后不被拉回底部。PR #126 的受控回放和 658 项前端测试已有证据，真实线上效果仍未测。公开范围提示的既有布局断言在方案与未修改基线上以同一坐标失败，归原 `CHAT-HEADER-01` 核对，没有借本次性能修复改写旧期望。
 
 [设计](../design/03-product-reassessment/chat-frontend-performance-trd.md) · [实测报告](../report/web/chat-frontend-performance-20261112.md) · [devlog](devlog.md#devlog-chat-frontend-performance-20261112) · [工作台](workbench.html)
+
+### MOBILE-UI-01 · 手机顶栏隐藏文档，全宽预览让选集难以连续浏览
+
+2026-11-12。手机访客需要先打开菜单才能找到使用说明，系列页每集的16:9预览又随整行放大。源码确认是760px下隐藏全部顶栏图标，以及480px下只把选集切成单列，未改变单集的纵向布局。验收要求顶栏文档带可见短文字且至少44px触控区域、390px单集不超过100px、13集总高至少减少50%、600px列表窗口至少5整集，并保留桌面网格、播放路由、观看位置、集数/时长和不可播放状态。
+
+同日隔离浏览器对照：390px总高3342.20→1080.44px，减少67.67%；单集70.19px，600px列表窗口2→7整集。9场景未发现页面溢出或JS异常，桌面尺寸与基线相同；76项相关单测、8项浏览器回归、类型与构建通过。证据限于固定测试样本和本机Chrome，未部署、未验真机或实际Cloud视频。[TRD](../design/03-product-reassessment/mobile-docs-episodes-trd.md) · [报告与截图](../report/web/mobile-docs-episodes-20261112/README.md) · [devlog](devlog.md#devlog-mobile-docs-episodes-20261112) · [工作台](workbench.html) · [PR #129](https://github.com/owariband/Seekino/pull/129)
+
+同日第二轮本地预览反馈：首轮外显短标签验收撤销，顶栏只显示44×44px文档图标，展开导航内保留文字。原生dialog瞬时切换且关闭立即卸载内容，现改为240ms进入/180ms退出、遮罩同步，并按实际过渡完成清理。12项浏览器回归（含中间帧、重开、焦点与reduced-motion）和76项相关单测通过，选集9场景指标未变；4190预览已更新，真机与Cloud仍未验。[第二轮证据](../report/web/mobile-docs-episodes-20261112/README.md#icon-and-drawer-motion) · [决策记录](devlog.md#devlog-mobile-drawer-motion-20261112)

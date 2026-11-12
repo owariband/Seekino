@@ -1,7 +1,7 @@
 import { configuredModels } from "../src/test/personalModelFixtures";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
-import type { AgentConversationView, AgentMessageView, AuthIdentity, DisplayMode, SeriesView } from "../src/api/contracts";
+import type { AgentConversationView, AgentMessageView, AuthIdentity, DisplayMode, SeriesView, VideoSummary } from "../src/api/contracts";
 
 async function mockService(page: Page, guest = true, { displayMode = "release", series = [], emailLoginEnabled = true }: { displayMode?: DisplayMode; series?: SeriesView[]; emailLoginEnabled?: boolean } = {}) {
   const identity: AuthIdentity = {
@@ -72,7 +72,234 @@ async function mockService(page: Page, guest = true, { displayMode = "release", 
   return { conversations, requests, unexpected, errors };
 }
 
+type DrawerFrame = {
+  open: boolean;
+  width: number;
+  transform: string;
+  backdropColor: string;
+  contentMounted: boolean;
+  transformDuration: number | null;
+};
+
+/** Clicks the native drawer control through Playwright, then freezes its actual CSS transitions at the halfway point. */
+async function freezeDrawerTransition(page: Page, action: "open" | "close"): Promise<DrawerFrame> {
+  if (action === "open") {
+    await page.getByRole("button", { name: "打开侧边栏", exact: true }).click();
+  } else {
+    await page.getByRole("dialog", { name: "手机导航", exact: true })
+      .getByRole("button", { name: "关闭侧边栏", exact: true }).click();
+  }
+  return page.evaluate(async (action) => {
+    const dialog = document.querySelector<HTMLDialogElement>("#mobile-navigation");
+    if (!dialog) throw new Error("Mobile drawer is missing");
+    const expectedOpen = action === "open";
+    const nextFrame = () => new Promise<number>((resolve) => requestAnimationFrame(resolve));
+    for (let attempt = 0; attempt < 10 && dialog.open !== expectedOpen; attempt += 1) await nextFrame();
+    if (dialog.open !== expectedOpen) throw new Error(`Mobile drawer did not ${action}`);
+    // Let the transition clock advance so the backdrop has left fully transparent.
+    await nextFrame();
+    await nextFrame();
+
+    const drawerAnimations = () => {
+      const animations = new Set<Animation>([
+        ...dialog.getAnimations({ subtree: true }),
+        ...document.getAnimations(),
+      ]);
+      return [...animations].filter((animation) => {
+        const effect = animation.effect;
+        return effect instanceof KeyframeEffect && effect.target === dialog;
+      });
+    };
+    const isTransform = (animation: Animation) =>
+      "transitionProperty" in animation && (animation as CSSTransition).transitionProperty === "transform";
+    let animations = drawerAnimations();
+    for (let attempt = 0; attempt < 10 && !animations.some(isTransform); attempt += 1) {
+      await nextFrame();
+      animations = drawerAnimations();
+    }
+    for (const animation of animations) {
+      animation.pause();
+      animation.currentTime = Number(animation.effect?.getComputedTiming().duration ?? 0) / 2;
+    }
+    const transformTransition = animations.find(isTransform);
+    return {
+      open: dialog.open,
+      width: dialog.getBoundingClientRect().width,
+      transform: getComputedStyle(dialog).transform,
+      backdropColor: getComputedStyle(dialog, "::backdrop").backgroundColor,
+      contentMounted: dialog.firstElementChild !== null,
+      transformDuration: transformTransition ? Number(transformTransition.effect?.getComputedTiming().duration ?? 0) : null,
+    };
+  }, action);
+}
+
+async function finishDrawerAnimations(page: Page) {
+  await page.evaluate(() => {
+    const dialog = document.querySelector<HTMLDialogElement>("#mobile-navigation");
+    if (!dialog) return;
+    const animations = new Set<Animation>([
+      ...dialog.getAnimations({ subtree: true }),
+      ...document.getAnimations(),
+    ]);
+    for (const animation of animations) {
+      const effect = animation.effect;
+      if (!(effect instanceof KeyframeEffect) || effect.target !== dialog) continue;
+      try {
+        animation.finish();
+      } catch {
+        // A superseded transition is already gone.
+      }
+    }
+  });
+}
+
+function translateX(transform: string): number {
+  if (transform === "none") return 0;
+  const matrix = transform.match(/matrix(3d)?\(([^)]+)\)/);
+  if (!matrix) throw new Error(`Unexpected transform: ${transform}`);
+  const values = matrix[2]!.split(",").map(Number);
+  return matrix[1] ? values[12]! : values[4]!;
+}
+
+function alphaOf(color: string): number {
+  const channels = color.match(/rgba?\(([^)]+)\)/)?.[1].split(/[ ,/]+/).map(Number);
+  if (!channels) throw new Error(`Unexpected color: ${color}`);
+  return channels.length === 4 ? channels[3]! : 1;
+}
+
+const compactSeries: SeriesView = {
+  seriesId: "compact-series", tenantId: "local-default", name: "紧凑选集测试系列",
+  description: "用于验证手机选集行高与整行链接。",
+  visibility: "private", access: "member", publisher: null, status: "READY",
+  videoCount: 13, readyVideoCount: 11, failedVideoCount: 0, pendingUploadCount: 0,
+  cover: { imageId: "compact-cover", url: "/media-placeholder.svg", expiresAt: null },
+  lastSearch: null, createdAt: 0, updatedAt: 0, transcriptLanguageHint: null,
+  importantExtraData: null, characterBible: [], pendingUploads: [],
+  videos: Array.from({ length: 13 }, (_, index): VideoSummary => {
+    const order = index + 1;
+    const unavailable = order === 5 || order === 11;
+    return {
+      videoId: `compact-ep-${order}`, tenantId: "local-default", seriesId: "compact-series",
+      episodeOrder: order, uploadSequence: order,
+      displayName: order === 2 ? "雨夜里那场没有说完的演出与沿着河岸寻找走失猫咪的漫长夜晚"
+        : order === 3 ? "A deliberately long English episode title that should wrap inside the compact row without overflowing the viewport"
+        : order === 8 ? null : `第 ${order} 集 · 测试标题`,
+      originalFilename: `compact-episode-${order}.mp4`, totalBytes: 1_000, durationSeconds: 60_000 + order * 1_000,
+      uploadStatus: "COMPLETED", parseStatus: "SUCCEEDED", uploadProgress: 100, parseProgress: 100,
+      indexStatus: "READY", playbackStatus: unavailable ? "PREPARING" : "READY",
+      playbackUrl: unavailable ? null : `/api/videos/content?videoId=compact-ep-${order}`,
+      playbackUrlExpiresAt: null,
+      thumbnail: { imageId: `compact-thumb-${order}`, url: "/media-placeholder.svg", expiresAt: null },
+      lastError: null,
+    };
+  }),
+};
+
 test.use({ viewport: { width: 390, height: 844 } });
+
+for (const width of [320, 390]) {
+  test(`shows the docs entry as an icon-only 44px target at ${width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 844 });
+    const mock = await mockService(page);
+    await page.goto("/watch");
+    const header = page.getByRole("banner", { name: "全站导航", exact: true });
+    const docsLink = header.getByRole("link", { name: "使用文档", exact: true });
+    await expect(docsLink).toBeVisible();
+    const linkBounds = (await docsLink.boundingBox())!;
+    expect(linkBounds.width).toBeCloseTo(44, 1);
+    expect(linkBounds.height).toBeCloseTo(44, 1);
+    expect((await docsLink.textContent())?.trim()).toBe("");
+    await expect(docsLink).toHaveAttribute("aria-label", "使用文档");
+    await expect(docsLink).toHaveAttribute("title", "使用文档");
+    expect(linkBounds.x + linkBounds.width).toBeLessThanOrEqual(width + 1);
+    for (const control of [header.getByRole("button", { name: "打开侧边栏", exact: true }), header.getByRole("link", { name: "搜索名场面", exact: true })]) {
+      const bounds = (await control.boundingBox())!;
+      expect(bounds.width).toBeGreaterThanOrEqual(44);
+      expect(bounds.height).toBeGreaterThanOrEqual(44);
+    }
+    const trigger = header.getByRole("button", { name: "打开侧边栏", exact: true });
+    await trigger.click();
+    const drawer = page.getByRole("dialog", { name: "手机导航", exact: true });
+    const drawerDocs = drawer.getByRole("link", { name: "使用文档", exact: true });
+    await expect(drawerDocs).toBeVisible();
+    await expect(drawerDocs).toContainText("使用文档");
+    await drawer.getByRole("button", { name: "关闭侧边栏", exact: true }).click();
+    await expect(drawer).toBeHidden();
+    expect(await header.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+    testInfo.annotations.push({ type: "docs entry dimensions", description: `${width}px viewport: icon-only link ${linkBounds.width}×${linkBounds.height}` });
+    await testInfo.attach(`docs-entry-${width}`, { body: JSON.stringify({ width, link: linkBounds }), contentType: "application/json" });
+    await docsLink.click();
+    await expect(page).toHaveURL(/\/docs$/);
+    await expect(page.getByRole("heading", { level: 1, name: "41 小时的课，你要的只是其中一段", exact: true })).toBeVisible();
+    expect(mock.unexpected).toEqual([]);
+    expect(mock.errors).toEqual([]);
+  });
+}
+
+for (const width of [320, 390, 760]) {
+  test(`lays out 13 episodes as compact full-row links at ${width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 900 });
+    const mock = await mockService(page, true, { series: [compactSeries] });
+    await page.goto("/series/compact-series?tenantId=local-default");
+    const region = page.getByRole("region", { name: "系列选集", exact: true });
+    await expect(region.getByRole("heading", { level: 2, name: /^剧集/ })).toBeVisible();
+    const rows = region.getByRole("listitem");
+    const links = region.getByRole("link");
+    await expect(rows).toHaveCount(13);
+    await expect(links).toHaveCount(11);
+    await expect(region.getByText("暂不可播放", { exact: true })).toHaveCount(2);
+    const rowBoxes = await rows.evaluateAll((nodes) => nodes.map((node) => {
+      const box = node.getBoundingClientRect();
+      return { left: box.left, right: box.right, top: box.top, width: box.width, height: box.height };
+    }));
+    expect(Math.max(...rowBoxes.map((box) => box.height))).toBeLessThanOrEqual(100);
+    expect(Math.max(...rowBoxes.map((box) => box.right))).toBeLessThanOrEqual(width + 1);
+    const firstLink = links.first();
+    const linkBounds = (await firstLink.boundingBox())!;
+    const rowBounds = await firstLink.evaluate((link) => {
+      const row = link.closest("li")!.getBoundingClientRect();
+      return { width: row.width, height: row.height };
+    });
+    expect(Math.abs(linkBounds.width - rowBounds.width)).toBeLessThanOrEqual(1);
+    expect(Math.abs(linkBounds.height - rowBounds.height)).toBeLessThanOrEqual(1);
+    const firstRow = (await rows.first().boundingBox())!;
+    const fifthRow = (await rows.nth(4).boundingBox())!;
+    expect(fifthRow.y + fifthRow.height - firstRow.y).toBeLessThanOrEqual(600);
+    const preview = (await firstLink.locator("img").first().boundingBox())!;
+    expect(preview.width).toBeGreaterThanOrEqual(112);
+    expect(preview.width).toBeLessThanOrEqual(128.5);
+    expect(Math.abs(preview.width / preview.height - 16 / 9)).toBeLessThan(0.05);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+    testInfo.annotations.push({ type: "episode row dimensions", description: `${width}px viewport: max row height ${Math.max(...rowBoxes.map((box) => box.height))}px, five rows ${fifthRow.y + fifthRow.height - firstRow.y}px` });
+    await testInfo.attach(`episode-rows-${width}`, { body: JSON.stringify({ width, rowBoxes }), contentType: "application/json" });
+    expect(mock.unexpected).toEqual([]);
+    expect(mock.errors).toEqual([]);
+  });
+}
+
+test("keeps the original four-column episode grid at 1280px", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  const mock = await mockService(page, true, { series: [compactSeries] });
+  await page.goto("/series/compact-series?tenantId=local-default");
+  const region = page.getByRole("region", { name: "系列选集", exact: true });
+  const rows = region.getByRole("listitem");
+  await expect(rows).toHaveCount(13);
+  await expect(region.getByText("暂不可播放", { exact: true })).toHaveCount(2);
+  const rowBoxes = await rows.evaluateAll((nodes) => nodes.map((node) => {
+    const box = node.getBoundingClientRect();
+    return { left: box.left, top: box.top, width: box.width };
+  }));
+  const firstRow = rowBoxes.slice(0, 4);
+  expect(new Set(firstRow.map((box) => Math.round(box.top))).size).toBe(1);
+  expect(new Set(firstRow.map((box) => Math.round(box.left))).size).toBe(4);
+  const firstDesktopRow = rowBoxes[0]!;
+  const fifthDesktopRow = rowBoxes[4]!;
+  expect(fifthDesktopRow.top).toBeGreaterThan(firstDesktopRow.top + 40);
+  expect(firstDesktopRow.width).toBeGreaterThan(180);
+  expect(mock.unexpected).toEqual([]);
+  expect(mock.errors).toEqual([]);
+});
 
 for (const width of [390, 1280]) {
   test(`explains unavailable email login without requests at ${width}px`, async ({ page }, testInfo) => {
@@ -168,6 +395,99 @@ test("keeps focus in the drawer and preserves the draft when dismissed", async (
   await page.getByRole("button", { name: "打开账号菜单", exact: true }).click();
   await expect(page.getByRole("region", { name: "当前账号", exact: true })).toBeVisible();
   await expect(input).toHaveValue("保留这段还没发送的草稿");
+  expect(mock.unexpected).toEqual([]);
+  expect(mock.errors).toEqual([]);
+});
+
+test("slides the mobile drawer in and out and keeps its content until the close transition finishes", async ({ page }, testInfo) => {
+  const mock = await mockService(page);
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.goto("/watch");
+  const header = page.getByRole("banner", { name: "全站导航", exact: true });
+  await expect(header).toBeVisible();
+  // Wait for the first data-backed render so the initial location effect cannot reset the open state.
+  await expect(page.getByText("公开资料里还没有视频。", { exact: true })).toBeVisible();
+  const drawer = page.getByRole("dialog", { name: "手机导航", exact: true });
+
+  const entering = await freezeDrawerTransition(page, "open");
+  await testInfo.attach("drawer-entering-frame", { body: JSON.stringify(entering), contentType: "application/json" });
+  expect(entering.open).toBe(true);
+  expect(entering.contentMounted).toBe(true);
+  expect(entering.transformDuration).toBe(240);
+  expect(alphaOf(entering.backdropColor)).toBeGreaterThan(0);
+  expect(alphaOf(entering.backdropColor)).toBeLessThan(0.35);
+  const enterX = translateX(entering.transform);
+  expect(enterX).toBeGreaterThan(-entering.width);
+  expect(enterX).toBeLessThan(0);
+  await finishDrawerAnimations(page);
+  await expect(drawer).toBeVisible();
+  expect(translateX(await drawer.evaluate((element) => getComputedStyle(element).transform))).toBe(0);
+
+  await page.evaluate(() => {
+    (document.querySelector("#mobile-navigation")!.firstElementChild as HTMLElement & { drawerRetained?: boolean }).drawerRetained = true;
+  });
+
+  const exiting = await freezeDrawerTransition(page, "close");
+  await testInfo.attach("drawer-exiting-frame", { body: JSON.stringify(exiting), contentType: "application/json" });
+  expect(exiting.open).toBe(false);
+  expect(exiting.contentMounted).toBe(true);
+  expect(exiting.transformDuration).toBe(180);
+  expect(alphaOf(exiting.backdropColor)).toBeGreaterThan(0);
+  expect(alphaOf(exiting.backdropColor)).toBeLessThan(0.35);
+  const exitX = translateX(exiting.transform);
+  expect(exitX).toBeGreaterThan(-exiting.width);
+  expect(exitX).toBeLessThan(0);
+  expect(await page.locator("#mobile-navigation").evaluate((element) => element.childElementCount)).toBe(1);
+
+  // While the retained mobile panel is still in the top layer, only the desktop account panel may own the id.
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.evaluate(() => document.querySelector<HTMLButtonElement>('button[aria-label="打开账号菜单"]')?.click());
+  await expect(header.getByRole("region", { name: "当前账号", exact: true })).toBeVisible();
+  expect(await page.locator("#seekino-account-panel").count()).toBe(1);
+  expect(await header.getByRole("button", { name: "打开账号菜单", exact: true }).getAttribute("aria-controls")).toBe("seekino-account-panel");
+
+  // Reopening during the close transition reverses it without unmounting the content.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.evaluate(() => document.querySelector<HTMLButtonElement>('button[aria-label="打开侧边栏"]')?.click());
+  await expect(drawer).toBeVisible();
+  expect(await page.evaluate(() =>
+    Boolean((document.querySelector("#mobile-navigation")?.firstElementChild as (HTMLElement & { drawerRetained?: boolean }) | null)?.drawerRetained))).toBe(true);
+  await finishDrawerAnimations(page);
+  await expect(drawer).toBeVisible();
+
+  await freezeDrawerTransition(page, "close");
+  await finishDrawerAnimations(page);
+  await expect.poll(() => page.locator("#mobile-navigation").evaluate((element) => element.childElementCount)).toBe(0);
+  await expect(drawer).toBeHidden();
+  expect(mock.unexpected).toEqual([]);
+  expect(mock.errors).toEqual([]);
+});
+
+test("closes the drawer with no motion when reduced motion is requested", async ({ page }) => {
+  const mock = await mockService(page);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("/watch");
+  const drawer = page.getByRole("dialog", { name: "手机导航", exact: true });
+  await page.getByRole("button", { name: "打开侧边栏", exact: true }).click();
+  await expect(drawer).toBeVisible();
+  const motion = await drawer.evaluate((element) => ({
+    animations: element.getAnimations({ subtree: true }).length,
+    duration: getComputedStyle(element).transitionDuration,
+    backdropDuration: getComputedStyle(element, "::backdrop").transitionDuration,
+  }));
+  expect(motion.animations).toBe(0);
+  expect(motion.duration).toBe("0s");
+  expect(motion.backdropDuration).toBe("0s");
+
+  await drawer.getByRole("button", { name: "关闭侧边栏", exact: true }).click();
+  await expect(drawer).toBeHidden();
+  await expect.poll(() => page.locator("#mobile-navigation").evaluate((element) => element.childElementCount)).toBe(0);
+
+  await page.setViewportSize({ width: 1280, height: 900 });
+  const header = page.getByRole("banner", { name: "全站导航", exact: true });
+  await header.getByRole("button", { name: "打开账号菜单", exact: true }).click();
+  await expect(header.getByRole("region", { name: "当前账号", exact: true })).toBeVisible();
+  expect(await page.locator("#seekino-account-panel").count()).toBe(1);
   expect(mock.unexpected).toEqual([]);
   expect(mock.errors).toEqual([]);
 });
