@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-12T17:17:21+08:00",
+ "updatedAt": "2026-11-12T18:11:14+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 49,
+ "revision": 50,
  "categories": [
   {
    "id": "parse",
@@ -5485,11 +5485,11 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "title": "已选夜间配色与 Hero 过渡共用背景",
    "category": "library",
    "type": "task",
-   "status": "verifying",
+   "status": "done",
    "priority": "P1",
    "description": "保持已选六项夜间值；首页和系列页的底色、遮罩、渐变与画布共用夜间颜色来源。",
-   "next": "在 5173 review 两页夜间衔接；确认后同步仍为草稿的 main 发布 #128。",
-   "verification": "构建和现有主题回归通过。两页/两宽度/日夜共 8 状态：4 个夜间无图探针与画布逐像素一致，白天前后最大通道差为 1/255。主观舒适度待 review。",
+   "next": "已上线；旧 Web 镜像和本次发布目录的 rollback-web 回滚入口保留。",
+   "verification": "2026-11-12 本地视觉 review 获确认。main 发布 #133 压成 1 个提交 dd4ed49c，仅 4 个 CSS；生产构建、2 项主题单测、1 项浏览器渐变回归及 GitHub release-files 通过。17:36（UTC+8）只更新生产 Web；50 个镜像文件、6 个 HTTPS 资源哈希和公网 8 状态通过，4 个夜间背景探针最大通道差为 0；其他 5 个服务未重建。",
    "updatedAt": "2026-11-12",
    "tags": [
     "UI"
@@ -5498,7 +5498,7 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
     "WATCH-THEME-01",
     "MOD-LIBRARY"
    ],
-   "branch": "fix/unify-hero-background",
+   "branch": "fix/release-reviewed-palette",
    "links": [
     {
      "label": "设计与验收",
@@ -5511,7 +5511,7 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "kind": "pr"
     },
     {
-     "label": "发布 PR #128",
+     "label": "历史草稿 #128（已关闭）",
      "url": "https://github.com/owariband/Seekino/pull/128",
      "kind": "pr"
     },
@@ -5524,6 +5524,16 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "label": "Hero 修复 #132",
      "url": "https://github.com/owariband/Seekino/pull/132",
      "kind": "pr"
+    },
+    {
+     "label": "正式发布 #133",
+     "url": "https://github.com/owariband/Seekino/pull/133",
+     "kind": "pr"
+    },
+    {
+     "label": "线上页面",
+     "url": "https://seekino.hypn0s.cloud/watch",
+     "kind": "page"
     }
    ]
   },
@@ -5535,7 +5545,7 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "status": "verifying",
    "priority": "P1",
    "description": "手机顶栏隐藏使用文档，系列选集沿用全宽大图，首次引导与连续选集困难。限定现有文档入口与760px以下选集布局，保留青瓷风格、桌面网格及播放合同。",
-   "next": "刷新4190本机预览确认纯图标入口与导航手感；PR #129评审后走独立发布流程，真机与Cloud验证仍待执行。",
+   "next": "本地预览已获确认，用户授权最小发布到main并上线；独立发布分支仅包含3个运行文件，正在按main锁文件构建和验收。",
    "verification": "本轮纯图标44×44px、抽屉内文字保留；240ms进入/180ms退出与遮罩同步，真实CSS中间帧、内容保留/清理、快速重开、焦点与reduced-motion等12项浏览器回归通过。76项相关单测、类型与构建通过，9场景选集指标未变（390px总高减少67.67%）。4190预览已更新；未合并、未发布，未验Safari/Firefox/真机或Cloud。",
    "updatedAt": "2026-11-12",
    "tags": [
