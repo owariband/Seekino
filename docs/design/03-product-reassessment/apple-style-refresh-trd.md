@@ -1,5 +1,7 @@
 # 1. 问题与现状
 
+2026-11-12 后续决定：本次中性色板造成整站观感偏离原有青瓷背景，按恢复要求由 [配色恢复 TRD](restore-celadon-palette-trd.md) / [PR #127](https://github.com/owariband/Seekino/pull/127) 恢复原色板，保留字体、动效和模型菜单。以下保留 11 月 10 日改版时的方案、取舍与验证边界。
+
 需求：参考 Apple 设计语言，让 Seekino Web 界面更干净、简约、有质感，重点更换字体。提出日期：2026-11-10（Asia/Shanghai）。分支：`feat/apple-style-refresh`（基于 `feat/cloud-user-docs`）；PR：[#90](https://github.com/owariband/Seekino/pull/90)。状态：实现完成、本地截图验证，待合并。
 
 **依赖。** 本分支叠加在 [Cloud 使用文档 TRD](cloud-user-docs-trd.md) 的分支上，使新文档页与欢迎卡片一并换新样式。合并顺序：先合 `feat/cloud-user-docs`，再合本分支；若前者调整，本分支 rebase 后重新截图。

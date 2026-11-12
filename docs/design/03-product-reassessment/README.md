@@ -35,12 +35,14 @@ hypnos 于 **2026-04-27 入职实习**，到这次面试复盘时已接近半年
 | [docker-web-assets-trd.md](docker-web-assets-trd.md) | 2026-11-06，CPU 构建暴露发布 Logo 软链接缺失 | 保留构建目录关系、限制发布资源输入，并验证 main 部署来源 | 设计与证据见正文；当前状态见工作台 DEPLOY-01 |
 | [cloud-guest-without-smtp-trd.md](cloud-guest-without-smtp-trd.md) | 2026-11-06，SMTP 留空导致整个 cloud API 无法启动 | 游客启动与邮件能力分离，未配置邮件时明确拒绝邮箱认证 | 当前状态见工作台 DEPLOY-02 |
 | [cloud-user-docs-trd.md](cloud-user-docs-trd.md) | 2026-11-10，Cloud 访客看不到两版区别、部署方式与 GitHub 入口，比赛需要真实用户却缺少转化落点 | 站内 `/docs` 使用文档与顶栏 GitHub 入口；API 文档迁到 `/api/docs` | 初稿 |
-| [apple-style-refresh-trd.md](apple-style-refresh-trd.md) | 2026-11-10，推广前界面不够简约高级：圆体标题、等宽大写小标签、绿灰色调 | Apple 式视觉层：SF / 自托管 Inter、中性色板、磨砂顶栏、胶囊按钮；不改布局 | 待评审 |
+| [apple-style-refresh-trd.md](apple-style-refresh-trd.md) | 2026-11-10，推广前界面不够简约高级：圆体标题、等宽大写小标签、绿灰色调 | Apple 式视觉层：SF / 自托管 Inter、中性色板、磨砂顶栏、胶囊按钮；不改布局 | 配色的后续恢复见下一项，原始取舍保留 |
+| [restore-celadon-palette-trd.md](restore-celadon-palette-trd.md) | 2026-11-12，中性色板替换青瓷底色，整站观感偏离此前配色 | 从 PR #90 前的源码恢复背景、表面、文字和 Hero 遮罩，保留字体与交互改进 | [PR #127](https://github.com/owariband/Seekino/pull/127)；验收证据见正文 |
 | [model-discovery-feedback-trd.md](model-discovery-feedback-trd.md) | 2026-11-10，“获取模型列表”结果不可见，whisper.cpp 必然 404 | 内联结果与模型 chip、防重复；无列表的服务给出中性说明 | 初稿 |
 | [sticky-docs-trd.md](sticky-docs-trd.md) | 2026-11-10，欢迎卡片与文档准确但抓不住首次访客 | 按 SUCCESs 重写，`/docs` 拆为快速开始等多页 | 初稿 |
 | [smtp-login-availability-trd.md](smtp-login-availability-trd.md) | 2026-11-07，邮件未配置仍展示验证码表单，用户填写后才知道不可用 | 由账号服务传递可用能力，空配置展示游客模式和未开放说明 | 当前状态见工作台 DEPLOY-04；依赖 #62，随 #63 发布 |
 | [cloud-docker-deploy-trd.md](cloud-docker-deploy-trd.md) | 2026-11-06，简历筛选需要公开演示，但云服务器上没有任何服务 | 用 Docker 在 4C8G 服务器部署发布后的 `main`，迁移演示数据，经公网 HTTPS 提供观看、检索与问答 | 初稿；实施与验收待进行 |
 | [chat-stream-snapshot-coalescing-trd.md](chat-stream-snapshot-coalescing-trd.md) | 2026-11-05，长回答流式交付途中被判为慢消费者并断开 | 合并缓冲中相邻的未发送快照，持续读取的客户端不再收到中断 | 初稿；实验待测 |
+| [chat-frontend-performance-trd.md](chat-frontend-performance-trd.md) | 2026-11-12，聊天输入、正文和思考更新反复解析历史回答，终态先于 EOF 时误显示连接中 | 保留流式合同与 Kino 行为，隔离渲染并验证状态、滚动和浏览器性能 | [PR #126](https://github.com/owariband/Seekino/pull/126)；执行状态见工作台 CHAT-PERF-01 |
 | [series-background-ownership-trd.md](series-background-ownership-trd.md) | 2026-11-05，系列概览讨论中发现简介、背景资料与人物资料归属不清 | 系列只保留“简介 + 一份背景资料”由用户维护，`character_bible` 转为只读兼容，Agent 使用显示名称 | 初稿；实验待测 |
 | [chat-streaming-trd.md](chat-streaming-trd.md) | 2026-11-01，课程 QA 撤回错误 FTT 后独立承接 | 模型正文在生成过程中交付，首字计量能关联实际请求、增量和浏览器展示 | PR #25 直接合入 dev，不依赖 #18；隔离验证与真实试点、性能和部署分开判断 |
 | [Chat 模型重试提示](chat-model-retry-status-trd.md) | 2026-11-07，local 观看问答 | 等待期间显示模型重试次数 | [PR #71](https://github.com/owariband/Seekino/pull/71) |

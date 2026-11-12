@@ -156,6 +156,8 @@ interface ConversationState {
   reasoning: Record<string, string>;
   loading: boolean;
   sending: boolean;
+  /** The service accepted the current request; its messages and terminal state are authoritative. */
+  accepted: boolean;
   cancellingMessageId: string | null;
   error: string | null;
   modelId: string;
@@ -173,6 +175,8 @@ interface ActiveConversation {
   identityKey: string;
   recoveryMessageId: string | null;
   streamedMessageId: string | null;
+  /** Idempotency key of the most recent request; a late reconciliation must not write over a newer one. */
+  requestKey: string | null;
   modelId: string;
   modelSaving: boolean;
   explicitDraftModel?: boolean;
@@ -187,7 +191,7 @@ export function useAgentConversation(requestedId: string | null = null) {
   localeRef.current = locale;
   const t = (message: string) => translate(localeRef.current, message);
   const [state, setState] = useState<ConversationState>({
-    requestedId, conversationId: null, messages: [], progress: {}, reasoning: {}, loading: true, sending: false, cancellingMessageId: null, error: null,
+    requestedId, conversationId: null, messages: [], progress: {}, reasoning: {}, loading: true, sending: false, accepted: false, cancellingMessageId: null, error: null,
     modelId: DEFAULT_MODEL_ID, modelSaving: false, modelError: null,
   });
   const activeRef = useRef<ActiveConversation | null>(null);
@@ -256,12 +260,12 @@ export function useAgentConversation(requestedId: string | null = null) {
     const defaultId = draftDefault.current.scope === conversationStorageKey() ? draftDefault.current.id : DEFAULT_MODEL_ID;
     const active: ActiveConversation = {
       conversationId: null, controller: new AbortController(), sending: false, sendController: null, cancellingMessageId: null,
-      identityKey: conversationStorageKey(), recoveryMessageId: null, streamedMessageId: null,
+      identityKey: conversationStorageKey(), recoveryMessageId: null, streamedMessageId: null, requestKey: null,
       modelId: defaultId, modelSaving: false,
     };
     activeRef.current = active;
     setState({
-      requestedId, conversationId: null, messages: [], progress: {}, reasoning: {}, loading: true, sending: false, cancellingMessageId: null, error: null,
+      requestedId, conversationId: null, messages: [], progress: {}, reasoning: {}, loading: true, sending: false, accepted: false, cancellingMessageId: null, error: null,
       modelId: defaultId, modelSaving: false, modelError: null,
     });
     void (async () => {
@@ -306,7 +310,7 @@ export function useAgentConversation(requestedId: string | null = null) {
     const defaultId = draftDefault.current.scope === conversationStorageKey() ? draftDefault.current.id : DEFAULT_MODEL_ID;
     activeRef.current = {
       conversationId: null, controller: new AbortController(), sending: false, sendController: null, cancellingMessageId: null,
-      identityKey: conversationStorageKey(), recoveryMessageId: null, streamedMessageId: null,
+      identityKey: conversationStorageKey(), recoveryMessageId: null, streamedMessageId: null, requestKey: null,
       modelId: defaultId, modelSaving: false, creationKey: crypto.randomUUID(),
     };
     setState((current) => ({
@@ -317,6 +321,7 @@ export function useAgentConversation(requestedId: string | null = null) {
       reasoning: {},
       loading: false,
       sending: false,
+      accepted: false,
       cancellingMessageId: null,
       error: null,
       modelId: defaultId,
@@ -424,15 +429,16 @@ export function useAgentConversation(requestedId: string | null = null) {
     const frozenExtraContext = extraContext === null ? null : structuredClone(extraContext);
     const frozenAttachments = (submission?.attachments ?? []).map(({ mediaUri }) => ({ mediaUri }));
     const onAccepted = submission?.onAccepted;
+    const idempotencyKey = crypto.randomUUID();
     active.sending = true;
+    active.requestKey = idempotencyKey;
     active.cancellingMessageId = null;
     const sendController = new AbortController();
     active.sendController = sendController;
     const signal = AbortSignal.any([active.controller.signal, sendController.signal]);
     active.recoveryMessageId = null;
-    setState((current) => ({ ...current, sending: true, cancellingMessageId: null, error: null }));
+    setState((current) => ({ ...current, sending: true, accepted: false, cancellingMessageId: null, error: null }));
     let messageId: string | null = null;
-    const idempotencyKey = crypto.randomUUID();
     let sequence = -1;
     let reasoningCallId: string | null = null;
     let accepted = false;
@@ -477,7 +483,7 @@ export function useAgentConversation(requestedId: string | null = null) {
           const progress = event.type === "answer.started" && phase && !current.progress[event.messageId]
             ? { ...current.progress, [event.messageId]: [{ type: "answer.progress" as const, conversationId, messageId: event.messageId, sequence: event.sequence, occurredAt: event.occurredAt, phase, timing: event.assistantMessage.timing }] }
             : current.progress;
-          return { ...current, progress, messages: mergeMessages(current.messages, [event.userMessage, event.assistantMessage], conversationId, null, event.type === "answer.snapshot") };
+          return { ...current, accepted: current.accepted || event.type === "answer.started", progress, messages: mergeMessages(current.messages, [event.userMessage, event.assistantMessage], conversationId, null, event.type === "answer.snapshot") };
         }
         if (event.type === "answer.failed") {
           const messages = mergeMessages(current.messages, [event.userMessage, event.assistantMessage], conversationId);
@@ -540,13 +546,13 @@ export function useAgentConversation(requestedId: string | null = null) {
       if (conversationId && !accepted && !rejected && activeRef.current === active && !signal.aborted) {
         try {
           const pair = await getAgentMessage(conversationId, { idempotencyKey });
-          if (activeRef.current === active && active.sendController === sendController && !signal.aborted && pair.userMessage.conversationId === conversationId && pair.assistantMessage.conversationId === conversationId) {
+          if (activeRef.current === active && active.requestKey === idempotencyKey && !signal.aborted && pair.userMessage.conversationId === conversationId && pair.assistantMessage.conversationId === conversationId) {
             accept();
             active.recoveryMessageId = pair.assistantMessage.status === "PROCESSING" ? pair.assistantMessage.messageId : null;
-            setState((current) => ({ ...current, error: pair.assistantMessage.status === "PROCESSING" ? current.error : null, messages: mergeMessages(current.messages, [pair.userMessage, pair.assistantMessage], conversationId) }));
+            setState((current) => ({ ...current, accepted: true, error: pair.assistantMessage.status === "PROCESSING" ? current.error : null, messages: mergeMessages(current.messages, [pair.userMessage, pair.assistantMessage], conversationId) }));
           }
         } catch {
-          if (activeRef.current === active && !signal.aborted) setState((current) => ({ ...current, error: current.error ?? t("未能确认消息是否已接收，草稿已保留") }));
+          if (activeRef.current === active && active.requestKey === idempotencyKey && !signal.aborted) setState((current) => ({ ...current, error: current.error ?? t("未能确认消息是否已接收，草稿已保留") }));
         }
       }
       if (active.sendController !== sendController) return;
@@ -556,28 +562,32 @@ export function useAgentConversation(requestedId: string | null = null) {
       if (activeRef.current === active) {
         setState((current) => ({ ...current, sending: false }));
         if (!conversationId) return;
-        // The HTTP subscription can end while the service still owns the Kick.
+        // The HTTP subscription can end while the service still owns the Kick. A newer request
+        // owns the key now, so this turn must not reconcile over that turn.
         try {
           const messages = await loadMessages(conversationId, localeRef.current);
-          if (activeRef.current === active) {
+          if (activeRef.current === active && active.requestKey === idempotencyKey) {
             const recovered = messages.some((message) => message.messageId === active.recoveryMessageId && message.status !== "PROCESSING");
             if (recovered) active.recoveryMessageId = null;
             setState((current) => ({ ...current, error: recovered ? null : current.error, messages: mergeMessages(current.messages, messages, conversationId) }));
           }
         } catch (error) {
-          if (activeRef.current === active) setState((current) => ({ ...current, error: current.error ?? errorMessage(error, localeRef.current) }));
+          if (activeRef.current === active && active.requestKey === idempotencyKey) setState((current) => ({ ...current, error: current.error ?? errorMessage(error, localeRef.current) }));
         }
       }
     }
   }, [ensureConversationId, requestedId, state.loading, state.requestedId, state.messages]);
 
   const visible = state.requestedId === requestedId ? state : {
-    requestedId, conversationId: null, messages: [], progress: {}, reasoning: {}, loading: true, sending: false, cancellingMessageId: null, error: null,
+    requestedId, conversationId: null, messages: [], progress: {}, reasoning: {}, loading: true, sending: false, accepted: false, cancellingMessageId: null, error: null,
     modelId: DEFAULT_MODEL_ID, modelSaving: false, modelError: null,
   };
   return {
     ...visible,
     searching: visible.sending || visible.messages.some((message) => message.status === "PROCESSING"),
+    // The connection hint belongs to the window before this request is accepted; once the
+    // request is accepted it stays off even while a terminal response is still closing.
+    connecting: visible.sending && !visible.accepted,
     cancelling: Boolean(visible.cancellingMessageId),
     clear,
     ensureConversationId,

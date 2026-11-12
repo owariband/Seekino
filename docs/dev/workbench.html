@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-12T10:49:55+08:00",
+ "updatedAt": "2026-11-12T15:54:58+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 40,
+ "revision": 45,
  "categories": [
   {
    "id": "parse",
@@ -5438,6 +5438,83 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "links": [
     {"label": "PR #118", "url": "https://github.com/owariband/Seekino/pull/118", "kind": "pr"},
     {"label": "发布 PR #122", "url": "https://github.com/owariband/Seekino/pull/122", "kind": "pr"}
+   ]
+  },
+  {
+   "id": "CHAT-PERF-01",
+   "title": "聊天页连接提示与历史 Markdown 渲染开销",
+   "category": "chat",
+   "type": "requirement",
+   "status": "verifying",
+   "priority": "P1",
+   "description": "输入、思考和正文更新执行全部历史 Markdown；完成态先于 SSE 关闭时可能重新显示连接中。保留 Kino 动作、证据顺序与恢复合同。",
+   "next": "用户复测长历史、媒体或trace较多的会话与真实设备；后续main正式发布纳入同一前端补丁，既有布局问题单独核对。",
+   "verification": "658项前端单测、类型与构建通过；Markdown 20/20/20降为0/0/1；60条历史4x CPU下输入p95 38.6→16.0ms、SSE到DOM p95 38.8→18.4ms。三个隔离回放场景通过；浏览器6通过、1项布局失败与基线相同。本地真实DeepSeek聊天通过；13:43公网前端已发布，文件哈希匹配，两轮真实聊天42/8个增量均完成，无JS异常或收尾连接提示，Kino回到sleep；API进程未变，回滚材料已保留。",
+   "updatedAt": "2026-11-12",
+   "tags": [
+    "性能",
+    "SSE",
+    "UI"
+   ],
+   "related": [
+    "MOD-CHAT",
+    "CHAT-LAYOUT-01",
+    "WATCH-KINO-01"
+   ],
+   "branch": "perf/chat-frontend",
+   "links": [
+    {
+     "label": "PR #126",
+     "kind": "pr",
+     "url": "https://github.com/owariband/Seekino/pull/126"
+    },
+    {
+     "label": "TRD",
+     "kind": "trd",
+     "url": "https://github.com/owariband/Seekino/blob/perf/chat-frontend/docs/design/03-product-reassessment/chat-frontend-performance-trd.md"
+    },
+    {
+     "label": "实测报告",
+     "kind": "source",
+     "url": "https://github.com/owariband/Seekino/blob/perf/chat-frontend/docs/report/web/chat-frontend-performance-20261112.md"
+    }
+   ]
+  },
+  {
+   "id": "WEB-PALETTE-01",
+   "title": "恢复原有青瓷背景与配套色板",
+   "category": "library",
+   "type": "task",
+   "status": "verifying",
+   "priority": "P1",
+   "description": "恢复 PR #90 前的背景、面板、文字与 Hero 遮罩，保留字体、动效及模型菜单。",
+   "next": "用户在 GitHub 合并发布 PR #128 后，按实际部署验证线上配色；开发集成状态以 PR #127 为准。",
+   "verification": "构建、2 项主题单测及现有渐变浏览器用例通过。Chrome 在 390px／1440px、日夜四页共 16 个状态精确色值通过；4 个 CSS 之外的布局、字体、动效未改。发布构建及 GitHub release-files 通过。现有 5173 和远端部署尚未替换。",
+   "updatedAt": "2026-11-12",
+   "tags": [
+    "UI"
+   ],
+   "related": [
+    "WATCH-THEME-01",
+    "MOD-LIBRARY"
+   ],
+   "branch": "fix/restore-celadon-palette",
+   "links": [
+    {
+     "label": "设计与验收",
+     "url": "https://github.com/owariband/Seekino/blob/fix/restore-celadon-palette/docs/design/03-product-reassessment/restore-celadon-palette-trd.md",
+     "kind": "trd"
+    },
+    {
+     "label": "PR #127",
+     "url": "https://github.com/owariband/Seekino/pull/127",
+     "kind": "pr"
+    },
+    {
+     "label": "发布 PR #128",
+     "url": "https://github.com/owariband/Seekino/pull/128",
+     "kind": "pr"
+    }
    ]
   }
  ]

@@ -116,6 +116,7 @@ Event / Sub-Chunk 的实施入口是 [sub-chunk-trd.md](02-agent-harness/sub-chu
 | 观看回答交付 | [watch-answer-delivery-trd.md](03-product-reassessment/watch-answer-delivery-trd.md) | 修复：实时证据不提交视频卡、失败表述准确、回答长度与用户可见术语受控（LOOP-06 / C22 / C25）。 |
 | 对话延迟创建 | [chat-lazy-conversation-trd.md](03-product-reassessment/chat-lazy-conversation-trd.md) | 修复：打开页面、新对话、删除补位不再创建空对话，首次发送时才创建；实现完成，待合并。 |
 | Chat 正文流式与真实 FTT | [chat-streaming-trd.md](03-product-reassessment/chat-streaming-trd.md) | 承接课程 PRD：正文增量交付、调用来源、浏览器采证及非流式/缓冲反例；关联 #18 / #25。 |
+| 聊天页前端性能 | [chat-frontend-performance-trd.md](03-product-reassessment/chat-frontend-performance-trd.md) | 连接状态与传输收尾、历史 Markdown 渲染隔离、滚动及 Kino 的同条件对照；对应 #126，当前执行状态见工作台 CHAT-PERF-01。 |
 | Chat 模型重试提示 | [设计](03-product-reassessment/chat-model-retry-status-trd.md) | 首次响应超时后的重试次数与恢复反馈。 |
 | Chat 工具与证据交付 | [agent-chat-delivery-contract.md](01-mvp/agent-chat-delivery-contract.md) | 交付合同与演进记录：Query / Evaluator、业务工具、证据核准及答案交付；Event 工具结合 Sub-Chunk TRD 阅读。 |
 | 网页搜索供应商 | [deepseek-web-search-trd.md](03-product-reassessment/deepseek-web-search-trd.md) | 主 TRD：可选免 key DDGS / DeepSeek API、查询边界、错误处理与真实入口验证。 |
@@ -148,7 +149,8 @@ Event / Sub-Chunk 的实施入口是 [sub-chunk-trd.md](02-agent-harness/sub-chu
 | 游客观看问答的执行预算 | [guest-chat-turn-budget-trd.md](03-product-reassessment/guest-chat-turn-budget-trd.md) | 每 IP 的请求额度与单条回答的模型、工具调用分别核验。 |
 | 云端无 SMTP 的游客启动 | [cloud-guest-without-smtp-trd.md](03-product-reassessment/cloud-guest-without-smtp-trd.md) | 邮件能力可选，游客身份仍保留签名、Redis、CSRF 与权限校验。 |
 | Cloud 使用文档与推广入口 | [cloud-user-docs-trd.md](03-product-reassessment/cloud-user-docs-trd.md) | `/docs` 归站内用户文档，Swagger 迁到 `/api/docs`。 |
-| Apple 式视觉刷新 | [apple-style-refresh-trd.md](03-product-reassessment/apple-style-refresh-trd.md) | 字体改为 SF / 自托管 Inter，标签去等宽，中性色板与磨砂顶栏。 |
+| Apple 式视觉刷新 | [apple-style-refresh-trd.md](03-product-reassessment/apple-style-refresh-trd.md) | 字体改为 SF / 自托管 Inter，标签去等宽；中性色板的后续恢复见下一项。 |
+| 青瓷背景配色恢复 | [restore-celadon-palette-trd.md](03-product-reassessment/restore-celadon-palette-trd.md) | 恢复 PR #90 前的背景、表面和文字配色，保留字体、动效与菜单。 |
 | SMTP 决定登录入口 | [smtp-login-availability-trd.md](03-product-reassessment/smtp-login-availability-trd.md) | 身份接口传递邮件能力；未配置时提前说明登录注册尚未开放，保留游客体验。 |
 | Local / Cloud | [local-cloud-trd.md](02-agent-harness/local-cloud-trd.md) | 运行形态设计：身份、配置归属、本地接入和云端部署边界。 |
 | 项目管理工作台 | [management-workbench-trd.md](03-product-reassessment/management-workbench-trd.md) | 单文件离线管理工作台：里程碑概览、课程闭环地图、验收门槛与四列看板，统一模块、需求、任务，关联 PR/TRD 和历史证据；2026-11-02 看板版本保留在同一 TRD。 |

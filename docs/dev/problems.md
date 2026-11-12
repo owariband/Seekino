@@ -2907,3 +2907,15 @@ micrograd v5 共 146 块，整集 90 分 04.884 秒。调度反复锁取候选�
 ### WATCH-FIND-03 · 片内查找把网络用语召回到字面相似的镜头
 
 2026-11-12。搜「红温」时，MyGO 第 2 集的前两条相关画面分别是紫红色眼睛和红色吉他。观众可以选择保留普通搜索，或理解为人物生气并按近义表达查找。验收检查两种模式的实际检索词、结果与跳转，以及角色、否定和字面限定。[设计与验收](../design/03-product-reassessment/watch-smart-find-trd.md) · [工作台](workbench.html)
+
+## WEB-PALETTE-01 · 中性色板替换青瓷背景，整站观感偏离此前配色
+
+2026-11-10，Apple 式视觉刷新在调整字体时同时替换全站色板，白天背景从 `#e4eae5` 改为 `#f5f5f7`，黑夜从 `#121816` 改成纯黑，首页与系列页也改为中性遮罩。2026-11-12 明确恢复原有配色。验收要求画布、面板、卡片、文字和 Hero 回到 `cee43f96^` 的颜色，保留字体、动效、主题偏好和模型菜单。[设计与验证](../design/03-product-reassessment/restore-celadon-palette-trd.md) · [PR #127](https://github.com/owariband/Seekino/pull/127) · [工作台](workbench.html)
+
+### CHAT-PERF-01 · 页面状态更新重跑历史 Markdown，终态收尾又误显示连接中
+
+2026-11-12。当前 dev 的组件探针确认：20 条历史回答下，输入一字、仅更新思考、更新一条消息，各执行 20 个 Markdown。可信终态先于 POST EOF 时，`sending` 仍为真且没有 PROCESSING，页面会重新显示连接中，并影响 Kino 的收尾状态。对照原问题验收时，需要同时核对解析次数、输入及正文观察延迟、Kino 状态、滚动、取消和恢复，不能只加过渡动效。
+
+验收边界：输入与思考更新不重解析未变化的历史正文；单消息只解析变化块；终态不显示连接中或无效停止，发送按钮与实际守卫一致；旧请求晚到不能污染已经结束的新回合；用户上滚后不被拉回底部。PR #126 的受控回放和 658 项前端测试已有证据，真实线上效果仍未测。公开范围提示的既有布局断言在方案与未修改基线上以同一坐标失败，归原 `CHAT-HEADER-01` 核对，没有借本次性能修复改写旧期望。
+
+[设计](../design/03-product-reassessment/chat-frontend-performance-trd.md) · [实测报告](../report/web/chat-frontend-performance-20261112.md) · [devlog](devlog.md#devlog-chat-frontend-performance-20261112) · [工作台](workbench.html)

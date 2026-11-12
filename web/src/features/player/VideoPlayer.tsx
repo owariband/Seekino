@@ -1,5 +1,5 @@
 import { Maximize, Minimize, Pause, Play, RotateCcw, RotateCw, Search, Volume2, VolumeX } from "lucide-react";
-import { forwardRef, type CSSProperties, type KeyboardEvent, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
+import { forwardRef, type CSSProperties, type KeyboardEvent, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
 
 import { errorMessage, mediaUrl } from "../../api/client";
 import type { VideoSummary } from "../../api/contracts";
@@ -59,19 +59,25 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(funct
   const playbackUrl = video.playbackStatus === "READY" ? mediaUrl(video.playbackUrl) : null;
   const mediaKey = `${video.videoId}:${atSeconds ?? "history"}:${playbackUrl ?? "none"}`;
 
+  const openFind = useCallback((selectQuery = false) => {
+    setFindOpen(true);
+    findInputRef.current?.focus();
+    if (selectQuery) findInputRef.current?.select();
+  }, []);
+
   useEffect(() => {
     if (!playbackUrl) return;
-    const openFind = (event: globalThis.KeyboardEvent) => {
-      if (event.defaultPrevented || event.isComposing || event.altKey || event.shiftKey
-          || !(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "f") return;
+    const onFindShortcut = (event: globalThis.KeyboardEvent) => {
+      if (event.defaultPrevented || event.isComposing || event.keyCode === 229) return;
+      if (event.metaKey === event.ctrlKey) return;
+      if (event.altKey || event.shiftKey || event.key.toLowerCase() !== "f") return;
       event.preventDefault();
-      setFindOpen(true);
-      findInputRef.current?.focus();
-      findInputRef.current?.select();
+      event.stopPropagation();
+      openFind(true);
     };
-    window.addEventListener("keydown", openFind, true);
-    return () => window.removeEventListener("keydown", openFind, true);
-  }, [playbackUrl]);
+    window.addEventListener("keydown", onFindShortcut, true);
+    return () => window.removeEventListener("keydown", onFindShortcut, true);
+  }, [openFind, playbackUrl]);
 
   useEffect(() => {
     setControlsVisible(true);
@@ -223,24 +229,41 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(funct
     resume();
   };
 
-  const toggleFullscreen = () => {
-    if (!onToggleFullscreen) return;
+  const toggleFullscreen = async (target: "player" | "page") => {
     try {
-      void Promise.resolve(onToggleFullscreen()).catch(() => setPlayError(t("无法切换网页全屏。")));
+      if (target === "page") {
+        await onToggleFullscreen?.();
+      } else if (document.fullscreenElement === playerRef.current) {
+        await document.exitFullscreen();
+      } else {
+        await playerRef.current?.requestFullscreen();
+      }
     } catch {
       setPlayError(t("无法切换网页全屏。"));
     }
   };
 
   const onKeyboard = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return;
-    if (event.target instanceof HTMLElement && event.target.closest("button, input, select")) return;
+    if (event.defaultPrevented || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+    const target = event.target;
+    if (target instanceof HTMLElement && (target.isContentEditable || target.closest('input, textarea, select, [role="search"]'))) return;
     const key = event.key.toLowerCase();
+    if (key === "/" && !event.shiftKey) {
+      event.preventDefault();
+      openFind(true);
+      return;
+    }
+    if (key === "f") {
+      event.preventDefault();
+      if (!event.repeat) void toggleFullscreen(event.shiftKey ? "page" : "player");
+      return;
+    }
+    if (target instanceof HTMLElement && target.closest("button")) return;
     if (key === " " || key === "k") togglePlay();
     else if (key === "arrowleft") seekTo(positionRef.current - 10_000);
     else if (key === "arrowright") seekTo(positionRef.current + 10_000);
     else if (key === "m") { const media = mediaRef.current; if (media) { media.muted = !media.muted; setMuted(media.muted); } }
-    else if (key === "f") toggleFullscreen();
     else return;
     event.preventDefault();
   };
@@ -257,7 +280,7 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(funct
   const timelinePercent = durationSeconds > 0 ? timelinePosition / durationSeconds * 100 : 0;
 
   return (
-    <div ref={playerRef} className={styles.videoPlayer} tabIndex={0} onKeyDown={onKeyboard} aria-label={t("视频播放器")}
+    <div ref={playerRef} className={styles.videoPlayer} tabIndex={0} onKeyDown={onKeyboard} aria-label={t("视频播放器")} aria-keyshortcuts="F"
       data-controls-visible={controlsVisible}
       onPointerEnter={() => setPointerInside(true)}
       onPointerLeave={() => setPointerInside(false)}
@@ -265,7 +288,7 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(funct
       onKeyDownCapture={() => setKeyboardFocus(true)}
       onFocusCapture={(event) => { if (event.target.matches(":focus-visible")) setKeyboardFocus(true); }}
       onBlurCapture={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setKeyboardFocus(false); }}>
-      <div className={styles.videoPlayerStage}>
+      <div className={styles.videoPlayerStage} onClickCapture={() => playerRef.current?.focus({ preventScroll: true })}>
         <video
           key={mediaKey}
           ref={mediaRef}
@@ -310,8 +333,8 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(funct
           <button className={styles.videoPlayerSkip} type="button" disabled={!mediaReady} onClick={() => seekTo(positionRef.current + 10_000)} aria-label={t("前进 10 秒")}><RotateCw size={18} /><small>10s</small></button>
           <time>{formatTimecode(currentSeconds)} / {formatTimecode(durationSeconds)}</time>
           <div className={styles.videoPlayerControlSpacer} />
-          <button type="button" aria-label={t("在本视频中查找")} title={t("在本视频中查找")}
-            aria-expanded={findOpen} onClick={() => { setFindOpen(true); findInputRef.current?.focus(); }}><Search size={18} /></button>
+          <button type="button" aria-label={t("在本视频中查找")} title={`${t("在本视频中查找")} (Ctrl/⌘+F, /)`}
+            aria-keyshortcuts="Control+F Meta+F /" aria-expanded={findOpen} onClick={() => openFind()}><Search size={18} /></button>
           <button type="button" onClick={() => { const media = mediaRef.current; if (media) { media.muted = !media.muted; if (!media.muted && media.volume === 0) media.volume = 0.5; setMuted(media.muted); setVolume(media.volume); } }} aria-label={muted || volume === 0 ? t("取消静音") : t("静音")}>
             {muted || volume === 0 ? <VolumeX size={18} /> : <Volume2 size={18} />}
           </button>
@@ -319,7 +342,9 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(funct
           <select value={playbackRate} onChange={(event) => { const media = mediaRef.current; if (media) { media.playbackRate = Number(event.currentTarget.value); setPlaybackRate(media.playbackRate); } }} aria-label={t("播放倍速")}>
             {[0.5, 0.75, 1, 1.25, 1.5, 2].map((rate) => <option key={rate} value={rate}>{rate}×</option>)}
           </select>
-          <button type="button" onClick={toggleFullscreen} aria-label={fullscreen ? t("退出网页全屏") : t("网页全屏")} disabled={!onToggleFullscreen}>{fullscreen ? <Minimize size={18} /> : <Maximize size={18} />}</button>
+          <button type="button" onClick={() => void toggleFullscreen("page")} aria-label={fullscreen ? t("退出网页全屏") : t("网页全屏")}
+            title={`${fullscreen ? t("退出网页全屏") : t("网页全屏")} (Shift+F)`} aria-keyshortcuts="Shift+F"
+            disabled={!onToggleFullscreen}>{fullscreen ? <Minimize size={18} /> : <Maximize size={18} />}</button>
         </div>
       </div>
       {playError ? <p className={styles.videoPlayerError} role="alert">{playError}</p> : null}
