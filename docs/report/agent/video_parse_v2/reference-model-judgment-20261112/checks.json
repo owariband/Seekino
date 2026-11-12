@@ -1,0 +1,45 @@
+{
+  "codeRevision": "76baa67d",
+  "integratedRevision": "89c25da2",
+  "baseDev": "2ec52ea4",
+  "tests": [
+    {
+      "scope": "engine parsev2 and MCP editing references",
+      "passed": 215,
+      "failed": 0,
+      "seconds": 1.68
+    },
+    {
+      "scope": "focused exact final schema and frozen responses",
+      "passed": 31,
+      "failed": 0,
+      "seconds": 0.23
+    },
+    {
+      "scope": "isolated full editing flow before dev integration",
+      "passed": 3,
+      "failed": 0,
+      "seconds": 25.95
+    },
+    {
+      "scope": "isolated full editing flow after dev integration",
+      "passed": 2,
+      "failed": 1,
+      "seconds": 17.66,
+      "failure": "Existing content-profile Event index target changed during execution; new reference-profile cases passed"
+    },
+    {
+      "scope": "targeted existing content-profile rerun",
+      "passed": 1,
+      "failed": 0,
+      "seconds": 14.23
+    }
+  ],
+  "videoModelCalls": 0,
+  "isolatedStorage": {
+    "sqlite": "pytest temporary database",
+    "elasticsearchCluster": "seekino-reference-test",
+    "elasticsearchPort": 19469,
+    "version": "8.19.22"
+  }
+}

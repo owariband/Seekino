@@ -18,7 +18,7 @@
 
 沿现有 Prepare → Chunk Understanding → Interval Refine → Index 执行。Prepare 对原片测量画面变化并选择代表；Understanding 读取片内帧并记录可观察手法；Refine 归纳共同用法并引用段 ID。原片区间、所有者与测量由宿主给出。专用检索投影随当前版本发布；原始观察与卡留在既有 Chunk / Interval 成果，提交沿用租约、版本和事务检查。单窗口上限为 63 个块。模板库沿 #50 暂缓。
 
-逐段使用 [#50 的 Weekend B 原文](../../../agent/video_parse_v2/edit_reference_pick.txt)，只填原片区间、帧率和检测时刻。全片使用[既有 Refine 原文](../../../agent/video_parse_v2/edit_reference_refine.txt)，将观察和测量作为独立文本输入。两份文本的 SHA-256 由回归测试核对。写入时以原段 ID 确定所属 Chunk，允许更新名称、摘要、角色、镜内运动和手法键。卡片存覆盖范围、信号及各例的段号、毫秒和画面依据。重复段号、遗漏段号、跨段或右端点引证会被拒绝。
+逐段使用 [#50 的 Weekend B 原文](../../../agent/video_parse_v2/edit_reference_pick.txt)，只填原片区间、帧率和检测时刻。全片使用[既有 Refine 原文](../../../agent/video_parse_v2/edit_reference_refine.txt)，将观察和测量作为独立文本输入。两份文本的 SHA-256 由回归测试核对。写入时以原段 ID 确定所属 Chunk，允许更新名称、摘要、角色、镜内运动和手法键。卡片存覆盖范围、信号及各例的段号、毫秒和画面依据。2026-11-12 修订：检测候选不再限制动作和风格锚点，Refine 可以只返回需更新的观察，宿主保留未返回的原观察并按来源重建成员；重复更新按最后一次应用，跨段或右端点引证仍拒绝。描述枚举和任意长度/条数门槛移除；当前修订与验证边界见 [过度校验修复 #139](reference-model-judgment-trd.md)。
 
 # 4. 对照实验与结果分析
 

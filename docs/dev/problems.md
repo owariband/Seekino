@@ -2931,3 +2931,10 @@ micrograd v5 共 146 块，整集 90 分 04.884 秒。调度反复锁取候选�
 同日隔离浏览器对照：390px总高3342.20→1080.44px，减少67.67%；单集70.19px，600px列表窗口2→7整集。9场景未发现页面溢出或JS异常，桌面尺寸与基线相同；76项相关单测、8项浏览器回归、类型与构建通过。证据限于固定测试样本和本机Chrome，未部署、未验真机或实际Cloud视频。[TRD](../design/03-product-reassessment/mobile-docs-episodes-trd.md) · [报告与截图](../report/web/mobile-docs-episodes-20261112/README.md) · [devlog](devlog.md#devlog-mobile-docs-episodes-20261112) · [工作台](workbench.html) · [PR #129](https://github.com/owariband/Seekino/pull/129)
 
 同日第二轮本地预览反馈：首轮外显短标签验收撤销，顶栏只显示44×44px文档图标，展开导航内保留文字。原生dialog瞬时切换且关闭立即卸载内容，现改为240ms进入/180ms退出、遮罩同步，并按实际过渡完成清理。12项浏览器回归（含中间帧、重开、焦点与reduced-motion）和76项相关单测通过，选集9场景指标未变；4190预览已更新，真机与Cloud仍未验。[第二轮证据](../report/web/mobile-docs-episodes-20261112/README.md#icon-and-drawer-motion) · [决策记录](devlog.md#devlog-mobile-drawer-motion-20261112)
+
+
+## EDIT-REFERENCE-02：检测切点与描述完整性偏好被当成模型结果的拒绝条件
+
+2026-11-12。剪辑素材库首轮 8 支公开视频中 4 支完成，P4、《人是猫》《快使用恋爱笔记》因动作时间分段未命中检测候选或未铺满区间被拒，P5R 因逐段 JSON 少外层右括号被拒。冻结的九条动作响应和三条 JSON 响应经过既有 observe_segments 入口回放，基线为 0/12 接收，不涉及新模型调用。进一步审计发现风格卡锚点只允许检测位置、有观察就必须有风格信号、Refine 必须全量复述且恰好一次等同类门槛；这些限制与来源归属、视频范围及租约版本不同。
+
+验收要求：保持原始中文和动作时间，12 条真实失败响应进入既有解析链路；合法的非切点动作/风格锚点、空风格卡和部分 Refine 更新可以提交并由 MCP 回源；外部来源、越界、过期版本仍被拒绝。真实模型批量完成率与业务质量另行记录，不由离线回放推定。设计与证据见 [TRD](../design/03-product-reassessment/reference-model-judgment-trd.md)，当前状态只维护在 [工作台](workbench.html) 的 EDIT-REFERENCE-02。

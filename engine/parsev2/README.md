@@ -106,3 +106,7 @@ actual model/embedding requests and cancellation.
 The active design contract is
 [`design/trd.md`](../../docs/design/02-agent-harness/video-parse-engine-trd.md). Historical Canonical/Patch reducer and atomic
 publication proposals are not the current implementation contract.
+
+## Editing reference observations
+
+`edit_reference.py` keeps the host-owned segment identity, decoded-frame clock and source bounds. Detector cuts and flashes are suggestions for model descriptions. Action steps may use any in-range integer milliseconds without tiling the segment; style examples use their own segment's half-open range. Empty style signals and partial Refine updates are accepted. The host retains omitted observations, applies the last duplicate update, and rebuilds its complete source-ordered members before Server commit. Descriptive labels remain text; source ownership, frame/volume contracts, leases and publication checks retain their existing owners. See the [design and evidence](../../docs/design/03-product-reassessment/reference-model-judgment-trd.md).

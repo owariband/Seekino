@@ -1,0 +1,81 @@
+{
+  "revision": "5c7a68ac",
+  "modelCalls": 0,
+  "method": "observe_segments with one frozen response per case and synthetic local frame pixels",
+  "accepted": 0,
+  "total": 12,
+  "cases": [
+    {
+      "caseId": "女神异闻录4-OP-9734",
+      "kind": "detector_boundary",
+      "accepted": false,
+      "error": "1 validation error for TechniqueObservation\n  Value error, steps must tile the measured interval using its candidate boundaries"
+    },
+    {
+      "caseId": "女神异闻录4-OP-9764",
+      "kind": "detector_boundary",
+      "accepted": false,
+      "error": "1 validation error for TechniqueObservation\n  Value error, steps must tile the measured interval using its candidate boundaries"
+    },
+    {
+      "caseId": "女神异闻录4-OP-9800",
+      "kind": "detector_boundary",
+      "accepted": false,
+      "error": "1 validation error for TechniqueObservation\n  Value error, steps must tile the measured interval using its candidate boundaries"
+    },
+    {
+      "caseId": "BV1fYpn6SEk9 - deepseek 翻唱《人是猫》真完整版，大肥鱼觉得人和猫一样可爱,所以人是猫 p01 大肥鱼人是猫真完整版-9868",
+      "kind": "detector_boundary",
+      "accepted": false,
+      "error": "1 validation error for TechniqueObservation\n  Value error, steps must tile the measured interval using its candidate boundaries"
+    },
+    {
+      "caseId": "BV1fYpn6SEk9 - deepseek 翻唱《人是猫》真完整版，大肥鱼觉得人和猫一样可爱,所以人是猫 p01 大肥鱼人是猫真完整版-9893",
+      "kind": "detector_boundary",
+      "accepted": false,
+      "error": "1 validation error for TechniqueObservation\n  Value error, steps must tile the measured interval using its candidate boundaries"
+    },
+    {
+      "caseId": "BV1fYpn6SEk9 - deepseek 翻唱《人是猫》真完整版，大肥鱼觉得人和猫一样可爱,所以人是猫 p01 大肥鱼人是猫真完整版-9936",
+      "kind": "detector_boundary",
+      "accepted": false,
+      "error": "1 validation error for TechniqueObservation\n  Value error, steps must tile the measured interval using its candidate boundaries"
+    },
+    {
+      "caseId": "BV1HjW3zyEuV - 快使用恋爱笔记！-10036",
+      "kind": "detector_boundary",
+      "accepted": false,
+      "error": "1 validation error for TechniqueObservation\n  Value error, steps must tile the measured interval using its candidate boundaries"
+    },
+    {
+      "caseId": "BV1HjW3zyEuV - 快使用恋爱笔记！-10051",
+      "kind": "detector_boundary",
+      "accepted": false,
+      "error": "1 validation error for TechniqueObservation\n  Value error, steps must tile the measured interval using its candidate boundaries"
+    },
+    {
+      "caseId": "BV1HjW3zyEuV - 快使用恋爱笔记！-10120",
+      "kind": "detector_boundary",
+      "accepted": false,
+      "error": "1 validation error for TechniqueObservation\n  Value error, steps must tile the measured interval using its candidate boundaries"
+    },
+    {
+      "caseId": "女神异闻录5皇家版-开场-10033",
+      "kind": "missing_root_delimiter",
+      "accepted": false,
+      "error": "1 validation error for PickNote\n  Invalid JSON: EOF while parsing an object at line 1 column 4436"
+    },
+    {
+      "caseId": "女神异闻录5皇家版-开场-10052",
+      "kind": "missing_root_delimiter",
+      "accepted": false,
+      "error": "1 validation error for PickNote\n  Invalid JSON: EOF while parsing an object at line 1 column 4066"
+    },
+    {
+      "caseId": "女神异闻录5皇家版-开场-10064",
+      "kind": "missing_root_delimiter",
+      "accepted": false,
+      "error": "1 validation error for PickNote\n  Invalid JSON: EOF while parsing an object at line 1 column 4799"
+    }
+  ]
+}
