@@ -1,0 +1,427 @@
+{
+  "date": "2026-11-12",
+  "baselineCommit": "1adac5d3f91806a7041bdb851b4a970c2bb61f41",
+  "candidateCommit": "1392bfa8",
+  "worker": {
+    "backend": "OpenCode",
+    "provider": "deepseek",
+    "model": "deepseek-flash",
+    "variant": "max",
+    "sessionId": "ses_e321617c2ffeWWEjVqsV4LOUDA"
+  },
+  "baseline": {
+    "environment": {
+      "browser": "157.0.8103.51",
+      "cpuRate": 4,
+      "viewport": "1440x900",
+      "fixture": "1/20/60 completed answers, fixed Markdown; independent Node SSE at 33ms, 100 deltas; whole-conversation snapshot every second",
+      "inputMetric": "Synthetic input dispatch to next rAF observation; not physical paint or field INP",
+      "domMetric": "Transport receipt to existing committed-DOM rAF observer; simulated source, not certified provider FTT"
+    },
+    "results": [
+      {
+        "historyCount": 1,
+        "historyReadyMs": 563.7000000011176,
+        "inputToNextRaf": {
+          "samples": 30,
+          "p50Ms": 15,
+          "p95Ms": 16.59999999962747,
+          "maxMs": 16.800000000745058
+        },
+        "deltaToObservedDom": {
+          "samples": 100,
+          "p50Ms": 10.899999998509884,
+          "p95Ms": 20.200000001117587,
+          "maxMs": 23.90000000037253
+        },
+        "inputFrameGaps": {
+          "samples": 34,
+          "p50Ms": 16.700000000000045,
+          "p95Ms": 16.700000000000045,
+          "maxMs": 16.799999999999955
+        },
+        "streamFrameGaps": {
+          "samples": 202,
+          "p50Ms": 16.699999999999818,
+          "p95Ms": 16.700000000000728,
+          "maxMs": 16.800000000000182
+        },
+        "longTasks": {
+          "input": [],
+          "stream": []
+        },
+        "kinoPhaseMs": [
+          {
+            "state": "run",
+            "ms": 5.900000000372529
+          },
+          {
+            "state": "think",
+            "ms": 3.900000000372529
+          },
+          {
+            "state": "loading",
+            "ms": 3.5
+          }
+        ],
+        "kinoTailStates": [
+          "look",
+          "happy"
+        ],
+        "snapshotFirstConnecting": true,
+        "terminalConnecting": true,
+        "stopVisible": true,
+        "tailSendDisabled": null,
+        "stayedUp": true,
+        "followedBottom": true,
+        "postCount": 1,
+        "errors": [],
+        "unexpectedApiPaths": []
+      },
+      {
+        "historyCount": 20,
+        "historyReadyMs": 527.9000000003725,
+        "inputToNextRaf": {
+          "samples": 30,
+          "p50Ms": 16.799999998882413,
+          "p95Ms": 20.699999999254942,
+          "maxMs": 21
+        },
+        "deltaToObservedDom": {
+          "samples": 100,
+          "p50Ms": 25.799999998882413,
+          "p95Ms": 34.70000000111759,
+          "maxMs": 50.90000000037253
+        },
+        "inputFrameGaps": {
+          "samples": 42,
+          "p50Ms": 16.699999999999932,
+          "p95Ms": 16.799999999999955,
+          "maxMs": 16.799999999999955
+        },
+        "streamFrameGaps": {
+          "samples": 204,
+          "p50Ms": 16.699999999999818,
+          "p95Ms": 16.700000000000728,
+          "maxMs": 33.40000000000009
+        },
+        "longTasks": {
+          "input": [],
+          "stream": []
+        },
+        "kinoPhaseMs": [
+          {
+            "state": "run",
+            "ms": 22.199999999254942
+          },
+          {
+            "state": "think",
+            "ms": 18.100000001490116
+          },
+          {
+            "state": "loading",
+            "ms": 17.199999999254942
+          }
+        ],
+        "kinoTailStates": [
+          "look",
+          "happy"
+        ],
+        "snapshotFirstConnecting": true,
+        "terminalConnecting": true,
+        "stopVisible": true,
+        "tailSendDisabled": null,
+        "stayedUp": true,
+        "followedBottom": true,
+        "postCount": 1,
+        "errors": [],
+        "unexpectedApiPaths": []
+      },
+      {
+        "historyCount": 60,
+        "historyReadyMs": 557.4000000003725,
+        "inputToNextRaf": {
+          "samples": 30,
+          "p50Ms": 36.59999999962747,
+          "p95Ms": 38.59999999962747,
+          "maxMs": 39
+        },
+        "deltaToObservedDom": {
+          "samples": 100,
+          "p50Ms": 35.30000000074506,
+          "p95Ms": 38.80000000074506,
+          "maxMs": 78
+        },
+        "inputFrameGaps": {
+          "samples": 36,
+          "p50Ms": 33.399999999999864,
+          "p95Ms": 50.100000000000136,
+          "maxMs": 50.100000000000136
+        },
+        "streamFrameGaps": {
+          "samples": 96,
+          "p50Ms": 33.30000000000018,
+          "p95Ms": 50,
+          "maxMs": 50.100000000000364
+        },
+        "longTasks": {
+          "input": [],
+          "stream": []
+        },
+        "kinoPhaseMs": [
+          {
+            "state": "run",
+            "ms": 43.5
+          },
+          {
+            "state": "think",
+            "ms": 38.80000000074506
+          },
+          {
+            "state": "loading",
+            "ms": 35.90000000037253
+          }
+        ],
+        "kinoTailStates": [
+          "look",
+          "happy"
+        ],
+        "snapshotFirstConnecting": true,
+        "terminalConnecting": true,
+        "stopVisible": true,
+        "tailSendDisabled": null,
+        "stayedUp": true,
+        "followedBottom": true,
+        "postCount": 1,
+        "errors": [],
+        "unexpectedApiPaths": []
+      }
+    ]
+  },
+  "candidate": {
+    "environment": {
+      "browser": "157.0.8103.51",
+      "cpuRate": 4,
+      "viewport": "1440x900",
+      "fixture": "1/20/60 completed answers, fixed Markdown; independent Node SSE at 33ms, 100 deltas; whole-conversation snapshot every second",
+      "inputMetric": "Synthetic input dispatch to next rAF observation; not physical paint or field INP",
+      "domMetric": "Transport receipt to existing committed-DOM rAF observer; simulated source, not certified provider FTT"
+    },
+    "results": [
+      {
+        "historyCount": 1,
+        "historyReadyMs": 372.59999999962747,
+        "inputToNextRaf": {
+          "samples": 30,
+          "p50Ms": 15.899999998509884,
+          "p95Ms": 16.899999998509884,
+          "maxMs": 16.90000000037253
+        },
+        "deltaToObservedDom": {
+          "samples": 100,
+          "p50Ms": 9.800000000745058,
+          "p95Ms": 18.200000001117587,
+          "maxMs": 25.200000001117587
+        },
+        "inputFrameGaps": {
+          "samples": 34,
+          "p50Ms": 16.69999999999999,
+          "p95Ms": 16.799999999999955,
+          "maxMs": 16.80000000000001
+        },
+        "streamFrameGaps": {
+          "samples": 201,
+          "p50Ms": 16.699999999999818,
+          "p95Ms": 16.700000000000728,
+          "maxMs": 16.800000000000182
+        },
+        "longTasks": {
+          "input": [],
+          "stream": []
+        },
+        "kinoPhaseMs": [
+          {
+            "state": "run",
+            "ms": 2.799999998882413
+          },
+          {
+            "state": "think",
+            "ms": 2.300000000745058
+          },
+          {
+            "state": "loading",
+            "ms": 0.8999999985098839
+          }
+        ],
+        "kinoTailStates": [
+          "sleep",
+          "happy"
+        ],
+        "snapshotFirstConnecting": false,
+        "terminalConnecting": false,
+        "stopVisible": false,
+        "tailSendDisabled": true,
+        "stayedUp": true,
+        "followedBottom": true,
+        "postCount": 1,
+        "errors": [],
+        "unexpectedApiPaths": []
+      },
+      {
+        "historyCount": 20,
+        "historyReadyMs": 396.2999999988824,
+        "inputToNextRaf": {
+          "samples": 30,
+          "p50Ms": 15.800000000745058,
+          "p95Ms": 16.40000000037253,
+          "maxMs": 17.100000001490116
+        },
+        "deltaToObservedDom": {
+          "samples": 100,
+          "p50Ms": 10.5,
+          "p95Ms": 18.399999998509884,
+          "maxMs": 24.09999999962747
+        },
+        "inputFrameGaps": {
+          "samples": 34,
+          "p50Ms": 16.699999999999932,
+          "p95Ms": 16.700000000000045,
+          "maxMs": 16.700000000000045
+        },
+        "streamFrameGaps": {
+          "samples": 202,
+          "p50Ms": 16.699999999999818,
+          "p95Ms": 16.799999999999727,
+          "maxMs": 16.800000000000182
+        },
+        "longTasks": {
+          "input": [],
+          "stream": []
+        },
+        "kinoPhaseMs": [
+          {
+            "state": "run",
+            "ms": 2.900000000372529
+          },
+          {
+            "state": "think",
+            "ms": 2.199999999254942
+          },
+          {
+            "state": "loading",
+            "ms": 2.400000000372529
+          }
+        ],
+        "kinoTailStates": [
+          "sleep",
+          "happy"
+        ],
+        "snapshotFirstConnecting": false,
+        "terminalConnecting": false,
+        "stopVisible": false,
+        "tailSendDisabled": true,
+        "stayedUp": true,
+        "followedBottom": true,
+        "postCount": 1,
+        "errors": [],
+        "unexpectedApiPaths": []
+      },
+      {
+        "historyCount": 60,
+        "historyReadyMs": 471.7000000011176,
+        "inputToNextRaf": {
+          "samples": 30,
+          "p50Ms": 15.400000000372529,
+          "p95Ms": 16,
+          "maxMs": 16.299999998882413
+        },
+        "deltaToObservedDom": {
+          "samples": 100,
+          "p50Ms": 11,
+          "p95Ms": 18.40000000037253,
+          "maxMs": 23.90000000037253
+        },
+        "inputFrameGaps": {
+          "samples": 34,
+          "p50Ms": 16.699999999999932,
+          "p95Ms": 16.700000000000045,
+          "maxMs": 16.800000000000068
+        },
+        "streamFrameGaps": {
+          "samples": 202,
+          "p50Ms": 16.699999999999818,
+          "p95Ms": 16.700000000000728,
+          "maxMs": 16.800000000000182
+        },
+        "longTasks": {
+          "input": [],
+          "stream": []
+        },
+        "kinoPhaseMs": [
+          {
+            "state": "run",
+            "ms": 2.899999998509884
+          },
+          {
+            "state": "think",
+            "ms": 2.400000000372529
+          },
+          {
+            "state": "loading",
+            "ms": 2.299999998882413
+          }
+        ],
+        "kinoTailStates": [
+          "sleep",
+          "happy"
+        ],
+        "snapshotFirstConnecting": false,
+        "terminalConnecting": false,
+        "stopVisible": false,
+        "tailSendDisabled": true,
+        "stayedUp": true,
+        "followedBottom": true,
+        "postCount": 1,
+        "errors": [],
+        "unexpectedApiPaths": []
+      }
+    ]
+  },
+  "baselineRenderCounts": {
+    "fixture": "20 completed assistant messages, actual SearchPage and react-markdown; jsdom; API hooks mocked",
+    "typingRenders": 20,
+    "reasoningRenders": 20,
+    "messageUpdateRenders": 20,
+    "historicalMessages": 20
+  },
+  "candidateRenderCounts": {
+    "fixture": "20 completed assistant messages, actual SearchPage and react-markdown; jsdom; API hooks mocked",
+    "typingRenders": 0,
+    "reasoningRenders": 0,
+    "messageUpdateRenders": 1,
+    "historicalMessages": 20
+  },
+  "validation": {
+    "frontendTests": {
+      "passed": 658,
+      "files": 33
+    },
+    "typecheck": "passed",
+    "build": "passed",
+    "browserRegression": {
+      "passed": 6,
+      "failed": 1,
+      "baselineAlsoFails": true,
+      "test": "chat-layout.spec.ts:65 public scope notice",
+      "expectedXAtLeast": 357.609375,
+      "actualX": 268
+    },
+    "deployed": false,
+    "businessModelCalls": 0
+  },
+  "limits": [
+    "One final paired replay per history size; p95 is descriptive for these samples, not a field SLO.",
+    "Synthetic input to next rAF and committed-DOM observation are not physical paint, INP, or certified provider FTT.",
+    "Conversation list contains one fixture conversation; large evidence traces, media-heavy histories and real network/device traffic were not measured."
+  ]
+}
