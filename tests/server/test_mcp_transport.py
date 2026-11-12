@@ -196,11 +196,13 @@ def test_modern_skills_manifest_and_legacy_resources_serve_identical_packaged_by
         assert modern("skills/get", uri="skill://video-shotcraft/absent")["error"]["code"] == -32602
 
 
-@pytest.mark.parametrize("name,license_name,repository", [
-    ("video-shotcraft", "Apache-2.0", "https://github.com/Vincentwei1021/video-shotcraft"),
-    ("motion-showreel", "MIT", "https://github.com/ConardLi/garden-skills"),
+@pytest.mark.parametrize("name,license_name,repository,upstream_sha256", [
+    ("video-shotcraft", "Apache-2.0", "https://github.com/Vincentwei1021/video-shotcraft",
+     "9e6b2d68f50cae3d5405178d35d2bd305ee2045691fa726b63bae3ab8bb62e6b"),
+    ("motion-showreel", "MIT", "https://github.com/ConardLi/garden-skills",
+     "1f4c26afebac69aa2b6a8e61c3440c636c686623161f74905143993bcf4af343"),
 ])
-def test_upstream_skill_keeps_its_pinned_guide_and_license(name, license_name, repository):
+def test_skill_records_upstream_source_and_adapted_guide(name, license_name, repository, upstream_sha256):
     import hashlib
     import json
     import re
@@ -208,9 +210,10 @@ def test_upstream_skill_keeps_its_pinned_guide_and_license(name, license_name, r
 
     root = Path(__file__).resolve().parents[2] / "server/skills" / name
     metadata = json.loads((root / "UPSTREAM.json").read_text())
-    guide = (root / "SKILL.md").read_text()
-    original = re.sub(r"\n<!-- Seekino integration start -->.*?<!-- Seekino integration end -->\n", "", guide, flags=re.S)
-    assert hashlib.sha256(original.encode()).hexdigest() == metadata["skill_sha256"]
+    guide = (root / "SKILL.md").read_bytes()
+    assert metadata["skill_sha256"] == upstream_sha256
+    assert metadata["adaptation"]["modified_by"] == "Seekino"
+    assert hashlib.sha256(guide).hexdigest() == metadata["adaptation"]["guide_sha256"]
     assert hashlib.sha256((root / "LICENSE").read_bytes()).hexdigest() == metadata["license_sha256"]
     assert metadata["license"] == license_name
     assert metadata["repository"] == repository

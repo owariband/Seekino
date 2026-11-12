@@ -7,5 +7,11 @@
   "skill_sha256": "1f4c26afebac69aa2b6a8e61c3440c636c686623161f74905143993bcf4af343",
   "license_sha256": "1126322e2cc8d165adc4c792eeb195717de2bcc7b39be1ce77959d78e87ef685",
   "complete_install_command": "npx skills add https://github.com/ConardLi/garden-skills/tree/2b9a89340b70f632d31c0f1c69fce94a7912423e/skills/motion-showreel -a claude-code -a codex -g -y",
-  "packaging": "Upstream guide plus a marked Seekino integration note. Complete references, assets and local production scripts install from the pinned upstream subtree."
+  "packaging": "Seekino-adapted Chinese guide. skill_sha256 identifies the pinned upstream original; adaptation.guide_sha256 identifies the distributed guide. The complete local package installs from the pinned upstream source.",
+  "adaptation": {
+    "modified_by": "Seekino",
+    "date": "2026-11-12",
+    "summary": "按 humanizer-zh、YC 清楚表达及用户提供的六条原则改写正文；保留操作规则、技术内容、来源和许可证。",
+    "guide_sha256": "995fbd722ed50a3f30d599a59277786e942f839bcf7a10aca3c66e0b37fb7abe"
+  }
 }

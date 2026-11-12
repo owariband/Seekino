@@ -531,6 +531,8 @@ npx skills add https://github.com/owariband/Seekino/tree/main/server/skills/seek
 
 MCP 分发 `skill://motion-showreel/SKILL.md`、`skill://video-shotcraft/SKILL.md` 及各自的许可证和固定版本信息。在剪辑机上完整安装后，Agent 才能读取各自的参考资料、素材和制作脚本。
 
+两份 MCP 正文由 Seekino 按固定上游版本改写为中文，保留原有操作规则。元数据分别记录上游原文和改写正文的 SHA-256，并标明修改范围；下面的安装命令取得对应版本的上游完整包。
+
 motion-showreel 适用于代码驱动的图形、文字、界面动画及支持的人物分层合成，用确定性的 `render(t)`、共享时间线和逐帧渲染制作视频。它原生要求先在工作区预览、确认后导出，除非用户明确免除预览。常规原片选取与裁剪沿用 Seekino 剪辑指引。
 
 ```sh

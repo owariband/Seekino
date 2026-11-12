@@ -6,5 +6,11 @@
   "skill_sha256": "9e6b2d68f50cae3d5405178d35d2bd305ee2045691fa726b63bae3ab8bb62e6b",
   "license_sha256": "b2ce9877a55547ada9b870150664d1468ff777e67cc9888806a73927d31c5771",
   "complete_install_command": "npx skills add https://github.com/Vincentwei1021/video-shotcraft/tree/6700db2ba80572ebc777b99d72049679fed9840c -a claude-code -a codex -g -y",
-  "packaging": "Upstream guide plus a marked Seekino integration note. Complete rendering resources install from the pinned upstream repository."
+  "packaging": "Seekino-adapted Chinese guide. skill_sha256 identifies the pinned upstream original; adaptation.guide_sha256 identifies the distributed guide. The complete local package installs from the pinned upstream source.",
+  "adaptation": {
+    "modified_by": "Seekino",
+    "date": "2026-11-12",
+    "summary": "按 humanizer-zh、YC 清楚表达及用户提供的六条原则改写正文；保留操作规则、技术内容、来源和许可证。",
+    "guide_sha256": "06f6f68684d1c06d3cbe1a7e812e3d8536c30fd1c03ab3d0e4f85961e13bcea2"
+  }
 }
