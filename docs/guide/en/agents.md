@@ -68,13 +68,15 @@ npx skills add https://github.com/owariband/Seekino/tree/main/server/skills/seek
 
 ## Shot library and motion references
 
+The following MCP guides are Seekino's Chinese adaptations of pinned upstream versions, retaining their operational rules. The resources identify the source revision, original and adapted guide digests, and modifications. The install commands obtain the corresponding complete upstream packages.
+
 MCP publishes `skill://motion-showreel/SKILL.md` for code-driven graphics, type, UI animation and supported subject-layer compositing. Its complete installation includes style references, starter assets, a timeline and local frame-rendering scripts. The upstream workflow previews in its workspace before export unless the user explicitly waives preview.
 
 ```sh
 npx skills add https://github.com/ConardLi/garden-skills/tree/2b9a89340b70f632d31c0f1c69fce94a7912423e/skills/motion-showreel -a claude-code -a codex -g -y
 ```
 
-MCP also publishes `skill://video-shotcraft/SKILL.md`, retaining the upstream guide, Apache-2.0 license and pinned revision. Install the complete package on the editing computer to consult its shot cards, demos, template and workbench.
+MCP also publishes `skill://video-shotcraft/SKILL.md` with the original Apache-2.0 license. Install the complete package on the editing computer to consult its shot cards, demos, template and workbench.
 
 ```sh
 npx skills add https://github.com/Vincentwei1021/video-shotcraft/tree/6700db2ba80572ebc777b99d72049679fed9840c -a claude-code -a codex -g -y

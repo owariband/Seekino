@@ -68,13 +68,15 @@ npx skills add https://github.com/owariband/Seekino/tree/main/server/skills/seek
 
 ## 镜头库与运动参考
 
+下面两份 MCP 正文由 Seekino 按固定上游版本改写为中文，保留原有操作规则。资源中提供原文版本、原文与改写正文的 SHA-256，以及修改说明；安装命令取得对应版本的上游完整包。
+
 MCP 提供 `skill://motion-showreel/SKILL.md`，用于代码驱动的图形、文字、界面动画和支持的人物分层合成。完整安装包含风格参考、starter、时间线和逐帧制作脚本。它原生要求先在工作区预览、确认后导出，除非用户明确免除预览。
 
 ```sh
 npx skills add https://github.com/ConardLi/garden-skills/tree/2b9a89340b70f632d31c0f1c69fce94a7912423e/skills/motion-showreel -a claude-code -a codex -g -y
 ```
 
-MCP 还提供 `skill://video-shotcraft/SKILL.md`，保留上游原指引、Apache-2.0 许可证和固定版本信息。在剪辑机上完整安装后，Agent 可以读取其镜头卡、demo、模板和工作台，供剪辑时参考。
+MCP 还提供 `skill://video-shotcraft/SKILL.md` 及原 Apache-2.0 许可证。在剪辑机上完整安装后，Agent 可以读取其镜头卡、demo、模板和工作台，供剪辑时参考。
 
 ```sh
 npx skills add https://github.com/Vincentwei1021/video-shotcraft/tree/6700db2ba80572ebc777b99d72049679fed9840c -a claude-code -a codex -g -y

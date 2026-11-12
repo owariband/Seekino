@@ -5,51 +5,57 @@ description: Find source performances and editing references with Seekino MCP, r
 
 # Editing with Seekino
 
+把视频库中适合当前镜头的原片和出处取到本机剪辑工程。Seekino 提供素材、可回看的风格参考和共享经验；需要制作成片时，你在本机编写镜头、处理素材并渲染。
+
+选片前，先说清这支片子要让谁看懂什么。产品演示可以从一次具体操作及其收益入手，叙事短片可以从人物想做什么、遇到什么、后来发生什么变化入手。先找到值得表达的内容，再判断哪些素材和手法能把它讲清楚。
+
 ## Choose footage
 
-1. Use `list_series` on the connected server. A local and a Cloud connection can be open together. Record the connection, series, video, and source milliseconds for every take. Resolve an `evidence_ref` on the connection that issued it.
-2. Use `retrieve` for dialogue, gestures and changes of expression. Include observable cues and spelling variants of the character's name. For example, to cut Anon's reaction in MyGO, search for 千早愛音, clenched teeth, and raised fists. Compare several takes. To survey all published appearances use `browse_events`, copy the recorded names, and follow `next_cursor` until it is null. Omit the name filter to include untagged events.
-3. Open each candidate with `read_evidence`. Watch the lead-in, the action and its release. Set your own inclusive `start_ms` and exclusive `end_ms` on the source video and call again. Download `media.clip_url` promptly. Cloud clips are limited to 60 seconds per request. Preserve motion and audio when the performance depends on them. A still works for a deliberate held beat.
+1. 用 `list_series` 查看已连接的素材库。本机和 Cloud 连接可以同时使用。每个候选都记录所属连接、series、视频和原片毫秒区间；`evidence_ref` 回到签发它的连接解析。
+2. 用 `retrieve` 找对白、动作或表情变化。搜索时结合人物名字的不同写法和可观察的动作。例如，为 MyGO 的爱音找反应镜头，可以搜索千早愛音、咬牙、举拳，再比较多个候选。需要查全已发布的出镜事件时，用 `browse_events`，采用结果中记录的人名，跟随 `next_cursor` 直到 null；省略人名筛选，可以看到未标注人物的事件。
+3. 用 `read_evidence` 核对候选及其前后文。指定源视频的 `start_ms` 和 `end_ms` 后再次调用，起点包含、终点不包含；及时下载 `media.clip_url`，检查动作的准备、发生和收尾，再确定最终剪辑区间。Cloud 每次最多取 60 秒。表演依靠动作或原声成立时，保留它们；有意停住某个节拍时，可以使用静帧。
 
 ## Borrow a visual technique
 
-Use `find_edit_templates` to search for a visible change, such as a diagonal wipe that reveals a title in two cuts. The `techniques` list contains indexed source observations. Play `media.play_url`, inspect the sequence frame by frame, and record the source range and the specific choice worth borrowing. `get_style_card(video_id)` gives the whole video's recurring signals with exemplar references. Open those exemplars with `read_evidence` to compare pacing, palette, composition and transitions. An empty result means this library has no matching published observation. A different series or a locally connected reference library can supply another example.
+用 `find_edit_templates` 搜索画面中能看见的变化，例如“斜向擦除，分两次露出标题”。`techniques` 是已索引的原片观察。打开 `media.play_url`，逐帧检查变化，记下来源区间和具体值得借鉴的处理。`get_style_card(video_id)` 提供整片反复出现的风格特征及例证；用 `read_evidence` 打开例证，比较节奏、配色、构图和转场。空结果只表示这个库没有匹配的已发布观察，可以换一个 series 或本机连接的参考库继续找。
 
-Choose what fits the current film. Keep borrowed timing, composition or motion distinct from your own variations. Keep the implementation, rendering, rights decisions and creative judgment on the editing computer.
+借鉴前，先看这个手法是否帮助观众理解当前内容。需要吸引注意时，可以利用内容里真实存在的预期差异；需要说明价值时，让观众看到具体动作、操作和结果。人物的目标与阻碍可以带出关心，前后状态的变化可以组织故事；技术解释、Logo 或抽象动画仍可按自身形式表达，不必硬套人物情绪和情节。
+
+选择适合当前影片的处理，让借来的节奏、构图和运动与自己的变化保持可区分，并分别记录。实现、渲染、素材权利判断和创作决定留在剪辑机上。原片例证支持你借鉴的判断，不能替未观察到的效果或收益背书。
 
 ## Camera motion references and suggestions
 
-Author camera motion in the editing project's code, using the shot's intent, rhythm and source material to judge what fits. The following ideas are references and suggestions for that work.
+在本机剪辑工程中编写镜头运动，根据镜头意图、节奏和素材判断怎么动。下面的做法供参考。
 
-A bell-shaped velocity can give a pan or push a slow departure, fast middle and settled arrival. Integrating that velocity produces an S-shaped position curve; a sigmoid or suitable easing curve can give a related effect. Shape the duration, peak, symmetry and landing in the shot code to suit the composition. When the shot ends in a hold, check that motion settles into it. A cut or deliberately stepped movement can call for different timing.
+需要慢起、加速、落定的平移或推拉时，可以参考钟形速度。速度积分得到 S 形位移，Sigmoid 或合适的 easing 也能形成相近的运动。在镜头代码中调整时长、峰值、对称性和落点，让它们服务当前构图。镜头以停留结束时，检查运动是否顺利落定；硬切或刻意分步的运动可以采用不同节奏。
 
-Stretch, skew, smear and blur can follow instantaneous speed and direction when they help express the move. Scale their intensity to the artwork and subject size, and inspect the arrival as well as the fast section. Position easing controls timing; geometric changes require their own transforms or filters. motion-showreel and video-shotcraft include motion helpers and examples that can be reused or adapted in local code. Watch the result and adjust it for readability and continuity.
+有助于表达当前镜头时，可以让拉伸、倾斜、拖影和模糊按瞬时速度与方向变化，强度结合画布和主体尺寸调整。检查快段，也检查到达时是否收得住。位移曲线控制时间分配，几何变化还需要相应的变换或滤镜。motion-showreel 和 video-shotcraft 提供了可复用或改写的运动辅助代码与示例；回看结果，再调整可读性和镜头衔接。
 
-Keep source observations and measured trajectories as evidence of the reference shot. Record creative changes separately when saving a reusable template and feedback.
+保留原片观察和实测轨迹，作为参考镜头的证据。保存可复用模板与反馈时，另行记录自己的创作改动。
 
 ## Consult local production Skills
 
-Read `skill://motion-showreel/SKILL.md` when the project needs code-driven graphics, type, UI animation or supported subject-layer compositing. Its complete local package supplies style references, starter assets, timeline and frame-rendering scripts. It has its own scope and preview-before-export workflow, including the condition for an explicit user waiver; read those instructions for the current task.
+需要代码驱动的图形、文字、界面动画或受支持的人物分层合成时，读 `skill://motion-showreel/SKILL.md`。完整本机包包含风格参考、starter、时间线和逐帧渲染脚本。它的适用范围、先预览再导出流程，以及用户明确免除预览的条件，都按该指引用于当前任务。
 
-Read `skill://video-shotcraft/SKILL.md` for shot cards, Remotion composition and velocity-linked motion treatment. Its complete local package supplies the referenced cards, demos and rendering helpers.
+需要镜头配方、Remotion 合成和速度联动的运动处理时，读 `skill://video-shotcraft/SKILL.md`。完整本机包包含对应的镜头卡、demo 和渲染辅助代码。
 
-Both entries document pinned local installation. Consult the production references that fit the film, and author the motion in the local project. This Seekino guide covers source selection, verification, local layers and series-shared experience. Template writes follow the selected series permissions.
+两份入口都提供固定版本的本机安装方法。按影片需要查阅制作参考，在本机工程里编写运动。Seekino 这份指引负责选片、来源核对、本机分层和 series 共享经验；模板写入遵循所属 series 的权限。
 
 ## Prepare a cutout when the shot calls for it
 
-For an animated subject, start with the source clip. Watch for flicker, edge loss and drift if matting successive frames. For a freeze frame or graphic insert, the bundled `scripts/split_frame.py` uses the CPU and the original canvas. Install its optional dependencies in a local Python 3.12 environment (`numpy`, `pillow`, `onnxruntime`). Download the [pinned anime-seg ONNX weights](https://huggingface.co/skytnt/anime-seg/resolve/a0a563c41338cbe0d23dfb4bfc3e243c518e5768/isnetis.onnx) once. The script verifies the file's SHA-256.
+主体在运动时，从原片片段开始处理；连续逐帧抠图需要检查闪烁、边缘丢失和漂移。制作定格或图形插入时，随附的 `scripts/split_frame.py` 在 CPU 上处理，并保留原画布。按需在本机 Python 3.12 环境安装依赖（`numpy`、`pillow`、`onnxruntime`），下载一次[固定版本的 anime-seg ONNX 权重](https://huggingface.co/skytnt/anime-seg/resolve/a0a563c41338cbe0d23dfb4bfc3e243c518e5768/isnetis.onnx)。脚本会校验文件的 SHA-256。
 
 ```sh
 python scripts/split_frame.py frame.png --weights isnetis.onnx --output layers
 ```
 
-Place `foreground.png` and `background-hole.png` at the same origin. `mask.png` holds the soft matte. Review `red-preview.png` for missing hair, outlines or unwanted scenery. The background layer has a transparent hole where the character was. Moving the character may require a separate clean plate or local inpainting.
+把 `foreground.png` 和 `background-hole.png` 放在同一个原点。`mask.png` 是软蒙版，查看 `red-preview.png` 时检查头发、轮廓是否丢失，是否混入多余背景。背景层在人物原位置留有透明孔洞；移动人物时，可能还需要单独的干净背景或本机补画。
 
 ## Reuse and update a template
 
-* Search the `templates` list with `find_edit_templates`. Use `include_parse_techniques=false` to search templates shared by the series you can view. Read a specific revision using `get_edit_template`. When a template has no default, use `list_edit_template_versions` and choose one. Pin its exact version in the edit.
-* Rebuild the effect locally from the revision's entry, files, runtime, slots and parameters. Check the rendered frames at the target frame rate and canvas size. Accessible source snapshots preserve what the author originally saw; inaccessible source details are withheld. If a source changed, inspect current footage separately.
-* Save a reusable effect with `save_edit_template_version`. For a new template select its series_id. Include the contract, editable text files, entry point, runtime, and evidence references from this server. Everyone who can view the selected series can read the saved versions and feedback. To revise an effect, supply its template and parent version and explain what changed in a `revision_rationale`. Record the viewer's feedback separately from your interpretation, the changes made, what you verified, and what remains unverified.
-* Use `append_edit_template_note` for later feedback or a client-reported render check. Promote a verified version with `set_default_edit_template_version` only when that choice is intended. Read the current template revision first and record the reason. Use the same `request_id` when retrying the same write.
+* 模板检索结果在 `templates` 列表里，用 `find_edit_templates` 获取。设为 `include_parse_techniques=false` 时，只查你能查看的 series 共享模板。用 `get_edit_template` 读取具体版本；模板没有默认版本时，用 `list_edit_template_versions` 查看并确定一版，在当前剪辑中固定该版本。
+* 依据该版本的入口、文件、运行环境、素材槽位和参数，在本机重建效果，按目标帧率和画布尺寸检查渲染帧。可访问的来源快照保留作者当时看到的内容，无权访问的来源细节会隐藏；来源已经变化时，另行检查当前原片。
+* 用 `save_edit_template_version` 保存可复用效果。新模板指定 series_id，带上合同、可编辑文本文件、入口、运行环境和本连接签发的证据引用。所有能查看该 series 的人都能读取保存的版本与反馈。修改已有效果时，提供模板和父版本，用 `revision_rationale` 说明改了什么。把观众原话、自己的判断、实际改动、已验证和未验证项分别记录。
+* 后续反馈或客户端报告的渲染检查用 `append_edit_template_note` 追加。确实需要将某个已验证版本设为默认时，再用 `set_default_edit_template_version`；先读取模板当前修订号，并记录理由。同一次写入重试时，沿用同一个 `request_id`。
 
-Each template belongs to one series. Reading, searching and version history follow that series visibility, regardless of the author or guest identity. A new valid guest credential sees the same public series templates. Writes follow the existing series edit permission. Cloud editors obtain a write-capable MCP credential from the account menu. Local series use the local access rules.
+每个模板归属一个 series。读取、搜索和版本历史都遵循该 series 的可见性，作者和游客身份不改变这条规则。换一枚有效游客凭据仍能读同一公开 series 的模板。写入沿用已有的 series 编辑权限；Cloud 编辑者从账号菜单取得可写 MCP 凭据，本机 series 沿用本机访问规则。
