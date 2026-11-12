@@ -417,11 +417,46 @@
       "actualX": 268
     },
     "deployed": false,
-    "businessModelCalls": 0
+    "businessModelCalls": 0,
+    "scope": "Isolated performance and regression checks; local deployment is recorded separately below."
   },
   "limits": [
     "One final paired replay per history size; p95 is descriptive for these samples, not a field SLO.",
     "Synthetic input to next rAF and committed-DOM observation are not physical paint, INP, or certified provider FTT.",
     "Conversation list contains one fixture conversation; large evidence traces, media-heavy histories and real network/device traffic were not measured."
-  ]
+  ],
+  "localDeployment": {
+    "date": "2026-11-12",
+    "frontendUrl": "http://127.0.0.1:5173/search",
+    "apiUrl": "http://127.0.0.1:9621",
+    "sourceCommit": "1ea15e785069c9418d56a0f5156fc1b6e9919557",
+    "environment": "existing local development database and Elasticsearch",
+    "seriesCount": 3,
+    "health": "ok",
+    "model": "deepseek-flash",
+    "temporaryRuntime": {
+      "agentAndSupervisorMaxOutputTokens": 8192,
+      "stream": true,
+      "originalConfigUnchanged": true,
+      "committed": false
+    },
+    "successfulChat": {
+      "receivedProviderDeltas": 100,
+      "domGrowthObservations": 79,
+      "status": "completed",
+      "terminationMs": 4588.8,
+      "connectingAfterTerminal": false,
+      "stopButtonAfterTerminal": false,
+      "pageErrors": 0,
+      "kinoStateAfterClick": "jump",
+      "certifiedFtt": false
+    },
+    "initialFailures": [
+      "Other existing preview backend: local model service unreachable",
+      "Existing local default Kimi: monthly quota exhausted (429)",
+      "Existing auxiliary DeepSeek binding: finish_reason=length at 256 completion tokens"
+    ],
+    "rawEvidenceDirectory": "outputs/verification/chat-frontend-performance-20261112/",
+    "cloudDeployed": false
+  }
 }

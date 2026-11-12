@@ -65,6 +65,16 @@ Kino 的三次 progress 到状态属性更新，在 60 条历史下分别从 43.
 
 公开范围提示属于现有 `CHAT-HEADER-01` 的布局合同，需要另行核对；本次只记录证据，没有新建第二个 PR。真实模型回答质量、线上网络、媒体较多或带大体积检索 trace 的历史、很长的会话侧栏及真实手机未验证。
 
+## 本地部署冒烟（2026-11-12 补验）
+
+按本地试用要求，在 `http://127.0.0.1:5173/search` 启动生产构建，代理到 `9621` 的 API；前后端源码均为 `1ea15e78`。复用既有开发 MySQL、ES 和三条 Series，API 健康状态为 ok。该轮连接实际服务与模型，与上面的隔离性能对照分别记录。
+
+首次复用的其他试验后端无法连接其本地模型。切回正常开发库后，Kimi 默认模型返回月度额度耗尽；DeepSeek 选项又沿用了查询改写的 256 token 上限，日志确认 `finish_reason=length`、`completion_tokens=256`。这些失败保留在本地证据中。随后为本次 API 使用独立的临时配置，把 agent / supervisor 绑定为 DeepSeek Flash、启用流式、输出上限 8192；查询改写预算和原配置文件保持原值，临时配置未提交。
+
+通过真实页面发送一条无需视频检索的通用知识问题：收到 100 个 `answer.delta`、79 次正文 DOM 增长观察，最终 `answer.completed`；观测到 1 次 `answer.model.completed`，请求终止耗时约 4.59 秒。结束后无“正在连接助手”及停止按钮，页面 JS 异常为 0；点击 Kino 后观测到 `jump`。这些验证了本机入口可用，不代表回答质量、所有动作的物理绘制或线上性能已经验收。没有独立供应商 trace，因此不认证 FTT。
+
+原始过程保存在 `outputs/verification/chat-frontend-performance-20261112/local-chat-smoke.json`、`local-chat-completed.png`，初次不可用、Kimi 额度和 256 token 截断分别保留。运行 PID 与日志在 `outputs/local-services/chat-frontend-preview.pid.json`、`chat-frontend-api.pid.json` 及同名前缀日志，临时模型配置为 `/private/tmp/seekino-chat-frontend-local-runtime.yaml`。仅本机部署，云端未部署。
+
 ## 复跑与交付边界
 
 在相同依赖下分别构建基线与方案，再从本分支调用同一个回放脚本。下面的 dist 路径替换为对应构建目录；`--expect-fixed` 只用于方案，检查连接提示、发送禁用、滚动、误唤醒和 100 个增量的 DOM 观察。
@@ -78,4 +88,4 @@ SEEKINO_TEST_BROWSER_CHANNEL=chrome node web/tests/chat-frontend-performance.mjs
 
 浏览器回放需要允许本机 loopback 监听。前端全量中的远端代理测试同样需要该能力；受限沙箱中的 EPERM 不是业务接口失败，不应修改测试绕过它。
 
-本次采用前端状态、渲染和滚动修复，交付于唯一 PR #126。代码及本机隔离验证完成；云端未部署，真实使用中的卡顿幅度仍需发布后验收。
+本次采用前端状态、渲染和滚动修复，交付于唯一 PR #126。代码、本机隔离验证和上述真实聊天冒烟完成；云端未部署，真实使用中的卡顿幅度仍需发布后验收。
