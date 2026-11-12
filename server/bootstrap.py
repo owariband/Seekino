@@ -26,6 +26,7 @@ from gateway.web_search import WebSearcher
 
 from .config import ServerSettings
 from .caller import CallerResources
+from .service.video_event_retrieval import VideoEventRetrievalService
 from .common.retrieval import build_event_retrieval_service, build_retrieval_service, validate_rerank_source
 from .common.storage import (
     build_artifact_storage,
@@ -93,6 +94,7 @@ class ApplicationServices:
     mcp_retrieval: McpRetrievalService | None = None
     model_settings: ModelSettings | None = None
     supervisor_sessions: DeepAgentSessionStore | None = None
+    event_retrieval: VideoEventRetrievalService | None = None
     _closed: bool = field(default=False, init=False, repr=False)
 
     def start(self) -> None:
@@ -594,6 +596,7 @@ def _build_application_services(
         jobs=jobs,
         media=media,
         retrieval=retrieval,
+        event_retrieval=event_retrieval,
         agent=agent,
         model_settings=model_settings,
         supervisor_sessions=supervisor_sessions,

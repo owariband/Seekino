@@ -123,5 +123,7 @@ hypnos 于 **2026-04-27 入职实习**，到这次面试复盘时已接近半年
 - [游客观看问答的执行预算](guest-chat-turn-budget-trd.md) 记录第五次模型调用中断的复现，以及按 IP 计数的独立验收。
 - [观看页 Kino 入口与悬浮陪看窗](watch-kino-entry-trd.md) 记录桌面浮窗、停靠、全屏和手机抽屉的实测。
 - [视频内文字查找](watch-text-find-trd.md) 记录当前一集的台词、画面文字和播放器毫秒跳转。[PR #105](https://github.com/owariband/Seekino/pull/105)
+- [片内画面查找](watch-visual-find-trd.md) 记录单集出镜、场景查询和独立开关。
+- [片内智能搜索](watch-smart-find-trd.md) 记录可选的网络梗解释、同义词匹配和单集验收。
 - [设置工作区](settings-workspace-trd.md) 记录会话内打开设置、设备偏好、管理员配置和设计样稿对照。
 - [对话回答模型与输入区](chat-composer-models-trd.md) 记录会话级模型选择、附件位置和侧栏调宽。状态见[工作台](../../dev/workbench.html) CHAT-COMPOSER-02。

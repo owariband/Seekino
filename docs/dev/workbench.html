@@ -427,7 +427,7 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
  "updatedAt": "2026-11-12T16:17:26+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 45,
+ "revision": 46,
  "categories": [
   {
    "id": "parse",
@@ -5232,6 +5232,64 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "label": "PR #106",
      "kind": "pr",
      "url": "https://github.com/owariband/Seekino/pull/106"
+    }
+   ]
+  },
+  {
+   "id": "WATCH-FIND-03",
+   "title": "智能识别当前集搜索中的网络用语",
+   "category": "search",
+   "type": "requirement",
+   "status": "verifying",
+   "priority": "P1",
+   "description": "观看页保留普通语义候选，开启智能搜索后用默认聊天模型解释网络梗，显示并搜索近义表达。",
+   "next": "等待上游画面搜索 PR 合并，再将智能搜索集成至 dev 并在发布环境复验。",
+   "verification": "本地实片的普通模式按播放时间导航五个相关候选。智能模式只保留两处含不满的标注，逐条跳到 11:02.150、15:41.000，首尾循环和切回普通模式均已验收。",
+   "updatedAt": "2026-11-12",
+   "tags": ["片内查找", "智能搜索"],
+   "related": ["WATCH-FIND-02", "MOD-SEARCH"],
+   "branch": "feat/watch-smart-find",
+   "links": [
+    {"label": "智能搜索设计与验收", "kind": "trd", "url": "https://github.com/owariband/Seekino/blob/feat/watch-smart-find/docs/design/03-product-reassessment/watch-smart-find-trd.md"},
+    {"label": "本地实测记录", "kind": "report", "url": "https://github.com/owariband/Seekino/blob/feat/watch-smart-find/docs/report/server/evidence/watch-smart-find-local-20261112.json"},
+    {"label": "PR #125", "kind": "pr", "url": "https://github.com/owariband/Seekino/pull/125"}
+   ]
+  },
+  {
+   "id": "WATCH-FIND-02",
+   "title": "观看页可切换的单集人物出镜与场景搜索",
+   "category": "search",
+   "type": "requirement",
+   "status": "verifying",
+   "priority": "P1",
+   "description": "在当前集按出镜标注与自然语言定位画面，浏览器记住画面开关。",
+   "next": "开发 PR 集成后按发布范围验收正式站。",
+   "verification": "隔离环境的 Chrome 实际停在爱音看手机 12:56.666 和背吉他包 14:07.999。关闭并刷新后文字查找有效，画面请求为零。",
+   "updatedAt": "2026-11-12",
+   "tags": [
+    "片内查找",
+    "画面搜索"
+   ],
+   "related": [
+    "WATCH-FIND-01",
+    "MOD-SEARCH"
+   ],
+   "branch": "feat/watch-visual-find",
+   "links": [
+    {
+     "label": "单集画面查找设计",
+     "kind": "trd",
+     "url": "https://github.com/owariband/Seekino/blob/feat/watch-visual-find/docs/design/03-product-reassessment/watch-visual-find-trd.md"
+    },
+    {
+     "label": "原片与浏览器验收",
+     "kind": "report",
+     "url": "https://github.com/owariband/Seekino/blob/feat/watch-visual-find/docs/report/server/evidence/watch-visual-find-local-20261112.json"
+    },
+    {
+     "label": "PR #120",
+     "kind": "pr",
+     "url": "https://github.com/owariband/Seekino/pull/120"
     }
    ]
   },
