@@ -1,30 +1,29 @@
 .page { --series-gutter: clamp(20px, 5vw, 96px); width: 100%; max-width: none; min-height: calc(100dvh - var(--app-header-height, 64px)); padding: 0 0 72px; scroll-margin-top: var(--app-header-height, 64px); }
-.hero { position: relative; isolation: isolate; display: flex; min-height: clamp(470px, 43vw, 720px); flex-direction: column; justify-content: space-between; padding: 28px var(--series-gutter) 90px; overflow: hidden; color: #f5f5f7; background: #0b0b0c; }
+.hero { position: relative; isolation: isolate; display: flex; min-height: clamp(470px, 43vw, 720px); flex-direction: column; justify-content: space-between; padding: 28px var(--series-gutter) 90px; overflow: hidden; color: #f3f8f5; background: var(--hero-base); }
 .heroFrame { position: absolute; z-index: -3; inset: 0 0 -22%; }
-.hero::before { position: absolute; z-index: -2; inset: 0; background: linear-gradient(90deg, rgb(0 0 0 / 94%), rgb(0 0 0 / 66%) 36%, rgb(0 0 0 / 8%) 78%); content: ""; }
-.hero::after { position: absolute; z-index: -1; right: 0; bottom: 0; left: 0; height: 115px; background: linear-gradient(0deg, var(--canvas), transparent); content: ""; }
-:global(:root[data-theme="light"]) .hero::after { background: linear-gradient(0deg, rgb(0 0 0 / 72%), transparent); }
-.back { display: inline-flex; width: fit-content; align-items: center; gap: 8px; min-height: 40px; padding-inline: 14px; color: #f5f5f7; border-radius: var(--radius-pill); background: rgb(0 0 0 / 50%); font-size: .8rem; text-decoration: none; }
+.hero::before { position: absolute; z-index: -2; inset: 0; background: linear-gradient(90deg, color-mix(in srgb, var(--hero-shade) 94%, transparent), color-mix(in srgb, var(--hero-shade) 66%, transparent) 36%, color-mix(in srgb, var(--hero-shade) 8%, transparent) 78%); content: ""; }
+.hero::after { position: absolute; z-index: -1; right: 0; bottom: 0; left: 0; height: 115px; background: linear-gradient(0deg, var(--hero-bottom), transparent); content: ""; }
+.back { display: inline-flex; width: fit-content; align-items: center; gap: 8px; min-height: 40px; padding-inline: 14px; color: #f3f8f5; border-radius: var(--radius-pill); background: rgb(5 16 13 / 50%); font-size: .8rem; text-decoration: none; }
 .back:hover { color: #8cd4c2; }
 .heroToolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; color: var(--ink); }
-.publisher { display: flex; align-items: center; gap: 9px; margin-top: 18px; color: #d2d2d7; font-size: .8rem; }
-.publisherAvatar { position: relative; display: grid; width: 30px; height: 30px; place-items: center; overflow: hidden; color: #0b0b0c; border-radius: 50%; background: #8dd3c8; }
+.publisher { display: flex; align-items: center; gap: 9px; margin-top: 18px; color: #d1dfd8; font-size: .8rem; }
+.publisherAvatar { position: relative; display: grid; width: 30px; height: 30px; place-items: center; overflow: hidden; color: #10251f; border-radius: 50%; background: #b6e4d7; }
 .publisherAvatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .heroContent { width: min(720px, 62%); padding-top: 100px; }
-.eyebrow { color: #8dd3c8; font-size: .85rem; font-weight: 600; }
+.eyebrow { color: #b6e4d7; font-size: .85rem; font-weight: 600; }
 .hero h1 { margin: 14px 0 22px; font: 700 clamp(2.5rem, 5vw, 5rem)/1.06 var(--display); letter-spacing: -.022em; overflow-wrap: anywhere; }
-.meta { display: flex; flex-wrap: wrap; gap: 10px 24px; color: #d2d2d7; font-size: .85rem; }
+.meta { display: flex; flex-wrap: wrap; gap: 10px 24px; color: #d1dfd8; font-size: .85rem; }
 .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; margin-top: 30px; }
 .play, .browse { display: inline-flex; min-height: 50px; align-items: center; justify-content: center; gap: 10px; padding: 0 25px; border-radius: var(--radius-pill); font-size: .9rem; font-weight: 600; text-decoration: none; }
 .play, .browse, .back { transition: color var(--duration-fast) var(--ease-out), background-color var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out); }
 .play:active, .browse:active, .back:active { transform: scale(.97); transition-duration: var(--duration-press); }
-.play { color: #1d1d1f; background: #f5f5f7; }
-.play:hover { background: #ffffff; }
-.browse { border: 1px solid rgb(255 255 255 / 38%); background: rgb(0 0 0 / 25%); }
+.play { color: #10251f; background: #8cd4c2; }
+.play:hover { background: #b1e9da; }
+.browse { border: 1px solid rgb(255 255 255 / 38%); background: rgb(5 16 13 / 25%); }
 .browse:hover { background: rgb(255 255 255 / 12%); }
 .hero :focus-visible { outline-color: #b1e9da; }
-.unavailable { color: #d2d2d7; font-size: .9rem; }
-.progress { display: grid; width: min(330px, 100%); gap: 10px; margin-top: 24px; color: #d2d2d7; font: .72rem/1.5 var(--sans); font-variant-numeric: tabular-nums; }
+.unavailable { color: #d1dfd8; font-size: .9rem; }
+.progress { display: grid; width: min(330px, 100%); gap: 10px; margin-top: 24px; color: #d1dfd8; font: .72rem/1.5 var(--sans); font-variant-numeric: tabular-nums; }
 .progress progress { width: 100%; height: 3px; overflow: hidden; border: 0; appearance: none; background: rgb(255 255 255 / 22%); }
 .progress progress::-webkit-progress-bar { background: rgb(255 255 255 / 22%); }
 .progress progress::-webkit-progress-value { background: #8cd4c2; }
@@ -52,9 +51,9 @@
 .preview { position: relative; display: grid; aspect-ratio: 16 / 9; overflow: hidden; place-items: center; color: var(--teal-deep); border-radius: 4px; background: var(--surface-muted); box-shadow: inset 0 0 0 1px var(--line); }
 .episodeFrame, .preview > img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .preview > img[hidden] { display: none; }
-.previewPlay { position: absolute; display: grid; width: 46px; height: 46px; place-items: center; padding-left: 3px; color: white; border: 1px solid rgb(255 255 255 / 50%); border-radius: 50%; background: rgb(0 0 0 / 65%); opacity: 0; transition: opacity 160ms var(--ease-out); }
+.previewPlay { position: absolute; display: grid; width: 46px; height: 46px; place-items: center; padding-left: 3px; color: white; border: 1px solid rgb(255 255 255 / 50%); border-radius: 50%; background: rgb(9 12 11 / 65%); opacity: 0; transition: opacity 160ms var(--ease-out); }
 .episode:hover .previewPlay, .episode:focus-visible .previewPlay { opacity: 1; }
-.episodeNumber, .duration { position: absolute; bottom: 10px; padding: 4px 7px; color: #f5f5f7; border-radius: 3px; background: rgb(0 0 0 / 78%); font: 600 .72rem/1.4 var(--sans); font-variant-numeric: tabular-nums; }
+.episodeNumber, .duration { position: absolute; bottom: 10px; padding: 4px 7px; color: #f3f8f5; border-radius: 3px; background: rgb(9 12 11 / 78%); font: 600 .72rem/1.4 var(--sans); font-variant-numeric: tabular-nums; }
 .episodeNumber { left: 10px; }
 .duration { right: 10px; }
 .watched { position: absolute; bottom: 0; left: 0; height: 3px; background: var(--teal); }
@@ -65,6 +64,6 @@ a.episode:hover > strong { color: var(--teal-deep); }
 .state { display: grid; justify-items: center; gap: 16px; text-align: center; margin: 0; padding: 48px var(--series-gutter); color: var(--ink-soft); }
 .empty { color: var(--ink-soft); font-size: .9rem; }
 @media (max-width: 1100px) { .episodeGrid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
-@media (max-width: 760px) { .hero { min-height: 560px; padding-bottom: 70px; } .heroContent { width: 100%; padding-top: 190px; } .hero::before { background: linear-gradient(0deg, #0b0b0c 8%, rgb(0 0 0 / 85%) 38%, rgb(0 0 0 / 8%) 82%); } .hero h1 { font-size: clamp(2.4rem, 8vw, 3.5rem); } .overview { grid-template-columns: minmax(0, 1fr); gap: 12px; padding-top: 12px; padding-bottom: 32px; } .episodeGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px 16px; } .previewPlay { opacity: 1; width: 36px; height: 36px; } }
+@media (max-width: 760px) { .hero { min-height: 560px; padding-bottom: 70px; } .heroContent { width: 100%; padding-top: 190px; } .hero::before { background: linear-gradient(0deg, var(--hero-base) 8%, color-mix(in srgb, var(--hero-shade) 85%, transparent) 38%, color-mix(in srgb, var(--hero-shade) 8%, transparent) 82%); } .hero h1 { font-size: clamp(2.4rem, 8vw, 3.5rem); } .overview { grid-template-columns: minmax(0, 1fr); gap: 12px; padding-top: 12px; padding-bottom: 32px; } .episodeGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px 16px; } .previewPlay { opacity: 1; width: 36px; height: 36px; } }
 @media (max-width: 480px) { .meta { font-size: .78rem; } .actions { gap: 10px; } .play, .browse { min-height: 46px; padding-inline: 18px; font-size: .85rem; } .episodeGrid { grid-template-columns: minmax(0, 1fr); } .episode > strong { font-size: .9rem; } .episodes h2 { font-size: 1.5rem; } }
 @media (prefers-reduced-motion: reduce) { .previewPlay { transition: none; } }
