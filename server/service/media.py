@@ -111,7 +111,10 @@ class MediaService:
             return VideoVisualTimeline(ready=False, cues=[])
         cues = [VideoVisualCue.from_event(event) for content in contents for event in content.timeline
                 if event.visible_persons or event.event_type in ("SCENE", "ACTION", "EMOTION")]
-        return VideoVisualTimeline(ready=True, cues=sorted(cues, key=lambda cue: (cue.start_ms, cue.end_ms)))
+        # The episode roster helps recognize offscreen names. Only visible_persons proves an appearance.
+        names = sorted({name for content in contents for name in content.persons})
+        return VideoVisualTimeline(ready=True, cues=sorted(cues, key=lambda cue: (cue.start_ms, cue.end_ms)),
+                                   known_persons=names)
 
     def export_parse_results(
         self, *, tenant_id: str, video_ids: Sequence[str] = (),

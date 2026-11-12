@@ -61,6 +61,7 @@ class VideoVisualCue(ContractModel):
 class VideoVisualTimeline(ContractModel):
     ready: bool
     cues: list[VideoVisualCue]
+    known_persons: list[str] = Field(default_factory=list, exclude_if=lambda names: not names)
 
 
 class VideoVisualQuery(ContractModel):

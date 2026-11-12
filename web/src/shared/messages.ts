@@ -568,6 +568,7 @@ export const englishMessages: Readonly<Record<string, string>> = {
   "没有匹配的结果": "No matches",
   "正在查找画面…": "Finding visuals…",
   "本集画面标注尚未就绪": "Visual annotations are unavailable",
+  "部分画面索引暂不可用": "Some scenes are unavailable in the index",
   "语义检索暂不可用": "Semantic search is unavailable",
   "查找台词或画面文字": "Find dialogue or on-screen text",
   "上一处": "Previous match",

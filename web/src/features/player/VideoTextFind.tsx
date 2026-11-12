@@ -58,9 +58,13 @@ export function VideoTextFind({ videoId, tenantId, inputRef, canSeek, onSeek, on
     const literal = (index?.search(query) ?? []).map(({ cue, text }) => ({
       startMs: cue.startMs, endMs: cue.endMs, source: cue.source, text,
     }));
-    return [...literal, ...visual.matches].sort((a, b) => a.startMs - b.startMs);
+    const exact = [...literal, ...visual.matches.filter(match => match.source === "visual")];
+    return [...exact.sort((a, b) => a.startMs - b.startMs), ...visual.matches.filter(match => match.source === "related")];
   }, [index, query, visual.matches]);
   const active = matches.findIndex(match => matchKey(match) === activeKey);
+  const sourceLabels = { dialogue: t("台词"), screen_text: t("画面文字"), visual: t("画面"), related: t("相关画面") };
+  const visualStatus = visual.timelineUnavailable ? t("本集画面标注尚未就绪")
+    : visual.semanticUnavailable ? t("语义检索暂不可用") : visual.semanticPartial ? t("部分画面索引暂不可用") : null;
   const label = visualFind ? t("查找文字或画面") : t("查找台词或画面文字");
 
   useEffect(() => {
@@ -101,7 +105,10 @@ export function VideoTextFind({ videoId, tenantId, inputRef, canSeek, onSeek, on
     </div>
     <div className={styles.findFilters}>
       <button type="button" role="switch" aria-checked={visualFind} aria-label={t("画面搜索")}
-        onClick={() => setVisualFind(!visualFind)}>
+        onClick={event => {
+          setVisualFind(!visualFind);
+          if (event.detail > 0) inputRef.current?.focus();
+        }}>
         <i aria-hidden="true" />{t("画面")}
       </button>
     </div>
@@ -110,8 +117,8 @@ export function VideoTextFind({ videoId, tenantId, inputRef, canSeek, onSeek, on
       <button type="button" onClick={() => setAttempt(value => value + 1)}>{t("重试")}</button>
     </div> : !index ? <p className={styles.textFindStatus} role="status">{t("正在读取本集文字…")}</p>
       : null}
-    {visual.timelineUnavailable || visual.semanticUnavailable ? <div className={styles.textFindStatus} role="status">
-      {visual.timelineUnavailable ? t("本集画面标注尚未就绪") : t("语义检索暂不可用")}
+    {visualStatus ? <div className={styles.textFindStatus} role="status">
+      {visualStatus}
       <button type="button" onClick={() => setAttempt(value => value + 1)}>{t("重试")}</button>
     </div> : query.trim() && !matches.length && index?.ready ? <p className={styles.textFindStatus} role="status">
       {visual.loading ? t("正在查找画面…") : visualFind ? t("没有匹配的结果") : t("没有匹配的文字")}
@@ -126,7 +133,7 @@ export function VideoTextFind({ videoId, tenantId, inputRef, canSeek, onSeek, on
             select(i + (event.key === "ArrowRight" ? 1 : -1));
           }}>
           <time>{formatTimecode(match.startMs)}</time>
-          <small>{{ dialogue: t("台词"), screen_text: t("画面文字"), visual: t("画面"), related: t("相关画面") }[match.source]}</small>
+          <small>{sourceLabels[match.source]}</small>
           <span title={match.text}>{match.text}</span>
         </button>
       </li>)}

@@ -101,7 +101,7 @@ def search_video_visuals(request: Request, response: Response, body: VideoVisual
     video = services.library.get_video(body.video_id, tenant_id=body.tenant_id)
     read_series(request, video.series_id, tenant_id=body.tenant_id)
     response.headers["Cache-Control"] = "private, no-store"
-    if services.event_retrieval is None:
+    if getattr(services, "event_retrieval", None) is None:
         return VideoVisualTimeline(ready=False, cues=[])
     with model_query(getattr(services, "auth", None), identity, request.client.host if request.client else "unknown"):
         result = services.event_retrieval.search_visuals(

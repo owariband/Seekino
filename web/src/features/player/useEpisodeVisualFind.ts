@@ -22,7 +22,7 @@ export function useEpisodeVisualFind(videoId: string, tenantId: string, query: s
     Promise.all([getVideoVisualTimeline(videoId, tenantId, controller.signal), import("./visualIndex")])
       .then(([timeline, { createVisualIndex, mergeVisualMatches }]) => {
         if (controller.signal.aborted) return;
-        if (timeline.ready) setIndex({ lookup: createVisualIndex(timeline.cues), merge: mergeVisualMatches });
+        if (timeline.ready) setIndex({ lookup: createVisualIndex(timeline.cues, timeline.knownPersons), merge: mergeVisualMatches });
         else setTimelineFailed(true);
       })
       .catch(() => { if (!controller.signal.aborted) setTimelineFailed(true); });
@@ -30,7 +30,7 @@ export function useEpisodeVisualFind(videoId: string, tenantId: string, query: s
   }, [videoId, tenantId, enabled, index, attempt]);
 
   const local = useMemo(() => enabled && needle && index ? index.lookup(needle) : null, [enabled, needle, index]);
-  const needsSemantic = Boolean(local && !local.personOnly && needle.length >= 2 && needle.length <= 500);
+  const needsSemantic = Boolean(local?.allowSemantic && needle.length >= 2 && needle.length <= 500);
   useEffect(() => {
     setSemantic(null);
     if (!index || !needsSemantic) return;
@@ -52,12 +52,13 @@ export function useEpisodeVisualFind(videoId: string, tenantId: string, query: s
     const candidates: VisualMatch[] = remote.cues.filter(local.accepts).map(cue => ({
       startMs: cue.startMs, endMs: cue.endMs, source: "related", text: cue.description,
     }));
-    return index.merge([...local.matches, ...candidates]);
+    return index.merge(local.matches, candidates);
   }, [local, index, remote]);
   return {
     matches,
     loading: enabled && Boolean(needle) && ((!index && !timelineFailed) || (needsSemantic && !remote)),
     timelineUnavailable: enabled && timelineFailed,
-    semanticUnavailable: remote?.ready === false,
+    semanticUnavailable: remote?.ready === false && !remote.cues.length,
+    semanticPartial: remote?.ready === false && remote.cues.length > 0,
   };
 }

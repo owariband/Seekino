@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { VideoVisualCue } from "../../api/contracts";
-import { createVisualIndex } from "./visualIndex";
+import { createVisualIndex, mergeVisualMatches, type VisualMatch } from "./visualIndex";
 
 const scene = (startMs: number, endMs: number, description: string, visiblePersons: string[], kind = "SCENE"): VideoVisualCue =>
   ({ startMs, endMs, kind, description, visiblePersons });
@@ -31,6 +31,21 @@ describe("single-video visual find", () => {
     expect(search.accepts(dialogue)).toBe(false);
     expect(lookup("辣椒").matches).toEqual([]);
     expect(lookup(" ").matches).toEqual([]);
+  });
+
+  it("retains confirmed jumps and preserves retrieval rank for distinct related shots", () => {
+    const exact: VisualMatch = { startMs: 500, endMs: 600, source: "visual", text: "原片" };
+    const similar = (startMs: number, endMs: number): VisualMatch => ({ startMs, endMs, source: "related", text: "相关" });
+    const suggestions = [similar(400, 650), similar(9500, 9700), similar(1100, 1200)];
+    expect(mergeVisualMatches([exact], suggestions).map(hit => hit.startMs)).toEqual([500, 9500, 1100]);
+  });
+
+  it("keeps a known offscreen speaker out of both appearance and semantic suggestions", () => {
+    const find = createVisualIndex([phone], ["千早愛音", "高松燈"]);
+    expect(find("高 松 灯")).toMatchObject({ matches: [], personOnly: true, allowSemantic: false });
+    expect(find("高松灯看手机")).toMatchObject({ matches: [], allowSemantic: false });
+    expect(find("手机").allowSemantic).toBe(true);
+    expect(find("！？").allowSemantic).toBe(false);
   });
 
   it("keeps Latin words searchable without assigning part of a longer word to a character", () => {

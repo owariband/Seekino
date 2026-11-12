@@ -26,31 +26,38 @@ function nameForms(name: string): string[] {
   return [name];
 }
 
-export function mergeVisualMatches(matches: VisualMatch[]): VisualMatch[] {
-  const ordered = matches.toSorted((a, b) => a.startMs - b.startMs
-    || Number(a.source === "related") - Number(b.source === "related") || b.endMs - a.endMs);
-  const merged: VisualMatch[] = [];
-  for (const match of ordered) {
-    const previous = merged.at(-1);
-    // Keep the timestamp and description tied to the same source event.
-    if (previous && previous.startMs <= match.startMs && previous.endMs >= match.endMs) continue;
-    merged.push(match);
+// Keep confirmed timestamps in order, then show the best distinct suggestions in retrieval order.
+export function mergeVisualMatches(exact: VisualMatch[], related: VisualMatch[] = []): VisualMatch[] {
+  const confirmed = exact.toSorted((a, b) => a.startMs - b.startMs || b.endMs - a.endMs);
+  const matches: VisualMatch[] = [];
+  for (const match of confirmed) {
+    if (matches.length && matches.at(-1)!.endMs >= match.endMs) continue;
+    matches.push(match);
   }
-  return merged;
+  const confirmedCount = matches.length;
+  for (const match of related) {
+    if (matches.some(other => other.startMs < match.endMs && match.startMs < other.endMs)) continue;
+    matches.push(match);
+    if (matches.length - confirmedCount === 5) break;
+  }
+  return matches;
 }
 
-export function createVisualIndex(cues: VideoVisualCue[]) {
+export function createVisualIndex(cues: VideoVisualCue[], knownPersons: string[] = []) {
   const aliases = new Map<string, Set<string>>();
   const entries = cues.map(cue => {
     const visible = cue.visiblePersons.map(phraseKey).filter(Boolean);
-    for (const name of visible) {
-      for (const alias of nameForms(name)) {
-        if (!aliases.has(alias)) aliases.set(alias, new Set());
-        aliases.get(alias)!.add(name);
-      }
-    }
     return { cue, visible, description: sceneKinds.has(cue.kind) ? phraseKey(cue.description) : "" };
   });
+  // Known people include offscreen speakers; keep this lexicon separate from visual evidence.
+  const roster = new Set([...knownPersons.map(phraseKey), ...entries.flatMap(entry => entry.visible)]);
+  for (const name of roster) {
+    if (!name) continue;
+    for (const alias of nameForms(name)) {
+      if (!aliases.has(alias)) aliases.set(alias, new Set());
+      aliases.get(alias)!.add(name);
+    }
+  }
   const names = [...aliases.keys()].sort((a, b) => b.length - a.length);
 
   return (query: string) => {
@@ -73,12 +80,17 @@ export function createVisualIndex(cues: VideoVisualCue[]) {
     const hasPeople = (visible: string[]) => groups.every(group => visible.some(name => group.has(name)));
     const accepts = (cue: VideoVisualCue) => sceneKinds.has(cue.kind) && hasPeople(cue.visiblePersons.map(phraseKey));
     const matches: VisualMatch[] = [];
+    let allowSemantic = false;
     for (const { cue, visible, description } of entries) {
       if (!hasPeople(visible)) continue;
-      if (!personOnly && (!terms.length || !description || !terms.every(term => description.includes(term)))) continue;
+      if (!personOnly) {
+        if (!terms.length || !description) continue;
+        allowSemantic = true;
+        if (!terms.every(term => description.includes(term))) continue;
+      }
       matches.push({ startMs: cue.startMs, endMs: cue.endMs, source: "visual",
         text: description ? cue.description : cue.visiblePersons.join("、") });
     }
-    return { matches: mergeVisualMatches(matches), personOnly, accepts };
+    return { matches: mergeVisualMatches(matches), personOnly, allowSemantic, accepts };
   };
 }

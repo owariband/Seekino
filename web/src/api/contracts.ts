@@ -104,6 +104,7 @@ export interface VideoVisualCue {
 export interface VideoVisualTimeline {
   ready: boolean;
   cues: VideoVisualCue[];
+  knownPersons?: string[];
 }
 
 export interface VideoTextTimeline {
