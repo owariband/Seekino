@@ -34,7 +34,7 @@
   gap: clamp(20px, 2.5vw, 48px);
   padding: 0 clamp(20px, 2.4vw, 46px);
   border-bottom: 1px solid var(--line);
-  background: var(--material);
+  background: var(--surface);
   -webkit-backdrop-filter: saturate(180%) blur(20px);
   backdrop-filter: saturate(180%) blur(20px);
 }
@@ -64,16 +64,16 @@
   gap: 10px;
   padding: 0 8px 0 14px;
   color: var(--ink-faint);
-  border: 1px solid transparent;
+  border: 1px solid var(--line);
   border-radius: var(--radius-pill);
-  background: color-mix(in srgb, var(--ink) 6%, transparent);
+  background: var(--surface-raised);
   font-size: .84rem;
   text-decoration: none;
   transition: border-color 160ms var(--ease-out), box-shadow 160ms var(--ease-out), color 160ms var(--ease-out);
 }
 .searchTrigger > span { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .searchTrigger kbd { padding: 3px 7px; color: var(--ink-soft); border: 1px solid var(--line); border-radius: 6px; background: var(--surface-muted); font: 600 .72rem/1.2 var(--sans); font-variant-numeric: tabular-nums; }
-.searchTrigger:hover { color: var(--ink-soft); background: color-mix(in srgb, var(--ink) 9%, transparent); }
+.searchTrigger:hover { color: var(--ink-soft); border-color: var(--line-strong); }
 
 .navigation { display: flex; height: 100%; min-width: 0; align-items: stretch; gap: clamp(4px, .7vw, 16px); }
 .navItem {
