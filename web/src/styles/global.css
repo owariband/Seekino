@@ -79,7 +79,8 @@
     /* The established celadon palette keeps grey-green backgrounds and off-white cards.
        Each token pairs its day and night color, and one shared mix carries the whole palette through a theme change. */
     --night-mix: 0%;
-    --canvas: color-mix(in srgb, #e4eae5, #0d1110 var(--night-mix));
+    --canvas-night: #0d1110;
+    --canvas: color-mix(in srgb, #e4eae5, var(--canvas-night) var(--night-mix));
     --canvas-glow: color-mix(in srgb, rgb(35 140 120 / 7%), transparent var(--night-mix));
     --surface: color-mix(in srgb, #ebf0ec, #171c1a var(--night-mix));
     --surface-raised: color-mix(in srgb, #f6f8f5, #202624 var(--night-mix));
@@ -114,6 +115,10 @@
     --brand-ink: #0b3b33;
     --brand-wordmark: color-mix(in srgb, var(--brand-ink), var(--brand) var(--night-mix));
     --stage: color-mix(in srgb, #0c1412, #080d0c var(--night-mix));
+    /* Hero layers retain their daytime depth and share the night canvas. */
+    --hero-base: color-mix(in srgb, #10251f, var(--canvas-night) var(--night-mix));
+    --hero-shade: color-mix(in srgb, #05100d, var(--canvas-night) var(--night-mix));
+    --hero-bottom: color-mix(in srgb, rgb(5 16 13 / 72%), var(--canvas-night) var(--night-mix));
   }
 
   /* Night flips the shared progress; fixed-depth tokens keep their own rules. */
