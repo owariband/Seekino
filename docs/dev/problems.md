@@ -2899,3 +2899,11 @@ micrograd v5 共 146 块，整集 90 分 04.884 秒。调度反复锁取候选�
 ### WATCH-SEEK-01 · 浏览器的原生进度轨道在视频上画出浅色描边
 
 视频底色较暗时，轨道上下各一条浅线尤其显眼。验收看明暗主题下的轨道无描边，同时保留已播放区、滑块和指针、键盘跳转。[实测记录](devlog.md#devlog-watch-seekbar-20261111)
+
+### CHAT-PERF-01 · 页面状态更新重跑历史 Markdown，终态收尾又误显示连接中
+
+2026-11-12。当前 dev 的组件探针确认：20 条历史回答下，输入一字、仅更新思考、更新一条消息，各执行 20 个 Markdown。可信终态先于 POST EOF 时，`sending` 仍为真且没有 PROCESSING，页面会重新显示连接中，并影响 Kino 的收尾状态。对照原问题验收时，需要同时核对解析次数、输入及正文观察延迟、Kino 状态、滚动、取消和恢复，不能只加过渡动效。
+
+验收边界：输入与思考更新不重解析未变化的历史正文；单消息只解析变化块；终态不显示连接中或无效停止，发送按钮与实际守卫一致；旧请求晚到不能污染已经结束的新回合；用户上滚后不被拉回底部。PR #126 的受控回放和 658 项前端测试已有证据，真实线上效果仍未测。公开范围提示的既有布局断言在方案与未修改基线上以同一坐标失败，归原 `CHAT-HEADER-01` 核对，没有借本次性能修复改写旧期望。
+
+[设计](../design/03-product-reassessment/chat-frontend-performance-trd.md) · [实测报告](../report/web/chat-frontend-performance-20261112.md) · [devlog](devlog.md#devlog-chat-frontend-performance-20261112) · [工作台](workbench.html)

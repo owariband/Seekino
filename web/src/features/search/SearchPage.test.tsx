@@ -16,10 +16,22 @@ const mocks = vi.hoisted(() => ({
   useWorkspace: vi.fn(),
   useAuth: vi.fn(),
 }));
+const markdownProbe = vi.hoisted(() => ({ renders: 0 }));
 
 vi.mock("../../app/workspace", () => ({ useWorkspace: mocks.useWorkspace }));
 vi.mock("./useAgentConversation", () => ({ useAgentConversation: mocks.useAgentConversation }));
 vi.mock("../auth/AuthProvider", () => ({ useAuth: mocks.useAuth }));
+vi.mock("react-markdown", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("react-markdown")>();
+  const { createElement } = await import("react");
+  return {
+    ...actual,
+    default: (props: Parameters<typeof actual.default>[0]) => {
+      markdownProbe.renders += 1;
+      return createElement(actual.default, props);
+    },
+  };
+});
 
 const now = Date.parse("2026-09-17T00:00:00Z");
 const baseMessageOptions: AgentMessageOptions = {
@@ -166,6 +178,7 @@ function renderPage(
     reasoning: {},
     loading: false,
     searching: false,
+    connecting: false,
     cancelling: false,
     error: null,
     modelId: firstModel,
@@ -1491,5 +1504,191 @@ describe("Lazy conversation lifecycle", () => {
     await screen.findByText("creation unavailable");
     expect(screen.getByRole("textbox", { name: "向 Seekino 助手提问" })).toHaveValue("Keep this question");
     expect(api.streamAgentMessage).not.toHaveBeenCalled();
+  });
+});
+
+describe("Chat turn closing state", () => {
+  it("shows the trusted terminal state without a connection hint or an invalid stop", async () => {
+    const view = renderPage(assistantMessage("已完成回答"));
+    const active = mocks.useAgentConversation.mock.results.at(-1)!.value;
+    mocks.useAgentConversation.mockReturnValue({ ...active, searching: true, connecting: false });
+    view.rerender(<SearchPage />);
+    await act(async () => {});
+
+    expect(screen.queryByText("正在连接助手…")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "停止生成" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "发送问题" })).toBeDisabled();
+
+    const user = userEvent.setup();
+    await user.type(screen.getByRole("textbox", { name: "向 Seekino 助手提问" }), "下一条{Enter}");
+    expect(mocks.send).not.toHaveBeenCalled();
+  });
+
+  it("shows the connection hint only before acceptance and keeps the composer blocked meanwhile", async () => {
+    const view = renderPage(assistantMessage("历史回答"));
+    const active = mocks.useAgentConversation.mock.results.at(-1)!.value;
+    mocks.useAgentConversation.mockReturnValue({ ...active, searching: true, connecting: true });
+    view.rerender(<SearchPage />);
+    await act(async () => {});
+
+    expect(screen.getByText("正在连接助手…")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "停止生成" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "发送问题" })).toBeDisabled();
+  });
+});
+
+describe("Chat thread following", () => {
+  // A real animation frame runs after the current task; run queued callbacks explicitly.
+  function queueAnimationFrames() {
+    let nextId = 1;
+    const frames = new Map<number, FrameRequestCallback>();
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      const id = nextId++;
+      frames.set(id, callback);
+      return id;
+    });
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation((id) => { frames.delete(id); });
+    return () => {
+      const pending = [...frames.values()];
+      frames.clear();
+      act(() => { for (const callback of pending) callback(0); });
+    };
+  }
+
+  function threadMetrics(thread: HTMLElement) {
+    let scrollHeight = 600;
+    let scrollTop = 200;
+    Object.defineProperty(thread, "scrollHeight", { configurable: true, get: () => scrollHeight });
+    Object.defineProperty(thread, "clientHeight", { configurable: true, get: () => 400 });
+    Object.defineProperty(thread, "scrollTop", { configurable: true, get: () => scrollTop, set: (value: number) => { scrollTop = value; } });
+    return {
+      grow(height: number) { scrollHeight = height; },
+      get scrollTop() { return scrollTop; },
+      set scrollTop(value: number) { scrollTop = value; },
+    };
+  }
+
+  function historyMessage(index: number, content: string): AgentMessageView {
+    return { ...assistantMessage(content), messageId: `assistant-${index}`, sequenceNo: index };
+  }
+
+  it("follows new content at the bottom, ignores growth after the reader scrolls up, and resumes at the bottom", async () => {
+    const flushFrames = queueAnimationFrames();
+    const view = renderPage(assistantMessage("第一段回答"));
+    await act(async () => {});
+    const thread = view.container.querySelector<HTMLElement>("[data-kino-stage]")!;
+    flushFrames();
+    const metrics = threadMetrics(thread);
+    fireEvent.scroll(thread);
+
+    const active = mocks.useAgentConversation.mock.results.at(-1)!.value;
+    const first = [historyMessage(1, "第一段回答")];
+    metrics.grow(900);
+    mocks.useAgentConversation.mockReturnValue({ ...active, messages: first });
+    view.rerender(<SearchPage />);
+    flushFrames();
+    expect(metrics.scrollTop).toBe(900);
+
+    metrics.scrollTop = 100;
+    fireEvent.scroll(thread);
+    metrics.grow(1_200);
+    mocks.useAgentConversation.mockReturnValue({ ...active, messages: [...first, historyMessage(2, "新增回答")] });
+    view.rerender(<SearchPage />);
+    flushFrames();
+    expect(metrics.scrollTop).toBe(100);
+
+    const second = [...first, historyMessage(2, "新增回答")];
+    metrics.scrollTop = 800;
+    fireEvent.scroll(thread);
+    metrics.grow(1_400);
+    mocks.useAgentConversation.mockReturnValue({ ...active, messages: [...second, historyMessage(3, "继续回答")] });
+    view.rerender(<SearchPage />);
+    flushFrames();
+    expect(metrics.scrollTop).toBe(1_400);
+  });
+
+  it("scrolls for observed height changes only while at the bottom and disconnects on unmount", async () => {
+    const observers: Array<{ callback: ResizeObserverCallback; targets: Set<Element>; disconnect: ReturnType<typeof vi.fn> }> = [];
+    vi.stubGlobal("ResizeObserver", class {
+      callback: ResizeObserverCallback;
+      targets = new Set<Element>();
+      disconnect = vi.fn();
+      constructor(callback: ResizeObserverCallback) {
+        this.callback = callback;
+        observers.push(this);
+      }
+      observe(target: Element) { this.targets.add(target); }
+      unobserve(target: Element) { this.targets.delete(target); }
+    });
+    const flushFrames = queueAnimationFrames();
+    try {
+      const view = renderPage(assistantMessage("第一段回答"));
+      await act(async () => {});
+      const thread = view.container.querySelector<HTMLElement>("[data-kino-stage]")!;
+      flushFrames();
+      const metrics = threadMetrics(thread);
+      fireEvent.scroll(thread);
+      const threadObserver = observers.find((observer) => observer.targets.has(thread));
+      expect(threadObserver).toBeDefined();
+
+      metrics.grow(1_000);
+      act(() => threadObserver!.callback([], {} as ResizeObserver));
+      flushFrames();
+      expect(metrics.scrollTop).toBe(1_000);
+
+      metrics.scrollTop = 0;
+      fireEvent.scroll(thread);
+      metrics.grow(1_200);
+      act(() => threadObserver!.callback([], {} as ResizeObserver));
+      flushFrames();
+      expect(metrics.scrollTop).toBe(0);
+
+      view.unmount();
+      expect(threadObserver!.disconnect).toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
+describe("Chat answer rendering boundary", () => {
+  function history(count: number): AgentMessageView[] {
+    return Array.from({ length: count }, (_, index) => ({
+      ...assistantMessage(`历史回答 ${index + 1}`),
+      messageId: `assistant-${index + 1}`,
+      sequenceNo: index + 1,
+    }));
+  }
+
+  it("does not re-execute historical Markdown for typing or reasoning, and only re-executes a changed answer", async () => {
+    mocks.useWorkspace.mockReturnValue({ mode: "live", displayMode: "release", series: [series], isLoading: false });
+    const messages = history(20);
+    const base = {
+      conversationId: "conversation-1", messages, progress: {}, reasoning: {}, loading: false, searching: false, connecting: false, cancelling: false,
+      error: null, modelId: firstModel, modelSaving: false, modelError: null, selectModel: mocks.selectModel, send: mocks.send, stop: mocks.stop,
+    };
+    mocks.useAgentConversation.mockReturnValue(base);
+    markdownProbe.renders = 0;
+    const view = render(<SearchPage />);
+    await act(async () => {});
+    expect(markdownProbe.renders).toBe(20);
+    markdownProbe.renders = 0;
+    view.rerender(<SearchPage />);
+    expect(markdownProbe.renders).toBe(0);
+
+    const user = userEvent.setup();
+    await user.type(screen.getByRole("textbox", { name: "向 Seekino 助手提问" }), "查");
+    expect(markdownProbe.renders).toBe(0);
+
+    mocks.useAgentConversation.mockReturnValue({ ...base, reasoning: { "assistant-1": "只更新思考" } });
+    view.rerender(<SearchPage />);
+    expect(markdownProbe.renders).toBe(0);
+
+    const updated = messages.map((message, index) => index === 5
+      ? { ...message, content: "更新后的回答 6", renderBlocks: [{ type: "markdown" as const, markdown: "更新后的回答 6" }] }
+      : message);
+    mocks.useAgentConversation.mockReturnValue({ ...base, messages: updated });
+    view.rerender(<SearchPage />);
+    expect(markdownProbe.renders).toBe(1);
   });
 });
