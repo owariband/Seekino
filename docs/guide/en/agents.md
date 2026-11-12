@@ -68,6 +68,12 @@ npx skills add https://github.com/owariband/Seekino/tree/main/server/skills/seek
 
 ## Shot library and motion references
 
+MCP publishes `skill://motion-showreel/SKILL.md` for code-driven graphics, type, UI animation and supported subject-layer compositing. Its complete installation includes style references, starter assets, a timeline and local frame-rendering scripts. The upstream workflow previews in its workspace before export unless the user explicitly waives preview.
+
+```sh
+npx skills add https://github.com/ConardLi/garden-skills/tree/2b9a89340b70f632d31c0f1c69fce94a7912423e/skills/motion-showreel -a claude-code -a codex -g -y
+```
+
 MCP also publishes `skill://video-shotcraft/SKILL.md`, retaining the upstream guide, Apache-2.0 license and pinned revision. Install the complete package on the editing computer to consult its shot cards, demos, template and workbench.
 
 ```sh
@@ -77,6 +83,8 @@ npx skills add https://github.com/Vincentwei1021/video-shotcraft/tree/6700db2ba8
 Seekino's editing guide offers camera motion references and suggestions. The agent writes velocity, position and deformation in the editing project's code according to the shot's intent, rhythm and source material. Bell-shaped speed and its S-shaped position integral can inform a slow departure, fast middle and settled arrival. Shape the duration, peak, symmetry and landing in the shot code, reusing or adapting upstream helpers where useful.
 
 Author stretch, smear or blur when it suits the shot, deriving intensity from instantaneous speed and direction. Watch the result and adjust it. Production and rendering stay on the editing computer. If this library helps, consider starring [video-shotcraft](https://github.com/Vincentwei1021/video-shotcraft).
+
+motion-showreel comes from [ConardLi/garden-skills](https://github.com/ConardLi/garden-skills) under MIT. The MCP package retains its original copyright, license and pinned revision. It contributes animation and compositing references; follow the Seekino guide for source selection and cutting. If it helps, consider starring the upstream project.
 
 ## Next
 

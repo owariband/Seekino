@@ -68,6 +68,12 @@ npx skills add https://github.com/owariband/Seekino/tree/main/server/skills/seek
 
 ## 镜头库与运动参考
 
+MCP 提供 `skill://motion-showreel/SKILL.md`，用于代码驱动的图形、文字、界面动画和支持的人物分层合成。完整安装包含风格参考、starter、时间线和逐帧制作脚本。它原生要求先在工作区预览、确认后导出，除非用户明确免除预览。
+
+```sh
+npx skills add https://github.com/ConardLi/garden-skills/tree/2b9a89340b70f632d31c0f1c69fce94a7912423e/skills/motion-showreel -a claude-code -a codex -g -y
+```
+
 MCP 还提供 `skill://video-shotcraft/SKILL.md`，保留上游原指引、Apache-2.0 许可证和固定版本信息。在剪辑机上完整安装后，Agent 可以读取其镜头卡、demo、模板和工作台，供剪辑时参考。
 
 ```sh
@@ -77,6 +83,8 @@ npx skills add https://github.com/Vincentwei1021/video-shotcraft/tree/6700db2ba8
 Seekino 剪辑指引提供镜头运动的参考和建议。Agent 根据镜头意图、节奏与素材，在剪辑工程里自行编写速度、位移和形变代码。例如，钟形速度及其积分形成的 S 形位移，可以作为慢起、加速、落定的参考；具体时长、快段、对称性与落点由镜头代码决定，也可以复用或调整上游辅助函数。
 
 拉伸、拖影等也可按镜头需要编写，用瞬时速度和方向控制强度，再回看实际画面调整。制作与渲染在本机完成。喜欢这套镜头库，欢迎给 [video-shotcraft](https://github.com/Vincentwei1021/video-shotcraft) 点一个 Star。
+
+motion-showreel 来自 [ConardLi/garden-skills](https://github.com/ConardLi/garden-skills)，使用 MIT，MCP 分发中保留原版权、许可证和固定版本。它提供动画与合成参考，常规原片选取与裁剪沿用 Seekino 剪辑指引。觉得有帮助，欢迎给上游项目 Star。
 
 ## 接下来
 

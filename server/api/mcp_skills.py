@@ -23,6 +23,7 @@ class EditingSkill(Extension):
         packages = {
             "seekino-editing-materials": ("SKILL.md", "scripts/split_frame.py"),
             "video-shotcraft": ("SKILL.md", "LICENSE", "UPSTREAM.json"),
+            "motion-showreel": ("SKILL.md", "LICENSE", "UPSTREAM.json"),
         }
         mime_types = {".md": "text/markdown", ".py": "text/x-python", ".json": "application/json"}
         for name, filenames in packages.items():

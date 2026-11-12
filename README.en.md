@@ -565,3 +565,5 @@ These are key sources consulted during the project's research and design. The pa
 ## Acknowledgements
 
 [video-shotcraft](https://github.com/Vincentwei1021/video-shotcraft) supplies shot recipes and production guidance for editing agents. Its Seekino MCP distribution entry retains the Apache-2.0 license, pinned revision and source attribution. If you find it useful, consider starring the upstream project.
+
+[motion-showreel](https://github.com/ConardLi/garden-skills/tree/2b9a89340b70f632d31c0f1c69fce94a7912423e/skills/motion-showreel) supplies references and production scripts for code-driven animation and layer compositing. It comes from ConardLi/garden-skills under MIT; the MCP entry retains the original copyright, license and pinned revision. If it helps, consider starring the upstream project.
