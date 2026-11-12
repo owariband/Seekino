@@ -262,9 +262,55 @@ The web interface and external tools use the same service APIs. Your tools can c
 | Track analysis tasks | `GET /api/jobs/video-parse/get`, `GET /api/jobs/video-parse/events` |
 | Retrieve footage | `POST /api/search`, returning source clips, time ranges and evidence. |
 | Find footage through Agent chat | `/api/agent/conversations/*` and `/api/agent/messages/*`, with ongoing conversations and streamed answers. |
-| Let an external agent fetch clips (MCP) | Streamable HTTP at `/mcp` (local library or published Cloud series, see [connection instructions](server/README.md#cloud-mcp)), 11 tools for footage, visual references and shared series templates, plus the editing skill. |
+| Let an external agent fetch clips (MCP) | Streamable HTTP at `/mcp`. [Add the Cloud MCP](#add-the-cloud-mcp) or [add your local personal video library later](#add-your-local-personal-video-library-later); 11 tools for footage, visual references and shared series templates, plus the editing skill. |
 
 After starting the service, inspect requests and responses in the [OpenAPI docs](http://127.0.0.1:9621/api/docs). See [Server](server/README.md) for integration details. The current scope field is `tenantId`. Video time fields use integer milliseconds relative to the original video, including fields that retain legacy `*Seconds` names; follow the current contract when integrating.
+
+### Add the Cloud MCP
+
+Connect to the public library on [Seekino Cloud](https://seekino.hypn0s.cloud) without deploying Seekino or signing in on the website. These commands are for Bash/zsh and require Claude Code or Codex CLI, `curl`, and `python3`.
+
+First, get a guest read token in your terminal:
+
+```sh
+SEEKINO_CLOUD='https://seekino.hypn0s.cloud'
+SEEKINO_MCP_TOKEN=$(curl -fsS -X POST "$SEEKINO_CLOUD/api/auth/mcp-token" \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["accessToken"])') && export SEEKINO_MCP_TOKEN
+```
+
+Then choose the command for your client. Claude Code (user-level configuration):
+
+```sh
+claude mcp add --scope user --transport http seekino_cloud "$SEEKINO_CLOUD/mcp" \
+  --header 'Authorization: Bearer ${SEEKINO_MCP_TOKEN}'
+```
+
+Codex:
+
+```sh
+codex mcp add seekino_cloud --url "$SEEKINO_CLOUD/mcp" \
+  --bearer-token-env-var SEEKINO_MCP_TOKEN
+```
+
+`mcp add` saves the connection configuration. After it succeeds, run `claude` or `codex` in the same terminal to start a new session and use the public Cloud library. Ask the agent to call `list_series` to check the connection. When you change terminals or the token expires, rerun the token command above and start the client from that terminal.
+
+### Add your local personal video library later
+
+To use your own footage later, follow the [deployment instructions](#3-deployment) to start Seekino on your computer, upload videos, and let analysis finish. Then add a local connection to the same client. Use the backend API address, which defaults to `http://127.0.0.1:9621/mcp`; replace the port if your API uses a different one.
+
+Again, choose the command for your client. Claude Code:
+
+```sh
+claude mcp add --scope user --transport http seekino_local http://127.0.0.1:9621/mcp
+```
+
+Codex:
+
+```sh
+codex mcp add seekino_local --url http://127.0.0.1:9621/mcp
+```
+
+The default local deployment uses `local` authentication and needs no Cloud token. Once the service is running, reconnect or restart the agent to use your local library. Keep both connections: `seekino_cloud` for public Cloud footage and `seekino_local` for your personal local footage. Add the local address once; it is not discovered automatically.
 
 ## 3. Deployment
 

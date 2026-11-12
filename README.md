@@ -375,9 +375,55 @@ Web 界面与外部工具使用同一套服务接口：
 | 跟踪解析任务 | `GET /api/jobs/video-parse/get`、`GET /api/jobs/video-parse/events` |
 | 检索素材 | `POST /api/search`，返回片段来源、时间范围与证据 |
 | Agent 对话 | `/api/agent/conversations/*`、`/api/agent/messages/*`，支持持续对话与流式回答 |
-| 外部 Agent 取素材（MCP） | `/mcp`（Streamable HTTP，本机素材库及 Cloud 已发布的平台系列，见[连接说明](server/README.md#cloud-mcp)），提供 11 个选片、风格参考与series 共享模板工具，以及剪辑 Skill |
+| 外部 Agent 取素材（MCP） | Streamable HTTP `/mcp`，支持[添加云端 MCP](#添加云端-mcp)与[后续添加本地个人视频素材库](#后续添加本地个人视频素材库)，11 个选片、风格参考与 series 共享模板工具，附剪辑 Skill。 |
 
 启动后查看 [OpenAPI 文档](http://127.0.0.1:9621/api/docs)，接入说明见 [Server](server/README.md)。当前范围字段使用 `tenantId`；视频时间采用相对原片起点的整数毫秒，部分字段仍保留 `*Seconds` 旧名。
+
+### 添加云端 MCP
+
+连接 [Seekino Cloud](https://seekino.hypn0s.cloud) 的公开素材库，无需先部署 Seekino 或网页登录。下面的命令适用于 Bash/zsh，需要已安装 Claude Code 或 Codex CLI、`curl` 和 `python3`。
+
+先在终端获取游客只读凭据：
+
+```sh
+SEEKINO_CLOUD='https://seekino.hypn0s.cloud'
+SEEKINO_MCP_TOKEN=$(curl -fsS -X POST "$SEEKINO_CLOUD/api/auth/mcp-token" \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["accessToken"])') && export SEEKINO_MCP_TOKEN
+```
+
+然后按所用客户端二选一。Claude Code（保存到用户配置）：
+
+```sh
+claude mcp add --scope user --transport http seekino_cloud "$SEEKINO_CLOUD/mcp" \
+  --header 'Authorization: Bearer ${SEEKINO_MCP_TOKEN}'
+```
+
+Codex：
+
+```sh
+codex mcp add seekino_cloud --url "$SEEKINO_CLOUD/mcp" \
+  --bearer-token-env-var SEEKINO_MCP_TOKEN
+```
+
+`mcp add` 会保存连接配置。执行成功后，在同一个终端运行 `claude` 或 `codex` 开启新会话，即可使用云端公开素材库；让 Agent 调用 `list_series` 可以确认连接。换终端或凭据过期后，重新执行上面的取凭据命令，再从该终端启动客户端。
+
+### 后续添加本地个人视频素材库
+
+以后需要使用自己的视频时，先按[部署说明](#3-部署)在本机启动 Seekino，上传视频并完成解析，再给同一客户端添加本地连接。这里填写后端 API 地址，默认是 `http://127.0.0.1:9621/mcp`；端口不同时换成实际 API 端口。
+
+同样按所用客户端二选一。Claude Code：
+
+```sh
+claude mcp add --scope user --transport http seekino_local http://127.0.0.1:9621/mcp
+```
+
+Codex：
+
+```sh
+codex mcp add seekino_local --url http://127.0.0.1:9621/mcp
+```
+
+本地默认使用 `local` 认证模式，无需云端凭据。服务运行后，重新连接或重启 Agent 即可使用本机素材库。两个连接可以同时保留：`seekino_cloud` 查线上公开素材，`seekino_local` 查本机个人素材。本地地址需要添加一次，目前不会自动发现。
 
 ## 进阶与开发
 
