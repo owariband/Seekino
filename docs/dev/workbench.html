@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-12T17:06:01+08:00",
+ "updatedAt": "2026-11-12T17:17:21+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 48,
+ "revision": 49,
  "categories": [
   {
    "id": "parse",
@@ -5482,14 +5482,14 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
   },
   {
    "id": "WEB-PALETTE-01",
-   "title": "青瓷浅色保留，夜间采用已选更深候选",
+   "title": "已选夜间配色与 Hero 过渡共用背景",
    "category": "library",
    "type": "task",
    "status": "verifying",
    "priority": "P1",
-   "description": "恢复浅色后，夜间按用户选定的六项候选收深；保留字体、布局、动效及其他颜色。",
-   "next": "在 dev local review 更深夜间候选；确认后同步仍为草稿的 main 发布 #128。",
-   "verification": "构建、12 个日夜/桌面/窄屏三页色值及现有主题渐变通过。Opus 5.5 已收到两张匿名实际截图并返回观察；主观舒适度待用户确认。",
+   "description": "保持已选六项夜间值；首页和系列页的底色、遮罩、渐变与画布共用夜间颜色来源。",
+   "next": "在 5173 review 两页夜间衔接；确认后同步仍为草稿的 main 发布 #128。",
+   "verification": "构建和现有主题回归通过。两页/两宽度/日夜共 8 状态：4 个夜间无图探针与画布逐像素一致，白天前后最大通道差为 1/255。主观舒适度待 review。",
    "updatedAt": "2026-11-12",
    "tags": [
     "UI"
@@ -5498,11 +5498,11 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
     "WATCH-THEME-01",
     "MOD-LIBRARY"
    ],
-   "branch": "fix/deeper-night-palette",
+   "branch": "fix/unify-hero-background",
    "links": [
     {
      "label": "设计与验收",
-     "url": "https://github.com/owariband/Seekino/blob/fix/deeper-night-palette/docs/design/03-product-reassessment/restore-celadon-palette-trd.md",
+     "url": "https://github.com/owariband/Seekino/blob/fix/unify-hero-background/docs/design/03-product-reassessment/restore-celadon-palette-trd.md",
      "kind": "trd"
     },
     {
@@ -5518,6 +5518,11 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
     {
      "label": "候选 PR #131",
      "url": "https://github.com/owariband/Seekino/pull/131",
+     "kind": "pr"
+    },
+    {
+     "label": "Hero 修复 #132",
+     "url": "https://github.com/owariband/Seekino/pull/132",
      "kind": "pr"
     }
    ]

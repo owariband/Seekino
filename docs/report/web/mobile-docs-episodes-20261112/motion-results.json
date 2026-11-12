@@ -1,10 +1,10 @@
 {
-  "integratedDev": "304e5abdc4d4aaa5ddec6ebf88a3f427c0655f90",
-  "startTime": "2026-11-12T09:13:59.856Z",
-  "runDurationMs": 5511.0560000000005,
+  "integratedDev": "55d81fb346e5d75a94a1c3f53a7347cb0e30f905",
+  "startTime": "2026-11-12T09:19:00.155Z",
+  "runDurationMs": 6132.362,
   "stats": {
-    "startTime": "2026-11-12T09:13:59.856Z",
-    "duration": 5511.0560000000005,
+    "startTime": "2026-11-12T09:19:00.155Z",
+    "duration": 6132.362,
     "expected": 12,
     "skipped": 0,
     "unexpected": 0,
@@ -32,63 +32,63 @@
     {
       "title": "shows the docs entry as an icon-only 44px target at 320px",
       "status": "passed",
-      "durationMs": 1601
+      "durationMs": 1774
     },
     {
       "title": "shows the docs entry as an icon-only 44px target at 390px",
       "status": "passed",
-      "durationMs": 1660
+      "durationMs": 1820
     },
     {
       "title": "lays out 13 episodes as compact full-row links at 320px",
       "status": "passed",
-      "durationMs": 929
+      "durationMs": 1415
     },
     {
       "title": "lays out 13 episodes as compact full-row links at 390px",
       "status": "passed",
-      "durationMs": 937
+      "durationMs": 1344
     },
     {
       "title": "lays out 13 episodes as compact full-row links at 760px",
       "status": "passed",
-      "durationMs": 942
+      "durationMs": 1467
     },
     {
       "title": "keeps the original four-column episode grid at 1280px",
       "status": "passed",
-      "durationMs": 396
+      "durationMs": 873
     },
     {
       "title": "keeps focus in the drawer and preserves the draft when dismissed",
       "status": "passed",
-      "durationMs": 2669
+      "durationMs": 2583
     },
     {
       "title": "slides the mobile drawer in and out and keeps its content until the close transition finishes",
       "status": "passed",
-      "durationMs": 1106
+      "durationMs": 955
     },
     {
       "title": "closes the drawer with no motion when reduced motion is requested",
       "status": "passed",
-      "durationMs": 770
+      "durationMs": 859
     },
     {
       "title": "keeps watch as the home page and navigates between watch and the assistant",
       "status": "passed",
-      "durationMs": 1951
+      "durationMs": 2184
     },
     {
       "title": "fades the home artwork with the page and respects reduced motion",
       "status": "passed",
-      "durationMs": 552
+      "durationMs": 793
     },
     {
       "title": "opens and switches drawer history without creating a blank conversation or losing the draft",
       "status": "passed",
-      "durationMs": 2222
+      "durationMs": 2335
     }
   ],
-  "rawReport": "outputs/verification/mobile-docs-episodes-20261112/motion-integrated/results.json"
+  "rawReport": "outputs/verification/mobile-docs-episodes-20261112/motion-hero-integrated/results.json"
 }

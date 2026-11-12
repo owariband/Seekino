@@ -30,6 +30,8 @@
 | [2026-11-12：dialog瞬时关闭并卸载内容，手机导航缺少开合过渡](#devlog-mobile-drawer-motion-20261112) | MOBILE-UI-01；PR #129第二轮 |
 | [2026-11-12：手机隐藏文档并放大全宽选集，初次引导与连续浏览困难](#devlog-mobile-docs-episodes-20261112) | MOBILE-UI-01；PR #129 |
 
+
+| [2026-11-12：Hero 独立绿黑蒙版使夜间过渡脱离页面画布](#devlog-shared-hero-20261112) | WEB-PALETTE-01；PR #132 |
 | [2026-11-12：夜间灰绿黑位偏浅，选定色块需要接入实际页面](#devlog-deeper-night-20261112) | WEB-PALETTE-01；PR #131 |
 | [2026-11-12 · 网络用语按字面相似度查找时，红吉他排在人物情绪前](#devlog-watch-smart-find-20261112) | WATCH-FIND-03 |
 | [2026-11-12 · 片内查找只匹配字幕，错过没有台词的出镜](#devlog-watch-visual-find-20261112) | WATCH-FIND-02 |
@@ -245,6 +247,26 @@
 | 设计咨询费用 | 不适用 | OpenRouter报告$0.42644，两次共66,938 tokens | 首次输出被截断，第二次补完整mini patch；不是产品运行成本 |
 
 局部浏览器证据支持采用紧凑行与首屏文档入口；缩略图变小是获取密度的明确取舍，真实素材上的主观舒适程度仍待评审。设计、源码指导、截图与原始尺寸见[报告](../report/web/mobile-docs-episodes-20261112/README.md)、[TRD](../design/03-product-reassessment/mobile-docs-episodes-trd.md)；当前执行状态见[工作台](workbench.html) `MOBILE-UI-01`。
+
+<a id="devlog-shared-hero-20261112"></a>
+## 2026-11-12：Hero 独立绿黑蒙版使夜间过渡脱离页面画布
+
+### 问题与现状
+
+更深夜间候选已接入，但首页大图底部仍有绿色过渡。原实现只同步了最底部终点，Hero 固定底色 `#10251f` 和 `rgb(5 16 13 / ...)` 遮罩没有跟随 `#0d1110` 画布；系列页有同一问题。两页在两种宽度下的基线均确认底色不等。
+
+### 方案候选
+
+共享一个 `--canvas-night`，由 canvas 和三个 Hero 颜色角色消费。页面模块保留各自透明度与几何布局，只消费共享颜色；系列页去掉重复日间覆盖。维持已选六项色值与原图色彩，白天保留原来的深色承托。不增加业务组件或配置。
+
+### 方案验证
+
+生产构建和既有主题渐变 / 减弱动态效果用例通过。真实首页和系列页在 390px / 1440px、日夜共 8 状态采图；独立浏览器隐藏封面与内容做 UI 蒙版探针，验证夜间所有像素都与画布相同，且白天未出现可见变化。探针不进入产品。命令、JSON 和图片在 `outputs/verification/hero-background-20261112/`，设计沿用[主 TRD](../design/03-product-reassessment/restore-celadon-palette-trd.md)。
+
+### 指标对比
+
+本次看衔接与回归，不涉及模型 token 或媒体处理成本。夜间 Hero 底色由 `#10251f` 统一为画布 `#0d1110`；4 个夜间探针对画布的全图最大通道差均为 0。4 个白天探针前后最大通道差为 1/255，符合事先设定的量化容差。3 个 CSS 统一颜色来源，媒体、布局与交互未改；[PR #132](https://github.com/owariband/Seekino/pull/132) 接入 dev local，主观 review 与 main 发布继续由[工作台](workbench.html)跟踪。
+
 
 <a id="devlog-deeper-night-20261112"></a>
 ## 2026-11-12：夜间灰绿黑位偏浅，选定色块需要接入实际页面
