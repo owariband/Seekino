@@ -23,13 +23,17 @@ Author camera motion in the editing project's code, using the shot's intent, rhy
 
 A bell-shaped velocity can give a pan or push a slow departure, fast middle and settled arrival. Integrating that velocity produces an S-shaped position curve; a sigmoid or suitable easing curve can give a related effect. Shape the duration, peak, symmetry and landing in the shot code to suit the composition. When the shot ends in a hold, check that motion settles into it. A cut or deliberately stepped movement can call for different timing.
 
-Stretch, skew, smear and blur can follow instantaneous speed and direction when they help express the move. Scale their intensity to the artwork and subject size, and inspect the arrival as well as the fast section. Position easing controls timing; geometric changes require their own transforms or filters. video-shotcraft supplies velocityAt and shot recipes that can be reused or adapted in local code. Watch the result and adjust it for readability and continuity.
+Stretch, skew, smear and blur can follow instantaneous speed and direction when they help express the move. Scale their intensity to the artwork and subject size, and inspect the arrival as well as the fast section. Position easing controls timing; geometric changes require their own transforms or filters. motion-showreel and video-shotcraft include motion helpers and examples that can be reused or adapted in local code. Watch the result and adjust it for readability and continuity.
 
 Keep source observations and measured trajectories as evidence of the reference shot. Record creative changes separately when saving a reusable template and feedback.
 
-## Use video-shotcraft
+## Consult local production Skills
 
-Read `skill://video-shotcraft/SKILL.md` for the pinned upstream guide and complete local installation command. Use it for shot cards, Remotion composition and velocity-linked motion treatment after retrieving source footage from Seekino. The local package supplies its referenced cards, demos and rendering helpers. Seekino's template writes follow the selected series permissions.
+Read `skill://motion-showreel/SKILL.md` when the project needs code-driven graphics, type, UI animation or supported subject-layer compositing. Its complete local package supplies style references, starter assets, timeline and frame-rendering scripts. It has its own scope and preview-before-export workflow, including the condition for an explicit user waiver; read those instructions for the current task.
+
+Read `skill://video-shotcraft/SKILL.md` for shot cards, Remotion composition and velocity-linked motion treatment. Its complete local package supplies the referenced cards, demos and rendering helpers.
+
+Both entries document pinned local installation. Consult the production references that fit the film, and author the motion in the local project. This Seekino guide covers source selection, verification, local layers and series-shared experience. Template writes follow the selected series permissions.
 
 ## Prepare a cutout when the shot calls for it
 

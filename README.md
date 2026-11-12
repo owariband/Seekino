@@ -441,3 +441,5 @@ Seekino/
 ## 致谢
 
 [video-shotcraft](https://github.com/Vincentwei1021/video-shotcraft) 为剪辑 Agent 提供镜头配方和制作方法。Seekino 的 MCP 分发入口保留其 Apache-2.0 许可证、固定版本和来源说明。觉得有帮助，欢迎给上游项目点一个 Star。
+
+[motion-showreel](https://github.com/ConardLi/garden-skills/tree/2b9a89340b70f632d31c0f1c69fce94a7912423e/skills/motion-showreel) 为代码动画与分层合成提供参考和制作脚本，来自 ConardLi/garden-skills，使用 MIT。MCP 分发入口保留原版权、许可证和固定版本。觉得有帮助，欢迎给上游项目点一个 Star。

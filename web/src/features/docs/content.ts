@@ -14,6 +14,7 @@ const cloudToken = [
   'SEEKINO_MCP_TOKEN=$(curl -fsS -X POST "$SEEKINO_CLOUD/api/auth/mcp-token" | python3 -c \'import json,sys; print(json.load(sys.stdin)["accessToken"])\') && export SEEKINO_MCP_TOKEN',
 ].join("\n");
 const installEditingSkill = "npx skills add https://github.com/owariband/Seekino/tree/main/server/skills/seekino-editing-materials -a claude-code -a codex -g -y";
+const installMotionShowreel = "npx skills add https://github.com/ConardLi/garden-skills/tree/2b9a89340b70f632d31c0f1c69fce94a7912423e/skills/motion-showreel -a claude-code -a codex -g -y";
 const installShotcraft = "npx skills add https://github.com/Vincentwei1021/video-shotcraft/tree/6700db2ba80572ebc777b99d72049679fed9840c -a claude-code -a codex -g -y";
 const claudeCloud = `claude mcp add --transport http seekino_cloud "$SEEKINO_CLOUD/mcp" --header 'Authorization: Bearer \${SEEKINO_MCP_TOKEN}'`;
 const codexCloud = 'codex mcp add seekino_cloud --url "$SEEKINO_CLOUD/mcp" --bearer-token-env-var SEEKINO_MCP_TOKEN';
@@ -136,6 +137,7 @@ const zh: DocsContent = {
           { title: "Codex 接入 Cloud", body: "使用 Codex 时运行，然后从这个终端打开 Codex。", code: codexCloud },
           { title: "更新 series 的共享模板", body: "所有 series 查看者共享模板、版本和反馈。编辑者可登录后从账号菜单复制剪辑写入凭据，在有编辑权限的 series 中保存代码与经验。" },
           { title: "安装剪辑 Skill", body: "该命令给两种客户端安装选片、风格借鉴、分层与模板写回指引。也可在 MCP 中通过 resources/read 读取 skill://seekino-editing-materials/SKILL.md。", code: installEditingSkill },
+          { title: "安装 motion-showreel", body: "MCP 可读取 skill://motion-showreel/SKILL.md。需要代码动画或分层合成时，可安装固定版本的完整参考、starter 和制作脚本；上游流程要求先预览、确认后导出，除非用户明确免除预览。", code: installMotionShowreel },
           { title: "安装 video-shotcraft 镜头库", body: "MCP 可读取 skill://video-shotcraft/SKILL.md。此命令把固定版本的完整镜头卡、demo、模板和工作台装到剪辑机，适用于 Claude Code 与 Codex。", code: installShotcraft },
           { title: "同时使用本机素材", body: "在宿主机启动本地 API，再为正在使用的客户端添加第二个服务。", code: "claude mcp add --transport http seekino_local http://127.0.0.1:9621/mcp\n# 或\ncodex mcp add seekino_local --url http://127.0.0.1:9621/mcp" },
           { title: "像交代同事一样说", body: "例如：“在 Seekino 里找出 Anon 咬牙切齿的镜头，核对来源后把片段存到 clips/。”" },
@@ -266,6 +268,7 @@ const en: DocsContent = {
         { kind: "steps", items: [
           { title: "Update shared series templates", body: "All series viewers share its templates, versions and feedback. Editors can copy an editing write token from the account menu and save code in a series they can edit." },
           { title: "Install the editing skill", body: "Install the guide for both clients, or read skill://seekino-editing-materials/SKILL.md with resources/read on the MCP connection.", code: installEditingSkill },
+          { title: "Install motion-showreel", body: "Read skill://motion-showreel/SKILL.md through MCP. For code-driven animation or layer compositing, install its pinned references, starter and production scripts. The upstream workflow previews before export unless the user explicitly waives preview.", code: installMotionShowreel },
           { title: "Install video-shotcraft", body: "Read skill://video-shotcraft/SKILL.md through MCP. This command installs the pinned complete upstream shot cards, demos, template and workbench on the editing computer for both clients.", code: installShotcraft },
         ] },
         { kind: "h", text: "Footage, visual references and shared series templates" },

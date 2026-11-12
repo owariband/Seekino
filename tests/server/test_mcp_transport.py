@@ -177,10 +177,12 @@ def test_modern_skills_manifest_and_legacy_resources_serve_identical_packaged_by
 
         assert capability in modern("server/discover")["result"]["capabilities"]["extensions"]
         entries = modern("skills/list")["result"]["skills"]
-        assert {entry["frontmatter"]["name"] for entry in entries} == {"seekino-editing-materials", "video-shotcraft"}
+        assert {entry["frontmatter"]["name"] for entry in entries} == {
+            "seekino-editing-materials", "video-shotcraft", "motion-showreel"}
+        assert len(entries) == 3
         resources = {item["uri"] for item in _rpc(client, "resources/list").json()["result"]["resources"]}
         assert {item["uri"] for entry in entries for item in entry["resources"]} == resources
-        assert len(resources) == 5
+        assert len(resources) == 8
         for entry in entries:
             name = entry["frontmatter"]["name"]
             assert entry["uri"] == f"skill://{name}/SKILL.md"
@@ -194,20 +196,24 @@ def test_modern_skills_manifest_and_legacy_resources_serve_identical_packaged_by
         assert modern("skills/get", uri="skill://video-shotcraft/absent")["error"]["code"] == -32602
 
 
-def test_upstream_skill_keeps_its_pinned_guide_and_license():
+@pytest.mark.parametrize("name,license_name,repository", [
+    ("video-shotcraft", "Apache-2.0", "https://github.com/Vincentwei1021/video-shotcraft"),
+    ("motion-showreel", "MIT", "https://github.com/ConardLi/garden-skills"),
+])
+def test_upstream_skill_keeps_its_pinned_guide_and_license(name, license_name, repository):
     import hashlib
     import json
     import re
     from pathlib import Path
 
-    root = Path(__file__).resolve().parents[2] / "server/skills/video-shotcraft"
+    root = Path(__file__).resolve().parents[2] / "server/skills" / name
     metadata = json.loads((root / "UPSTREAM.json").read_text())
     guide = (root / "SKILL.md").read_text()
     original = re.sub(r"\n<!-- Seekino integration start -->.*?<!-- Seekino integration end -->\n", "", guide, flags=re.S)
     assert hashlib.sha256(original.encode()).hexdigest() == metadata["skill_sha256"]
     assert hashlib.sha256((root / "LICENSE").read_bytes()).hexdigest() == metadata["license_sha256"]
-    assert metadata["license"] == "Apache-2.0"
-    assert metadata["repository"] == "https://github.com/Vincentwei1021/video-shotcraft"
+    assert metadata["license"] == license_name
+    assert metadata["repository"] == repository
     assert re.fullmatch(r"[0-9a-f]{40}", metadata["commit"])
     assert "/tree/" + metadata["commit"] in metadata["complete_install_command"]
 
