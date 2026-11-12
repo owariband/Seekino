@@ -193,6 +193,8 @@ def create_mcp_app(service: McpRetrievalService, *, auth_mode: str, auth: AuthSe
             "get_style_card 给出整片风格卡和每个例证的 evidence_ref，再用 read_evidence 核对例证。"
             "索引命中只提供线索；未记录的画面细节要看原片，当前上下文和媒体入口由 read_evidence 返回。"
             "动作或表情变化承担情节时，检查它的准备、发生与收尾，再确定取片区间。"
+            "剧情剪辑按剧本所需的神情与动作变化比较候选，保留人物一段时间内的连续表演。"
+            "需要换景或合成时，在本机制作时间对齐的动态人物层，检查是否始终保留同一人物、边缘是否完整、前后动作是否衔接。"
             "视频时间都是整数毫秒，区间包含 start_ms、不包含 end_ms。"
             "将自行确定的 start_ms 和 end_ms 交给 read_evidence，及时下载 media.clip_url。"
             "可直接使用连续原片，也可在本机分层后保留其运动；有意停住某个节拍时可以使用静帧。"
@@ -291,6 +293,7 @@ def create_mcp_app(service: McpRetrievalService, *, auth_mode: str, auth: AuthSe
         """按自然语言、对白或动作寻找原片候选。top_k 计算不同 Chunk 的数量，一个 Chunk 可有多个事件。
         省略 series_ids 时搜索可访问的素材库。把返回的 evidence_ref 交给 read_evidence，核对上下文并取片；
         用 next_cursor 继续查看排序结果，查全系列候选则用 browse_events。
+        剧情表演先按神情与动作变化寻找候选，再回看整段，按剧本判断节奏与衔接。
         找运镜时描述方向、速度变化或露出了什么；命中的 SCENE 可能带有 camera_ref。时间单位为毫秒。
         """
         return await invoke(

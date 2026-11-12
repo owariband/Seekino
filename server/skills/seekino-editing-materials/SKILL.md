@@ -11,9 +11,13 @@ description: Find source performances and editing references with Seekino MCP, r
 
 ## Choose footage
 
+按剧本选人物表演时，先写清这一刻发生了什么、人物的神情与动作怎样变化。例如剧本需要“听见指责后愣住，再咬牙转头”，就围绕这些可观察的变化分别检索，比较多个候选。回看整段时，判断情绪起点、变化过程和收尾是否接得上剧情，也检查视线、朝向、姿态与相邻镜头的衔接；仅有同一种情绪标签还不足以判断。
+
 1. 用 `list_series` 查看已连接的素材库。本机和 Cloud 连接可以同时使用。每个候选都记录所属连接、series、视频和原片毫秒区间；`evidence_ref` 回到签发它的连接解析。
 2. 用 `retrieve` 找对白、动作或表情变化。搜索时结合人物名字的不同写法和可观察的动作。例如，为 MyGO 的爱音找反应镜头，可以搜索千早愛音、咬牙、举拳，再比较多个候选。需要查全已发布的出镜事件时，用 `browse_events`，采用结果中记录的人名，跟随 `next_cursor` 直到 null；省略人名筛选，可以看到未标注人物的事件。
 3. 用 `read_evidence` 核对候选及其前后文。指定源视频的 `start_ms` 和 `end_ms` 后再次调用，起点包含、终点不包含；及时下载 `media.clip_url`，检查动作的准备、发生和收尾，再确定最终剪辑区间。Cloud 每次最多取 60 秒。表演依靠动作或原声成立时，保留它们；有意停住某个节拍时，可以使用静帧。
+
+选中后，保留人物在这段时间内的连续动作、神情变化和自然停顿，再按剧本确定入点、出点。没有合适片段时，说明具体哪里不匹配，继续找候选或调整镜头安排。
 
 ## Borrow a visual technique
 
@@ -43,7 +47,11 @@ description: Find source performances and editing references with Seekino MCP, r
 
 ## Prepare a cutout when the shot calls for it
 
-主体在运动时，从原片片段开始处理；连续逐帧抠图需要检查闪烁、边缘丢失和漂移。制作定格或图形插入时，随附的 `scripts/split_frame.py` 在 CPU 上处理，并保留原画布。按需在本机 Python 3.12 环境安装依赖（`numpy`、`pillow`、`onnxruntime`），下载一次[固定版本的 anime-seg ONNX 权重](https://huggingface.co/skytnt/anime-seg/resolve/a0a563c41338cbe0d23dfb4bfc3e243c518e5768/isnetis.onnx)。脚本会校验文件的 SHA-256。
+剧情需要换背景或合成时，可以把选定人物在这段区间内的连续表演抠出来，保留神情、转头、手势和身体动作。在本机准备透明人物视频，或与原片逐帧对应的蒙版序列。保持统一画布，或记录裁剪偏移，保住人物本身的运动；人物层、蒙版和保留的原声按同一时间轴对齐，并记录原片区间与工程时间的对应关系。
+
+连续回看整段，检查是否始终保留同一个人物，脸部、头发、手部和遮挡是否处理完整，有无闪烁、边缘丢失或漂移。合成后再对照剧本检查神情变化、动作节奏与前后镜头；移动、缩放或变速后也要复看。当前随附脚本只处理单帧，连续人物分离需在本机另行编写或调用相应工具，并检查整段结果，不能用单帧验收代替。
+
+制作定格或图形插入时，随附的 `scripts/split_frame.py` 在 CPU 上处理，并保留原画布。按需在本机 Python 3.12 环境安装依赖（`numpy`、`pillow`、`onnxruntime`），下载一次[固定版本的 anime-seg ONNX 权重](https://huggingface.co/skytnt/anime-seg/resolve/a0a563c41338cbe0d23dfb4bfc3e243c518e5768/isnetis.onnx)。脚本会校验文件的 SHA-256。
 
 ```sh
 python scripts/split_frame.py frame.png --weights isnetis.onnx --output layers
