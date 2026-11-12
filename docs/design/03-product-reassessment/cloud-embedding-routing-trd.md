@@ -32,4 +32,4 @@ GPU 关机。云机单槽 b12283 对 4129 token 合成文档返回 1024 维，67
 
 公网 MyGO 原题进入 RETRIEVING，并已完成 3 次 Qwen 编码。19:57 可用内存仅余 50,000 KiB，swap 剩 12 KiB。21:31:06 内核因整机 OOM 杀掉 API 的 Python，匿名 RSS 为 4,938,604 KiB，API 没有内存上限；Qwen 容器未重启。21:38 公网首页返回 200，SSH 恢复。已把这条测试消息从处理中标记为服务中断。课程题等待受控重放。[检索内存修复 PR #116](https://github.com/owariband/Seekino/pull/116) · [工作台](../../dev/workbench.html)
 
-2026-11-12 从 CPU 宿主机按 Compose 服务名 `exec -T embedding` 调用容器内 `POST /v1/embeddings`，返回 HTTP 200 和 1024 维。独立网络上线后，需从宿主机和 API 各发一次真实查询，并在替换 API 前后核对 Qwen 的容器 ID 和启动时间。
+2026-11-12 00:31（UTC+8），独立 Qwen 服务在 Cloud 版本 `720a2cd8` 上生效。重建 API 前后，宿主机向量请求分别在 46.3 和 45.6 毫秒返回 1024 维。两次请求命中同一 Qwen 容器，其 ID 和启动时间一致。新 API 通过 `http://embedding:18845` 调用生产配置的 `embed_query`，264.7 毫秒返回 1024 维。另开 SSH 会话，从宿主机回环连续发三次短查询，均返回 HTTP 200 和 1024 维，耗时 36.8–74.8 毫秒。公网 `/healthz` 返回 200。本次覆盖 API 重建，未重启整台 CPU 主机。
