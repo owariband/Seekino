@@ -52,6 +52,6 @@ Chrome 隔离 fixture 在 390 × 1000 与 1440 × 1000 视口，分别验证白�
 
 # 6. 结果验收与闭环
 
-已恢复并通过本地构建、主题回归与日夜／桌面／窄屏精确色值验证。运行代码仅修改 4 个 CSS，未更改组件逻辑、接口、持久数据或依赖。独立预览在 `http://127.0.0.1:4190`；现有 5173 服务尚未替换，[main 发布 PR #128](https://github.com/owariband/Seekino/pull/128) 已准备，仅含同样 4 个运行 CSS；main 的资产路径注释和 `.gitignore` 保持原样。发布分支从 `49ea0590` 建立，按其锁文件独立安装后构建通过，本地发布树检查与 GitHub `release-files` 均通过。实体手机、Safari 和远端部署尚未验证。
+已恢复并通过本地构建、主题回归与日夜／桌面／窄屏精确色值验证。运行代码仅修改 4 个 CSS，未更改组件逻辑、接口、持久数据或依赖。独立预览在 `http://127.0.0.1:4190`；现有 5173 服务尚未替换，[main 发布 PR #128](https://github.com/owariband/Seekino/pull/128) 已准备，仅含同样 4 个运行 CSS；main 的资产路径注释和 `.gitignore` 保持原样。发布分支从 `49ea0590` 建立，按其锁文件独立安装后构建通过，本地发布树检查与 GitHub `release-files` 均通过。发布构建另在 4191 端口重复通过同一组 4 项 Chrome 检查（16 个页面状态），证据在验证目录的 `release/` 下。实体手机、Safari 和远端部署尚未验证。
 
 当前执行状态统一见 [管理工作台](../../dev/workbench.html)，问题与过程分别记入 [problems](../../dev/problems.md) 和 [devlog](../../dev/devlog.md)，不在本 TRD 维护任务看板。
