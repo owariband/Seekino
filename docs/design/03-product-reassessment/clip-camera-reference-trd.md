@@ -24,7 +24,7 @@
 
 普通视觉解析也要求把显著的镜头变化直接写进中文场景描述，并在 Refine 保留。自动或显式选为剪辑素材时还有结构化观察。Web 搜索与片段读取 API 的 `allTimeEvents[].cameraDescription` 使用这条观察生成完整的中文运镜描述。普通片段详情按当前播放范围显示相应条目，可同时看到来源时间、起幅、落幅与运动节奏。
 
-2026-11-12 增加本机创作参数 `velocity_curve: {kind: "gaussian", sigma: 0.18}`。它对有限时间内的高斯形速度做积分、边界减基线与归一化，提供精确起终位置和两端静止。`gaussianMotionAt` 同时返回位移进度及每毫秒的瞬时速度，供剪辑端按速度联动拉伸或拖影。参数由编辑明确选择，原片观测与实测采样继续作为来源证据。SDK Skill 资源直接提供同一份可移植模块，完整用法记在[剪辑主设计](editing-skill-style-reference-trd.md#third-party-skill-and-authored-camera-timing-added-on-november-12)。数值回归对照 Python math.erf，浏览器对照页检查播放和宽度调节。生产部署仍待主 PR review。
+2026-11-12 的运动参考补充放在剪辑 Skill：Agent 根据镜头意图、节奏与素材，在本机工程中自行编写速度、位移和形变代码。钟形速度、S 形位移以及按速度联动拉伸或拖影作为参考和建议。先前增加的固定曲线参数与辅助函数原型已撤回，原有镜头模块、观测与实测采样合同保持不变。具体取舍记在[剪辑主设计](editing-skill-style-reference-trd.md#third-party-skill-and-authored-camera-timing-added-on-november-12)。生产部署仍待主 PR review。
 
 # 4. 对照实验与结果分析
 

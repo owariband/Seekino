@@ -180,7 +180,7 @@ def test_modern_skills_manifest_and_legacy_resources_serve_identical_packaged_by
         assert {entry["frontmatter"]["name"] for entry in entries} == {"seekino-editing-materials", "video-shotcraft"}
         resources = {item["uri"] for item in _rpc(client, "resources/list").json()["result"]["resources"]}
         assert {item["uri"] for entry in entries for item in entry["resources"]} == resources
-        assert len(resources) == 6
+        assert len(resources) == 5
         for entry in entries:
             name = entry["frontmatter"]["name"]
             assert entry["uri"] == f"skill://{name}/SKILL.md"
@@ -189,9 +189,7 @@ def test_modern_skills_manifest_and_legacy_resources_serve_identical_packaged_by
                 contents, = _rpc(client, "resources/read", {"uri": item["uri"]}).json()["result"]["contents"]
                 raw = contents["text"].encode()
                 filename = item["uri"].removeprefix(f"skill://{name}/")
-                source = (project / "engine/parsev2/viewport-v1.mjs" if filename == "camera/viewport-v1.mjs"
-                          else project / "server/skills" / name / filename)
-                assert raw == source.read_bytes()
+                assert raw == (project / "server/skills" / name / filename).read_bytes()
                 assert item["size"] == len(raw) and item["digest"] == "sha256:" + hashlib.sha256(raw).hexdigest()
         assert modern("skills/get", uri="skill://video-shotcraft/absent")["error"]["code"] == -32602
 

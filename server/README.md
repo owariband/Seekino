@@ -527,7 +527,7 @@ npx skills add https://github.com/owariband/Seekino/tree/main/server/skills/seek
 从旧版升级时，先停止 API 写入并备份数据库，运行 `uv run python -m scripts.migrate_edit_template_series` 预览，再用 `--apply --writers-stopped` 应用，随后按原方式执行 `init-db`。API 镜像也包含同一脚本，可在容器中用 `python -m scripts.migrate_edit_template_series` 执行预览和升级。迁移给现有模板表增加 `series_id` 和索引。历史未绑定模板会保留，管理者须经确认后将其 `series_id` 与 `tenant_id` 显式绑定到目标 series；绑定前不会出现在共享读取中。模板引用的原片不能作为自动公开旧代码的依据。
 
 
-### video-shotcraft 与镜头速度曲线
+### video-shotcraft 与镜头运动参考
 
 MCP 同时分发 `skill://video-shotcraft/SKILL.md`，附上游许可证和固定版本信息。该入口发布指引；在剪辑机上完整安装后，Agent 才能按相对路径读取其镜头卡、demo、模板和工作台。
 
@@ -535,6 +535,6 @@ MCP 同时分发 `skill://video-shotcraft/SKILL.md`，附上游许可证和固�
 npx skills add https://github.com/Vincentwei1021/video-shotcraft/tree/6700db2ba80572ebc777b99d72049679fed9840c -a claude-code -a codex -g -y
 ```
 
-通过 `resources/read` 读取 `skill://seekino-editing-materials/camera/viewport-v1.mjs`，可以取得同一份可移植镜头模块。新创作的平移或推拉可设置 `velocity_curve: {kind: "gaussian", sigma: 0.18}`，调整中段速度的集中程度。`gaussianMotionAt` 返回位移进度和每毫秒的瞬时速度，供本机效果联动。源镜头仍携带原观测或采样轨迹，创作时显式选择此参数会覆盖新构图采用的进度曲线。
+Skill 提供镜头运动的参考和建议，Agent 根据镜头意图、节奏与素材，在剪辑工程里自行编写速度、位移及形变代码。钟形速度与积分得到的 S 形位移可以作为平移或推拉的参考；拉伸、拖影等可按瞬时速度和方向联动。Agent 可以复用或调整上游辅助函数，并回看实际效果。原片观测与实测轨迹继续用于核对来源。
 
 [video-shotcraft](https://github.com/Vincentwei1021/video-shotcraft) 的代码与文档使用 Apache-2.0，MCP 分发中保留许可证、来源与修改说明。喜欢这套镜头库，欢迎给上游项目 Star。完整包中的媒体和渲染依赖按上游各自的授权说明使用。
