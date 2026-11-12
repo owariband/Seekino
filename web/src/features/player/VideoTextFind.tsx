@@ -59,7 +59,13 @@ export function VideoTextFind({ videoId, tenantId, inputRef, canSeek, onSeek, on
       startMs: cue.startMs, endMs: cue.endMs, source: cue.source, text,
     }));
     const exact = [...literal, ...visual.matches.filter(match => match.source === "visual")];
-    return [...exact.sort((a, b) => a.startMs - b.startMs), ...visual.matches.filter(match => match.source === "related")];
+    const ordered = [...exact.sort((a, b) => a.startMs - b.startMs), ...visual.matches.filter(match => match.source === "related")];
+    return ordered.map(match => ({
+      ...match,
+      // A shot can begin during the preceding cut. Preview its interior; keep utterances at their onset.
+      positionMs: match.source === "visual" || match.source === "related"
+        ? match.startMs + Math.floor((match.endMs - match.startMs) / 2) : match.startMs,
+    }));
   }, [index, query, visual.matches]);
   const active = matches.findIndex(match => matchKey(match) === activeKey);
   const sourceLabels = { dialogue: t("台词"), screen_text: t("画面文字"), visual: t("画面"), related: t("相关画面") };
@@ -77,7 +83,7 @@ export function VideoTextFind({ videoId, tenantId, inputRef, canSeek, onSeek, on
     const next = (position + matches.length) % matches.length;
     const match = matches[next]!;
     setActiveKey(matchKey(match));
-    onSeek(match.startMs);
+    onSeek(match.positionMs);
   }
 
   const previous = () => select(active <= 0 ? matches.length - 1 : active - 1);
@@ -132,7 +138,7 @@ export function VideoTextFind({ videoId, tenantId, inputRef, canSeek, onSeek, on
             event.preventDefault();
             select(i + (event.key === "ArrowRight" ? 1 : -1));
           }}>
-          <time>{formatTimecode(match.startMs)}</time>
+          <time title={`${formatTimecode(match.startMs)}–${formatTimecode(match.endMs)}`}>{formatTimecode(match.positionMs)}</time>
           <small>{sourceLabels[match.source]}</small>
           <span title={match.text}>{match.text}</span>
         </button>

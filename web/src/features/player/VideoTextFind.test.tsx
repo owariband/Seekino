@@ -30,9 +30,9 @@ it("finds a silently visible character, jumps to the source, and remembers text-
   expect(toggle).toBeChecked();
   type("愛 音");
   fireEvent.click(await screen.findByText(phone.description));
-  expect(seek).toHaveBeenLastCalledWith(774833);
+  expect(seek).toHaveBeenLastCalledWith(776666);
   fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
-  expect(seek).toHaveBeenLastCalledWith(845166);
+  expect(seek).toHaveBeenLastCalledWith(847999);
   expect(screen.getByText("爱音说。")).toBeInTheDocument();
   expect(client.searchVideoVisuals).not.toHaveBeenCalled();
   fireEvent.click(toggle);
@@ -75,5 +75,5 @@ it("keeps local results navigable if semantic retrieval is unavailable", async (
   type("爱音手机");
   await screen.findByText("语义检索暂不可用");
   fireEvent.click(screen.getByText(phone.description));
-  expect(seek).toHaveBeenCalledWith(774833);
+  expect(seek).toHaveBeenCalledWith(776666);
 });
