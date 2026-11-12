@@ -33,14 +33,11 @@ export function useEpisodeVisualFind(videoId: string, tenantId: string, terms: r
     const original = index.lookup(terms[0]!);
     if (original.personOnly || terms.length === 1) return original;
     const matches = [...original.matches];
-    let effective = original;
     for (const term of terms.slice(1)) {
-      const variant = index.lookup(term, original.hasPeople);
-      matches.push(...variant.matches);
-      if (term === semanticQuery) effective = variant;
+      matches.push(...index.lookup(term, original.hasPeople).matches);
     }
-    return { ...effective, matches: index.merge(matches) };
-  }, [enabled, terms, semanticQuery, index]);
+    return { ...original, matches: index.merge(matches) };
+  }, [enabled, terms, index]);
   const needsSemantic = Boolean(local?.allowSemantic && semanticQuery.length >= 2 && semanticQuery.length <= 500);
   useEffect(() => {
     setSemantic(null);

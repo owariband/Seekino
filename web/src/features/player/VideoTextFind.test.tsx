@@ -68,17 +68,19 @@ it("discards a late semantic response after switching off and confines suggestio
   expect(client.getVideoVisualTimeline).toHaveBeenCalledTimes(1);
 });
 
-it("keeps local results navigable if semantic retrieval is unavailable", async () => {
+it.each([false, true])("keeps an uncorrected query navigable if semantic retrieval is unavailable (smart: %s)", async smart => {
   vi.mocked(client.searchVideoVisuals).mockResolvedValue({ ready: false, cues: [] });
+  vi.spyOn(client, "interpretVideoFindQuery").mockResolvedValue({ query: "爱音手机", synonyms: [] });
   const seek = vi.fn();
   mount(seek);
+  if (smart) fireEvent.click(screen.getByRole("switch", { name: "智能搜索" }));
   type("爱音手机");
-  await screen.findByText("语义检索暂不可用");
+  await screen.findByText("语义检索暂不可用", {}, { timeout: 3000 });
   fireEvent.click(screen.getByText(phone.description));
   expect(seek).toHaveBeenCalledWith(776666);
 });
 
-it("keeps ordinary semantics free of chat calls and reruns only the corrected semantic query in smart mode", async () => {
+it("shows similarity suggestions in ordinary mode and only term-backed hits after a correction", async () => {
   const interpret = vi.spyOn(client, "interpretVideoFindQuery").mockResolvedValue({
     query: "生气", synonyms: ["恼火", "不满"],
   });
@@ -87,22 +89,32 @@ it("keeps ordinary semantics free of chat calls and reruns only the corrected se
     { startMs: 4000, endMs: 5100, source: "screen_text", texts: ["他心中不满，也很恼火。"] },
   ] });
   const emotion = { ...phone, description: "少女生气地盯着同伴，一脸不满。" };
-  vi.mocked(client.getVideoVisualTimeline).mockResolvedValue({ ready: true, cues: [emotion] });
+  const uncertain = { ...second, description: "燈睁大眼睛，显得茫然不安。" };
+  vi.mocked(client.getVideoVisualTimeline).mockResolvedValue({ ready: true, cues: [emotion, uncertain] });
+  vi.mocked(client.searchVideoVisuals).mockResolvedValue({ ready: true, cues: [uncertain] });
   const seek = vi.fn();
   mount(seek);
   const toggle = screen.getByRole("switch", { name: "智能搜索" });
   expect(toggle).not.toBeChecked();
   type("红温");
   await screen.findByText("我红温了。");
-  await waitFor(() => expect(client.searchVideoVisuals).toHaveBeenCalledTimes(1));
+  await screen.findByText(uncertain.description);
   expect(interpret).not.toHaveBeenCalled();
-  fireEvent.click(toggle);
-  expect(await screen.findByText("纠正")).toHaveTextContent("纠正 生气、恼火、不满");
+  vi.useFakeTimers();
+  try {
+    fireEvent.click(toggle);
+    await act(() => vi.runOnlyPendingTimersAsync()); // Let the interpretation settle.
+    await act(() => vi.runOnlyPendingTimersAsync()); // Flush any scheduled visual query.
+    expect(screen.getByText("纠正")).toHaveTextContent("纠正 生气、恼火、不满");
+    expect(screen.queryByText(uncertain.description)).not.toBeInTheDocument();
+    expect(vi.mocked(client.searchVideoVisuals).mock.calls.map(call => call[0])).toEqual(["红温"]);
+  } finally {
+    vi.useRealTimers();
+  }
   expect(screen.getByRole("textbox")).toHaveValue("红温");
   expect(screen.getAllByText("他心中不满，也很恼火。")).toHaveLength(1);
   fireEvent.click(screen.getByText(emotion.description));
   expect(seek).toHaveBeenCalledWith(776666);
-  await waitFor(() => expect(vi.mocked(client.searchVideoVisuals).mock.calls.map(call => call[0])).toEqual(["红温", "生气"]));
   expect(interpret).toHaveBeenCalledTimes(1);
   fireEvent.click(screen.getByRole("switch", { name: "画面搜索" }));
   expect(screen.queryByText(emotion.description)).not.toBeInTheDocument();
@@ -133,6 +145,21 @@ it("keeps smart lookup independent of visuals and ignores a late response for an
   expect(client.getVideoVisualTimeline).not.toHaveBeenCalled();
 });
 
+it("keeps an empty correction empty when a superseded ordinary search finishes", async () => {
+  let finish!: (result: VideoVisualTimeline) => void;
+  const remote = vi.mocked(client.searchVideoVisuals).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  vi.spyOn(client, "interpretVideoFindQuery").mockResolvedValue({ query: "生气", synonyms: ["不满"] });
+  mount();
+  type("红温");
+  await waitFor(() => expect(remote).toHaveBeenCalledTimes(1));
+  fireEvent.click(screen.getByRole("switch", { name: "智能搜索" }));
+  await screen.findByText("纠正");
+  expect(remote.mock.calls[0]![3].aborted).toBe(true);
+  await act(async () => finish({ ready: true, cues: [second] }));
+  expect(screen.getByText("没有匹配的结果")).toBeInTheDocument();
+  expect(screen.queryByRole("listitem")).not.toBeInTheDocument();
+});
+
 it("falls back to ordinary semantics on model failure and retries the current query", async () => {
   const interpret = vi.spyOn(client, "interpretVideoFindQuery").mockRejectedValueOnce(new Error("unavailable"))
     .mockResolvedValueOnce({ query: "恼火", synonyms: [] });
@@ -156,6 +183,38 @@ it("keeps the original character as a visual constraint when an interpretation d
   fireEvent.click(screen.getByRole("switch", { name: "智能搜索" }));
   type("爱音红温");
   await screen.findByText(intended.description);
-  await waitFor(() => expect(client.searchVideoVisuals).toHaveBeenCalledTimes(1));
+  expect(client.searchVideoVisuals).not.toHaveBeenCalled();
   expect(screen.queryByText(stranger.description)).not.toBeInTheDocument();
+});
+
+it("orders all sources by seek time and keeps the selected timestamp when ranked suggestions arrive", async () => {
+  const shot = { ...phone, startMs: 1000, endMs: 9001, description: "她跟着节奏点头。" };
+  const early = { ...phone, startMs: 200, endMs: 600, description: "早段镜头。" };
+  const late = { ...second, startMs: 9200, endMs: 9600, description: "末段镜头。" };
+  vi.mocked(client.getVideoVisualTimeline).mockResolvedValue({ ready: true, cues: [shot] });
+  vi.mocked(client.getVideoTextTimeline).mockResolvedValue({ ready: true, cues: [
+    { startMs: 3150, endMs: 3240, source: "screen_text", texts: ["节奏练习"] },
+    { startMs: 3670, endMs: 3930, source: "dialogue", texts: ["跟上节奏。"] },
+  ] });
+  let publish!: (result: VideoVisualTimeline) => void;
+  vi.mocked(client.searchVideoVisuals).mockImplementation(() => new Promise(resolve => { publish = resolve; }));
+  const seek = vi.fn();
+  mount(seek);
+  type("节奏");
+  fireEvent.click(await screen.findByText("跟上节奏。"));
+  expect(seek).toHaveBeenLastCalledWith(3670);
+  await waitFor(() => expect(client.searchVideoVisuals).toHaveBeenCalledTimes(1));
+  await act(async () => publish({ ready: true, cues: [late, early] }));
+  expect(screen.getAllByRole("listitem").map(row => row.querySelector("span")?.textContent)).toEqual([
+    early.description, "节奏练习", "跟上节奏。", shot.description, late.description,
+  ]);
+  expect(screen.getByText("跟上节奏。").closest("button")).toHaveAttribute("aria-current", "true");
+  expect(screen.getByText("3/5")).toBeInTheDocument();
+  const input = screen.getByRole("textbox");
+  fireEvent.keyDown(input, { key: "Enter" });
+  fireEvent.click(screen.getByRole("button", { name: "下一处" }));
+  fireEvent.keyDown(input, { key: "ArrowDown" });
+  fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
+  fireEvent.click(screen.getByRole("button", { name: "上一处" }));
+  expect(seek.mock.calls.map(([ms]) => ms)).toEqual([3670, 5000, 9400, 400, 9400, 5000]);
 });

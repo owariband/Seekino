@@ -62,14 +62,12 @@ export function VideoTextFind({ videoId, tenantId, inputRef, canSeek, onSeek, on
     const literal = (index?.search(smart.terms) ?? []).map(({ cue, text }) => ({
       startMs: cue.startMs, endMs: cue.endMs, source: cue.source, text,
     }));
-    const exact = [...literal, ...visual.matches.filter(match => match.source === "visual")];
-    const ordered = [...exact.sort((a, b) => a.startMs - b.startMs), ...visual.matches.filter(match => match.source === "related")];
-    return ordered.map(match => ({
+    return [...literal, ...visual.matches].map(match => ({
       ...match,
       // A shot can begin during the preceding cut. Preview its interior; keep utterances at their onset.
       positionMs: match.source === "visual" || match.source === "related"
         ? match.startMs + Math.floor((match.endMs - match.startMs) / 2) : match.startMs,
-    }));
+    })).sort((a, b) => a.positionMs - b.positionMs);
   }, [index, smart.terms, visual.matches]);
   const active = matches.findIndex(match => matchKey(match) === activeKey);
   const sourceLabels = { dialogue: t("台词"), screen_text: t("画面文字"), visual: t("画面"), related: t("相关画面") };

@@ -26,7 +26,7 @@ function nameForms(name: string): string[] {
   return [name];
 }
 
-// Keep confirmed timestamps in order, then show the best distinct suggestions in retrieval order.
+// Drop contained annotations, then select up to five distinct suggestions by relevance.
 export function mergeVisualMatches(exact: VisualMatch[], related: VisualMatch[] = []): VisualMatch[] {
   const confirmed = exact.toSorted((a, b) => a.startMs - b.startMs || b.endMs - a.endMs);
   const matches: VisualMatch[] = [];

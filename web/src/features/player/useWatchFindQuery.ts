@@ -31,5 +31,7 @@ export function useWatchFindQuery(videoId: string, tenantId: string, query: stri
     ? [...new Set([raw, expansion.query, ...expansion.synonyms])]
     : raw ? [raw] : [], [raw, expansion]);
   const loading = interpret && !current;
-  return { terms, semanticQuery: loading ? "" : expansion?.query ?? raw, loading, failed: current?.terms === null };
+  // A correction searches the displayed terms in the episode. Related scenes are for ordinary queries.
+  const semanticQuery = loading || terms.length > 1 ? "" : raw;
+  return { terms, semanticQuery, loading, failed: current?.terms === null };
 }
