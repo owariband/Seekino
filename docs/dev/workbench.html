@@ -427,7 +427,7 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
  "updatedAt": "2026-11-12T17:06:01+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 47,
+ "revision": 48,
  "categories": [
   {
    "id": "parse",
@@ -5482,14 +5482,14 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
   },
   {
    "id": "WEB-PALETTE-01",
-   "title": "恢复原有青瓷背景与配套色板",
+   "title": "青瓷浅色保留，夜间采用已选更深候选",
    "category": "library",
    "type": "task",
    "status": "verifying",
    "priority": "P1",
-   "description": "恢复 PR #90 前的背景、面板、文字与 Hero 遮罩，保留字体、动效及模型菜单。",
-   "next": "用户在 GitHub 合并发布 PR #128 后，按实际部署验证线上配色；开发集成状态以 PR #127 为准。",
-   "verification": "构建、2 项主题单测及现有渐变浏览器用例通过。Chrome 在 390px／1440px、日夜四页共 16 个状态精确色值通过；4 个 CSS 之外的布局、字体、动效未改。发布构建及 GitHub release-files 通过。现有 5173 和远端部署尚未替换。",
+   "description": "恢复浅色后，夜间按用户选定的六项候选收深；保留字体、布局、动效及其他颜色。",
+   "next": "在 dev local review 更深夜间候选；确认后同步仍为草稿的 main 发布 #128。",
+   "verification": "构建、12 个日夜/桌面/窄屏三页色值及现有主题渐变通过。Opus 5.5 已收到两张匿名实际截图并返回观察；主观舒适度待用户确认。",
    "updatedAt": "2026-11-12",
    "tags": [
     "UI"
@@ -5498,11 +5498,11 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
     "WATCH-THEME-01",
     "MOD-LIBRARY"
    ],
-   "branch": "fix/restore-celadon-palette",
+   "branch": "fix/deeper-night-palette",
    "links": [
     {
      "label": "设计与验收",
-     "url": "https://github.com/owariband/Seekino/blob/fix/restore-celadon-palette/docs/design/03-product-reassessment/restore-celadon-palette-trd.md",
+     "url": "https://github.com/owariband/Seekino/blob/fix/deeper-night-palette/docs/design/03-product-reassessment/restore-celadon-palette-trd.md",
      "kind": "trd"
     },
     {
@@ -5513,6 +5513,11 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
     {
      "label": "发布 PR #128",
      "url": "https://github.com/owariband/Seekino/pull/128",
+     "kind": "pr"
+    },
+    {
+     "label": "候选 PR #131",
+     "url": "https://github.com/owariband/Seekino/pull/131",
      "kind": "pr"
     }
    ]

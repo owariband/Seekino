@@ -24,6 +24,8 @@
 
 验证使用production build与本机Chrome。76项相关单测、typecheck与build通过；定向浏览器12 passed、0 flaky。新动画用例最初在页面尚未稳定时用`evaluate`程序化点击失败；改为等待可观察的首屏数据和Playwright locator点击，再暂停真实过渡采样，原有半程/内容/重开断言全部保留。失败trace与完整原始报告留在`outputs/verification/mobile-docs-episodes-20261112/`，[摘要](motion-results.json)保留实际帧值和12项结果。
 
+最终合入最新dev `304e5abd`及#131选定的新版深色配色，保留全部上游卡片和文档。76项单测、类型/构建、12项浏览器回归与9场景再次通过；运动采样及几何记录逐项相同，本轮深色截图已按最新配色刷新。
+
 本机[4190预览](http://127.0.0.1:4190/watch)已提供本轮构建，用户可刷新检查。尚未验证Safari、Firefox或iOS/Android真机；不支持这些CSS能力时的浏览器行为也未实测，不声明全部浏览器均有动画效果。未部署Cloud或合并PR。
 
 ![当前390px图标入口和选集](icon-only-390.png)

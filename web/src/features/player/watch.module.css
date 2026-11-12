@@ -152,7 +152,7 @@
 .hero::before { position: absolute; z-index: -2; inset: 0; background: linear-gradient(90deg, rgb(5 16 13 / 92%), rgb(5 16 13 / 62%) 36%, rgb(5 16 13 / 8%) 78%); content: ""; }
 /* Fading a dark frame into the light canvas leaves a grey haze; end on a deeper tone with a clean edge instead.
    Mixing the two bottom tones with the page progress keeps the blend in step with the palette. */
-.hero::after { position: absolute; z-index: -1; right: 0; bottom: 0; left: 0; height: 150px; background: linear-gradient(0deg, color-mix(in srgb, rgb(5 16 13 / 72%), #121816 var(--night-mix)), transparent); content: ""; }
+.hero::after { position: absolute; z-index: -1; right: 0; bottom: 0; left: 0; height: 150px; background: linear-gradient(0deg, color-mix(in srgb, rgb(5 16 13 / 72%), var(--canvas) var(--night-mix)), transparent); content: ""; }
 .heroContent { width: min(620px, 55%); padding-block: 16px; }
 .heroKicker { display: inline-flex; align-items: center; color: #b6e4d7; font-size: .9rem; font-weight: 600; }
 .heroContent h2 { margin: 14px 0 20px; font: 700 clamp(2.5rem, 5vw, 5rem)/1.05 var(--display); letter-spacing: -.022em; overflow-wrap: anywhere; }
