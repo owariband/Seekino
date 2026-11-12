@@ -11,9 +11,9 @@ class _Model(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, str_strip_whitespace=True)
 
 
-Text = Annotated[str, Field(min_length=1, max_length=600)]
+Text = Annotated[str, Field(min_length=1)]
 SegmentID = Annotated[str, Field(pattern=r"^seg-[0-9]{7,}$")]
-Role = Literal["INTRO", "TRANSITION", "ACCENT", "TITLE", "LOOP", "OUTRO"]
+Role = Text
 
 
 class PaletteColor(_Model):
@@ -53,9 +53,9 @@ class ReferenceSegment(_Model):
 
 
 class ShotView(_Model):
-    framing: Literal["ECU", "CU", "MCU", "MS", "FULL", "WIDE", "INSERT", "GRAPHIC", "OTHER"]
+    framing: Text
     subject: Text | None
-    enter: Literal["CUT", "FLASH", "WIPE", "ZOOM", "SMASH", "MATCH", "MOVEMENT", "HOLD", "NONE", "UNCERTAIN"]
+    enter: Text
 
 
 class Step(ShotView):
@@ -71,7 +71,7 @@ class Look(_Model):
 
 
 class Motion(_Model):
-    steps: list[Step] = Field(min_length=1, max_length=90)
+    steps: list[Step]
     camera: Text | None
     easing: Text | None
     accent: Text | None = Field(default=None, exclude_if=lambda value: value is None)
@@ -88,8 +88,8 @@ class NoteDescription(_Model):
     summary: Text
     role: Role | None
     look: Look
-    slots: list[Slot | Text] = Field(max_length=8)
-    signals: list[Text] = Field(max_length=8)
+    slots: list[Slot | Text]
+    signals: list[Text]
 
 
 class Note(NoteDescription):
@@ -97,9 +97,7 @@ class Note(NoteDescription):
 
 
 class PickNote(Note):
-    """New model observations use the documented material slots. Old stored notes may contain text slots."""
-
-    slots: list[Slot] = Field(max_length=8)
+    """Model observations use the same material slots as stored notes."""
 
 
 class TechniqueObservation(_Model):
@@ -109,14 +107,9 @@ class TechniqueObservation(_Model):
 
     @model_validator(mode="after")
     def source_steps(self):
-        allowed = {*self.segment.fine_starts_ms, self.segment.end_ms}
-        cursor = self.segment.start_ms
         for step in self.note.motion.steps:
-            if step.start_ms != cursor or step.end_ms <= cursor or step.end_ms not in allowed:
-                raise ValueError("steps must tile the measured interval using its candidate boundaries")
-            cursor = step.end_ms
-        if cursor != self.segment.end_ms:
-            raise ValueError("steps must reach the end of the measured interval")
+            if not self.segment.start_ms <= step.start_ms < step.end_ms <= self.segment.end_ms:
+                raise ValueError("steps must stay inside the measured source interval")
         return self
 
 
@@ -169,27 +162,26 @@ class SignalExample(_Model):
 class StyleSignal(_Model):
     name: Text
     description: Text
-    examples: list[SignalExample] = Field(min_length=1, max_length=8)
+    examples: list[SignalExample] = Field(min_length=1)
 
 
 class AnchoredStyleCard(_Model):
     scope: Text
-    signals: list[StyleSignal] = Field(max_length=8)
+    signals: list[StyleSignal]
 
     def validate_sources(self, observations):
-        anchors = {o.segment.segment_id: {o.segment.start_ms, *o.segment.fine_starts_ms} for o in observations}
-        if bool(anchors) != bool(self.signals):
-            raise ValueError("style signals must cite observed material")
+        ranges = {o.segment.segment_id: (o.segment.start_ms, o.segment.end_ms) for o in observations}
         for signal in self.signals:
             for example in signal.examples:
-                if example.at_ms not in anchors.get(example.segment_id, ()):
-                    raise ValueError("style signal must cite a measured position in its own segment")
+                bounds = ranges.get(example.segment_id)
+                if bounds is None or not bounds[0] <= example.at_ms < bounds[1]:
+                    raise ValueError("style signal must cite a position inside its own segment")
         return self
 
 
 class RefinedObservation(_Model):
     segment_id: SegmentID
-    technique_key: Text
+    technique_key: Text | None
     name: Text
     summary: Text
     role: Role | None
@@ -206,7 +198,7 @@ class RefinedObservation(_Model):
 
 class RefinedMember(_Model):
     sequence_no: int = Field(ge=0, lt=63)
-    observations: list[RefinedObservation] = Field(max_length=8)
+    observations: list[RefinedObservation]
 
 
 class ReferenceRefinement(_Model):
@@ -218,10 +210,24 @@ class ReferenceRefinement(_Model):
         updates = [note for member in self.members for note in member.observations]
         by_id = {note.segment_id: note for note in updates}
         originals = [o for chunk in members.values() for o in chunk.observations]
-        if len(by_id) != len(updates) or set(by_id) != {o.segment.segment_id for o in originals}:
-            raise ValueError("Refine must return every observed segment exactly once")
+        source_ids = {o.segment.segment_id for o in originals}
+        if set(by_id) - source_ids:
+            raise ValueError("Refine references source segments that were not observed")
         self.style_card.validate_sources(originals)
-        return self.model_copy(update={"members": [
-            RefinedMember(sequence_no=seq, observations=[by_id[o.segment.segment_id] for o in chunk.observations])
-            for seq, chunk in sorted(members.items())
-        ]})
+        host_members = []
+        for seq, chunk in sorted(members.items()):
+            observations = []
+            for original in chunk.observations:
+                update = by_id.get(original.segment.segment_id)
+                if update is None:
+                    update = RefinedObservation(
+                        segment_id=original.segment.segment_id,
+                        technique_key=original.technique_key,
+                        name=original.note.name,
+                        summary=original.note.summary,
+                        role=original.note.role,
+                        camera=original.note.motion.camera,
+                    )
+                observations.append(update)
+            host_members.append(RefinedMember(sequence_no=seq, observations=observations))
+        return self.model_copy(update={"members": host_members})

@@ -2,7 +2,7 @@ Write a reference note for an editor deciding whether to inspect this clip. Repo
 
 Source interval [{start_ms}, {end_ms}) ms. The images are ordered native frames at {fps} fps. Each image is labelled with its source timestamp. Detector candidates in ms: {fine_starts_ms}. Flash candidates in ms: {flashes_ms}.
 
-Describe the visible changes in chronological order. Group adjacent frames when they show the same framing and action. Inspect the frames at each proposed boundary: a different drawing or pose can occur within the same shot. Use the supplied segment edges and candidate times for step boundaries, tile the segment without gaps, and mention any unresolved timing in the summary.
+Describe the visible changes in chronological order. Group adjacent frames when they show the same framing and action. Inspect the frames at each proposed boundary: a different drawing or pose can occur within the same shot. Use source-clock times inside the segment for step boundaries; the detector and flash times are suggestions, not required boundaries. Steps may leave gaps or overlap and need not cover the whole segment; mention any unresolved timing in the summary.
 
 Describe framing changes across cuts separately from continuous movement within a shot. In motion.camera, record only visible within-shot movement. Use STATIC for a visibly stationary shot and null when a single value cannot be established. Use null for an uncertain or mixed easing or role. Describe apparent changes of size or position when the cause cannot be determined from the frames.
 

@@ -293,3 +293,65 @@ def test_one_mcp_from_upload_to_both_source_clips(tmp_path, editing_app):
             assert _call(public, "get_style_card", {"video_id": reference_id})["isError"]
             assert _call(public, "read_evidence", {"evidence_ref": hit["evidence_ref"]})["isError"]
             assert _call(public, "find_edit_templates", {"query": "方块逐级硬切"})["structuredContent"]["techniques"] == []
+
+
+@pytest.mark.parametrize("include_update", [False, True], ids=["retain-source-notes", "partial-last-update"])
+def test_reference_action_notes_survive_refine_and_mcp(tmp_path, editing_app, monkeypatch, include_update):
+    import sys
+
+    original_response = _model_response
+    summary = "人物动作可以发生在检测切点之间，保留可见变化和原始时间。" * 30
+
+    def response(inputs, *, schema_name, result_type, **kwargs):
+        if schema_name == "technique_observation":
+            note = original_response(inputs, schema_name=schema_name, result_type=result_type, **kwargs).model_dump()
+            start, end = map(int, re.search(r"Source interval \[(\d+), (\d+)\)", inputs[0].text).groups())
+            note.update(name="自由动作分段", summary=summary, role="人物反应", slots=["背景图"])
+            note["motion"]["steps"] = [
+                {"start_ms": start + 1, "end_ms": start + 2, "framing": "肩后近景", "enter": "缓慢入画", "subject": "方块"},
+                {"start_ms": end - 2, "end_ms": end - 1, "framing": "肩后近景", "enter": "停留", "subject": "方块"},
+            ]
+            return result_type.model_validate(note)
+        if schema_name == "edit_reference_style_card":
+            source = json.loads(inputs[1].text)["observations"][0]
+            members = []
+            if include_update:
+                note = source["observation"]
+                update = {"segment_id": source["segment_id"], "technique_key": "动作",
+                    "name": "被后一个更新替代", "summary": note["summary"], "role": note["role"],
+                    "camera": note["motion"]["camera"]}
+                members = [{"sequence_no": source["sequence_no"],
+                            "observations": [update, {**update, "name": "自由动作分段"}]}]
+            return result_type.model_validate({"members": members, "style_card": {
+                "scope": "动作观察", "signals": [{"name": "动作", "description": "检测点之间的变化",
+                    "examples": [{"segment_id": source["segment_id"], "at_ms": source["start_ms"] + 1,
+                                  "detail": "人物开始入画"}]}]}})
+        return original_response(inputs, schema_name=schema_name, result_type=result_type, **kwargs)
+
+    monkeypatch.setattr(sys.modules[__name__], "_model_response", response)
+    with TestClient(editing_app, base_url="http://127.0.0.1:9621", client=("127.0.0.1", 50000),
+            headers={"Accept": "application/json, text/event-stream", "MCP-Protocol-Version": "2025-06-18"}) as client:
+        created = client.post("/api/series/create", json={"tenantId": "local-default", "name": "Action references"})
+        assert created.status_code == 201, created.text
+        source = _source_file(tmp_path, "action-reference.mp4", reference=True)
+        video_id = _upload(client, created.json()["seriesId"], 1, source, {"parseConfig": {"profile": "edit_reference"}})
+        init = _rpc(client, "initialize", {"protocolVersion": "2025-06-18", "capabilities": {},
+            "clientInfo": {"name": "action-reference-test", "version": "1"}})
+        assert init.status_code == 200
+        found = _call(client, "find_edit_templates", {"query": "自由动作分段"})
+        assert not found.get("isError"), found
+        hit = found["structuredContent"]["techniques"][0]
+        assert hit["video_id"] == video_id
+        card = _call(client, "get_style_card", {"video_id": video_id})
+        assert not card.get("isError"), card
+        example = card["structuredContent"]["style_card"]["signals"][0]["examples"][0]
+        evidence = _call(client, "read_evidence", {"evidence_ref": example["evidence_ref"]})
+        assert not evidence.get("isError"), evidence
+        evidence = evidence["structuredContent"]
+        assert example["at_ms"] == evidence["start_ms"] + 1
+        assert example["at_ms"] not in evidence["measured"]["fine_starts_ms"]
+        assert evidence["note"]["summary"] == summary
+        assert evidence["note"]["role"] == "人物反应"
+        assert evidence["note"]["slots"] == ["背景图"]
+        assert evidence["note"]["motion"]["steps"][0]["start_ms"] == evidence["start_ms"] + 1
+        assert evidence["note"]["motion"]["steps"][-1]["end_ms"] == evidence["end_ms"] - 1

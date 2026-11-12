@@ -51,7 +51,10 @@ async def observe_segments(segments, frames, generate, attempts):
                                      for path in _frame_sheets(segment, frames, boundaries))]
         for attempt in range(attempts):
             try:
-                note = await generate(inputs, PickNote)
+                try:
+                    note = await generate(inputs, PickNote)
+                except ValidationError as error:
+                    note = _completed_response(PickNote, error)
                 observations.append(TechniqueObservation(segment=segment, note=note))
                 break
             except ValueError as error:
@@ -61,8 +64,8 @@ async def observe_segments(segments, frames, generate, attempts):
     return ReferenceChunk(observations=observations)
 
 
-def _completed_card_response(schema, error):
-    """Accept a complete set of entries when only the closing root brace was dropped."""
+def _completed_response(schema, error):
+    """Accept a complete response when only its closing root brace was dropped."""
     issues = error.errors(include_url=False)
     raw = issues[0].get("input") if len(issues) == 1 and issues[0]["type"] == "json_invalid" else None
     if not isinstance(raw, str):
@@ -73,7 +76,7 @@ def _completed_card_response(schema, error):
     except json.JSONDecodeError as exc:
         if exc.pos == len(text) and exc.msg == "Expecting ',' delimiter":
             result = schema.model_validate_json(text + "}")
-            logging.getLogger(__name__).info("reference Refine recovered a missing final object delimiter")
+            logging.getLogger(__name__).info("reference response recovered a missing final object delimiter")
             return result
     raise error
 
@@ -95,7 +98,7 @@ async def consolidate(members: dict[int, ReferenceChunk], generate, attempts) ->
             try:
                 draft = await generate(inputs, ReferenceRefinement)
             except ValidationError as error:
-                draft = _completed_card_response(ReferenceRefinement, error)
+                draft = _completed_response(ReferenceRefinement, error)
             return draft.for_sources(members)
         except ValueError as error:
             if attempt + 1 == attempts:
