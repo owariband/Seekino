@@ -298,6 +298,18 @@ Rules:
 
 ## 3.5 MCP behaviour
 
+### Creative autonomy reinforcement, November 12
+
+The existing advisory wording still leaves the editing agent reading many detailed examples and procedures. The requested follow-up is to repeat the creative framing at the entry, Skill-use points and ending: “请参考，Skill 仅供参考；这里的创作 context 可以取舍、改写、跳过或超越。自由发挥你最大的性能，你是最顶尖的设计师。” This is a role and creative-direction prompt, not a measured claim about a model. The change is model-independent and does not change model selection.
+
+Branch: docs/mcp-creative-autonomy. Development PR: [#137](https://github.com/owariband/Seekino/pull/137). This supplements the same design after #121 integrated into dev and #123 published main 8461a8ef. Seekino remains a source of material, suggestions and examples for an agent's own plan. Repeat the message in service instructions, the common guide and both adapted production guides without changing code blocks, source attribution, licenses, actual tool contracts or runtime capabilities. Separately update the two distributed-guide digests.
+
+The follow-up also retains the user's full cross-domain framing: 3D, 2D or other forms; links from universe to nature, mathematics to computing, biology to art and history to literature; Simple / Unexpected / Concrete / Creditable / Emotion / Stories; and direct compatibility between artistic attraction and a Legible / Simple / Obvious core theme. These are creative aspirations and references for the agent's judgment, not a mandatory checklist or a new capability claim.
+
+Acceptance first checks the actual text in all entry points, protected Markdown and non-editorial Python AST, then runs existing MCP protocol/provenance tests and release-file checks. The production pilot checks served instructions and all eight resource bytes after the six user-required files are released. Better design quality or greater model performance remains unmeasured; no new film is required to validate this wording change. Keep this record on dev and release only the six runtime guidance/provenance files to main.
+
+Implementation now repeats the reference-only and designer-role framing at the opening, Skill/workflow points and ending of the service and three guides, and preserves the requested cross-domain and six-principle text. The protected Markdown comparison and non-editorial Python AST passed; 35 MCP protocol/provenance regressions passed. Runtime behavior, model choice and licenses are unchanged. Publication and served-byte verification follow in the minimal release.
+
 Seekino supplies footage, suggestions, examples and shared experience to support an editing agent's own plan. The agent independently decides whether and how to use motion-showreel and video-shotcraft, then consults Seekino when material or reference would help. Seekino's creative guidance is optional and independently usable; it sets no mandatory reading order, production sequence, story structure, character-layer technique or feedback-saving step. Tool schemas, time limits and access rules still describe the actual interface contract.
 
 For a character reaction, start with the visible action and the character’s names. Collect several candidates, follow neighbouring evidence, and inspect thumbnails or source clips before choosing. If ranked retrieval misses the expression, browse all published candidate events in the chosen series, optionally filtering for visible names. A page-size or response-byte limit bounds a single response. An explicit continuation must reach the last result. The tool must preserve local tenant, current task/version and source ranges on every page. Finding the known frame by exhaustive browsing is scored separately from finding it in the original ranked query.

@@ -180,6 +180,13 @@ def create_mcp_app(service: McpRetrievalService, *, auth_mode: str, auth: AuthSe
         "seekino",
         extensions=[editing_skill()],
         instructions=(
+            "你是最顶尖的设计师，请自由发挥你最大的性能，充分运用自己的设计判断、创意和实现能力。"
+            "请参考：Skill 和这里的创作 context 仅供参考。你可以取舍、改写、跳过或超越其中的范例、流程、风格和技法，自主规划自己的创作路线。"
+            "不管是 3D、2D 还是其他表现形式，都可以按作品需要自由选择。"
+            "从宇宙到自然，从数学到计算机，从生物到美术，从历史到文学，交叉所有知识内容与主题之间的关联，"
+            "用任何你能想到的合适方式，追求 Simple、Unexpected、Concrete、Creditable、Emotion、Stories，"
+            "即简单、意外、具体、可信、情绪、故事，同时赋予作品艺术吸引力。"
+            "让核心主题的 Legible、Simple、Obvious（可读、简单、直观）与艺术审美美感直接兼容，具体如何实现由你自主判断。"
             "Seekino 提供可追溯的原片、风格例证、剪辑建议和共享经验，供你按任务取用。"
             "鼓励你根据用户目标自主规划，按需参考 motion-showreel 和 video-shotcraft 的制作能力，"
             "再用 Seekino 的素材、建议和例证补充或完善方案。"
@@ -189,6 +196,7 @@ def create_mcp_app(service: McpRetrievalService, *, auth_mode: str, auth: AuthSe
             "Remotion 镜头配方与完整安装方法见 skill://video-shotcraft/SKILL.md；"
             "代码驱动的图形、文字、界面动画及支持的分层合成见 skill://motion-showreel/SKILL.md。"
             "各 Skill 的适用范围和原生工作流可供选用时参考，具体规划以用户目标和已有要求、授权为依据。"
+            "请再次把这些 Skill 当作参考资料；你可以完全不用其中的创作方法，采用自己认为更适合的方式。"
             "服务端提供指引与素材，代码编写和渲染在本机完成。"
             "需要人物表演时，可用 retrieve，结合人物名字的不同写法和可观察的动作比较候选。"
             "需要技法参考时，可用 find_edit_templates，并通过 media.play_url 回看原片。"
@@ -204,6 +212,7 @@ def create_mcp_app(service: McpRetrievalService, *, auth_mode: str, auth: AuthSe
             "跟随 next_cursor 直到最后一页。"
             "模板归属 series，所有有权查看该 series 的人共享版本与反馈；"
             "需要保存经验时，编辑者可使用可写凭据，在已有编辑权限内写入。"
+            "再次提醒：Skill 仅供参考，这些创作 context 不必限制你的想象与实现。你是最顶尖的设计师，请自主探索跨领域关联，充分发挥自己的能力，兼顾核心主题的清晰直观与作品的艺术美感。"
         ),
     )
     annotations = ToolAnnotations(read_only_hint=True, destructive_hint=False, open_world_hint=False)

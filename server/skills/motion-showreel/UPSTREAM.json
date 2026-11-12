@@ -11,7 +11,7 @@
   "adaptation": {
     "modified_by": "Seekino",
     "date": "2026-11-12",
-    "summary": "按 humanizer-zh、YC 清楚表达及用户提供的六条原则改写正文；保留操作规则、技术内容、来源和许可证。",
-    "guide_sha256": "5c0fdeff663781b2dba35c41d264e3054dc02f5fdf01994ee01e80cde7de2bc7"
+    "summary": "按 humanizer-zh 改写正文，补充反复强调参考性质、设计师角色、自主创作及跨领域表达的提示；保留技术内容、来源和许可证。",
+    "guide_sha256": "3c587a750d1a57b8180e7c8b56a4a536074bc71c779ade9e2a17a87d2eb79fac"
   }
 }
