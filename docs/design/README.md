@@ -150,7 +150,7 @@ Event / Sub-Chunk 的实施入口是 [sub-chunk-trd.md](02-agent-harness/sub-chu
 | 云端无 SMTP 的游客启动 | [cloud-guest-without-smtp-trd.md](03-product-reassessment/cloud-guest-without-smtp-trd.md) | 邮件能力可选，游客身份仍保留签名、Redis、CSRF 与权限校验。 |
 | Cloud 使用文档与推广入口 | [cloud-user-docs-trd.md](03-product-reassessment/cloud-user-docs-trd.md) | `/docs` 归站内用户文档，Swagger 迁到 `/api/docs`。 |
 | Apple 式视觉刷新 | [apple-style-refresh-trd.md](03-product-reassessment/apple-style-refresh-trd.md) | 字体改为 SF / 自托管 Inter，标签去等宽；中性色板的后续恢复见下一项。 |
-| 青瓷背景配色恢复 | [restore-celadon-palette-trd.md](03-product-reassessment/restore-celadon-palette-trd.md) | 恢复 PR #90 前的背景、表面和文字配色，保留字体、动效与菜单。 |
+| 青瓷配色恢复与更深夜间候选 | [restore-celadon-palette-trd.md](03-product-reassessment/restore-celadon-palette-trd.md) | 恢复原浅色配色；夜间按已选候选收深，保持字体、动效与菜单。 |
 | SMTP 决定登录入口 | [smtp-login-availability-trd.md](03-product-reassessment/smtp-login-availability-trd.md) | 身份接口传递邮件能力；未配置时提前说明登录注册尚未开放，保留游客体验。 |
 | Local / Cloud | [local-cloud-trd.md](02-agent-harness/local-cloud-trd.md) | 运行形态设计：身份、配置归属、本地接入和云端部署边界。 |
 | 项目管理工作台 | [management-workbench-trd.md](03-product-reassessment/management-workbench-trd.md) | 单文件离线管理工作台：里程碑概览、课程闭环地图、验收门槛与四列看板，统一模块、需求、任务，关联 PR/TRD 和历史证据；2026-11-02 看板版本保留在同一 TRD。 |

@@ -36,7 +36,7 @@ hypnos 于 **2026-04-27 入职实习**，到这次面试复盘时已接近半年
 | [cloud-guest-without-smtp-trd.md](cloud-guest-without-smtp-trd.md) | 2026-11-06，SMTP 留空导致整个 cloud API 无法启动 | 游客启动与邮件能力分离，未配置邮件时明确拒绝邮箱认证 | 当前状态见工作台 DEPLOY-02 |
 | [cloud-user-docs-trd.md](cloud-user-docs-trd.md) | 2026-11-10，Cloud 访客看不到两版区别、部署方式与 GitHub 入口，比赛需要真实用户却缺少转化落点 | 站内 `/docs` 使用文档与顶栏 GitHub 入口；API 文档迁到 `/api/docs` | 初稿 |
 | [apple-style-refresh-trd.md](apple-style-refresh-trd.md) | 2026-11-10，推广前界面不够简约高级：圆体标题、等宽大写小标签、绿灰色调 | Apple 式视觉层：SF / 自托管 Inter、中性色板、磨砂顶栏、胶囊按钮；不改布局 | 配色的后续恢复见下一项，原始取舍保留 |
-| [restore-celadon-palette-trd.md](restore-celadon-palette-trd.md) | 2026-11-12，中性色板替换青瓷底色，整站观感偏离此前配色 | 从 PR #90 前的源码恢复背景、表面、文字和 Hero 遮罩，保留字体与交互改进 | [PR #127](https://github.com/owariband/Seekino/pull/127)；验收证据见正文 |
+| [restore-celadon-palette-trd.md](restore-celadon-palette-trd.md) | 2026-11-12，恢复青瓷底色后继续 review 夜间黑位 | 保留恢复后的白天，夜间采用已选六项候选；实际匿名截图交由 Opus 5.5 评审 | [PR #131](https://github.com/owariband/Seekino/pull/131)；此前恢复 #127 的证据保留 |
 | [model-discovery-feedback-trd.md](model-discovery-feedback-trd.md) | 2026-11-10，“获取模型列表”结果不可见，whisper.cpp 必然 404 | 内联结果与模型 chip、防重复；无列表的服务给出中性说明 | 初稿 |
 | [sticky-docs-trd.md](sticky-docs-trd.md) | 2026-11-10，欢迎卡片与文档准确但抓不住首次访客 | 按 SUCCESs 重写，`/docs` 拆为快速开始等多页 | 初稿 |
 | [smtp-login-availability-trd.md](smtp-login-availability-trd.md) | 2026-11-07，邮件未配置仍展示验证码表单，用户填写后才知道不可用 | 由账号服务传递可用能力，空配置展示游客模式和未开放说明 | 当前状态见工作台 DEPLOY-04；依赖 #62，随 #63 发布 |

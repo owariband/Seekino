@@ -79,13 +79,13 @@
     /* The established celadon palette keeps grey-green backgrounds and off-white cards.
        Each token pairs its day and night color, and one shared mix carries the whole palette through a theme change. */
     --night-mix: 0%;
-    --canvas: color-mix(in srgb, #e4eae5, #121816 var(--night-mix));
+    --canvas: color-mix(in srgb, #e4eae5, #0d1110 var(--night-mix));
     --canvas-glow: color-mix(in srgb, rgb(35 140 120 / 7%), transparent var(--night-mix));
-    --surface: color-mix(in srgb, #ebf0ec, #1a2220 var(--night-mix));
-    --surface-raised: color-mix(in srgb, #f6f8f5, #222c29 var(--night-mix));
-    --surface-muted: color-mix(in srgb, #d9e1db, #28332f var(--night-mix));
-    --ink: color-mix(in srgb, #17312b, #e7efec var(--night-mix));
-    --ink-soft: color-mix(in srgb, #566b65, #b7c6c1 var(--night-mix));
+    --surface: color-mix(in srgb, #ebf0ec, #171c1a var(--night-mix));
+    --surface-raised: color-mix(in srgb, #f6f8f5, #202624 var(--night-mix));
+    --surface-muted: color-mix(in srgb, #d9e1db, #29312e var(--night-mix));
+    --ink: color-mix(in srgb, #17312b, #dde5e1 var(--night-mix));
+    --ink-soft: color-mix(in srgb, #566b65, #a7b5ae var(--night-mix));
     --ink-faint: color-mix(in srgb, #85938e, #8a9b96 var(--night-mix));
     --line: color-mix(in srgb, rgb(36 73 64 / 15%), rgb(160 205 192 / 14%) var(--night-mix));
     --line-strong: color-mix(in srgb, rgb(35 140 120 / 38%), rgb(116 197 186 / 42%) var(--night-mix));
