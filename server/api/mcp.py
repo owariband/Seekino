@@ -180,28 +180,30 @@ def create_mcp_app(service: McpRetrievalService, *, auth_mode: str, auth: AuthSe
         "seekino",
         extensions=[editing_skill()],
         instructions=(
-            "用场景描述找到可核对的原片、出处和剪辑参考，按用户当前任务取用。"
-            "需要制作成片时，在本机编写镜头并渲染。"
-            "剪辑前通过 resources/read 读取 skill://seekino-editing-materials/SKILL.md，"
-            "其中说明选片、风格参考、运动建议、本机分层和经验写回。"
+            "Seekino 提供可追溯的原片、风格例证、剪辑建议和共享经验，供你按任务取用。"
+            "鼓励你根据用户目标自主规划，按需参考 motion-showreel 和 video-shotcraft 的制作能力，"
+            "再用 Seekino 的素材、建议和例证补充或完善方案。"
+            "这些创作建议可独立取用，使用顺序、参考哪些 Skill 和采用哪些手法由你结合任务判断。"
+            "通过 resources/read 可按需读取 skill://seekino-editing-materials/SKILL.md，"
+            "参考选片、风格、运动、本机分层和经验读写的用法。"
             "Remotion 镜头配方与完整安装方法见 skill://video-shotcraft/SKILL.md；"
             "代码驱动的图形、文字、界面动画及支持的分层合成见 skill://motion-showreel/SKILL.md。"
-            "按任务查阅制作参考，遵循用户已明确的要求与授权，沿用各指引的适用范围、工作流和确认条件。"
+            "各 Skill 的适用范围和原生工作流可供选用时参考，具体规划以用户目标和已有要求、授权为依据。"
             "服务端提供指引与素材，代码编写和渲染在本机完成。"
-            "用 retrieve 找人物表演，结合人物名字的不同写法和可观察的动作，比较多个候选。"
-            "用 find_edit_templates 找剪辑技法与镜头变化，打开 media.play_url 并检查原帧。"
-            "get_style_card 给出整片风格卡和每个例证的 evidence_ref，再用 read_evidence 核对例证。"
+            "需要人物表演时，可用 retrieve，结合人物名字的不同写法和可观察的动作比较候选。"
+            "需要技法参考时，可用 find_edit_templates，并通过 media.play_url 回看原片。"
+            "get_style_card 提供整片风格卡和例证的 evidence_ref，可用 read_evidence 了解例证。"
             "索引命中只提供线索；未记录的画面细节要看原片，当前上下文和媒体入口由 read_evidence 返回。"
-            "动作或表情变化承担情节时，检查它的准备、发生与收尾，再确定取片区间。"
-            "剧情剪辑按剧本所需的神情与动作变化比较候选，保留人物一段时间内的连续表演。"
-            "需要换景或合成时，在本机制作时间对齐的动态人物层，检查是否始终保留同一人物、边缘是否完整、前后动作是否衔接。"
+            "剧情剪辑可参考人物的神情与动作变化，结合准备、发生和收尾判断片段是否适合剧本。"
+            "连续人物表演与动态分层是可借鉴的方法，是否采用由当前方案决定；"
+            "采用时，可在本机准备时间对齐的人物层，回看人物一致性、边缘和动作衔接。"
             "视频时间都是整数毫秒，区间包含 start_ms、不包含 end_ms。"
-            "将自行确定的 start_ms 和 end_ms 交给 read_evidence，及时下载 media.clip_url。"
+            "需要取片时，同时将 start_ms 和 end_ms 交给 read_evidence，返回的 media.clip_url 可供及时下载。"
             "可直接使用连续原片，也可在本机分层后保留其运动；有意停住某个节拍时可以使用静帧。"
-            "排序结果只是候选；需要查全一个系列或某个人物已标注的出镜事件时，用 browse_events，"
+            "排序结果只是候选；需要查全一个系列或某个人物已标注的出镜事件时，可用 browse_events，"
             "跟随 next_cursor 直到最后一页。"
             "模板归属 series，所有有权查看该 series 的人共享版本与反馈；"
-            "编辑者使用可写凭据，在已有编辑权限内保存经验。"
+            "需要保存经验时，编辑者可使用可写凭据，在已有编辑权限内写入。"
         ),
     )
     annotations = ToolAnnotations(read_only_hint=True, destructive_hint=False, open_world_hint=False)
@@ -293,7 +295,7 @@ def create_mcp_app(service: McpRetrievalService, *, auth_mode: str, auth: AuthSe
         """按自然语言、对白或动作寻找原片候选。top_k 计算不同 Chunk 的数量，一个 Chunk 可有多个事件。
         省略 series_ids 时搜索可访问的素材库。把返回的 evidence_ref 交给 read_evidence，核对上下文并取片；
         用 next_cursor 继续查看排序结果，查全系列候选则用 browse_events。
-        剧情表演先按神情与动作变化寻找候选，再回看整段，按剧本判断节奏与衔接。
+        剧情表演可参考神情与动作变化寻找候选，结合整段回看判断是否适合当前剧本和镜头。
         找运镜时描述方向、速度变化或露出了什么；命中的 SCENE 可能带有 camera_ref。时间单位为毫秒。
         """
         return await invoke(
