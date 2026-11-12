@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-12T10:42:37+08:00",
+ "updatedAt": "2026-11-12T10:49:55+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 38,
+ "revision": 40,
  "categories": [
   {
    "id": "parse",
@@ -5379,6 +5379,45 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "kind": "evidence",
      "url": "https://github.com/owariband/Seekino/blob/docs/editing-skill-style-reference/docs/report/server/editing-mcp-code-loop-20261110.json"
     }
+   ]
+  },
+  {
+   "id": "CHAT-KINO-01",
+   "title": "让 Kino 在最新回复上庆祝、入睡并在追问时起跳",
+   "category": "chat",
+   "type": "task",
+   "status": "done",
+   "priority": "unset",
+   "description": "收起完成状态后仍保留 Kino，历史对话只在最新助手回复上直接入睡。",
+   "next": "",
+   "verification": "本地覆盖有、无思考文字。公网 Chrome 游客完成两轮真实问答，两次庆祝后入睡，追问时醒来、跳到新回复，刷新后仅最新回复有一只睡着的 Kino。",
+   "updatedAt": "2026-11-12",
+   "tags": ["Kino", "动画"],
+   "related": ["MOD-CHAT"],
+   "branch": "fix/player-seekbar-border",
+   "links": [
+    {"label": "完成态设计更正", "url": "https://github.com/owariband/Seekino/blob/fix/player-seekbar-border/docs/design/03-product-reassessment/chat-answer-shape-trd.md", "kind": "trd"},
+    {"label": "PR #118", "url": "https://github.com/owariband/Seekino/pull/118", "kind": "pr"},
+    {"label": "发布 PR #122", "url": "https://github.com/owariband/Seekino/pull/122", "kind": "pr"}
+   ]
+  },
+  {
+   "id": "WATCH-SEEK-01",
+   "title": "去除播放进度轨道的浅色描边",
+   "category": "library",
+   "type": "task",
+   "status": "done",
+   "priority": "unset",
+   "description": "保留进度颜色、滑块和跳转操作，让轨道直接叠在画面上。",
+   "next": "",
+   "verification": "本地 Chrome 桌面和模拟触屏、明暗主题均无描边，轨道色带高 6 个 CSS 像素。公网课程视频拖到 37.83% 时进度与播放位置一致，Home 键可回到起点。",
+   "updatedAt": "2026-11-12",
+   "tags": ["播放器"],
+   "related": ["MOD-LIBRARY"],
+   "branch": "fix/player-seekbar-border",
+   "links": [
+    {"label": "PR #118", "url": "https://github.com/owariband/Seekino/pull/118", "kind": "pr"},
+    {"label": "发布 PR #122", "url": "https://github.com/owariband/Seekino/pull/122", "kind": "pr"}
    ]
   }
  ]

@@ -28,6 +28,8 @@
 | 记录 | 原问题编号 |
 |---|---|
 | [2026-11-12 · 片内查找只匹配字幕，错过没有台词的出镜](#devlog-watch-visual-find-20261112) | WATCH-FIND-02 |
+| [2026-11-11：完成状态移除了 Kino，回答结束时看不到庆祝和睡觉](#devlog-kino-perch-20261111) | CHAT-KINO-01 |
+| [2026-11-11：浏览器的原生进度轨道在视频上留下浅色描边](#devlog-watch-seekbar-20261111) | WATCH-SEEK-01 |
 | [2026-11-11 · 片头后的取帧错过标题卡，MyGO 第 2 集显示了剧情概括](#devlog-mygo-ep02-title-20261111) | F08 |
 | [2026-11-11：Cloud 跳过协议挂载，剪辑机读不到公开素材](#devlog-cloud-public-mcp-20261111) | MCP-CLOUD-01 |
 | [2026-11-11：游客在读完证据后耗尽四次模型调用](#devlog-guest-chat-budget-20261111) | CHAT-GUEST-01 |
@@ -5695,6 +5697,30 @@ Web 容器。公网直连和系统代理各验证三个地址，Chrome 验证真
 ### 指标对比
 
 MCP 工具从四个增至十一个。一次保存的 70 KiB 文本在重试后仍只有一个版本。真实 ES、FFmpeg 和隔离数据库覆盖上传、两类素材索引和原片帧回看。历史 E2 的复用开销与最终短片质量仍按 #50 的原验收范围记录。
+
+<a id="devlog-kino-perch-20261111"></a>
+## 2026-11-11：完成状态移除了 Kino，回答结束时看不到庆祝和睡觉
+
+**问题与现状**　11 月 5 日 22:07，[排版设计](https://github.com/owariband/Seekino/commit/015675d1)把睡着的 Kino 和完成状态框一起列入移除范围。22:48，[实现与测试](https://github.com/owariband/Seekino/commit/7640f58a)据此在回答成功时移除了 Kino，原有庆祝动画还在，却来不及播放。
+
+**方案候选**　完成文字和思考区可以保持紧凑。最新回复继续保留原来的 Kino 组件，就能沿用它已有的庆祝、睡眠、唤醒与跳跃，无需重写动画。
+
+**方案验证**　本地 Chrome 用模拟消息流连续完成两轮问答，有、无思考文字各一次。两轮都能看到庆祝后入睡。发出追问时醒来，新回复出现时起跳。重开历史只在最新回复直接入睡。[回归用例](../../web/src/features/search/AgentProgress.test.tsx) · [PR #118](https://github.com/owariband/Seekino/pull/118)
+
+**指标对比**　关注的是每个动作出现在哪条回复上。改前，成功后有 0 只 Kino；改后，最新回复有 1 只，旧回复有 0 只。11 月 12 日 10:27，公网 Chrome 游客的两轮真实回答都先庆祝再入睡。追问时 Kino 从第一条回复跳到第二条，刷新后直接睡在第二条回复上。[发布 PR #122](https://github.com/owariband/Seekino/pull/122)
+
+<a id="devlog-watch-seekbar-20261111"></a>
+## 2026-11-11：浏览器的原生进度轨道在视频上留下浅色描边
+
+**问题与现状**　Chrome 给原生滑块的已播放区和剩余区都画了浅色边线，深色画面上能看清轨道上下两条线。
+
+**方案候选**　描边来自浏览器绘制的轨道。保留原生滑块输入，单独绘制无边框的轨道和滑块，已播放宽度仍取自实际播放位置。
+
+**方案验证**　本地 Chrome 用同一段视频核对桌面和模拟触屏、明暗主题，比较修改前后的截图，并实际拖动及使用方向键跳转。[播放器代码](../../web/src/features/player/VideoPlayer.tsx) · [PR #118](https://github.com/owariband/Seekino/pull/118)
+
+**指标对比**　轨道上下原来各有 1 个 CSS 像素的描边，改后均为 0；内部色带仍是 6 个 CSS 像素。移除描边后仍能看清播放位置，也能继续拖动和键盘跳转。
+
+11 月 12 日，公网 Chrome 在 Karpathy 第一集拖动进度条，色带和视频实际位置均为 37.83%。按 Home 键回到起点，媒体分段请求返回 HTTP 206。[发布 PR #122](https://github.com/owariband/Seekino/pull/122)
 
 <a id="devlog-watch-visual-find-20261112"></a>
 ## 2026-11-12 · 片内查找只匹配字幕，错过没有台词的出镜
