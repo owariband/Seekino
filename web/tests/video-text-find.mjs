@@ -7,6 +7,63 @@ import { chromium, expect } from "@playwright/test";
 const [origin, seriesId, tenantId, expectedFile] = process.argv.slice(2);
 const episodes = JSON.parse(await readFile(expectedFile, "utf8"));
 const captureDir = process.env.SEEKINO_TEST_FIND_SCREENSHOTS;
+
+async function checkWatchShortcuts(browser, watchUrl) {
+  const playerSelector = '[aria-label="视频播放器"][tabindex="0"]';
+  // Each fullscreen target gets a fresh page so Chrome's re-entry cooldown cannot affect the next case.
+  for (const mode of ["window", "player", "page"]) {
+    const page = await browser.newPage({ locale: "zh-CN", viewport: { width: 1280, height: 800 } });
+    try {
+      await page.goto(watchUrl);
+      const player = page.locator(playerSelector);
+      const video = player.locator("video");
+      const panel = page.getByRole("search", { name: "在本视频中查找" });
+      const input = panel.getByRole("textbox");
+      await expect.poll(() => video.evaluate(v => v.readyState), { timeout: 15000 }).toBeGreaterThanOrEqual(1);
+
+      await page.evaluate(() => {
+        window.videoFindFullscreenChanges = 0;
+        document.addEventListener("fullscreenchange", () => { window.videoFindFullscreenChanges++; });
+      });
+      const target = mode === "player" ? player : page.locator("[data-app-shell]");
+      const fullscreen = () => target.evaluate(el => ({
+        changes: window.videoFindFullscreenChanges,
+        active: document.fullscreenElement === el ? "target" : document.fullscreenElement ? "other" : "none",
+      }));
+      if (mode === "window") {
+        await page.keyboard.press("/");
+        await expect(panel).toHaveCount(0);
+      } else {
+        await player.focus();
+        await page.keyboard.press(mode === "player" ? "f" : "Shift+f");
+      }
+      const expected = mode === "window" ? { changes: 0, active: "none" } : { changes: 1, active: "target" };
+      await expect.poll(fullscreen).toEqual(expected);
+      await expect(panel).toHaveCount(0);
+
+      for (const shortcut of ["Control+f", "Meta+f", "/"]) {
+        if (shortcut === "Control+f") await player.focus();
+        else await video.click({ position: { x: 32, y: 32 } });
+        await expect(player).toBeFocused();
+        await page.keyboard.press(shortcut);
+        await expect(input).toBeFocused();
+        await expect(input).toHaveValue("");
+        await expect.poll(() => input.evaluate(el => {
+          const rect = el.getBoundingClientRect();
+          return document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2) === el;
+        })).toBe(true);
+        await page.keyboard.type("/f");
+        await expect(input).toHaveValue("/f");
+        assert.deepEqual(await fullscreen(), expected, `${mode}: ${shortcut} changed fullscreen`);
+        await input.press("Escape");
+        await expect(panel).toHaveCount(0);
+      }
+    } finally {
+      await page.close();
+    }
+  }
+}
+
 const browser = await chromium.launch({ channel: process.env.SEEKINO_TEST_BROWSER_CHANNEL || undefined });
 try {
   const page = await browser.newPage({ locale: "zh-CN", viewport: { width: 1280, height: 800 } });
@@ -34,6 +91,12 @@ try {
     await page.keyboard.press(index === 0 ? "Meta+f" : "Control+f");
     await expect(input).toBeFocused();
     await expect(input).toHaveValue("");
+    const visuals = find.getByRole("switch", { name: "画面搜索" });
+    if (index === 0) {
+      await expect(visuals).toBeChecked();
+      await visuals.click();
+    }
+    await expect(visuals).not.toBeChecked();
     for (const query of ["高松燈", "高　松 灯"]) {
       await input.fill(query);
       if (!hits.length) await expect(find.getByText("没有匹配的文字")).toBeVisible();
@@ -85,6 +148,11 @@ try {
       if (!hits.length) await expect(find.getByText("没有匹配的文字")).toBeVisible();
       await expect(rows).toHaveCount(hits.length);
     }
+  }
+  if (episodes.length) {
+    const watchUrl = new URL(`/watch/${seriesId}/${episodes[0].videoId}`, origin);
+    watchUrl.searchParams.set("tenantId", tenantId);
+    await checkWatchShortcuts(browser, watchUrl.href);
   }
   console.log(JSON.stringify({ episodes: observed }));
 } finally {

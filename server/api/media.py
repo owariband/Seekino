@@ -9,11 +9,13 @@ from typing import Literal
 from fastapi import Depends, Query, Request
 from fastapi.responses import FileResponse, Response
 
-from .context import get_identity, get_services
+from .context import get_identity, get_services, revalidate_identity
 from .library import read_series
 from ..error.auth import AuthError
 from ..service.access import is_series_member, model_query, require_tenant_write, series_access
-from ..model.dto.mediaDTO import ParseExportOptions, ParseExportRequest, VideoTextTimeline, parse_export_event_types
+from ..model.dto.mediaDTO import (
+    ParseExportOptions, ParseExportRequest, VideoTextTimeline, VideoVisualQuery, VideoVisualTimeline, parse_export_event_types,
+)
 from ..repository.library import SeriesNotFoundError
 from ..model.vo.searchVO import VideoChunkEvidenceView
 from .search import evidence_view
@@ -81,6 +83,34 @@ def _clip_output() -> Iterator[Path]:
     # The request-scoped dependency stays alive until FileResponse finishes sending.
     with TemporaryDirectory(prefix="seekino-clip-") as directory:
         yield Path(directory) / "clip.mp4"
+
+
+def get_video_visual_timeline(
+    request: Request, response: Response, video_id: str = Query(alias="videoId"), tenant_id: str = Query(alias="tenantId"),
+) -> VideoVisualTimeline:
+    services = get_services(request)
+    video = services.library.get_video(video_id, tenant_id=tenant_id)
+    read_series(request, video.series_id, tenant_id=tenant_id)
+    response.headers["Cache-Control"] = "private, no-store"
+    return services.media.video_visual_timeline(video.video_id, tenant_id=tenant_id)
+
+
+def search_video_visuals(request: Request, response: Response, body: VideoVisualQuery) -> VideoVisualTimeline:
+    services = get_services(request)
+    identity = get_identity(request)
+    video = services.library.get_video(body.video_id, tenant_id=body.tenant_id)
+    read_series(request, video.series_id, tenant_id=body.tenant_id)
+    response.headers["Cache-Control"] = "private, no-store"
+    if getattr(services, "event_retrieval", None) is None:
+        return VideoVisualTimeline(ready=False, cues=[])
+    with model_query(getattr(services, "auth", None), identity, request.client.host if request.client else "unknown"):
+        result = services.event_retrieval.search_visuals(
+            body.query, tenant_id=body.tenant_id, series_id=video.series_id, video_id=video.video_id,
+        )
+    if identity.mode == "cloud":
+        request.state.identity = revalidate_identity(request)
+        services.media.require_series_access(request.state.identity, [video.series_id], tenant_id=body.tenant_id)
+    return result
 
 
 def get_video_clip(

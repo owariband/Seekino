@@ -43,6 +43,7 @@ import type {
   VideoParseTaskView,
   VideoSearchRequest,
   VideoTextTimeline,
+  VideoVisualTimeline,
 } from "./contracts";
 
 export let TENANT_ID =
@@ -601,6 +602,17 @@ export function updateAgentGlobalSettings(
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ values, revision }),
+  });
+}
+
+export function getVideoVisualTimeline(videoId: string, tenantId: string, signal: AbortSignal): Promise<VideoVisualTimeline> {
+  return requestJson(`/api/videos/visual-timeline?${new URLSearchParams({ tenantId, videoId })}`, { signal });
+}
+
+export function searchVideoVisuals(query: string, videoId: string, tenantId: string, signal: AbortSignal): Promise<VideoVisualTimeline> {
+  return requestJson("/api/videos/visual-search", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query, videoId, tenantId }), signal,
   });
 }
 
