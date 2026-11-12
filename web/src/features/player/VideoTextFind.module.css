@@ -35,7 +35,7 @@
   font-size: .8125rem;
   transition: background-color var(--duration-fast) var(--ease-out);
 }
-.textFindBar input::placeholder { color: var(--ink-soft); }
+.textFindBar input::placeholder { color: var(--ink-soft); font-size: .72rem; }
 .textFindBar input:focus-visible {
   outline: none;
   background: color-mix(in srgb, var(--surface-muted) 55%, transparent);

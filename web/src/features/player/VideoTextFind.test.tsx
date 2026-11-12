@@ -97,7 +97,7 @@ it("keeps ordinary semantics free of chat calls and reruns only the corrected se
   await waitFor(() => expect(client.searchVideoVisuals).toHaveBeenCalledTimes(1));
   expect(interpret).not.toHaveBeenCalled();
   fireEvent.click(toggle);
-  await screen.findByText("生气、恼火、不满");
+  expect(await screen.findByText("纠正")).toHaveTextContent("纠正 生气、恼火、不满");
   expect(screen.getByRole("textbox")).toHaveValue("红温");
   expect(screen.getAllByText("他心中不满，也很恼火。")).toHaveLength(1);
   fireEvent.click(screen.getByText(emotion.description));

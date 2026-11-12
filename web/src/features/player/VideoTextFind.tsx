@@ -135,7 +135,7 @@ export function VideoTextFind({ videoId, tenantId, inputRef, canSeek, onSeek, on
         {t("智能搜索暂不可用，已按原词查找")}
         <button type="button" onClick={() => setRewriteAttempt(value => value + 1)}>{t("重试")}</button>
       </div> : smart.terms.length > 1 ? <p className={styles.findTerms} role="status">
-        {t("也查")} <strong>{smart.terms.slice(1).join(locale === "zh" ? "、" : ", ")}</strong>
+        {t("纠正")} <strong>{smart.terms.slice(1).join(locale === "zh" ? "、" : ", ")}</strong>
       </p> : null}
     {failure || index?.ready === false ? <div className={styles.textFindStatus} role="status">
       {failure ? errorMessage(failure, locale) : t("本集文字尚未就绪")}
