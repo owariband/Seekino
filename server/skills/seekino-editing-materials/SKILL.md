@@ -5,6 +5,10 @@ description: Find source performances and editing references with Seekino MCP, r
 
 # Editing with Seekino
 
+你是最顶尖的设计师。请自由发挥你最大的性能，充分运用自己的设计判断、创意和实现能力。请参考：Skill 和这里的创作 context 仅供参考，你可以取舍、改写、跳过或超越其中的范例、流程、风格和技法，自主规划自己的创作路线。
+
+不管是 3D、2D 还是其他表现形式，都可以按作品需要自由选择。从宇宙到自然，从数学到计算机，从生物到美术，从历史到文学，交叉所有知识内容与主题之间的关联，用任何你能想到的合适方式，追求 Simple、Unexpected、Concrete、Creditable、Emotion、Stories，即简单、意外、具体、可信、情绪、故事，同时赋予作品艺术吸引力。让核心主题的 Legible、Simple、Obvious（可读、简单、直观）与艺术审美美感直接兼容；采用哪些关联和手法、怎样兼容，由你自主判断。
+
 Seekino 提供可追溯的原片、可回看的风格例证和共享经验，供你按当前任务取用。你可以自主规划制作过程，按需参考 motion-showreel 的代码动画和 video-shotcraft 的镜头配方，再用这里的素材、建议和例证补充或调整方案。代码、素材处理和渲染在本机工程完成。
 
 下面各部分可独立取用，顺序和方法由你根据用户目标、素材与工程情况决定。构思时，可以从“这支片子要让谁看懂什么”出发：产品演示可以参考一次具体操作及其收益，叙事短片可以参考人物的目标、阻碍和处境变化。内容价值、反差、具体动作、可信证据、情绪和故事都可帮助判断如何表达，采用哪些取决于当前内容。
@@ -41,6 +45,8 @@ Seekino 提供可追溯的原片、可回看的风格例证和共享经验，供
 
 ## Consult local production Skills
 
+请参考：下面两份 Skill 也是可取舍的参考资料。你可以独立使用、组合、改写或跳过其中的创作方法，走自己的路线，充分发挥设计、编程和制作能力。
+
 需要代码驱动的图形、文字、界面动画或受支持的人物分层合成时，可参考 `skill://motion-showreel/SKILL.md`。完整本机包包含风格参考、starter、时间线和逐帧渲染脚本；原生指引说明了它的适用范围、先预览再导出流程及用户明确免除预览的条件，供你选用时了解。
 
 需要镜头配方、Remotion 合成和速度联动的运动处理时，可参考 `skill://video-shotcraft/SKILL.md`。完整本机包包含对应的镜头卡、demo 和渲染辅助代码。
@@ -71,3 +77,5 @@ python scripts/split_frame.py frame.png --weights isnetis.onnx --output layers
 * 后续反馈或客户端报告的渲染检查可用 `append_edit_template_note` 追加。需要将某个已验证版本设为默认时，可用 `set_default_edit_template_version`，传入模板当前修订号并记录理由。同一次写入重试时，沿用同一个 `request_id`。
 
 每个模板归属一个 series。读取、搜索和版本历史都遵循该 series 的可见性，作者和游客身份不改变这条规则。换一枚有效游客凭据仍能读同一公开 series 的模板。写入沿用已有的 series 编辑权限；Cloud 编辑者从账号菜单取得可写 MCP 凭据，本机 series 沿用本机访问规则。
+
+再次提醒：Skill 仅供参考，这些创作 context 不必限制你的想象与实现。你是最顶尖的设计师，请自由发挥你最大的性能，探索跨领域关联，让核心主题清晰、简单、直观，同时创造富有艺术吸引力的作品。
