@@ -11,7 +11,7 @@ from engine.rag.contracts import (
 )
 from engine.rag.indexing.events import EventIndexingContract
 from engine.rag.retrieval.contracts import (
-    EventFilters, EventIndexNotReadyError, EventSearchResult, RetrievalConsistencyError, RetrievalPolicy,
+    EventFilters, EventIndexNotReadyError, EventSearchResult, RetrievalConsistencyError, RetrievalPolicy, SeriesNotReadyError,
 )
 from engine.rag.retrieval.events import (
     EVENT_RETRIEVAL_STRATEGY_VERSION, fuse_event_hits, select_event_chunk_hits, verify_event_candidate,
@@ -21,6 +21,7 @@ from gateway.usage import model_call_context
 
 from .video_parse_persistence import VideoParseConflictError, VideoParsePersistenceService
 from ..error.retrieval import retrieval_backend_errors
+from ..model.dto.mediaDTO import VideoVisualCue, VideoVisualTimeline
 from ..storage.elasticsearch_events import ElasticsearchVideoEventStore
 from .video_retrieval import QueryEmbedder, RetrievalIndexConsistencyError
 
@@ -52,13 +53,33 @@ class VideoEventRetrievalService:
         self._vision_embedder = embedder if vision_embedder is None else vision_embedder
         self._exact, self._tracing = exact, tracing
 
+    def search_visuals(self, query: str, *, tenant_id: str, series_id: str, video_id: str) -> VideoVisualTimeline:
+        try:
+            result = self.search(query, tenant_id=tenant_id, series_ids=[series_id], video_id=video_id,
+                                 event_types=("SCENE", "ACTION", "EMOTION"), top_k=12)
+        except (EventIndexNotReadyError, SeriesNotReadyError):
+            return VideoVisualTimeline(ready=False, cues=[])
+
+        parents = {hit.evidence.video_chunk_id: hit.evidence for hit in result.chunk_result.hits}
+        cues = []
+        for match in result.matches[:24]:
+            parent = parents[match.video_chunk_id]
+            if (parent.tenant_id, parent.series_id, parent.video_id) != (tenant_id, series_id, video_id):
+                raise RetrievalIndexConsistencyError("Visual evidence escaped the requested video")
+            # search() already verified this Event's index, version and bounds against this exact timeline.
+            event = parent.all_time_events[match.timeline_index]
+            cues.append(VideoVisualCue(start_ms=event["start_seconds"], end_ms=event["end_seconds"],
+                                       kind=event["event_type"], description=event["description"],
+                                       visible_persons=event["visible_persons"]))
+        return VideoVisualTimeline(ready=not result.chunk_result.partial, cues=cues)
+
     @retrieval_backend_errors()
     def search(
         self, query: str, *, tenant_id: str, series_ids: Sequence[str], top_k: int = 10,
         lexical_weight: float | None = None, text_weight: float | None = None,
         vision_weight: float | None = None, event_types: Sequence[str] | None = None,
         speaker: str | None = None, video_chunk_ids: Sequence[str] | None = None,
-        episode_order: int | None = None,
+        episode_order: int | None = None, video_id: str | None = None,
     ) -> EventSearchResult:
         if not isinstance(query, str) or not query.strip():
             raise ValueError("query must be nonblank")
@@ -89,9 +110,12 @@ class VideoEventRetrievalService:
                 event_index=(self._store.index_name, self._contract.contract_id),
                 video_chunk_ids=filters.video_chunk_ids or None,
                 **({"episode_order": episode_order} if episode_order is not None else {}),
+                **({"video_id": video_id} if video_id is not None else {}),
             )
         except VideoParseConflictError as error:
             raise EventIndexNotReadyError(str(error)) from error
+        if video_id is not None and any(item != video_id for item in selected.searched_video_ids):
+            raise RetrievalIndexConsistencyError("Event scope escaped the requested video")
         # Absence/coverage is checked before any model call; it is not an empty match.
         self._store.bind_contract(self._contract)
         source_generations = selected.event_source_generations

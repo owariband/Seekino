@@ -40,11 +40,13 @@ def series_names(
 
 
 def list_series_videos(
-    session: Session, *, series_ids: Sequence[str], episode_order: int | None = None,
+    session: Session, *, series_ids: Sequence[str], episode_order: int | None = None, video_id: str | None = None,
 ) -> list[VideoData]:
     query = select(Video).where(
         Video.series_id.in_(series_ids), ~video_deletion_pending(),
     )
+    if video_id is not None:
+        query = query.where(Video.id == video_id)
     if episode_order is not None:
         query = query.where(Video.episode_order == episode_order)
     return [task_store.video_data(row) for row in session.scalars(query.order_by(Video.episode_order, Video.id))]
