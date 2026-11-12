@@ -1,5 +1,13 @@
 # 1. 问题与现状
 
+## 2026-11-12 发布验收记录
+
+本地实际页面 review 已获确认，随后明确授权合入 main 并上线。[发布 PR #133](https://github.com/owariband/Seekino/pull/133) 从最新 main `41dc6c46` 只选取 4 个运行 CSS，压成单提交 `dd4ed49c`（56 行新增 / 50 行删除）；`.gitignore` 沿用 main。本 TRD、看板、devlog、实验与私有配置均未进入发布提交，旧发布草稿 #128 已关闭。
+
+main 锁文件对应依赖下的生产构建、2 项主题单测、1 项既有浏览器渐变回归、本地与 GitHub 发布树检查通过。17:36（UTC+8）仅更新云端 Web 为 `seekino-web:main-dd4ed49c`，核对 50 个镜像文件和 6 个关键 HTTPS 资源哈希。公网首页 / 系列页 × 日夜 × 390 / 1440 像素共 8 状态均通过，无页面脚本或资源加载错误；4 个隔离夜间背景探针对 `#0d1110` 的全图最大通道差为 0。手机首页首次探针叠入 Kino 浮动引导卡，已保留原取样并仅在独立浏览器排除该非 Hero 层后重取，不改产品或用户浏览器。
+
+API、embedding、MySQL、Elasticsearch、Redis 的容器 ID、启动时间与镜像保持。旧 Web 镜像及远端 `/home/ubuntu/seekino-cloud-runtime/releases/palette-dd4ed49c-20261112/rollback-web` 保留。证据位于 `outputs/verification/palette-main-20261112/` 与 `outputs/ops/cloud-runtime/palette-reviewed-20261112/`。正式域名为 [Seekino](https://seekino.hypn0s.cloud/watch)；Safari 和实体手机仍未实测。本次闭环状态见[工作台](../../dev/workbench.html) `WEB-PALETTE-01`；下列候选与待发布描述按其阶段保留历史事实。
+
 ## 当前补充：Hero 过渡共用主题背景（2026-11-12）
 
 更深夜间候选已通过 PR #131 接入 dev local，但首页推荐图底部仍呈一片绿色，和下方页面背景不统一。实际来源为 Hero 的固定底色 `#10251f` 和侧向 / 移动遮罩 `rgb(5 16 13 / ...)`；上一轮只让最底部跟随 canvas，尚未覆盖整个过渡层。
