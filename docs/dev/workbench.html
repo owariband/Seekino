@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-12T10:28:12+08:00",
+ "updatedAt": "2026-11-12T10:29:15.642426+00:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 39,
+ "revision": 51,
  "categories": [
   {
    "id": "parse",
@@ -5236,6 +5236,64 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    ]
   },
   {
+   "id": "WATCH-FIND-03",
+   "title": "智能识别当前集搜索中的网络用语",
+   "category": "search",
+   "type": "requirement",
+   "status": "verifying",
+   "priority": "P1",
+   "description": "观看页保留普通语义候选，开启智能搜索后用默认聊天模型解释网络梗，显示并搜索近义表达。",
+   "next": "等待上游画面搜索 PR 合并，再将智能搜索集成至 dev 并在发布环境复验。",
+   "verification": "本地实片的普通模式按播放时间导航五个相关候选。智能模式只保留两处含不满的标注，逐条跳到 11:02.150、15:41.000，首尾循环和切回普通模式均已验收。",
+   "updatedAt": "2026-11-12",
+   "tags": ["片内查找", "智能搜索"],
+   "related": ["WATCH-FIND-02", "MOD-SEARCH"],
+   "branch": "feat/watch-smart-find",
+   "links": [
+    {"label": "智能搜索设计与验收", "kind": "trd", "url": "https://github.com/owariband/Seekino/blob/feat/watch-smart-find/docs/design/03-product-reassessment/watch-smart-find-trd.md"},
+    {"label": "本地实测记录", "kind": "report", "url": "https://github.com/owariband/Seekino/blob/feat/watch-smart-find/docs/report/server/evidence/watch-smart-find-local-20261112.json"},
+    {"label": "PR #125", "kind": "pr", "url": "https://github.com/owariband/Seekino/pull/125"}
+   ]
+  },
+  {
+   "id": "WATCH-FIND-02",
+   "title": "观看页可切换的单集人物出镜与场景搜索",
+   "category": "search",
+   "type": "requirement",
+   "status": "verifying",
+   "priority": "P1",
+   "description": "在当前集按出镜标注与自然语言定位画面，浏览器记住画面开关。",
+   "next": "开发 PR 集成后按发布范围验收正式站。",
+   "verification": "隔离环境的 Chrome 实际停在爱音看手机 12:56.666 和背吉他包 14:07.999。关闭并刷新后文字查找有效，画面请求为零。",
+   "updatedAt": "2026-11-12",
+   "tags": [
+    "片内查找",
+    "画面搜索"
+   ],
+   "related": [
+    "WATCH-FIND-01",
+    "MOD-SEARCH"
+   ],
+   "branch": "feat/watch-visual-find",
+   "links": [
+    {
+     "label": "单集画面查找设计",
+     "kind": "trd",
+     "url": "https://github.com/owariband/Seekino/blob/feat/watch-visual-find/docs/design/03-product-reassessment/watch-visual-find-trd.md"
+    },
+    {
+     "label": "原片与浏览器验收",
+     "kind": "report",
+     "url": "https://github.com/owariband/Seekino/blob/feat/watch-visual-find/docs/report/server/evidence/watch-visual-find-local-20261112.json"
+    },
+    {
+     "label": "PR #120",
+     "kind": "pr",
+     "url": "https://github.com/owariband/Seekino/pull/120"
+    }
+   ]
+  },
+  {
    "id": "WATCH-FIND-01",
    "title": "在当前视频按台词和画面文字跳转",
    "category": "search",
@@ -5308,8 +5366,8 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "status": "verifying",
    "priority": "P1",
    "description": "从剧本寻找可剪表演和有原片依据的手法，编辑在本机选入点、出点并判断如何使用。",
-   "next": "review #121 的 series 共享和三份 Skill，重点核对 Seekino 仅供参考、Agent 自主规划和按需组合制作 Skill 的表达；通过后核对 #123 正式文件。动态人物分离和剧本匹配效果待实际采用后的整段验收。",
-   "verification": "同一 #50 应用在隔离环境贯通六个 MCP 工具、带毫秒引证的新卡及两段 MP4。真实 P5R 回看 34 帧。series 修复两分支各 159 项回归通过、7 项 Redis 跳过，原镜头模块与 main 一致。中文正文及剧本表演指引补充后两分支各 35 项 MCP 回归通过，三项 Skill、八份资源不变；分别校验上游来源、原许可证及改写正文摘要。YAML、标题、代码块、标识符、链接和非文案 Python AST 未改，独立语义复核的问题已修正。原固定包安装验证为 video-shotcraft 1,221 份、motion-showreel 114 份文件一致。开发类型检查和两分支构建通过。成片、文案效果与生产升级待验收。",
+   "next": "核对 #123 的正式发布文件，继续 review 后再决定 main 发布与生产升级；动态人物分离和剧本匹配效果待实际采用后的整段验收。",
+   "verification": "同一 #50 应用在隔离环境贯通六个 MCP 工具、带毫秒引证的新卡及两段 MP4。真实 P5R 回看 34 帧。series 修复两分支各 159 项回归通过、7 项 Redis 跳过，原镜头模块与 main 一致。中文正文及剧本表演指引补充后两分支各 35 项 MCP 回归通过，三项 Skill、八份资源不变；分别校验上游来源、原许可证及改写正文摘要。YAML、标题、代码块、标识符、链接和非文案 Python AST 未改，独立语义复核的问题已修正。原固定包安装验证为 video-shotcraft 1,221 份、motion-showreel 114 份文件一致。开发类型检查和两分支构建此前通过；与最新 dev 整合后，200 项后端回归通过、7 项独立 Redis 测试跳过，122 项前端单测及含类型检查的构建通过。成片、文案效果与生产升级待验收。",
    "updatedAt": "2026-11-12",
    "tags": [
     "参考片",
@@ -5381,6 +5439,155 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "links": [
     {"label": "PR #118", "url": "https://github.com/owariband/Seekino/pull/118", "kind": "pr"},
     {"label": "发布 PR #122", "url": "https://github.com/owariband/Seekino/pull/122", "kind": "pr"}
+   ]
+  },
+  {
+   "id": "CHAT-PERF-01",
+   "title": "聊天页连接提示与历史 Markdown 渲染开销",
+   "category": "chat",
+   "type": "requirement",
+   "status": "verifying",
+   "priority": "P1",
+   "description": "输入、思考和正文更新执行全部历史 Markdown；完成态先于 SSE 关闭时可能重新显示连接中。保留 Kino 动作、证据顺序与恢复合同。",
+   "next": "用户复测长历史、媒体或trace较多的会话与真实设备；后续main正式发布纳入同一前端补丁，既有布局问题单独核对。",
+   "verification": "658项前端单测、类型与构建通过；Markdown 20/20/20降为0/0/1；60条历史4x CPU下输入p95 38.6→16.0ms、SSE到DOM p95 38.8→18.4ms。三个隔离回放场景通过；浏览器6通过、1项布局失败与基线相同。本地真实DeepSeek聊天通过；13:43公网前端已发布，文件哈希匹配，两轮真实聊天42/8个增量均完成，无JS异常或收尾连接提示，Kino回到sleep；API进程未变，回滚材料已保留。",
+   "updatedAt": "2026-11-12",
+   "tags": [
+    "性能",
+    "SSE",
+    "UI"
+   ],
+   "related": [
+    "MOD-CHAT",
+    "CHAT-LAYOUT-01",
+    "WATCH-KINO-01"
+   ],
+   "branch": "perf/chat-frontend",
+   "links": [
+    {
+     "label": "PR #126",
+     "kind": "pr",
+     "url": "https://github.com/owariband/Seekino/pull/126"
+    },
+    {
+     "label": "TRD",
+     "kind": "trd",
+     "url": "https://github.com/owariband/Seekino/blob/perf/chat-frontend/docs/design/03-product-reassessment/chat-frontend-performance-trd.md"
+    },
+    {
+     "label": "实测报告",
+     "kind": "source",
+     "url": "https://github.com/owariband/Seekino/blob/perf/chat-frontend/docs/report/web/chat-frontend-performance-20261112.md"
+    }
+   ]
+  },
+  {
+   "id": "WEB-PALETTE-01",
+   "title": "已选夜间配色与 Hero 过渡共用背景",
+   "category": "library",
+   "type": "task",
+   "status": "done",
+   "priority": "P1",
+   "description": "保持已选六项夜间值；首页和系列页的底色、遮罩、渐变与画布共用夜间颜色来源。",
+   "next": "已上线；旧 Web 镜像和本次发布目录的 rollback-web 回滚入口保留。",
+   "verification": "2026-11-12 本地视觉 review 获确认。main 发布 #133 压成 1 个提交 dd4ed49c，仅 4 个 CSS；生产构建、2 项主题单测、1 项浏览器渐变回归及 GitHub release-files 通过。17:36（UTC+8）只更新生产 Web；50 个镜像文件、6 个 HTTPS 资源哈希和公网 8 状态通过，4 个夜间背景探针最大通道差为 0；其他 5 个服务未重建。",
+   "updatedAt": "2026-11-12",
+   "tags": [
+    "UI"
+   ],
+   "related": [
+    "WATCH-THEME-01",
+    "MOD-LIBRARY"
+   ],
+   "branch": "fix/release-reviewed-palette",
+   "links": [
+    {
+     "label": "设计与验收",
+     "url": "https://github.com/owariband/Seekino/blob/fix/unify-hero-background/docs/design/03-product-reassessment/restore-celadon-palette-trd.md",
+     "kind": "trd"
+    },
+    {
+     "label": "PR #127",
+     "url": "https://github.com/owariband/Seekino/pull/127",
+     "kind": "pr"
+    },
+    {
+     "label": "历史草稿 #128（已关闭）",
+     "url": "https://github.com/owariband/Seekino/pull/128",
+     "kind": "pr"
+    },
+    {
+     "label": "候选 PR #131",
+     "url": "https://github.com/owariband/Seekino/pull/131",
+     "kind": "pr"
+    },
+    {
+     "label": "Hero 修复 #132",
+     "url": "https://github.com/owariband/Seekino/pull/132",
+     "kind": "pr"
+    },
+    {
+     "label": "正式发布 #133",
+     "url": "https://github.com/owariband/Seekino/pull/133",
+     "kind": "pr"
+    },
+    {
+     "label": "线上页面",
+     "url": "https://seekino.hypn0s.cloud/watch",
+     "kind": "page"
+    }
+   ]
+  },
+  {
+   "id": "MOBILE-UI-01",
+   "title": "手机文档入口、选集密度与导航过渡",
+   "category": "library",
+   "type": "requirement",
+   "status": "done",
+   "priority": "P1",
+   "description": "手机顶栏隐藏使用文档，系列选集沿用全宽大图，首次引导与连续选集困难。限定现有文档入口与760px以下选集布局，保留青瓷风格、桌面网格及播放合同。",
+   "next": "已获本地确认并通过PR #135最小发布至main aeb5e0d5；公网Chrome验收通过。保留旧Web回退，Safari、Firefox及实体手机可继续补测。",
+   "verification": "main仅3个运行文件（70增/9删），无TRD、报告或依赖改动；main锁文件下类型/构建、77项相关单测、12项浏览器与9场景布局通过，GitHub release-files通过。18:24（UTC+8）只发布Web，50个镜像文件和7个HTTPS资源哈希匹配，另5项服务不变；公网真实13集在320/390/760/761/1440px通过，390px每集70.19px、列表1080.44px，图标44×44px可进文档、抽屉保留文字。240ms进入/180ms退出、遮罩与reduced-motion实测通过。无JS或JS/CSS资源错误、无模型请求；Safari/Firefox/真机未测。证据：outputs/verification/mobile-main-20261112/、outputs/ops/cloud-runtime/mobile-navigation-20261112/。",
+   "updatedAt": "2026-11-12",
+   "tags": [
+    "UI",
+    "移动端"
+   ],
+   "related": [
+    "MOD-LIBRARY"
+   ],
+   "branch": "fix/mobile-docs-episodes",
+   "links": [
+    {
+     "label": "PR #129",
+     "kind": "pr",
+     "url": "https://github.com/owariband/Seekino/pull/129"
+    },
+    {
+     "label": "TRD",
+     "kind": "trd",
+     "url": "https://github.com/owariband/Seekino/blob/dev/docs/design/03-product-reassessment/mobile-docs-episodes-trd.md"
+    },
+    {
+     "label": "报告与截图",
+     "kind": "source",
+     "url": "https://github.com/owariband/Seekino/blob/dev/docs/report/web/mobile-docs-episodes-20261112/README.md"
+    },
+    {
+     "label": "devlog",
+     "kind": "source",
+     "url": "https://github.com/owariband/Seekino/blob/dev/docs/dev/devlog.md#devlog-mobile-docs-episodes-20261112"
+    },
+    {
+     "label": "正式发布 #135",
+     "kind": "pr",
+     "url": "https://github.com/owariband/Seekino/pull/135"
+    },
+    {
+     "label": "线上实际系列",
+     "kind": "page",
+     "url": "https://seekino.hypn0s.cloud/series/90d72272-eb0f-5067-ae63-4653240a0e13?tenantId=platform-public"
+    }
    ]
   }
  ]

@@ -273,8 +273,13 @@ describe("VideoPlayer", () => {
     fireEvent.change(screen.getByRole("combobox", { name: "播放倍速" }), { target: { value: "1.5" } });
     expect(media.playbackRate).toBe(1.5);
     fireEvent.click(screen.getByRole("button", { name: "网页全屏" }));
+    shell.requestFullscreen = vi.fn().mockResolvedValue(undefined);
     fireEvent.keyDown(shell, { key: "f" });
+    expect(shell.requestFullscreen).toHaveBeenCalledOnce();
+    expect(toggleFullscreen).toHaveBeenCalledTimes(1);
+    fireEvent.keyDown(shell, { key: "F", shiftKey: true });
     expect(toggleFullscreen).toHaveBeenCalledTimes(2);
+    expect(shell.requestFullscreen).toHaveBeenCalledOnce();
   });
 
   it("writes progress at most every five seconds and flushes on pause, page leave, and unmount", () => {

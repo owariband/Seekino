@@ -56,6 +56,8 @@ UploadProvider ───── 3 文件并行、3 分片 worker、暂停恢复�
 
 观看首页和系列页使用服务返回的 Summary 推荐封面；未观看时保持静态图，观看后显示上次播放位置。没有 Summary 图片时回退原片预览。观看历史沿用按身份隔离的浏览器本地存储，尚不跨设备同步，封面预览不写入观看历史。
 
+手机顶栏显示书本文档图标，展开导航后显示“使用文档”文字。手机导航以240ms进入、180ms退出，遮罩同步淡变；减少动态效果时立即切换，保留原生焦点和Esc关闭。系列详情在760px及以下使用左图右文的紧凑选集，保留集数、时长、已看位置和不可播放提示；更宽屏幕继续使用网格。设计与尺寸对照见[移动端文档与选集](../docs/design/03-product-reassessment/mobile-docs-episodes-trd.md)。
+
 在观看页按 `⌘F` / `Ctrl+F` 或点播放器放大镜，可查本集已解析的台词和画面文字。输入可混用繁简与字间空格。点击结果或按 Enter 跳到该条的起点，Shift+Enter 回到上一处，Esc 关闭。
 
 ## 启动
@@ -145,3 +147,5 @@ npm run test:e2e
 正常 Chat 请求通过 `seekino:chat-delivery` 浏览器事件区分发出、实时正文接收、可见 DOM 观察、模型轮次完成及持久终态。DOM 观察使用提交后的下一动画帧，并不声称精确测得物理屏幕绘制。记录不包含正文；失败/中断只有终止耗时，没有成功 TT。
 
 单独浏览器记录保留候选 `firstProviderTextReceivedMs`，`fttMs` 为 null；结合独立 `SEEKINO_CHAT_TRACE_DIR` 中的原始请求/SSE，由 `scripts/verify_chat_streaming_trace.py` 核验身份与完成前交付后才填写有效 FTT。旧服务、非流式和缺少来源的快照不能计为真实首字。采集方法、模拟与真实验证边界见 [实施报告](../docs/report/server/chat-streaming-20261101.md)。
+
+聊天页按消息和 Markdown 块隔离渲染，连接提示只覆盖本次请求尚未受理的阶段；可信终态到达后，等待 POST 关闭时保留禁用的发送按钮。滚动按帧合并，读者向上滚后停止跟随。固定历史、独立 SSE 与生产构建的性能回放在 `tests/chat-frontend-performance.mjs`，运行方法及浏览器既有失败见 [2026-11-12 验收报告](../docs/report/web/chat-frontend-performance-20261112.md)。

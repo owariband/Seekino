@@ -2899,3 +2899,35 @@ micrograd v5 共 146 块，整集 90 分 04.884 秒。调度反复锁取候选�
 ### WATCH-SEEK-01 · 浏览器的原生进度轨道在视频上画出浅色描边
 
 视频底色较暗时，轨道上下各一条浅线尤其显眼。验收看明暗主题下的轨道无描边，同时保留已播放区、滑块和指针、键盘跳转。[实测记录](devlog.md#devlog-watch-seekbar-20261111)
+
+### WATCH-FIND-02 · 当前视频里出镜但未入字幕的人物无法定位
+
+2026-11-12。MyGO 第 2 集中，爱音看手机、背吉他包时，字幕都没有她的名字。验收要求能按本集出镜标注或自然语言描述找到这两处原片，区分台词中提及的人物，允许关闭画面并保留逐字查找。[设计与验收](../design/03-product-reassessment/watch-visual-find-trd.md) · [工作台](workbench.html)
+
+### WATCH-FIND-03 · 片内查找把网络用语召回到字面相似的镜头
+
+2026-11-12。搜「红温」时，MyGO 第 2 集的前两条相关画面分别是紫红色眼睛和红色吉他。观众可以选择保留普通搜索，或理解为人物生气并按近义表达查找。验收检查两种模式的实际检索词、结果与跳转，以及角色、否定和字面限定。[设计与验收](../design/03-product-reassessment/watch-smart-find-trd.md) · [工作台](workbench.html)
+
+## WEB-PALETTE-01 · 中性色板替换青瓷背景，整站观感偏离此前配色
+
+2026-11-10，Apple 式视觉刷新在调整字体时同时替换全站色板，白天背景从 `#e4eae5` 改为 `#f5f5f7`，黑夜从 `#121816` 改成纯黑，首页与系列页也改为中性遮罩。2026-11-12 明确恢复原有配色。验收要求画布、面板、卡片、文字和 Hero 回到 `cee43f96^` 的颜色，保留字体、动效、主题偏好和模型菜单。[设计与验证](../design/03-product-reassessment/restore-celadon-palette-trd.md) · [PR #127](https://github.com/owariband/Seekino/pull/127) · [工作台](workbench.html)
+
+2026-11-12 首页后续：推荐图底部仍有独立绿色带。实际 Hero 底色 `#10251f` 与夜间画布 `#0d1110` 不同，侧向与窄屏遮罩也仍固定绿黑。验收补充为两页背景、遮罩和渐变共用夜间源，白天保持。四个夜间无图探针已与画布逐像素一致，白天差异不超过 1/255；主观 review 继续进行。[本轮 #132](https://github.com/owariband/Seekino/pull/132)
+
+2026-11-12 后续 review：恢复版夜间仍偏灰，纯黑版也未达到舒适预期，现已选中「更深一点」候选。追加验收为六项夜间端点匹配所选色板、白天不变、实际页面可 review；Claude 评审须看到匿名界面图片，不能只看文字。12 状态和既有渐变通过，Opus 5.5 已收到两张实际图并返回观察，主观舒适度仍待确认。[本轮 #131](https://github.com/owariband/Seekino/pull/131)
+
+### CHAT-PERF-01 · 页面状态更新重跑历史 Markdown，终态收尾又误显示连接中
+
+2026-11-12。当前 dev 的组件探针确认：20 条历史回答下，输入一字、仅更新思考、更新一条消息，各执行 20 个 Markdown。可信终态先于 POST EOF 时，`sending` 仍为真且没有 PROCESSING，页面会重新显示连接中，并影响 Kino 的收尾状态。对照原问题验收时，需要同时核对解析次数、输入及正文观察延迟、Kino 状态、滚动、取消和恢复，不能只加过渡动效。
+
+验收边界：输入与思考更新不重解析未变化的历史正文；单消息只解析变化块；终态不显示连接中或无效停止，发送按钮与实际守卫一致；旧请求晚到不能污染已经结束的新回合；用户上滚后不被拉回底部。PR #126 的受控回放和 658 项前端测试已有证据，真实线上效果仍未测。公开范围提示的既有布局断言在方案与未修改基线上以同一坐标失败，归原 `CHAT-HEADER-01` 核对，没有借本次性能修复改写旧期望。
+
+[设计](../design/03-product-reassessment/chat-frontend-performance-trd.md) · [实测报告](../report/web/chat-frontend-performance-20261112.md) · [devlog](devlog.md#devlog-chat-frontend-performance-20261112) · [工作台](workbench.html)
+
+### MOBILE-UI-01 · 手机顶栏隐藏文档，全宽预览让选集难以连续浏览
+
+2026-11-12。手机访客需要先打开菜单才能找到使用说明，系列页每集的16:9预览又随整行放大。源码确认是760px下隐藏全部顶栏图标，以及480px下只把选集切成单列，未改变单集的纵向布局。验收要求顶栏文档带可见短文字且至少44px触控区域、390px单集不超过100px、13集总高至少减少50%、600px列表窗口至少5整集，并保留桌面网格、播放路由、观看位置、集数/时长和不可播放状态。
+
+同日隔离浏览器对照：390px总高3342.20→1080.44px，减少67.67%；单集70.19px，600px列表窗口2→7整集。9场景未发现页面溢出或JS异常，桌面尺寸与基线相同；76项相关单测、8项浏览器回归、类型与构建通过。证据限于固定测试样本和本机Chrome，未部署、未验真机或实际Cloud视频。[TRD](../design/03-product-reassessment/mobile-docs-episodes-trd.md) · [报告与截图](../report/web/mobile-docs-episodes-20261112/README.md) · [devlog](devlog.md#devlog-mobile-docs-episodes-20261112) · [工作台](workbench.html) · [PR #129](https://github.com/owariband/Seekino/pull/129)
+
+同日第二轮本地预览反馈：首轮外显短标签验收撤销，顶栏只显示44×44px文档图标，展开导航内保留文字。原生dialog瞬时切换且关闭立即卸载内容，现改为240ms进入/180ms退出、遮罩同步，并按实际过渡完成清理。12项浏览器回归（含中间帧、重开、焦点与reduced-motion）和76项相关单测通过，选集9场景指标未变；4190预览已更新，真机与Cloud仍未验。[第二轮证据](../report/web/mobile-docs-episodes-20261112/README.md#icon-and-drawer-motion) · [决策记录](devlog.md#devlog-mobile-drawer-motion-20261112)

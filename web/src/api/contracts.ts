@@ -93,6 +93,25 @@ export interface VideoEpisodeUpdateRequest {
   episodeOrder: number;
 }
 
+export interface VideoVisualCue {
+  startMs: number;
+  endMs: number;
+  description: string;
+  visiblePersons: string[];
+  kind: string;
+}
+
+export interface VideoVisualTimeline {
+  ready: boolean;
+  cues: VideoVisualCue[];
+  knownPersons?: string[];
+}
+
+export interface VideoFindTerms {
+  query: string;
+  synonyms: string[];
+}
+
 export interface VideoTextTimeline {
   ready: boolean;
   cues: { startMs: number; endMs: number; source: "dialogue" | "screen_text"; texts: string[] }[];

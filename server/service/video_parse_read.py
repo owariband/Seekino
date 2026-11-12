@@ -244,6 +244,7 @@ def resolve_retrieval_scope(
     ordered_series_ids: tuple[str, ...],
     workspace: str,
     episode_order: int | None = None,
+    video_id: str | None = None,
     event_index: tuple[str, str] | None = None,
     video_chunk_ids: Sequence[str] | None = None,
 ) -> VideoParseRetrievalScope:
@@ -261,7 +262,7 @@ def resolve_retrieval_scope(
             + ", ".join(missing)
         )
 
-    videos = read_store.list_series_videos(session, series_ids=ordered_series_ids, episode_order=episode_order)
+    videos = read_store.list_series_videos(session, series_ids=ordered_series_ids, episode_order=episode_order, video_id=video_id)
     if episode_order is not None and not videos:
         raise EpisodeNotFoundError()
     requested = event_chunk_owners(session, video_chunk_ids, [video.id for video in videos])

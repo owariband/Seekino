@@ -76,23 +76,24 @@
     --display: var(--sans);
     /* Reserved for code and editable source; labels and figures use --sans with tabular numerals. */
     --mono: ui-monospace, "SF Mono", "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
-    /* Neutral greys with teal as the only accent; white cards sit on a light grey canvas.
+    /* The established celadon palette keeps grey-green backgrounds and off-white cards.
        Each token pairs its day and night color, and one shared mix carries the whole palette through a theme change. */
     --night-mix: 0%;
-    --canvas: color-mix(in srgb, #f5f5f7, #000000 var(--night-mix));
-    --canvas-glow: transparent;
-    --surface: color-mix(in srgb, #fbfbfd, #101012 var(--night-mix));
-    --surface-raised: color-mix(in srgb, #ffffff, #1c1c1e var(--night-mix));
-    --surface-muted: color-mix(in srgb, #e8e8ed, #2c2c2e var(--night-mix));
-    --ink: color-mix(in srgb, #1d1d1f, #f5f5f7 var(--night-mix));
-    --ink-soft: color-mix(in srgb, #6e6e73, #a1a1a6 var(--night-mix));
-    --ink-faint: color-mix(in srgb, #86868b, #7c7c80 var(--night-mix));
-    --line: color-mix(in srgb, rgb(0 0 0 / 9%), rgb(255 255 255 / 11%) var(--night-mix));
+    --canvas-night: #0d1110;
+    --canvas: color-mix(in srgb, #e4eae5, var(--canvas-night) var(--night-mix));
+    --canvas-glow: color-mix(in srgb, rgb(35 140 120 / 7%), transparent var(--night-mix));
+    --surface: color-mix(in srgb, #ebf0ec, #171c1a var(--night-mix));
+    --surface-raised: color-mix(in srgb, #f6f8f5, #202624 var(--night-mix));
+    --surface-muted: color-mix(in srgb, #d9e1db, #29312e var(--night-mix));
+    --ink: color-mix(in srgb, #17312b, #dde5e1 var(--night-mix));
+    --ink-soft: color-mix(in srgb, #566b65, #a7b5ae var(--night-mix));
+    --ink-faint: color-mix(in srgb, #85938e, #8a9b96 var(--night-mix));
+    --line: color-mix(in srgb, rgb(36 73 64 / 15%), rgb(160 205 192 / 14%) var(--night-mix));
     --line-strong: color-mix(in srgb, rgb(35 140 120 / 38%), rgb(116 197 186 / 42%) var(--night-mix));
     --teal: color-mix(in srgb, #238c78, #74c5ba var(--night-mix));
     --teal-deep: color-mix(in srgb, #126b5d, #8dd3c8 var(--night-mix));
-    --teal-soft: color-mix(in srgb, #dff1ec, #16302b var(--night-mix));
-    --teal-wash: color-mix(in srgb, #eef7f4, #142420 var(--night-mix));
+    --teal-soft: color-mix(in srgb, #d9eee7, #213330 var(--night-mix));
+    --teal-wash: color-mix(in srgb, #eaf5f0, #1f2e2a var(--night-mix));
     --amber: color-mix(in srgb, #b97828, #d9b26f var(--night-mix));
     --red: color-mix(in srgb, #b9564d, #f28b82 var(--night-mix));
     --shadow: 0 2px 6px rgb(0 0 0 / 4%), 0 16px 48px rgb(0 0 0 / 8%);
@@ -114,6 +115,10 @@
     --brand-ink: #0b3b33;
     --brand-wordmark: color-mix(in srgb, var(--brand-ink), var(--brand) var(--night-mix));
     --stage: color-mix(in srgb, #0c1412, #080d0c var(--night-mix));
+    /* Hero layers retain their daytime depth and share the night canvas. */
+    --hero-base: color-mix(in srgb, #10251f, var(--canvas-night) var(--night-mix));
+    --hero-shade: color-mix(in srgb, #05100d, var(--canvas-night) var(--night-mix));
+    --hero-bottom: color-mix(in srgb, rgb(5 16 13 / 72%), var(--canvas-night) var(--night-mix));
   }
 
   /* Night flips the shared progress; fixed-depth tokens keep their own rules. */
@@ -134,7 +139,9 @@
 @layer base {
   body {
     color: var(--ink);
-    background: var(--canvas);
+    background:
+      radial-gradient(circle at 88% 2%, var(--canvas-glow), transparent 26rem),
+      var(--canvas);
     line-height: 1.55;
     letter-spacing: -0.003em;
   }
