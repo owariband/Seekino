@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-12T10:29:15.642426+00:00",
+ "updatedAt": "2026-11-12T20:25:13.887090+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 51,
+ "revision": 53,
  "categories": [
   {
    "id": "parse",
@@ -5587,6 +5587,45 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "label": "线上实际系列",
      "kind": "page",
      "url": "https://seekino.hypn0s.cloud/series/90d72272-eb0f-5067-ae63-4653240a0e13?tenantId=platform-public"
+    }
+   ]
+  },
+  {
+   "id": "EDIT-REFERENCE-02",
+   "title": "去除剪辑参考模型观察的过度拒绝",
+   "category": "parse",
+   "type": "requirement",
+   "status": "verifying",
+   "priority": "P1",
+   "description": "允许按可见动作自由分段，去除候选切点、全量复述和描述性硬门槛，保留真实来源与执行边界。",
+   "next": "将修复与最新 dev 整合后重新加载 localhost，再通过 Seekino 的正式任务入口验证失败素材的新版本。",
+   "verification": "实现提交 76baa67d；冻结回放由 0/12 变为 12/12，保留原文与动作时间。主 Agent 复跑 215 项 Engine/相关回归、31 项聚焦回归和独立 SQLite/ES 的 3 项完整链路全部通过。真实任务重新运行及内容质量另行验证。",
+   "updatedAt": "2026-11-12",
+   "tags": [
+    "模型观察",
+    "过度校验",
+    "真实失败回放"
+   ],
+   "related": [
+    "EDIT-REFERENCE-01",
+    "MOD-PARSE"
+   ],
+   "branch": "fix/reference-model-judgment",
+   "links": [
+    {
+     "label": "TRD 与验证计划",
+     "kind": "trd",
+     "url": "https://github.com/owariband/Seekino/blob/fix/reference-model-judgment/docs/design/03-product-reassessment/reference-model-judgment-trd.md"
+    },
+    {
+     "label": "PR #139",
+     "kind": "pr",
+     "url": "https://github.com/owariband/Seekino/pull/139"
+    },
+    {
+     "label": "冻结回放与完整链路证据",
+     "kind": "evidence",
+     "url": "https://github.com/owariband/Seekino/blob/fix/reference-model-judgment/docs/report/agent/video_parse_v2/reference-model-judgment-20261112/README.md"
     }
    ]
   }

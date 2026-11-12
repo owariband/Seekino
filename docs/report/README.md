@@ -23,6 +23,8 @@
 
 ## Agent / video_parse_v2
 
+- [剪辑参考模型观察的过度校验修复（2026-11-12）](agent/video_parse_v2/reference-model-judgment-20261112/README.md)：12 条真实失败响应对照、来源边界与独立上传到 MCP 验证；真实批次运行另行记录。
+
 11 月 9 日，片主在《Weekend》两支匿名成片中选了 02。两组收到同样的八段 P5R 笔记，02 的导演多拿到一张自动风格卡。[成片盲评与动态试剪](agent/video_parse_v2/film-refine-ab-20261109/README.md) · [同日文字选片评分](agent/video_parse_v2/refine-ab-20261109/README.md)
 
 剪辑素材的镜头方向、起止构图与回放误差，见[四段控制样例及 10 秒灯塔片实测](agent/video_parse_v2/clip-camera-reference-20261110.md)。
@@ -112,3 +114,4 @@ Chat 正文流式与计量：[2026-11-01 实施与隔离验收](server/chat-stre
 3. 可编辑场景和导出图与报告共同维护；跳转链接指向现有设计、代码或证据。图中的旧目录文字和历史修改树保留原记录含义。
 4. 不在报告中再维护一套实时任务状态；与看板、设计、problems、devlog 建立链接。
 5. 历史迁移清单、来源校验值及基准快照仍保留原路径，本索引提供原 report_docs 到新目录的对照。
+

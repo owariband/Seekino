@@ -71,6 +71,7 @@ hypnos 于 **2026-04-27 入职实习**，到这次面试复盘时已接近半年
 | [剪辑双召回主设计](editing-skill-style-reference-trd.md) | 2026-11-05 开题，同一 PR 交付设计和代码 | 编辑从剧本找表演与剪辑手法，凭证据取回原片 | [需求、实现与验收 #50](https://github.com/owariband/Seekino/pull/50) |
 | [本机 MCP 接口与整体验收](mcp-edit-references-trd.md) | #50 接口部分 | 由同一客户端查表演、查手法、取两段原片 | [可复跑测试](../../../tests/server/test_editing_mcp_flow.py) |
 | [代表片段与全片风格卡](edit-reference-profile-trd.md) | #50 解析部分 | 从原片生成手法依据 | 同一功能的解析合同 |
+| [去除剪辑参考过度校验](reference-model-judgment-trd.md) | 2026-11-12，检测切点被当成动作唯一边界，真实批次被拒 | 以原片归属整合模型观察并覆盖真实失败响应 | [独立修复 #139](https://github.com/owariband/Seekino/pull/139) |
 | [解析结果用途](parse-result-profile-trd.md) | #50 上传部分 | 同库正片与剪辑参考的配置及读取隔离 | 同一功能的上传合同 |
 | [《Weekend Study》宣传片剧本](editing-promo-weekend-study.md) | #50 试点成片，片主 2026-11-10 批准 | 一条 prompt 经 MCP 取材、本地抠像渲染 | 剧本、实测数字与占位项；成片待制作 |
 | [动画表情素材召回](anime-material-recall-trd.md) | 2026-11-08，五集盲评漏选爱音反应 | 剪辑 Agent 按画面表情找素材 | 单独核验语义排名、全量翻页与原片画面。 |

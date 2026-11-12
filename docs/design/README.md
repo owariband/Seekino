@@ -126,6 +126,7 @@ Event / Sub-Chunk 的实施入口是 [sub-chunk-trd.md](02-agent-harness/sub-chu
 | 动画表情素材召回 | [E4 专项](03-product-reassessment/anime-material-recall-trd.md) | 动画表情提示词、整集对照与 MCP 全量素材浏览。 |
 | 剧本双召回与原片取用 | [同一个 MCP 的整体验收](03-product-reassessment/mcp-edit-references-trd.md) | 从剧本找表演、查手法、取用两类原片，随 #50 向 dev 交付。 |
 | 剪辑参考解析 | [代表片段与全片风格卡](03-product-reassessment/edit-reference-profile-trd.md) | 参考档案使用原片帧与独立手法索引。 |
+| 剪辑参考模型观察 | [去除过度校验](03-product-reassessment/reference-model-judgment-trd.md) | [#139](https://github.com/owariband/Seekino/pull/139)：动作边界、风格锚点与 Refine 更新以原片来源为界，回放真实失败响应。 |
 | 解析结果用途 | [正片与剪辑参考档案](03-product-reassessment/parse-result-profile-trd.md) | 冻结任务用途，限定正片检索与导出范围。 |
 | 上传视频自动判型 | [解析前置路由](03-product-reassessment/parse-pre-hook-router-trd.md) | 普通上传在抽帧前判断剧情、课程或剪辑成片，并保存生效策略。 |
 | 剪辑素材的运镜参考 | [描述、检索与回放](03-product-reassessment/clip-camera-reference-trd.md) | 解析来源镜头的取景和节奏，通过同一条发布事件取回可运行的二维镜头与参数。 |

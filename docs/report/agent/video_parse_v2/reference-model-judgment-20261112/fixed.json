@@ -1,0 +1,81 @@
+{
+  "codeRevision": "76baa67d",
+  "modelCalls": 0,
+  "accepted": 12,
+  "total": 12,
+  "fixtureSha256": "bc5e963a8a135cca78acd82380d0ff69b89979875720880d249b9aaee67f07f2",
+  "cases": [
+    {
+      "caseId": "女神异闻录4-OP-9734",
+      "kind": "detector_boundary",
+      "accepted": true,
+      "textAndTimesPreserved": true
+    },
+    {
+      "caseId": "女神异闻录4-OP-9764",
+      "kind": "detector_boundary",
+      "accepted": true,
+      "textAndTimesPreserved": true
+    },
+    {
+      "caseId": "女神异闻录4-OP-9800",
+      "kind": "detector_boundary",
+      "accepted": true,
+      "textAndTimesPreserved": true
+    },
+    {
+      "caseId": "BV1fYpn6SEk9 - deepseek 翻唱《人是猫》真完整版，大肥鱼觉得人和猫一样可爱,所以人是猫 p01 大肥鱼人是猫真完整版-9868",
+      "kind": "detector_boundary",
+      "accepted": true,
+      "textAndTimesPreserved": true
+    },
+    {
+      "caseId": "BV1fYpn6SEk9 - deepseek 翻唱《人是猫》真完整版，大肥鱼觉得人和猫一样可爱,所以人是猫 p01 大肥鱼人是猫真完整版-9893",
+      "kind": "detector_boundary",
+      "accepted": true,
+      "textAndTimesPreserved": true
+    },
+    {
+      "caseId": "BV1fYpn6SEk9 - deepseek 翻唱《人是猫》真完整版，大肥鱼觉得人和猫一样可爱,所以人是猫 p01 大肥鱼人是猫真完整版-9936",
+      "kind": "detector_boundary",
+      "accepted": true,
+      "textAndTimesPreserved": true
+    },
+    {
+      "caseId": "BV1HjW3zyEuV - 快使用恋爱笔记！-10036",
+      "kind": "detector_boundary",
+      "accepted": true,
+      "textAndTimesPreserved": true
+    },
+    {
+      "caseId": "BV1HjW3zyEuV - 快使用恋爱笔记！-10051",
+      "kind": "detector_boundary",
+      "accepted": true,
+      "textAndTimesPreserved": true
+    },
+    {
+      "caseId": "BV1HjW3zyEuV - 快使用恋爱笔记！-10120",
+      "kind": "detector_boundary",
+      "accepted": true,
+      "textAndTimesPreserved": true
+    },
+    {
+      "caseId": "女神异闻录5皇家版-开场-10033",
+      "kind": "missing_root_delimiter",
+      "accepted": true,
+      "textAndTimesPreserved": true
+    },
+    {
+      "caseId": "女神异闻录5皇家版-开场-10052",
+      "kind": "missing_root_delimiter",
+      "accepted": true,
+      "textAndTimesPreserved": true
+    },
+    {
+      "caseId": "女神异闻录5皇家版-开场-10064",
+      "kind": "missing_root_delimiter",
+      "accepted": true,
+      "textAndTimesPreserved": true
+    }
+  ]
+}
