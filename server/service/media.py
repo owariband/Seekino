@@ -26,6 +26,8 @@ from ..model.dto.mediaDTO import (
     VideoMedia,
     VideoTextCue,
     VideoTextTimeline,
+    VideoVisualCue,
+    VideoVisualTimeline,
     parse_export_event_types,
 )
 from ..repository.library import SeriesNotFoundError
@@ -100,6 +102,19 @@ class MediaService:
                 cues[key] = VideoTextCue(start_ms=event.start_seconds, end_ms=event.end_seconds, source=source,
                                          texts=list(dict.fromkeys(texts)))
         return VideoTextTimeline(ready=True, cues=[cues[key] for key in sorted(cues)])
+
+    def video_visual_timeline(self, video_id: str, *, tenant_id: str) -> VideoVisualTimeline:
+        if self._parse_persistence is None:
+            return VideoVisualTimeline(ready=False, cues=[])
+        contents = self._parse_persistence.published_video_contents(video_id, tenant_id=tenant_id)
+        if contents is None:
+            return VideoVisualTimeline(ready=False, cues=[])
+        cues = [VideoVisualCue.from_event(event) for content in contents for event in content.timeline
+                if event.visible_persons or event.event_type in ("SCENE", "ACTION", "EMOTION")]
+        # The episode roster helps recognize offscreen names. Only visible_persons proves an appearance.
+        names = sorted({name for content in contents for name in content.persons})
+        return VideoVisualTimeline(ready=True, cues=sorted(cues, key=lambda cue: (cue.start_ms, cue.end_ms)),
+                                   known_persons=names)
 
     def export_parse_results(
         self, *, tenant_id: str, video_ids: Sequence[str] = (),

@@ -9,20 +9,6 @@
 .resizeHandle:hover::before, .resizeHandle:focus-visible::before { top: 25%; bottom: 25%; background: var(--teal); }
 .videoPlayer { position: relative; display: flex; width: 100%; height: 100%; min-height: 0; flex-direction: column; overflow: hidden; color: #f7f8f7; background: #101514; outline: none; }
 .videoPlayer:focus-visible { outline: 2px solid var(--teal); outline-offset: 3px; }
-.textFind { position: absolute; z-index: 5; top: 10px; right: 10px; display: flex; flex-direction: column; width: min(420px, calc(100% - 20px)); max-height: calc(100% - 78px); color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 4px 24px rgb(0 0 0 / 22%); overflow: hidden; }
-.textFindBar { display: flex; align-items: center; gap: 3px; padding: 6px; }
-.textFindBar input { flex: 1; min-width: 0; padding: 5px 7px; color: var(--ink); background: transparent; border: none; font: inherit; }
-.textFindBar output, .textFindResults time { color: var(--ink-soft); font-size: .76rem; font-variant-numeric: tabular-nums; }
-.textFind button { color: inherit; background: transparent; border: 0; border-radius: 5px; cursor: pointer; font: inherit; }
-.textFind button:hover:not(:disabled), .textFind button[aria-current="true"] { background: var(--surface-muted); }
-.textFind button:disabled { opacity: .45; cursor: default; }
-.textFindBar button { display: grid; width: 29px; height: 29px; place-items: center; }
-.textFindStatus { margin: 0; padding: 4px 12px 10px; color: var(--ink-soft); font-size: .8rem; }
-.textFindStatus button { margin-left: 8px; text-decoration: underline; }
-.textFindResults { margin: 0; padding: 4px; border-top: 1px solid var(--line); list-style: none; overflow: auto; overscroll-behavior: contain; }
-.textFindResults button { display: grid; grid-template-columns: auto auto 1fr; align-items: baseline; gap: 8px; width: 100%; padding: 7px; text-align: left; }
-.textFindResults small { color: var(--teal-deep); font-size: .72rem; }
-.textFindResults span { overflow-wrap: anywhere; font-size: .84rem; }
 .videoPlayerStage { position: relative; display: grid; width: 100%; min-height: 0; flex: 1; place-items: center; background: #090c0b; }
 .videoPlayerStage video { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: contain; cursor: pointer; }
 /* The edge blend stays when controls fade out; keep it narrow for burned-in subtitles. */

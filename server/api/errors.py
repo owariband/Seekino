@@ -46,6 +46,7 @@ from ..service.agent_chat import AgentAttachmentInputUnavailableError
 from ..error.auth import AuthError
 from ..service.upload import UploadChecksumMismatchError
 from ..service.video_retrieval import RetrievalIndexConsistencyError
+from ..service.video_find_query import FindQueryUnavailable
 from ..storage.artifact import ArtifactIntegrityError
 
 _logger = logging.getLogger(__name__)
@@ -158,6 +159,7 @@ def register_exception_handlers(app: FastAPI) -> None:
         (AgentReferenceInvalidError, 400, "REFERENCE_INVALID", "所引用的候选片段无效，请重新选择"),
         (AgentMessageInProgressError, 409, "MESSAGE_IN_PROGRESS", "当前对话的回答仍在生成，请等待完成"),
         (RetrievalUnavailableError, 503, "RETRIEVAL_UNAVAILABLE", RetrievalUnavailableError.public_message),
+        (FindQueryUnavailable, 503, "VIDEO_FIND_QUERY_UNAVAILABLE", "智能搜索暂不可用"),
         (UploadChecksumMismatchError, 422, "CHECKSUM_MISMATCH", "文件校验失败，请检查并重新上传"),
         (MediaMissingError, 410, "MEDIA_MISSING", "原媒体文件已丢失"),
         (MediaNotReadyError, 409, "MEDIA_NOT_READY", "媒体正在准备或尚无兼容格式"),
