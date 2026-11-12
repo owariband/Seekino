@@ -1,6 +1,6 @@
 ---
 name: seekino-editing-materials
-description: Find source performances and editing references with Seekino MCP, review the original footage, prepare local layers, and save reusable editing techniques and feedback in the editor's library. Use for footage selection, style research, and updating a motion template after a cut.
+description: Find source performances and editing references with Seekino MCP, review the original footage, prepare local layers, and save reusable editing techniques and feedback in the source series. Use for footage selection, style research, and updating a motion template after a cut.
 ---
 
 # Editing with Seekino
@@ -29,9 +29,9 @@ Place `foreground.png` and `background-hole.png` at the same origin. `mask.png` 
 
 ## Reuse and update a template
 
-* Search the `templates` list with `find_edit_templates`. Use `include_parse_techniques=false` to search only your own templates. Read a specific revision using `get_edit_template`. When a template has no default, use `list_edit_template_versions` and choose one. Pin its exact version in the edit.
-* Rebuild the effect locally from the revision's entry, files, runtime, slots and parameters. Check the rendered frames at the target frame rate and canvas size. Source snapshots preserve what the author originally saw. If a source changed, inspect current footage separately.
-* Save a reusable effect with `save_edit_template_version`. Include the contract, editable text files, entry point, runtime, and evidence references from this server. To revise an effect, supply its template and parent version and explain what changed in a `revision_rationale`. Record the viewer's feedback separately from your interpretation, the changes made, what you verified, and what remains unverified.
+* Search the `templates` list with `find_edit_templates`. Use `include_parse_techniques=false` to search templates shared by the series you can view. Read a specific revision using `get_edit_template`. When a template has no default, use `list_edit_template_versions` and choose one. Pin its exact version in the edit.
+* Rebuild the effect locally from the revision's entry, files, runtime, slots and parameters. Check the rendered frames at the target frame rate and canvas size. Accessible source snapshots preserve what the author originally saw; inaccessible source details are withheld. If a source changed, inspect current footage separately.
+* Save a reusable effect with `save_edit_template_version`. For a new template select its series_id. Include the contract, editable text files, entry point, runtime, and evidence references from this server. Everyone who can view the selected series can read the saved versions and feedback. To revise an effect, supply its template and parent version and explain what changed in a `revision_rationale`. Record the viewer's feedback separately from your interpretation, the changes made, what you verified, and what remains unverified.
 * Use `append_edit_template_note` for later feedback or a client-reported render check. Promote a verified version with `set_default_edit_template_version` only when that choice is intended. Read the current template revision first and record the reason. Use the same `request_id` when retrying the same write.
 
-Local writes belong to the local library. Cloud writes require a signed-in personal MCP credential from the account menu. Guest connections can still read the guide, search published material and download clips.
+Each template belongs to one series. Reading, searching and version history follow that series visibility, regardless of the author or guest identity. A new valid guest credential sees the same public series templates. Writes follow the existing series edit permission. Cloud editors obtain a write-capable MCP credential from the account menu. Local series use the local access rules.

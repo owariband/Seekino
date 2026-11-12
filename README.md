@@ -350,7 +350,7 @@ Web 界面与外部工具使用同一套服务接口：
 | 跟踪解析任务 | `GET /api/jobs/video-parse/get`、`GET /api/jobs/video-parse/events` |
 | 检索素材 | `POST /api/search`，返回片段来源、时间范围与证据 |
 | Agent 对话 | `/api/agent/conversations/*`、`/api/agent/messages/*`，支持持续对话与流式回答 |
-| 外部 Agent 取素材（MCP） | `/mcp`（Streamable HTTP，本机素材库及 Cloud 已发布的平台系列，见[连接说明](server/README.md#cloud-mcp)），工具 选片、风格参考、个人模板与反馈（11 个工具），附剪辑 Skill |
+| 外部 Agent 取素材（MCP） | `/mcp`（Streamable HTTP，本机素材库及 Cloud 已发布的平台系列，见[连接说明](server/README.md#cloud-mcp)），工具 选片、风格参考、series 共享模板与反馈（11 个工具），附剪辑 Skill |
 
 启动后查看 [OpenAPI 文档](http://127.0.0.1:9621/api/docs)，接入说明见 [Server](server/README.md)。当前范围字段使用 `tenantId`；视频时间采用相对原片起点的整数毫秒，部分字段仍保留 `*Seconds` 旧名。
 

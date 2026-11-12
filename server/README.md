@@ -512,7 +512,7 @@ codex mcp add seekino_cloud --url "$SEEKINO_CLOUD/mcp" --bearer-token-env-var SE
 `list_series` 返回平台公开租户已发布且 READY 的系列。`browse_events` 返回 Event 引用，`retrieve` 用自然语言检索。先 `read_evidence(evidence_ref)` 核对来源，再给出 `start_ms` 与 `end_ms` 获取 `media.clip_url`。区间使用整数毫秒、左闭右开，每段最多 60 秒。链接最长有效 5 分钟，下载器可直接获取该 MP4，下载时服务端重新核对发布状态、证据版本和用户身份。检索与转码共用既有云端请求和并发额度。以不同名称添加本机端点即可在同一剪辑会话调用两个库。[服务端设计](../docs/design/03-product-reassessment/cloud-public-mcp-trd.md)
 
 
-### 剪辑 Skill、风格参考与个人库
+### 剪辑 Skill、风格参考与 series 共享模板
 
 连接后可用 `resources/read` 读取 `skill://seekino-editing-materials/SKILL.md`。支持 MCP Skills 扩展的客户端可通过 `skills/list` 和 `skills/get` 发现指引与随附的本机分层脚本。也可以给本机 Claude Code 和 Codex 一次安装。
 
@@ -520,6 +520,8 @@ codex mcp add seekino_cloud --url "$SEEKINO_CLOUD/mcp" --bearer-token-env-var SE
 npx skills add https://github.com/owariband/Seekino/tree/main/server/skills/seekino-editing-materials -a claude-code -a codex -g -y
 ```
 
-用 `find_edit_templates` 搜索剪辑技法或自己的模板，`get_style_card` 读取整片风格并回看例证。用 `get_edit_template` 和 `list_edit_template_versions` 读取自己的版本、来源和反馈。通过 `save_edit_template_version` 保存完整代码与来源，`append_edit_template_note` 追加反馈或本机检查，`set_default_edit_template_version` 明确指定默认版本。
+用 `find_edit_templates` 搜索剪辑技法和可见 series 的共享模板，`get_style_card` 读取整片风格并回看例证。用 `get_edit_template` 和 `list_edit_template_versions` 读取所属 series 的版本、来源和反馈。通过 `save_edit_template_version` 指定 `series_id` 保存完整代码与来源，`append_edit_template_note` 追加反馈或本机检查，`set_default_edit_template_version` 明确指定默认版本。
 
-本机可直接保存。在 Cloud 网页登录后，打开账号菜单，选择“复制个人 MCP 凭据”，在剪辑终端把它设为 `SEEKINO_MCP_TOKEN` 后启动客户端。该凭据可读取公开素材并访问自己的模板库。网页登录的程序化调用使用 `POST /api/auth/mcp-token?scope=personal`、当前会话 Cookie 和 CSRF 请求头。游客和默认签发的凭据仍可取公开素材。客户端首次调用时可先请它读取剪辑 Skill。
+模板归属 series。任何有权查看该 series 的用户都可以读取模板、历史版本和反馈，作者字段用于署名与追溯。游客凭据换新后仍可读取同一公开 series 的模板。写入沿用 series 现有编辑权限。Cloud 编辑者可在账号菜单选择“复制剪辑写入凭据”，或用 `POST /api/auth/mcp-token?scope=personal`、当前会话 Cookie 和 CSRF 请求头领取写入凭据。本机沿用本地 series 权限。客户端首次调用时可先请它读取剪辑 Skill。
+
+从旧版升级时，先停止 API 写入并备份数据库，运行 `uv run python -m scripts.migrate_edit_template_series` 预览，再用 `--apply --writers-stopped` 应用，随后按原方式执行 `init-db`。API 镜像也包含同一脚本，可在容器中用 `python -m scripts.migrate_edit_template_series` 执行预览和升级。迁移给现有模板表增加 `series_id` 和索引。历史未绑定模板会保留，管理者须经确认后将其 `series_id` 与 `tenant_id` 显式绑定到目标 series；绑定前不会出现在共享读取中。模板引用的原片不能作为自动公开旧代码的依据。

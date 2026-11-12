@@ -14,6 +14,8 @@
 !gateway/**
 !server/
 !server/**
+!scripts/
+!scripts/migrate_edit_template_series.py
 !web/
 !web/**
 !assets/
