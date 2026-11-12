@@ -13,8 +13,10 @@ from .context import get_identity, get_services, revalidate_identity
 from .library import read_series
 from ..error.auth import AuthError
 from ..service.access import is_series_member, model_query, require_tenant_write, series_access
+from ..service.video_find_query import FindQueryUnavailable, interpret_video_find_query
 from ..model.dto.mediaDTO import (
-    ParseExportOptions, ParseExportRequest, VideoTextTimeline, VideoVisualQuery, VideoVisualTimeline, parse_export_event_types,
+    ParseExportOptions, ParseExportRequest, VideoFindTerms, VideoTextTimeline, VideoVisualQuery,
+    VideoVisualTimeline, parse_export_event_types,
 )
 from ..repository.library import SeriesNotFoundError
 from ..model.vo.searchVO import VideoChunkEvidenceView
@@ -107,6 +109,22 @@ def search_video_visuals(request: Request, response: Response, body: VideoVisual
         result = services.event_retrieval.search_visuals(
             body.query, tenant_id=body.tenant_id, series_id=video.series_id, video_id=video.video_id,
         )
+    if identity.mode == "cloud":
+        request.state.identity = revalidate_identity(request)
+        services.media.require_series_access(request.state.identity, [video.series_id], tenant_id=body.tenant_id)
+    return result
+
+
+def interpret_video_query(request: Request, response: Response, body: VideoVisualQuery) -> VideoFindTerms:
+    services = get_services(request)
+    identity = get_identity(request)
+    video = services.library.get_video(body.video_id, tenant_id=body.tenant_id)
+    read_series(request, video.series_id, tenant_id=body.tenant_id)
+    response.headers["Cache-Control"] = "private, no-store"
+    if services.model_settings is None:
+        raise FindQueryUnavailable()
+    with model_query(services.auth, identity, request.client.host if request.client else "unknown"):
+        result = interpret_video_find_query(body.query, services.model_settings)
     if identity.mode == "cloud":
         request.state.identity = revalidate_identity(request)
         services.media.require_series_access(request.state.identity, [video.series_id], tenant_id=body.tenant_id)

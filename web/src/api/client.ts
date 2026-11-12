@@ -39,6 +39,7 @@ import type {
   VideoEpisodeUpdateRequest,
   VideoChunkSearchResult,
   VideoChunkEvidence,
+  VideoFindTerms,
   VideoSummary,
   VideoParseTaskView,
   VideoSearchRequest,
@@ -611,6 +612,13 @@ export function getVideoVisualTimeline(videoId: string, tenantId: string, signal
 
 export function searchVideoVisuals(query: string, videoId: string, tenantId: string, signal: AbortSignal): Promise<VideoVisualTimeline> {
   return requestJson("/api/videos/visual-search", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query, videoId, tenantId }), signal,
+  });
+}
+
+export function interpretVideoFindQuery(query: string, videoId: string, tenantId: string, signal: AbortSignal): Promise<VideoFindTerms> {
+  return requestJson("/api/videos/find-query", {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ query, videoId, tenantId }), signal,
   });

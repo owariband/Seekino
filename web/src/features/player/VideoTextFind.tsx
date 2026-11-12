@@ -1,10 +1,11 @@
 import { ChevronDown, ChevronUp, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent, type RefObject } from "react";
 
 import { errorMessage, getVideoTextTimeline } from "../../api/client";
 import { useI18n } from "../../app/i18n";
 import { formatTimecode } from "../../shared/format";
 import { useEpisodeVisualFind } from "./useEpisodeVisualFind";
+import { useWatchFindQuery } from "./useWatchFindQuery";
 import { useWatchPreferences } from "./watchPreferences";
 import type { createVideoTextSearch } from "./videoTextSearch";
 import styles from "./VideoTextFind.module.css";
@@ -34,7 +35,10 @@ export function VideoTextFind({ videoId, tenantId, inputRef, canSeek, onSeek, on
   const [failure, setFailure] = useState<Error | null>(null);
   const [attempt, setAttempt] = useState(0);
   const { visualFind, setVisualFind } = useWatchPreferences();
-  const visual = useEpisodeVisualFind(videoId, tenantId, query, visualFind, attempt);
+  const [smartFind, setSmartFind] = useState(false);
+  const [rewriteAttempt, setRewriteAttempt] = useState(0);
+  const smart = useWatchFindQuery(videoId, tenantId, query, smartFind, rewriteAttempt);
+  const visual = useEpisodeVisualFind(videoId, tenantId, smart.terms, smart.semanticQuery, visualFind, attempt);
   const [activeKey, setActiveKey] = useState<string | null>(null);
   const selectedRef = useRef<HTMLButtonElement>(null);
   const resultsRef = useRef<HTMLOListElement>(null);
@@ -55,18 +59,16 @@ export function VideoTextFind({ videoId, tenantId, inputRef, canSeek, onSeek, on
   }, [tenantId, videoId, attempt]);
 
   const matches = useMemo(() => {
-    const literal = (index?.search(query) ?? []).map(({ cue, text }) => ({
+    const literal = (index?.search(smart.terms) ?? []).map(({ cue, text }) => ({
       startMs: cue.startMs, endMs: cue.endMs, source: cue.source, text,
     }));
-    const exact = [...literal, ...visual.matches.filter(match => match.source === "visual")];
-    const ordered = [...exact.sort((a, b) => a.startMs - b.startMs), ...visual.matches.filter(match => match.source === "related")];
-    return ordered.map(match => ({
+    return [...literal, ...visual.matches].map(match => ({
       ...match,
       // A shot can begin during the preceding cut. Preview its interior; keep utterances at their onset.
       positionMs: match.source === "visual" || match.source === "related"
         ? match.startMs + Math.floor((match.endMs - match.startMs) / 2) : match.startMs,
-    }));
-  }, [index, query, visual.matches]);
+    })).sort((a, b) => a.positionMs - b.positionMs);
+  }, [index, smart.terms, visual.matches]);
   const active = matches.findIndex(match => matchKey(match) === activeKey);
   const sourceLabels = { dialogue: t("台词"), screen_text: t("画面文字"), visual: t("画面"), related: t("相关画面") };
   const visualStatus = visual.timelineUnavailable ? t("本集画面标注尚未就绪")
@@ -90,6 +92,10 @@ export function VideoTextFind({ videoId, tenantId, inputRef, canSeek, onSeek, on
   const next = () => select(active + 1);
   const disabled = !canSeek || matches.length === 0;
 
+  function keepTypingFocus(event: MouseEvent<HTMLButtonElement>) {
+    if (event.button === 0 && document.activeElement === inputRef.current) event.preventDefault();
+  }
+
   return <section className={styles.textFind} role="search" aria-label={t("在本视频中查找")}
     onKeyDown={event => {
       if (event.nativeEvent.isComposing || event.keyCode === 229) return;
@@ -110,14 +116,29 @@ export function VideoTextFind({ videoId, tenantId, inputRef, canSeek, onSeek, on
       <button type="button" aria-label={t("关闭片内查找")} onClick={onClose}><X size={16} /></button>
     </div>
     <div className={styles.findFilters}>
-      <button type="button" role="switch" aria-checked={visualFind} aria-label={t("画面搜索")}
+      <button type="button" role="switch" aria-checked={visualFind} aria-label={t("画面搜索")} onMouseDown={keepTypingFocus}
         onClick={event => {
           setVisualFind(!visualFind);
           if (event.detail > 0) inputRef.current?.focus();
         }}>
         <i aria-hidden="true" />{t("画面")}
       </button>
+      <button type="button" role="switch" aria-checked={smartFind} aria-label={t("智能搜索")} onMouseDown={keepTypingFocus}
+        onClick={event => {
+          setSmartFind(!smartFind);
+          setActiveKey(null);
+          if (event.detail > 0) inputRef.current?.focus();
+        }}>
+        <i aria-hidden="true" />{t("智能搜索")}
+      </button>
     </div>
+    {smart.loading ? <p className={styles.textFindStatus} role="status">{t("正在理解搜索词…")}</p>
+      : smart.failed ? <div className={styles.textFindStatus} role="status">
+        {t("智能搜索暂不可用，已按原词查找")}
+        <button type="button" onClick={() => setRewriteAttempt(value => value + 1)}>{t("重试")}</button>
+      </div> : smart.terms.length > 1 ? <p className={styles.findTerms} role="status">
+        {t("纠正")} <strong>{smart.terms.slice(1).join(locale === "zh" ? "、" : ", ")}</strong>
+      </p> : null}
     {failure || index?.ready === false ? <div className={styles.textFindStatus} role="status">
       {failure ? errorMessage(failure, locale) : t("本集文字尚未就绪")}
       <button type="button" onClick={() => setAttempt(value => value + 1)}>{t("重试")}</button>
@@ -126,7 +147,7 @@ export function VideoTextFind({ videoId, tenantId, inputRef, canSeek, onSeek, on
     {visualStatus ? <div className={styles.textFindStatus} role="status">
       {visualStatus}
       <button type="button" onClick={() => setAttempt(value => value + 1)}>{t("重试")}</button>
-    </div> : query.trim() && !matches.length && index?.ready ? <p className={styles.textFindStatus} role="status">
+    </div> : query.trim() && !matches.length && index?.ready && !smart.loading ? <p className={styles.textFindStatus} role="status">
       {visual.loading ? t("正在查找画面…") : visualFind ? t("没有匹配的结果") : t("没有匹配的文字")}
     </p> : null}
     {matches.length > 0 && <ol className={styles.textFindResults} ref={resultsRef}>

@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 from engine.parsev2.schemas import TimelineEvent, VideoParseResult
 from engine.rag.indexing.events import EventType
@@ -74,6 +74,14 @@ class VideoVisualQuery(ContractModel):
         if not self.query.strip():
             raise ValueError("query must contain text")
         return self
+
+
+FindQueryTerm = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]
+
+
+class VideoFindTerms(ContractModel):
+    query: FindQueryTerm
+    synonyms: list[FindQueryTerm] = Field(max_length=4)
 
 
 class ParseExportSource(BaseModel):

@@ -9,11 +9,10 @@ type SemanticResult = { index: LocalIndex; query: string; result: VideoVisualTim
 const empty: VisualMatch[] = [];
 
 // VideoTextFind is keyed by tenant and video. Its index lives only for that open panel.
-export function useEpisodeVisualFind(videoId: string, tenantId: string, query: string, enabled: boolean, attempt: number) {
+export function useEpisodeVisualFind(videoId: string, tenantId: string, terms: readonly string[], semanticQuery: string, enabled: boolean, attempt: number) {
   const [index, setIndex] = useState<LocalIndex | null>(null);
   const [timelineFailed, setTimelineFailed] = useState(false);
   const [semantic, setSemantic] = useState<SemanticResult | null>(null);
-  const needle = query.trim();
 
   useEffect(() => {
     if (!enabled || index) return;
@@ -29,23 +28,32 @@ export function useEpisodeVisualFind(videoId: string, tenantId: string, query: s
     return () => controller.abort();
   }, [videoId, tenantId, enabled, index, attempt]);
 
-  const local = useMemo(() => enabled && needle && index ? index.lookup(needle) : null, [enabled, needle, index]);
-  const needsSemantic = Boolean(local?.allowSemantic && needle.length >= 2 && needle.length <= 500);
+  const local = useMemo(() => {
+    if (!enabled || !index || !terms.length) return null;
+    const original = index.lookup(terms[0]!);
+    if (original.personOnly || terms.length === 1) return original;
+    const matches = [...original.matches];
+    for (const term of terms.slice(1)) {
+      matches.push(...index.lookup(term, original.hasPeople).matches);
+    }
+    return { ...original, matches: index.merge(matches) };
+  }, [enabled, terms, index]);
+  const needsSemantic = Boolean(local?.allowSemantic && semanticQuery.length >= 2 && semanticQuery.length <= 500);
   useEffect(() => {
     setSemantic(null);
     if (!index || !needsSemantic) return;
     const controller = new AbortController();
     const publish = (result: VideoVisualTimeline) => {
-      if (!controller.signal.aborted) setSemantic({ index, query: needle, result });
+      if (!controller.signal.aborted) setSemantic({ index, query: semanticQuery, result });
     };
     const timer = window.setTimeout(() => {
-      searchVideoVisuals(needle, videoId, tenantId, controller.signal)
+      searchVideoVisuals(semanticQuery, videoId, tenantId, controller.signal)
         .then(publish).catch(() => publish({ ready: false, cues: [] }));
     }, 300);
     return () => { window.clearTimeout(timer); controller.abort(); };
-  }, [videoId, tenantId, needsSemantic, needle, index, attempt]);
+  }, [videoId, tenantId, needsSemantic, semanticQuery, index, attempt]);
 
-  const remote = needsSemantic && semantic?.query === needle && semantic.index === index ? semantic.result : null;
+  const remote = needsSemantic && semantic?.query === semanticQuery && semantic.index === index ? semantic.result : null;
   const matches = useMemo(() => {
     if (!local || !index) return empty;
     if (!remote?.cues.length) return local.matches;
@@ -56,7 +64,7 @@ export function useEpisodeVisualFind(videoId: string, tenantId: string, query: s
   }, [local, index, remote]);
   return {
     matches,
-    loading: enabled && Boolean(needle) && ((!index && !timelineFailed) || (needsSemantic && !remote)),
+    loading: enabled && terms.length > 0 && ((!index && !timelineFailed) || (needsSemantic && !remote)),
     timelineUnavailable: enabled && timelineFailed,
     semanticUnavailable: remote?.ready === false && !remote.cues.length,
     semanticPartial: remote?.ready === false && remote.cues.length > 0,

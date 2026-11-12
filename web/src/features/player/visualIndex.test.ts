@@ -36,8 +36,9 @@ describe("single-video visual find", () => {
   it("retains confirmed jumps and preserves retrieval rank for distinct related shots", () => {
     const exact: VisualMatch = { startMs: 500, endMs: 600, source: "visual", text: "原片" };
     const similar = (startMs: number, endMs: number): VisualMatch => ({ startMs, endMs, source: "related", text: "相关" });
-    const suggestions = [similar(400, 650), similar(9500, 9700), similar(1100, 1200)];
-    expect(mergeVisualMatches([exact], suggestions).map(hit => hit.startMs)).toEqual([500, 9500, 1100]);
+    const suggestions = [similar(400, 650), similar(9500, 9700), similar(1100, 1200),
+      similar(7200, 7500), similar(5000, 5100), similar(2000, 2500), similar(100, 150)];
+    expect(mergeVisualMatches([exact], suggestions).map(hit => hit.startMs)).toEqual([500, 9500, 1100, 7200, 5000, 2000]);
   });
 
   it("keeps a known offscreen speaker out of both appearance and semantic suggestions", () => {

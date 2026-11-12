@@ -35,11 +35,10 @@
   font-size: .8125rem;
   transition: background-color var(--duration-fast) var(--ease-out);
 }
-.textFindBar input::placeholder { color: var(--ink-soft); }
+.textFindBar input::placeholder { color: var(--ink-soft); font-size: .72rem; }
 .textFindBar input:focus-visible {
   outline: none;
-  background: color-mix(in srgb, var(--surface-muted) 55%, transparent);
-  box-shadow: inset 0 -1px var(--ink-soft);
+  background: var(--surface-muted);
 }
 .textFindBar output, .textFindResults time {
   color: var(--ink-soft);
@@ -67,7 +66,7 @@
   .textFind button:hover:not(:disabled) { background: var(--surface-muted); }
 }
 
-.findFilters { display: flex; align-items: center; padding: 0 5px 3px; }
+.findFilters { display: flex; flex-wrap: wrap; align-items: center; gap: 0 4px; padding: 0 5px 3px; }
 .findFilters button {
   display: inline-flex;
   align-items: center;
@@ -100,6 +99,8 @@
 .findFilters button[aria-checked="true"] i::after { transform: translateX(10px); }
 .textFindStatus { margin: 0; padding: 3px 9px 7px; overflow: auto; color: var(--ink-soft); font-size: .75rem; }
 .textFindStatus button { margin-inline-start: 4px; padding: 2px 4px; text-decoration: underline; }
+.findTerms { flex: 0 1 auto; min-height: 0; margin: 0; padding: 0 9px 6px; overflow: auto; overflow-wrap: anywhere; color: var(--ink-soft); font-size: .75rem; line-height: 1.4; }
+.findTerms strong { color: var(--ink); font-weight: 500; }
 .textFindResults {
   min-height: 0;
   max-height: 128px;
@@ -159,7 +160,7 @@
 }
 @media (forced-colors: active) {
   .textFind { border-color: CanvasText; }
-  .textFindBar input:focus-visible { border-bottom: 2px solid CanvasText; }
+  .textFindBar input:focus-visible { outline: 2px solid Highlight; outline-offset: -2px; }
   .textFind button:focus-visible { outline: 2px solid ButtonText; }
   .textFindResults button[aria-current="true"]::before { background: CanvasText; forced-color-adjust: none; }
 }
