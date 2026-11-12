@@ -2,6 +2,20 @@
 
 需求：移动端文档入口与剧集列表密度修复。提出日期：2026-11-12（Asia/Singapore）。分支：`fix/mobile-docs-episodes`；集成目标：`dev`；PR：[#129](https://github.com/owariband/Seekino/pull/129)。当前执行状态见[工作台](../../dev/workbench.html) `MOBILE-UI-01`。
 
+## 2026-11-12 正式发布验收
+
+本地预览获确认后，已授权最小化合入 main 并上线。开发 [PR #129](https://github.com/owariband/Seekino/pull/129) 合入 dev；发布 [PR #135](https://github.com/owariband/Seekino/pull/135) 从最新 main `dd4ed49c` 只选取三个已审阅运行文件，以单提交 `aeb5e0d5` 合入 main：`AppShell.tsx`、`app-shell.module.css`、`series.module.css`，70行新增、9行删除。没有改依赖、API或main的`.gitignore`；本TRD、报告、看板和实验材料均留在dev。
+
+main锁文件独立安装后，类型检查、生产构建、77项相关单测、12项浏览器回归和9场景布局检查通过；合并后的main源码树与验收候选完全相同。本地发布树检查和GitHub `release-files`检查通过（820个跟踪路径、28个发布资产）。
+
+18:24:55（UTC+8）线上仅更新Web为 `seekino-web:main-aeb5e0d5`；50个镜像文件、7个关键HTTPS资源哈希与main构建匹配，Web健康、API健康正常。API、embedding、MySQL、Elasticsearch、Redis的容器ID、镜像和启动时间均未变化。公网[实际系列](https://seekino.hypn0s.cloud/series/90d72272-eb0f-5067-ae63-4653240a0e13?tenantId=platform-public)在390/320/760/761/1440px五种宽度与对应日夜状态使用真实数据、未拦截API：13集数量、缩略图、原播放链接、紧凑行与桌面列数、无横向溢出均通过；390px单集70.19px、列表1080.44px。顶栏纯图标44×44px能进入真实使用指南，抽屉内保留文字；公网暂停实际CSS过渡核对240ms进入、180ms退出、遮罩同步、退出内容清理和reduced-motion均通过，无页面脚本或JS/CSS资源错误，未发模型请求。
+
+原始证据位于 `outputs/verification/mobile-main-20261112/` 与 `outputs/ops/cloud-runtime/mobile-navigation-20261112/`。第一轮截图早于缩略图加载，且元数据监听混入首页对其他系列的预取；保留初次记录后，仅修正验收脚本的选定系列过滤与等待真实可见缩略图就绪，再跑同样五个公网场景全部通过，没有修改产品代码或放宽断言。旧Web镜像和远端 `/home/ubuntu/seekino-cloud-runtime/releases/mobile-navigation-aeb5e0d5-20261112/rollback-web` 保留。
+
+最终采用并已发布，本地确认及公网Chrome证据支持原问题闭环。Safari、Firefox、iOS内嵌浏览器和Android真机尚未实测，不据此保证这些环境的CSS过渡效果。执行状态只在[工作台](../../dev/workbench.html) `MOBILE-UI-01`维护；下方“未合并／未发布”等描述保留各阶段历史，最新发布事实以本节为准。
+
+## 初始问题与阶段记录
+
 手机访客首次进入 Seekino 时，需要知道怎样检索、观看与提问。现有顶栏只呈现菜单、字标与搜索，“使用文档”位于菜单抽屉中，访客必须先发现并展开菜单才能了解用法。同一设备浏览系列选集时，整行宽的 16:9 画面与下方标题让每集占用大量纵向空间，选到后续剧集需要反复滑动。
 
 用户提供六张截图：前两张为现状，后四张为流媒体产品参考。参考中可借鉴的是左缩略图、右标题和元信息的紧凑选集，不照搬其黑橙配色、下载按钮或尚未实现的观看状态。

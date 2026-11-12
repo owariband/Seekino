@@ -216,6 +216,8 @@
 | 退出内容 | 立即卸载 | 过渡期间存在、结束后卸载；快速重开保留 |
 | 运行依赖与接口 | — | 无新增；本次设计咨询23,772 tokens、$0.222 |
 
+2026-11-12正式发布补充：本地预览已获确认，[PR #135](https://github.com/owariband/Seekino/pull/135)以main单提交`aeb5e0d5`仅交付三个运行文件。main锁文件下77项相关单测、12项浏览器用例、9场景布局与发布树检查通过；18:24（UTC+8）只更新Web，另外五项服务的容器与启动时间保持。公网Chrome真实13集、五种宽度的入口、缩略图与选集护栏通过，390px列表仍为1080.44px；实际240ms进入/180ms退出、遮罩与reduced-motion通过，无模型请求。首次取证过早且监听混入其他系列预取，保留记录后修正验收脚本，再跑同样场景通过，没有改产品。证据在`outputs/verification/mobile-main-20261112/`及`outputs/ops/cloud-runtime/mobile-navigation-20261112/`，Safari、Firefox和实体手机仍未实测。
+
 证据支持采用原生CSS过渡与内容保留，实际手感仍由本地预览和后续真机评审。保留[顾问原始输出](../report/web/mobile-docs-episodes-20261112/opus-motion-design.md)、[实际帧记录](../report/web/mobile-docs-episodes-20261112/motion-results.json)与[当前报告](../report/web/mobile-docs-episodes-20261112/README.md#icon-and-drawer-motion)，状态见[工作台](workbench.html)。
 
 <a id="devlog-mobile-docs-episodes-20261112"></a>

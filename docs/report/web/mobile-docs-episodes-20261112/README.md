@@ -4,6 +4,16 @@
 
 当前方案：手机顶栏只显示书本图标，展开的导航内显示“使用文档”；侧栏240ms滑入、180ms滑出，遮罩同步淡变。系列选集在760px及以下使用左图右文紧凑行，761px以上沿用原网格。保留青瓷色板、Hero、排序、原播放链接、观看位置与不可播放状态；`SeriesPage.tsx`、API、持久化和媒体时间合同没有修改。
 
+## 正式上线：main `aeb5e0d5`
+
+[发布PR #135](https://github.com/owariband/Seekino/pull/135) 已合并，2026-11-12 18:24（UTC+8）仅发布Web；main只新增一个提交、修改三个运行文件（70增/9删），内部资料全部留在dev。main锁文件下类型、构建、77项相关单测、12项浏览器用例、9场景布局、本地及GitHub发布树检查通过；合并main的源码树与候选相同。
+
+公网Chrome使用真实13集、未拦截API，390/320/760/761/1440px五场景通过。手机为纯图标44×44px、实际文档导航、左图右文63–72px紧凑行；桌面为三列/四列，实际缩略图就绪后截图。390px下13集列表1080.44px；抽屉文字、240ms进入/180ms退出、遮罩、退出后清理和reduced-motion均通过，无页面脚本或JS/CSS资源错误、无模型请求。初次截图早于缩略图到达、元数据监听混入其他系列预取；保留初次记录后修正验收脚本，未更改产品，同场景重跑通过。
+
+50个镜像文件和7个HTTPS资源哈希与main产物一致，Web/API健康，另五项服务的容器、镜像和启动时间均保持。证据在 `outputs/verification/mobile-main-20261112/`（含`public/public-review.json`、实际截图及脚本）和 `outputs/ops/cloud-runtime/mobile-navigation-20261112/`（含`activated.json`、清单与发布日志）；旧Web镜像及远端`mobile-navigation-aeb5e0d5-20261112/rollback-web`保留。Safari、Firefox和iOS/Android真机未实测。
+
+下文为设计与本地验证的阶段记录，“未部署／未合并”以当时为准；现行验收见本节与[TRD发布记录](../../../design/03-product-reassessment/mobile-docs-episodes-trd.md#2026-11-12-正式发布验收)。
+
 <a id="icon-and-drawer-motion"></a>
 ## 第二轮：纯图标入口与导航抽屉运动（当前方案）
 

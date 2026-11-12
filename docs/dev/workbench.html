@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-12T18:11:14+08:00",
+ "updatedAt": "2026-11-12T10:29:15.642426+00:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 50,
+ "revision": 51,
  "categories": [
   {
    "id": "parse",
@@ -5542,11 +5542,11 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "title": "手机文档入口、选集密度与导航过渡",
    "category": "library",
    "type": "requirement",
-   "status": "verifying",
+   "status": "done",
    "priority": "P1",
    "description": "手机顶栏隐藏使用文档，系列选集沿用全宽大图，首次引导与连续选集困难。限定现有文档入口与760px以下选集布局，保留青瓷风格、桌面网格及播放合同。",
-   "next": "本地预览已获确认，用户授权最小发布到main并上线；独立发布分支仅包含3个运行文件，正在按main锁文件构建和验收。",
-   "verification": "本轮纯图标44×44px、抽屉内文字保留；240ms进入/180ms退出与遮罩同步，真实CSS中间帧、内容保留/清理、快速重开、焦点与reduced-motion等12项浏览器回归通过。76项相关单测、类型与构建通过，9场景选集指标未变（390px总高减少67.67%）。4190预览已更新；未合并、未发布，未验Safari/Firefox/真机或Cloud。",
+   "next": "已获本地确认并通过PR #135最小发布至main aeb5e0d5；公网Chrome验收通过。保留旧Web回退，Safari、Firefox及实体手机可继续补测。",
+   "verification": "main仅3个运行文件（70增/9删），无TRD、报告或依赖改动；main锁文件下类型/构建、77项相关单测、12项浏览器与9场景布局通过，GitHub release-files通过。18:24（UTC+8）只发布Web，50个镜像文件和7个HTTPS资源哈希匹配，另5项服务不变；公网真实13集在320/390/760/761/1440px通过，390px每集70.19px、列表1080.44px，图标44×44px可进文档、抽屉保留文字。240ms进入/180ms退出、遮罩与reduced-motion实测通过。无JS或JS/CSS资源错误、无模型请求；Safari/Firefox/真机未测。证据：outputs/verification/mobile-main-20261112/、outputs/ops/cloud-runtime/mobile-navigation-20261112/。",
    "updatedAt": "2026-11-12",
    "tags": [
     "UI",
@@ -5565,17 +5565,27 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
     {
      "label": "TRD",
      "kind": "trd",
-     "url": "https://github.com/owariband/Seekino/blob/fix/mobile-docs-episodes/docs/design/03-product-reassessment/mobile-docs-episodes-trd.md"
+     "url": "https://github.com/owariband/Seekino/blob/dev/docs/design/03-product-reassessment/mobile-docs-episodes-trd.md"
     },
     {
      "label": "报告与截图",
      "kind": "source",
-     "url": "https://github.com/owariband/Seekino/blob/fix/mobile-docs-episodes/docs/report/web/mobile-docs-episodes-20261112/README.md"
+     "url": "https://github.com/owariband/Seekino/blob/dev/docs/report/web/mobile-docs-episodes-20261112/README.md"
     },
     {
      "label": "devlog",
      "kind": "source",
-     "url": "https://github.com/owariband/Seekino/blob/fix/mobile-docs-episodes/docs/dev/devlog.md#devlog-mobile-docs-episodes-20261112"
+     "url": "https://github.com/owariband/Seekino/blob/dev/docs/dev/devlog.md#devlog-mobile-docs-episodes-20261112"
+    },
+    {
+     "label": "正式发布 #135",
+     "kind": "pr",
+     "url": "https://github.com/owariband/Seekino/pull/135"
+    },
+    {
+     "label": "线上实际系列",
+     "kind": "page",
+     "url": "https://seekino.hypn0s.cloud/series/90d72272-eb0f-5067-ae63-4653240a0e13?tenantId=platform-public"
     }
    ]
   }
