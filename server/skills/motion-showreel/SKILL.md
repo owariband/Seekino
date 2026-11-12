@@ -14,7 +14,7 @@ MCP 提供改写正文、许可证和固定版本信息。要读取相对路径�
 npx skills add https://github.com/ConardLi/garden-skills/tree/2b9a89340b70f632d31c0f1c69fce94a7912423e/skills/motion-showreel -a claude-code -a codex -g -y
 ```
 
-选片、来源核对、本机分层和 series 共享模板使用 Seekino MCP 及其剪辑指引。需要代码驱动的图形、文字、界面动画或支持的人物分层合成时，参考 motion-showreel：用确定性的 render(t)、共享时间线和本机逐帧渲染制作。下文的适用范围、先预览再导出流程，以及用户明确免除预览的条件保持不变。需要 Remotion 镜头配方或相应制作流程时，可参考 video-shotcraft。运动代码由你根据当前镜头和用户要求，在本机工程中编写。
+制作过程可由你根据用户目标自主规划，按需参考 motion-showreel 的代码动画，也可借鉴 video-shotcraft 的 Remotion 镜头配方。Seekino MCP 及其剪辑指引可在需要时补充原片、来源、分层建议和 series 共享经验。下文保留上游适用范围、先预览再导出流程及用户明确免除预览的条件，供选用时了解。确定性的 render(t)、共享时间线和本机逐帧渲染可用于代码驱动的图形、文字、界面动画及支持的人物分层合成；具体运动代码和参考如何组合，由你根据当前镜头和用户要求判断。
 
 来源与许可证信息见 UPSTREAM.json 和 LICENSE，引用的资产与依赖沿用各自的声明和条款。觉得有帮助，欢迎给上游 garden-skills 点一个 Star。
 <!-- Seekino integration end -->

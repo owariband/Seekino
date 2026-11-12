@@ -14,7 +14,7 @@ MCP 提供改写正文、许可证和固定版本信息。要读取相对路径�
 npx skills add https://github.com/Vincentwei1021/video-shotcraft/tree/6700db2ba80572ebc777b99d72049679fed9840c -a claude-code -a codex -g -y
 ```
 
-用 Seekino MCP 取得有权访问的原片、来源引用和 series 共享模板。Seekino 剪辑指引提供运动参考，例如钟形速度与 S 形位移；你根据镜头意图、节奏和素材，在本机工程里编写运动代码。上游辅助代码已支持速度联动的拉伸、拖影和模糊，需要时可以复用或改写，并按当前速度控制强度。
+制作过程可由你根据用户目标自主规划，按需借鉴本 Skill 的镜头配方或 motion-showreel 的代码动画。需要原片、来源引用、series 共享经验或其他创作参考时，可从 Seekino MCP 取用有权访问的内容来补充方案。Seekino 剪辑指引中的钟形速度、S 形位移等都是参考建议，是否采用、如何实现由你结合镜头意图、节奏和素材判断。上游辅助代码已支持速度联动的拉伸、拖影和模糊，需要时可以复用或改写，并按当前速度控制强度。
 
 完整上游包中的代码、媒体和渲染依赖沿用各自的声明与条款。来源、授权和安装信息见本 MCP 包中的 `UPSTREAM.json` 和 `LICENSE`。觉得有帮助，欢迎给上游项目点一个 Star。
 <!-- Seekino integration end -->
