@@ -8,10 +8,8 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import defer
 
-from ..constants.identity import guest_editing_tenant
 from ..model.dto.editing_template import TemplateDetails, canonical_bytes, validate_files, validate_note
 from ..model.editing_template import EditTemplate, EditTemplateVersion
-from ..model.user import User
 from ..utils.time import now_unix_time_ms
 
 
@@ -80,14 +78,10 @@ class EditingTemplateRepository:
         self.sessions = sessions
 
     @contextmanager
-    def _write(self, tenant, owner):
+    def _write(self):
         with self.sessions.begin() as session:
             if session.get_bind().dialect.name == "sqlite":
                 session.connection().exec_driver_sql("BEGIN IMMEDIATE")
-            # Login moves this guest's templates while holding the same identity row.
-            if tenant == guest_editing_tenant(owner) and not session.scalar(select(User.id).where(
-                User.id == owner, User.is_anonymous.is_(True), User.status == "ACTIVE").with_for_update()):
-                raise ValueError("PERSONAL_LIBRARY_REQUIRED")
             yield session
 
     def search(self, tenant, owner, query, limit=5, tags=None):
@@ -169,15 +163,7 @@ class EditingTemplateRepository:
         body = {**content, "sources": [resolve_source(ref) for ref in dict.fromkeys(source_refs)]}
         # A simultaneous retry can insert the deterministic id first. Re-read its receipt after rollback.
         try:
-            with self._write(tenant, owner) as session:
-                if tenant == guest_editing_tenant(owner):
-                    existing = self._saved(session, tenant, owner, version_id, digest)
-                    if existing:
-                        return existing
-                    count = session.scalar(select(func.count(EditTemplateVersion.id)).select_from(EditTemplate).join(
-                        EditTemplateVersion).where(EditTemplate.tenant_id == tenant, EditTemplate.creator_id == owner))
-                    if count >= 32:
-                        raise ValueError("GUEST_LIBRARY_FULL")
+            with self._write() as session:
                 if metadata is not None:
                     template = EditTemplate(id=str(uuid5(NAMESPACE_URL, "template:" + version_id)),
                                             tenant_id=tenant, creator_id=owner, **metadata)
@@ -211,7 +197,7 @@ class EditingTemplateRepository:
     def append(self, tenant, owner, *, version_id, kind, entry, request_id):
         note = validate_note(entry, kind)
         digest = _hash([kind, note])
-        with self._write(tenant, owner) as session:
+        with self._write() as session:
             template = session.scalar(select(EditTemplate).join(EditTemplateVersion).where(
                 EditTemplate.tenant_id == tenant, EditTemplate.creator_id == owner,
                 EditTemplateVersion.id == version_id).with_for_update())
@@ -224,8 +210,6 @@ class EditingTemplateRepository:
                 if prior.get("request_id") == request_id:
                     _same_request(prior["request_hash"], digest)
                     return _receipt(version)
-            if tenant == guest_editing_tenant(owner) and len(version.evaluation) + len(version.checks) >= 64:
-                raise ValueError("GUEST_LIBRARY_FULL")
             recorded = {**note, "author": owner, "created_at": now_unix_time_ms(), "request_id": request_id, "request_hash": digest}
             if kind == "check":
                 version.checks = [*version.checks, {**recorded, "reported_by": "client"}]
@@ -237,7 +221,7 @@ class EditingTemplateRepository:
         if not reason.strip() or len(reason) > 2000:
             raise ValueError("INVALID_ARGUMENT: Give a reason for the default choice.")
         digest = _hash([version_id, revision, reason])
-        with self._write(tenant, owner) as session:
+        with self._write() as session:
             template = _template(session, tenant, owner, template_id, lock=True)
             version = _version(session, template, version_id)
             prior = template.default_requests.get(request_id)
@@ -246,8 +230,6 @@ class EditingTemplateRepository:
             else:
                 if revision != template.revision:
                     raise ValueError("TEMPLATE_CONFLICT: Read the current revision before selecting a default.")
-                if tenant == guest_editing_tenant(owner) and len(version.evaluation) + len(version.checks) >= 64:
-                    raise ValueError("GUEST_LIBRARY_FULL")
                 template.default_version_id = version.id
                 template.revision += 1
                 template.default_requests = {**template.default_requests, request_id: digest}

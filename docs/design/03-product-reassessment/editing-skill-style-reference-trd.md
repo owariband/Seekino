@@ -84,7 +84,7 @@ Together they remove most of the manual guidance an AI edit needs today: the use
 
 In scope:
 - An **`edit_reference` parse profile** inside the existing parse task. A video parsed with it (for example P5R) gets representative highlights picked in Prepare, high-frame-rate visual analysis of those picks in Understanding, consolidation of observations and a style card in one whole-video Refine window, and indexing.
-- The template library requested for local and signed-in Cloud editing on November 11: reusable templates, immutable versions holding their complete contract and code, append-only evaluations and checks, an explicit default version, and server-side source snapshots.
+- The series-shared template library clarified on November 12: reusable templates, immutable versions holding their complete contract and code, append-only evaluations and checks, an explicit default version, and server-side source snapshots.
 - MCP tools for finding templates and observations, reading versions, style cards, saving versions and appending notes.
 - The promo as the acceptance case. The first delivery is a character reaction discoverable by expression and a way to browse the full authorized candidate set through MCP.
 
@@ -261,13 +261,14 @@ slots: ["subject_cutout: full body"]
 
 ## 3.4 Template library
 
-Its lifecycle is independent of parsing: deleting or reparsing a source video must not delete code an agent created. It is written by agents through MCP, not by parse leases. One template can cite several videos. So it gets its own two tables.
+Templates and immutable versions use the existing two template tables. Each template belongs to one series and its tenant. Everyone who can view that series can read its versions, code and feedback, regardless of who contributed them. Writes use the existing series edit permission. Creator and author fields provide attribution. Reparsing a source retains saved code. Parse-derived observations and style cards remain in chunk_parse_content.content and interval_parse_content.content.
 
 **`edit_template`: stable identity**
 
 | Column | Notes |
 | --- | --- |
-| `id`, `tenant_id`, `creator_id` | |
+| `id`, `tenant_id`, `series_id` | Series ownership determines access. |
+| `creator_id` | Attribution only. |
 | `name`, `description`, `tags` (JSON) | |
 | `default_version_id` | Nullable; changed only by an explicit action |
 | `revision` | Optimistic lock for changing the default |
@@ -292,7 +293,7 @@ Rules:
 - The repository exposes insert-version, append-note and set-default only. Appends run in the Service inside one row-locked transaction; existing entries are never edited or removed.
 - Saving never moves the default. A creation pins an exact `version_id` in its local project.
 - A complaint never invalidates a version or promotes its successor.
-- `sources` store IDs without foreign keys. On read each source reports `current`, `superseded`, `content_changed` or `unavailable`; the saved snapshot is always returned and newer evidence is never substituted.
+- `sources` store IDs without foreign keys. On read each source reports `current`, `superseded`, `content_changed` or `unavailable`; snapshots whose source series the viewer can no longer access are withheld; newer evidence is never substituted.
 - Checks are shown as client-reported, never as server-verified quality.
 
 ## 3.5 MCP behaviour
@@ -309,13 +310,19 @@ For a character reaction, start with the visible action and the character’s na
 | `append_edit_template_note(version_id, kind, entry)` | Adds a timestamped, attributed evaluation or check entry |
 | `set_default_edit_template_version(template_id, version_id, reason)` | Explicit, guarded by `revision`; records a `default_selection` entry |
 
-The November 11 delivery extends the original loopback write contract to each signed-in editor's private Cloud library. The existing guest and public-read credentials keep their original scope. A separate, explicitly requested personal MCP credential authorizes reads and writes in the active account's own library. The server resolves ownership and public reference visibility for each operation. Templates, notes and defaults belong to that owner independently of the public footage they cite. The same installable `seekino-editing-materials` guide describes selecting performances, viewing reference techniques and saving a revision or feedback. A new client should discover and read the guide through MCP and use it in Claude Code or Codex.
+### Series sharing clarified on November 12
 
-### Guest editing on a Cloud with email login disabled
+The same series access rule applies to every viewer. A new valid guest token can discover the same public series templates as another guest or signed-in reader. The server resolves a template or version to its series before returning any content. A private series remains available to its existing members. Making a series private or disabling its publisher revokes public template reads and search results immediately.
 
-A native editor needs to finish a complete cut without an email account. An explicit `scope=editing` credential opens a private guest template library using the existing rate-limited guest identity. Unscoped public tokens keep the published-media contract. The guest can run the three version/feedback/default writes and read them again on the same credential, independently of every other guest and signed-in account. The source footage still follows the published-series checks. A guest browser can issue the same capability using its current session and CSRF credentials. When that same browser identity signs in, preserve the template IDs, their immutable revision contents and attribution. A separately minted anonymous CLI identity can be revisited with the original bearer until it expires.
+New templates explicitly select series_id. Existing template and version IDs remain accepted and resolve the stored series. Saving revisions, appending notes and selecting a default use the series' existing write permission and the explicit write-capable MCP credential. Request retries are scoped to the series and acting editor so two authors can reuse the same client request ID safely.
 
-Delivery branch `feat/guest-editing-mcp`, [PR #121](https://github.com/owariband/Seekino/pull/121). Verify anonymous opt-in, a cookie-free public editing loop, independent guests, the original read-only token, safe retries and transfer on login. Verify through the deployed HTTPS transport and read back a real guest revision. The first anonymous trial permits 32 private revisions per guest and 64 recorded entries per version; idempotent retries are checked before the limit. The public credential and member storage scopes remain independently verified. The package and documentation must make the no-email path the first editable connection.
+Upgrade adds a nullable series_id to the existing edit_template table and an index. Existing unassigned rows remain intact and are withheld from shared reads until an operator explicitly binds them to an approved series. Source citations alone do not authorize publication of an existing private template. Production read-only inspection on November 12 found both template tables present with zero rows. No production migration has been applied for series sharing.
+
+Continue the same delivery in [PR #121](https://github.com/owariband/Seekino/pull/121), branch feat/guest-editing-mcp. [PR #123](https://github.com/owariband/Seekino/pull/123) contains only the corresponding product release files after development review. Both remain subject to review before release.
+
+Verification will cover two independently issued guest tokens sharing an author's public template, a second author reading and contributing with series edit permission, cross-tenant public series, private series denial, visibility withdrawal, disabled publishers, wrong-series version IDs, per-author request retries, concurrent mutations and an upgrade retaining unassigned historical rows. Results are pending implementation and tests.
+
+The superseded November 11 owner-private implementation shipped in #119. The subsequent guest-private proposal in #121 added guest ownership, login transfer and per-guest limits. The November 12 clarification replaces those access rules with series sharing. The guest-owned proposal is retained in Git history as a rejected direction.
 
 ## 3.6 Rejected options
 
@@ -502,3 +509,5 @@ In the earlier Weekend trial both groups received the eight P5R notes. The owner
 | 2026-11-08 | Character material and representative frames could wait until after template storage | Weekend film 2 won its own review with a shared character pack; three clearly sampled clenched-teeth frames were described as a smile | Codex follow-up: whole-episode anime prompt pilot, unchanged query, and exhaustive MCP browsing; defer template storage until measured technique reuse | §3.5, §3.8, E4, §5 |
 | 2026-11-10 | A design-only PR with a separate implementation review for each integration step | The editor needs one checkout and one MCP endpoint to test both source paths together | Keep the original design history and integrate implementation and acceptance into #50 | The read-only pilot is ready for independent review. Template writeback stays deferred until a second edit demonstrates reuse |
 | 2026-11-10 | Promo script: Anon gives up, Kino appears and demonstrates its features, Anon ends up reading papers | Reviewed against *Made to Stick*: three features and no single core; paper reading is not a Seekino capability | Owner approved 《Weekend Study》: one core line, one demo, a challenge plot with a Monday deadline, and a reveal that the film's own shots were found through Seekino | §5; [script](editing-promo-weekend-study.md) |
+
+| 2026-11-12 | Template and guest libraries were owner-private | The owner confirmed that anyone who can view the series must share its templates regardless of author | Bind templates to series and reuse series read/write permissions | Pending implementation, migration and authorization regression tests |
