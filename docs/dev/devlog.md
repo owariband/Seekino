@@ -199,6 +199,8 @@
 
 生产构建和既有主题渐变 / 减弱动态效果用例通过。真实首页和系列页在 390px / 1440px、日夜共 8 状态采图；独立浏览器隐藏封面与内容做 UI 蒙版探针，验证夜间所有像素都与画布相同，且白天未出现可见变化。探针不进入产品。命令、JSON 和图片在 `outputs/verification/hero-background-20261112/`，设计沿用[主 TRD](../design/03-product-reassessment/restore-celadon-palette-trd.md)。
 
+2026-11-12 本地 review 确认后，[PR #133](https://github.com/owariband/Seekino/pull/133) 以 1 个提交、4 个 CSS 合入 main `dd4ed49c`。17:36（UTC+8）仅更新生产 Web，镜像 50 文件和 HTTPS 6 资源哈希通过；公网 8 状态无脚本或资源错误，4 个隔离夜间探针最大通道差为 0。手机首页的非 Hero 浮动引导卡仅在探针浏览器排除，原取样保留。其他 5 个服务的容器与启动时间保持，旧镜像和回滚入口保留。发布及公网证据在 `outputs/ops/cloud-runtime/palette-reviewed-20261112/` 与 `outputs/verification/palette-main-20261112/`；本记录只维护在 dev。Safari 与实体手机未实测。
+
 ### 指标对比
 
 本次看衔接与回归，不涉及模型 token 或媒体处理成本。夜间 Hero 底色由 `#10251f` 统一为画布 `#0d1110`；4 个夜间探针对画布的全图最大通道差均为 0。4 个白天探针前后最大通道差为 1/255，符合事先设定的量化容差。3 个 CSS 统一颜色来源，媒体、布局与交互未改；[PR #132](https://github.com/owariband/Seekino/pull/132) 接入 dev local，主观 review 与 main 发布继续由[工作台](workbench.html)跟踪。
