@@ -2899,3 +2899,7 @@ micrograd v5 共 146 块，整集 90 分 04.884 秒。调度反复锁取候选�
 ### WATCH-SEEK-01 · 浏览器的原生进度轨道在视频上画出浅色描边
 
 视频底色较暗时，轨道上下各一条浅线尤其显眼。验收看明暗主题下的轨道无描边，同时保留已播放区、滑块和指针、键盘跳转。[实测记录](devlog.md#devlog-watch-seekbar-20261111)
+
+## WEB-PALETTE-01 · 中性色板替换青瓷背景，整站观感偏离此前配色
+
+2026-11-10，Apple 式视觉刷新在调整字体时同时替换全站色板，白天背景从 `#e4eae5` 改为 `#f5f5f7`，黑夜从 `#121816` 改成纯黑，首页与系列页也改为中性遮罩。2026-11-12 明确恢复原有配色。验收要求画布、面板、卡片、文字和 Hero 回到 `cee43f96^` 的颜色，保留字体、动效、主题偏好和模型菜单。[设计与验证](../design/03-product-reassessment/restore-celadon-palette-trd.md) · [PR #127](https://github.com/owariband/Seekino/pull/127) · [工作台](workbench.html)
