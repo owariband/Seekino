@@ -246,6 +246,16 @@ class LibraryService:
             owner_user_id=owner_user_id,
         )
 
+    def resolve_series(self, *, series_id: str | None = None, video_id: str | None = None,
+                       owner_user_id: str = LOCAL_USER_ID) -> SeriesState:
+        if (series_id is None) == (video_id is None):
+            raise ValueError("Choose one series or video")
+        tenant, resolved = self._repository.series_address(
+            series_id=canonical_uuid(series_id, "series_id") if series_id is not None else None,
+            video_id=canonical_uuid(video_id, "video_id") if video_id is not None else None,
+        )
+        return self.get_series(resolved, tenant_id=tenant, owner_user_id=owner_user_id)
+
     def require_public_ready_series(self, series_id: str, *, tenant_id: str, owner_user_id: str) -> None:
         series = self.get_series(series_id, tenant_id=tenant_id, owner_user_id=owner_user_id)
         if series.visibility != SeriesVisibility.PUBLIC or not series.publisher_active or series.status != "READY":

@@ -350,7 +350,7 @@ Web 界面与外部工具使用同一套服务接口：
 | 跟踪解析任务 | `GET /api/jobs/video-parse/get`、`GET /api/jobs/video-parse/events` |
 | 检索素材 | `POST /api/search`，返回片段来源、时间范围与证据 |
 | Agent 对话 | `/api/agent/conversations/*`、`/api/agent/messages/*`，支持持续对话与流式回答 |
-| 外部 Agent 取素材（MCP） | `/mcp`（Streamable HTTP，本机素材库及 Cloud 已发布的平台系列，见[连接说明](server/README.md#cloud-mcp)），工具 选片、风格参考、个人模板与反馈（11 个工具），附剪辑 Skill |
+| 外部 Agent 取素材（MCP） | `/mcp`（Streamable HTTP，本机素材库及 Cloud 已发布的平台系列，见[连接说明](server/README.md#cloud-mcp)），工具 选片、风格参考、series 共享模板与反馈（11 个工具），附剪辑 Skill |
 
 启动后查看 [OpenAPI 文档](http://127.0.0.1:9621/api/docs)，接入说明见 [Server](server/README.md)。当前范围字段使用 `tenantId`；视频时间采用相对原片起点的整数毫秒，部分字段仍保留 `*Seconds` 旧名。
 
@@ -436,3 +436,10 @@ Seekino/
 | [Writing effective tools for agents](https://www.anthropic.com/research/writing-tools-for-agents) | 工具职责、按需上下文、分页与可纠正错误反馈 |
 
 </details>
+
+
+## 致谢
+
+[video-shotcraft](https://github.com/Vincentwei1021/video-shotcraft) 为剪辑 Agent 提供镜头配方和制作方法。Seekino 的 MCP 分发入口保留其 Apache-2.0 许可证、固定版本和来源说明。觉得有帮助，欢迎给上游项目点一个 Star。
+
+[motion-showreel](https://github.com/ConardLi/garden-skills/tree/2b9a89340b70f632d31c0f1c69fce94a7912423e/skills/motion-showreel) 为代码动画与分层合成提供参考和制作脚本，来自 ConardLi/garden-skills，使用 MIT。MCP 分发入口保留原版权、许可证和固定版本。觉得有帮助，欢迎给上游项目点一个 Star。

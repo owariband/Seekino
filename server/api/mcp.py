@@ -30,8 +30,8 @@ if TYPE_CHECKING:
     from ..service.mcp_retrieval import McpRetrievalService
 
 _ERRORS = {
-    "PERSONAL_LIBRARY_REQUIRED": "Sign in to Cloud and copy a personal MCP token from the account menu.",
-    "TEMPLATE_NOT_FOUND": "No such template or version exists in your library.",
+    "PERSONAL_LIBRARY_REQUIRED": "Copy an editing write token from the account menu and choose a series you can edit.",
+    "TEMPLATE_NOT_FOUND": "No accessible series template or version exists.",
     "TEMPLATE_CONFLICT": "Read the current revision and retry. Reuse a request_id only for identical input.",
     "REFERENCE_INDEX_UNAVAILABLE": "Editing-reference search is unavailable on this instance.",
     "INVALID_ARGUMENT": "Check the tool arguments and their documented limits.",
@@ -180,22 +180,30 @@ def create_mcp_app(service: McpRetrievalService, *, auth_mode: str, auth: AuthSe
         "seekino",
         extensions=[editing_skill()],
         instructions=(
-            "For editing, read skill://seekino-editing-materials/SKILL.md with resources/read. "
-            "It explains shot selection, style references, local cutouts and saving feedback. "
-            "Local or signed-in personal credentials can save template versions, append notes and select defaults. "
-            "Find source performances with retrieve. For editing techniques and shot changes, use find_edit_templates, "
-            "play its media.play_url and inspect the source frames. get_style_card returns a whole-film card "
-            "with an evidence_ref for every exemplar. Read those references with read_evidence. Results are indexed evidence, "
-            "not proof of unrecorded visual details. Use read_evidence for current source "
-            "context and media URLs. All video times are integer milliseconds; intervals "
-            "include start_ms and exclude end_ms. For editing, collect different candidate shots, "
-            "try the character’s names and observable cues, and watch the source before choosing. "
-            "When a gesture or expression change carries the scene, watch the lead-in and follow-through. "
-            "Call read_evidence with your chosen start_ms and end_ms and download media.clip_url. "
-            "Use the continuous footage as is, or keep its motion with your own local cutout tools. "
-            "A still can emphasize a chosen beat. Ranked results are only a shortlist. "
-            "Use browse_events for every published event in "
-            "a series or every tagged appearance of a character. Follow next_cursor through the final page."
+            "Seekino 提供可追溯的原片、风格例证、剪辑建议和共享经验，供你按任务取用。"
+            "鼓励你根据用户目标自主规划，按需参考 motion-showreel 和 video-shotcraft 的制作能力，"
+            "再用 Seekino 的素材、建议和例证补充或完善方案。"
+            "这些创作建议可独立取用，使用顺序、参考哪些 Skill 和采用哪些手法由你结合任务判断。"
+            "通过 resources/read 可按需读取 skill://seekino-editing-materials/SKILL.md，"
+            "参考选片、风格、运动、本机分层和经验读写的用法。"
+            "Remotion 镜头配方与完整安装方法见 skill://video-shotcraft/SKILL.md；"
+            "代码驱动的图形、文字、界面动画及支持的分层合成见 skill://motion-showreel/SKILL.md。"
+            "各 Skill 的适用范围和原生工作流可供选用时参考，具体规划以用户目标和已有要求、授权为依据。"
+            "服务端提供指引与素材，代码编写和渲染在本机完成。"
+            "需要人物表演时，可用 retrieve，结合人物名字的不同写法和可观察的动作比较候选。"
+            "需要技法参考时，可用 find_edit_templates，并通过 media.play_url 回看原片。"
+            "get_style_card 提供整片风格卡和例证的 evidence_ref，可用 read_evidence 了解例证。"
+            "索引命中只提供线索；未记录的画面细节要看原片，当前上下文和媒体入口由 read_evidence 返回。"
+            "剧情剪辑可参考人物的神情与动作变化，结合准备、发生和收尾判断片段是否适合剧本。"
+            "连续人物表演与动态分层是可借鉴的方法，是否采用由当前方案决定；"
+            "采用时，可在本机准备时间对齐的人物层，回看人物一致性、边缘和动作衔接。"
+            "视频时间都是整数毫秒，区间包含 start_ms、不包含 end_ms。"
+            "需要取片时，同时将 start_ms 和 end_ms 交给 read_evidence，返回的 media.clip_url 可供及时下载。"
+            "可直接使用连续原片，也可在本机分层后保留其运动；有意停住某个节拍时可以使用静帧。"
+            "排序结果只是候选；需要查全一个系列或某个人物已标注的出镜事件时，可用 browse_events，"
+            "跟随 next_cursor 直到最后一页。"
+            "模板归属 series，所有有权查看该 series 的人共享版本与反馈；"
+            "需要保存经验时，编辑者可使用可写凭据，在已有编辑权限内写入。"
         ),
     )
     annotations = ToolAnnotations(read_only_hint=True, destructive_hint=False, open_world_hint=False)
@@ -261,34 +269,34 @@ def create_mcp_app(service: McpRetrievalService, *, auth_mode: str, auth: AuthSe
     async def list_series(
         ctx: Context,
         offset: Annotated[int, Field(ge=0, le=1_000_000, strict=True,
-                                    description="Zero-based series offset; use next_offset to continue.")] = 0,
+                                    description="从 0 开始的系列偏移量；继续翻页时传入返回的 next_offset。")] = 0,
         limit: Annotated[int, Field(ge=1, le=50, strict=True,
-                                   description="Maximum number of series to return in this page.")] = 20,
+                                   description="本页最多返回多少个系列。")] = 20,
     ) -> dict[str, Any]:
-        """List accessible video series and their indexing status; use IDs to narrow retrieve."""
+        """查看可访问的系列及索引状态，取得准确的系列 ID 后缩小 retrieve 的搜索范围。"""
         return await invoke(ctx, service.list_series, offset=offset, limit=limit)
 
     @server.tool(annotations=annotations, structured_output=True)
     async def retrieve(
         query: Annotated[str, Field(min_length=1, max_length=4000,
-                                   description="Describe the scene, action or dialogue to find in source videos.")],
+                                   description="描述要找的场景、动作或对白，尽量写出画面中可观察的变化。")],
         ctx: Context,
         series_ids: Annotated[list[Annotated[str, Field(min_length=1, max_length=64)]] | None, Field(
-            min_length=1, max_length=50, description="Optional IDs from list_series; omit to search accessible READY series.")] = None,
+            min_length=1, max_length=50, description="可选，使用 list_series 返回的 ID；省略时搜索可访问的 READY 系列。")] = None,
         top_k: Annotated[int, Field(ge=1, le=20, strict=True,
-                                   description="Maximum distinct parent chunks; each may have multiple matching events.")] = 5,
+                                   description="最多召回多少个不同的父 Chunk；每个 Chunk 可以包含多个匹配事件。")] = 5,
         event_types: Annotated[list[Literal["SCENE", "ACTION", "DIALOGUE", "EMOTION", "RELATION_CHANGE", "ON_SCREEN_TEXT", "OTHER"]] | None, Field(
-            max_length=7, description="Optional Timeline event categories to include.")] = None,
+            max_length=7, description="可选，限定返回的 Timeline 事件类型。")] = None,
         speaker: Annotated[str | None, Field(min_length=1, max_length=255,
-                                            description="Filter reliable DIALOGUE speakers by name, not visible people.")] = None,
+                                            description="按可靠的 DIALOGUE 说话人姓名筛选；此项不筛选画面出镜人物。")] = None,
         cursor: Annotated[str | None, Field(min_length=1, max_length=512,
-                                            description="Replay the same search with next_cursor to continue.")] = None,
+                                            description="继续同一次检索时，保持其他条件不变，传入返回的 next_cursor。")] = None,
     ) -> dict[str, Any]:
-        """Retrieve event evidence by natural language, dialogue or action. top_k counts distinct chunks,
-        not events. Omit series_ids to search the accessible library. Read returned evidence_ref
-        with read_evidence for verified source context and downloadable media. Follow next_cursor for more
-        ranked hits. For all candidate shots in a series, use browse_events. Search camera moves by
-        observed direction, pace or reveal. A matching SCENE can carry a camera_ref. Times are milliseconds.
+        """按自然语言、对白或动作寻找原片候选。top_k 计算不同 Chunk 的数量，一个 Chunk 可有多个事件。
+        省略 series_ids 时搜索可访问的素材库。把返回的 evidence_ref 交给 read_evidence，核对上下文并取片；
+        用 next_cursor 继续查看排序结果，查全系列候选则用 browse_events。
+        剧情表演可参考神情与动作变化寻找候选，结合整段回看判断是否适合当前剧本和镜头。
+        找运镜时描述方向、速度变化或露出了什么；命中的 SCENE 可能带有 camera_ref。时间单位为毫秒。
         """
         return await invoke(
             ctx, service.retrieve, query=query, series_ids=series_ids, top_k=top_k,
@@ -303,35 +311,32 @@ def create_mcp_app(service: McpRetrievalService, *, auth_mode: str, auth: AuthSe
         include_parse_techniques: bool = True,
         top_k: Annotated[int, Field(ge=1, le=8, strict=True)] = 5,
     ) -> dict[str, Any]:
-        """Find editing techniques by natural language. Each source-checked observation has original
-        start/end milliseconds, shot steps and media.play_url for that interval. Choose whether to
-        borrow it after watching the original. series_ids scope source footage. tags filter private templates.
-        Set include_parse_techniques=false to search only your template library."""
+        """按画面变化找可借鉴的技法，同时检索可见 series 的共享模板。
+        技法观察已经回源核对，包含原片毫秒区间、镜头步骤和 media.play_url；回看后再判断是否适合当前片子。
+        series_ids 限定来源系列，tags 筛选共享模板。设 include_parse_techniques=false 时只查可见的模板库。"""
         return await invoke(ctx, service.find_edit_templates, query=query, series_ids=series_ids, tags=tags,
                             include_parse_techniques=include_parse_techniques, top_k=top_k)
 
     @server.tool(annotations=annotations, structured_output=True)
     async def get_style_card(video_id: Annotated[str, Field(min_length=1, max_length=64)], ctx: Context) -> dict[str, Any]:
-        """Read the current whole-video Refine card and every exemplar. Each exemplar has a source
-        range and an evidence_ref accepted by read_evidence for playback and download."""
+        """查看当前整片 Refine 风格卡及全部例证，了解反复出现的风格特征。
+        每个例证都有原片区间和 evidence_ref，可交给 read_evidence 回看或下载。"""
         return await invoke(ctx, service.get_style_card, video_id=video_id)
 
     @server.tool(annotations=annotations, structured_output=True)
     async def browse_events(
-        series_id: Annotated[str, Field(min_length=1, max_length=64, description="An accessible ID from list_series.")],
+        series_id: Annotated[str, Field(min_length=1, max_length=64, description="使用 list_series 返回的可访问系列 ID。")],
         ctx: Context,
         visible_names: Annotated[list[Annotated[str, Field(min_length=1, max_length=255)]] | None, Field(
-            min_length=1, max_length=32, description="Any of these on-screen names. Copy character names from "
-            "event.visible_persons and include known aliases. Omit to browse every event.")] = None,
-        limit: Annotated[int, Field(ge=1, le=50, strict=True, description="Maximum cards on this page.")] = 24,
+            min_length=1, max_length=32, description="匹配任一出镜人物；采用 event.visible_persons 中记录的人名，"
+            "可带已知别名。省略时浏览全部事件。")] = None,
+        limit: Annotated[int, Field(ge=1, le=50, strict=True, description="本页最多返回多少张事件卡。")] = 24,
         cursor: Annotated[str | None, Field(min_length=1, max_length=512,
-                                            description="Pass the previous next_cursor with the same filters.")] = None,
+                                            description="保持筛选条件不变，传入上一页的 next_cursor。")] = None,
     ) -> dict[str, Any]:
-        """Enumerate all published source events in episode order, independent of ranked search.
-        For a character shot, inspect several candidates through read_evidence and review source frames.
-        Names filter recorded on-screen appearances; unambiguous aliases declared in the series background
-        are included. Use the stored spelling from a ranked hit for ambiguous or undocumented aliases.
-        Continue through empty pages until next_cursor is null. Omit the name filter to include untagged shots.
+        """按集数顺序浏览全部已发布事件，不依赖检索排序。找人物镜头时比较多个候选，用 read_evidence 核对原帧。
+        人名筛选依据已记录的出镜信息，包含系列背景中无歧义的别名；别名有歧义或未声明时，采用命中结果中的实际写法。
+        遇到空页也继续翻页，直到 next_cursor 为 null；省略人名筛选可以看到未标注人物的镜头。
         """
         return await invoke(ctx, service.browse_events, series_id=series_id, visible_names=visible_names,
                             limit=limit, cursor=cursor)
@@ -339,33 +344,31 @@ def create_mcp_app(service: McpRetrievalService, *, auth_mode: str, auth: AuthSe
     @server.tool(annotations=annotations, structured_output=True)
     async def read_evidence(
         evidence_ref: Annotated[str, Field(min_length=1, max_length=4096,
-                                          description="Copy an evidence_ref or next_evidence_ref exactly; do not construct one.")],
+                                          description="原样使用返回的 evidence_ref 或 next_evidence_ref，不自行拼接引用。")],
         ctx: Context,
-        start_ms: Annotated[int | None, Field(ge=0, strict=True, description="Optional inclusive start on the source video, "
-                                             "in milliseconds. Supply both bounds to download a clip.")] = None,
-        end_ms: Annotated[int | None, Field(gt=0, strict=True, description="Exclusive source end in milliseconds. "
-                                           "May span adjacent events in the same video; Cloud limit: 60,000 ms per clip.")] = None,
+        start_ms: Annotated[int | None, Field(ge=0, strict=True, description="可选，源视频中的起点毫秒，包含此时刻；"
+                                             "取片时同时提供起点和终点。")] = None,
+        end_ms: Annotated[int | None, Field(gt=0, strict=True, description="源视频中的终点毫秒，不包含此时刻；"
+                                           "可跨同一视频内的相邻事件，Cloud 每段最多 60,000 毫秒。")] = None,
     ) -> dict[str, Any]:
-        """Read current evidence from retrieve, browse_events, find_edit_templates or get_style_card.
-        For an editing reference, omitting bounds returns the measured source clip, note and native-frame evidence. Follow
-        next_evidence_ref to continue bounded context. A stale reference requires a new retrieval.
-        Omit both bounds to review source context. Supply both to get a downloadable MP4 at media.clip_url
-        for your chosen source range, with its original motion and audio when present.
-        For a matched camera_ref, camera_replay contains an editable ES module and params for supported
-        continuous 2-D moves. Anchors are creative defaults; verify the observed framing in matched_event.
+        """核对 retrieve、browse_events、find_edit_templates 或 get_style_card 返回的当前来源。
+        不传起止时间时读取上下文；剪辑参考会带回实测原片区间、笔记和原帧证据。用 next_evidence_ref 继续查看有界上下文，
+        引用过期则重新检索。同时提供起止时间后，从 media.clip_url 下载所选区间的 MP4，保留原有运动及存在的音轨。
+        命中 camera_ref 时，camera_replay 为受支持的连续二维运镜提供可编辑 ES 模块和参数。
+        锚点是创作默认值，实际构图仍要核对 matched_event。
         """
         return await invoke(ctx, service.read_evidence, evidence_ref=evidence_ref,
                             start_ms=start_ms, end_ms=end_ms, cloud=auth_mode == "cloud")
 
     @server.tool(annotations=annotations, structured_output=True)
     async def get_edit_template(template_id: str, ctx: Context, version_id: str | None = None) -> dict[str, Any]:
-        """Read your exact saved code, source snapshots, evaluations and checks. Without a version ID,
-        return the explicit default or list versions if no default is selected."""
+        """读取可见 series 共享的代码、来源快照、评价和检查记录。
+        未指定版本时返回明确设定的默认版；没有默认版则列出版本，供你确定要用的一版。"""
         return await invoke(ctx, service.get_edit_template, template_id=template_id, version_id=version_id)
 
     @server.tool(annotations=annotations, structured_output=True)
     async def list_edit_template_versions(template_id: str, ctx: Context) -> dict[str, Any]:
-        """List revisions, lineage and the default of a template in your library."""
+        """查看可见 series 中模板的共享版本、派生关系和默认版本。"""
         return await invoke(ctx, service.list_edit_template_versions, template_id=template_id)
 
     @server.tool(annotations=writes, structured_output=True)
@@ -373,15 +376,16 @@ def create_mcp_app(service: McpRetrievalService, *, auth_mode: str, auth: AuthSe
         ctx: Context, request_id: RequestId, spec: dict, visual_requirements: dict | list, slots: list | dict,
         params_schema: dict, files: dict[str, str], entry: str, runtime: dict, evaluation: TemplateEvaluation,
         template_id: str | None = None, new_template: TemplateDetails | None = None, parent_version_id: str | None = None,
+        series_id: Annotated[str | None, Field(min_length=1, max_length=64, description="新模板必填；所有有权查看该 series 的人共享保存的版本。")] = None,
         source_refs: Annotated[list[Annotated[str, Field(min_length=1, max_length=4096)]], Field(max_length=16)] = [],
         check: dict | None = None,
     ) -> dict[str, Any]:
-        """Save a revision in your local or personal Cloud library. Supply template_id or new_template
-        {name, description, tags}. files is a map of relative paths to text (1 MiB total); entry names one.
-        Include source evidence_refs from this connection. For a parent use evaluation.kind=revision_rationale
-        and describe changes. A save never selects a default. Reuse request_id on retry."""
+        """把可复用实现保存到有编辑权限的 series。新模板提供 series_id 和 new_template，修订已有模板提供 template_id。
+        new_template 包含 {name, description, tags}；files 是相对路径到文本的映射，总计最多 1 MiB，entry 指向其中一个文件。
+        来源 evidence_refs 必须来自本连接。基于父版本修改时，用 evaluation.kind=revision_rationale 说明变化。
+        保存不会设置默认版本；同一次写入重试时沿用 request_id。"""
         return await invoke(ctx, service.save_edit_template_version, request_id=request_id, template_id=template_id,
-                            new_template=new_template.model_dump() if new_template else None, parent_version_id=parent_version_id, spec=spec,
+                            new_template=new_template.model_dump() if new_template else None, parent_version_id=parent_version_id, series_id=series_id, spec=spec,
                             visual_requirements=visual_requirements, slots=slots, params_schema=params_schema,
                             files=files, entry=entry, runtime=runtime, source_refs=source_refs,
                             evaluation=evaluation.model_dump(exclude_none=True), check=check)
@@ -389,8 +393,8 @@ def create_mcp_app(service: McpRetrievalService, *, auth_mode: str, auth: AuthSe
     @server.tool(annotations=writes, structured_output=True)
     async def append_edit_template_note(ctx: Context, version_id: str, kind: Literal["evaluation", "check"],
                                         entry: dict, request_id: RequestId) -> dict[str, Any]:
-        """Append attributed usage feedback or a client-reported render check to your chosen version.
-        Separate user_feedback, agent_judgment, changes, verified and unverified. Reuse request_id on retry."""
+        """为指定版本追加有署名的使用反馈或客户端渲染检查。
+        分别记录 user_feedback、agent_judgment、changes、verified 和 unverified；同一次写入重试时沿用 request_id。"""
         return await invoke(ctx, service.append_edit_template_note, version_id=version_id, kind=kind,
                             entry=entry, request_id=request_id)
 
@@ -398,7 +402,7 @@ def create_mcp_app(service: McpRetrievalService, *, auth_mode: str, auth: AuthSe
     async def set_default_edit_template_version(ctx: Context, template_id: str, version_id: str,
                                                 revision: Annotated[int, Field(ge=0)], reason: str,
                                                 request_id: RequestId) -> dict[str, Any]:
-        """Select the default explicitly. Supply the template's current revision and your selection reason."""
+        """明确指定模板的默认版本，提供当前 revision，并说明设置理由。"""
         return await invoke(ctx, service.set_default_edit_template_version, template_id=template_id,
                             version_id=version_id, revision=revision, reason=reason, request_id=request_id)
 

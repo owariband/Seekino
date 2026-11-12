@@ -14,6 +14,8 @@ const cloudToken = [
   'SEEKINO_MCP_TOKEN=$(curl -fsS -X POST "$SEEKINO_CLOUD/api/auth/mcp-token" | python3 -c \'import json,sys; print(json.load(sys.stdin)["accessToken"])\') && export SEEKINO_MCP_TOKEN',
 ].join("\n");
 const installEditingSkill = "npx skills add https://github.com/owariband/Seekino/tree/main/server/skills/seekino-editing-materials -a claude-code -a codex -g -y";
+const installMotionShowreel = "npx skills add https://github.com/ConardLi/garden-skills/tree/2b9a89340b70f632d31c0f1c69fce94a7912423e/skills/motion-showreel -a claude-code -a codex -g -y";
+const installShotcraft = "npx skills add https://github.com/Vincentwei1021/video-shotcraft/tree/6700db2ba80572ebc777b99d72049679fed9840c -a claude-code -a codex -g -y";
 const claudeCloud = `claude mcp add --transport http seekino_cloud "$SEEKINO_CLOUD/mcp" --header 'Authorization: Bearer \${SEEKINO_MCP_TOKEN}'`;
 const codexCloud = 'codex mcp add seekino_cloud --url "$SEEKINO_CLOUD/mcp" --bearer-token-env-var SEEKINO_MCP_TOKEN';
 
@@ -133,22 +135,24 @@ const zh: DocsContent = {
           { title: "获取 Cloud 只读凭据", body: "在 Cloud 站点复制命令，到剪辑终端运行。游客可读取已发布的平台系列，凭据到期后重跑这一步。", code: cloudToken },
           { title: "Claude Code 接入 Cloud", body: "使用 Claude 时运行，然后从这个终端打开 Claude Code。", code: claudeCloud },
           { title: "Codex 接入 Cloud", body: "使用 Codex 时运行，然后从这个终端打开 Codex。", code: codexCloud },
-          { title: "保存到个人 Cloud 剪辑库", body: "登录后从账号菜单复制个人 MCP 凭据，在剪辑终端将它设为 SEEKINO_MCP_TOKEN 后启动客户端。同一连接可读公开素材并写回自己的经验。" },
-          { title: "安装剪辑 Skill", body: "该命令给两种客户端安装选片、风格借鉴、分层与模板写回指引。也可在 MCP 中通过 resources/read 读取 skill://seekino-editing-materials/SKILL.md。", code: installEditingSkill },
+          { title: "更新 series 的共享模板", body: "所有 series 查看者共享模板、版本和反馈。编辑者可登录后从账号菜单复制剪辑写入凭据，在有编辑权限的 series 中保存代码与经验。" },
+          { title: "安装剪辑 Skill", body: "把选片、风格借鉴、分层与经验写回指引装给两种客户端。MCP 中也可通过 resources/read 读取 skill://seekino-editing-materials/SKILL.md。", code: installEditingSkill },
+          { title: "安装 motion-showreel", body: "MCP 中的 skill://motion-showreel/SKILL.md 是 Seekino 中文改写版。此命令安装固定版本的上游完整包，供代码动画或分层合成使用；先预览、确认后导出的规则保持不变，除非用户明确免除预览。", code: installMotionShowreel },
+          { title: "安装 video-shotcraft 镜头库", body: "MCP 中的 skill://video-shotcraft/SKILL.md 是 Seekino 中文改写版。此命令安装固定版本的上游完整镜头卡、demo、模板和工作台，适用于 Claude Code 与 Codex。", code: installShotcraft },
           { title: "同时使用本机素材", body: "在宿主机启动本地 API，再为正在使用的客户端添加第二个服务。", code: "claude mcp add --transport http seekino_local http://127.0.0.1:9621/mcp\n# 或\ncodex mcp add seekino_local --url http://127.0.0.1:9621/mcp" },
           { title: "像交代同事一样说", body: "例如：“在 Seekino 里找出 Anon 咬牙切齿的镜头，核对来源后把片段存到 clips/。”" },
         ] },
-        { kind: "h", text: "素材、风格和个人模板工具" },
+        { kind: "h", text: "素材、风格和 series 共享模板工具" },
         { kind: "tools", items: [
           { name: "list_series", body: "看看素材库里有哪些系列。" },
           { name: "retrieve", body: "用一句描述检索片段，返回原片与时间范围。" },
           { name: "browse_events", body: "按时间顺序浏览一集里发生了什么。" },
           { name: "read_evidence", body: "核对原片上下文。给出起止毫秒后，可取得该区间的 MP4 下载地址。" },
-          { name: "find_edit_templates", body: "检索有来源的剪辑手法和自己的模板。" },
+          { name: "find_edit_templates", body: "检索有来源的剪辑手法和可见 series 的共享模板。" },
           { name: "get_style_card", body: "读整部参考片的风格信号，回看对应原片。" },
           { name: "get_edit_template", body: "读取指定或默认版本的代码、来源和反馈。" },
           { name: "list_edit_template_versions", body: "列出版本、派生关系与默认选择。" },
-          { name: "save_edit_template_version", body: "在本机或登录后的个人 Cloud 库保存新版本。" },
+          { name: "save_edit_template_version", body: "选择 series_id，在有编辑权限的 series 中保存新版本。" },
           { name: "append_edit_template_note", body: "给指定版本追加反馈或渲染检查。" },
           { name: "set_default_edit_template_version", body: "明确选择默认版本并记录原因。" },
         ] },
@@ -262,20 +266,22 @@ const en: DocsContent = {
           { title: "Ask the way you'd brief a colleague", body: "For example: \"Find the shots of Anon gritting her teeth in Seekino, check the sources, and save the clips to clips/.\"" },
         ] },
         { kind: "steps", items: [
-          { title: "Use a personal Cloud library", body: "Sign in, copy your personal MCP token from the account menu, and set SEEKINO_MCP_TOKEN in the editing terminal before launching the client." },
+          { title: "Update shared series templates", body: "All series viewers share its templates, versions and feedback. Editors can copy an editing write token from the account menu and save code in a series they can edit." },
           { title: "Install the editing skill", body: "Install the guide for both clients, or read skill://seekino-editing-materials/SKILL.md with resources/read on the MCP connection.", code: installEditingSkill },
+          { title: "Install motion-showreel", body: "Read Seekino's Chinese adaptation at skill://motion-showreel/SKILL.md through MCP. This command installs the pinned upstream references, starter and production scripts. The preview-before-export rule remains unless the user explicitly waives preview.", code: installMotionShowreel },
+          { title: "Install video-shotcraft", body: "Read Seekino's Chinese adaptation at skill://video-shotcraft/SKILL.md through MCP. This command installs the pinned complete upstream shot cards, demos, template and workbench on the editing computer for both clients.", code: installShotcraft },
         ] },
-        { kind: "h", text: "Footage, visual references and private templates" },
+        { kind: "h", text: "Footage, visual references and shared series templates" },
         { kind: "tools", items: [
           { name: "list_series", body: "See which series are in the library." },
           { name: "retrieve", body: "Search clips with a description; returns the source video and time range." },
           { name: "browse_events", body: "Walk through what happens in an episode, in order." },
           { name: "read_evidence", body: "Read source context and supply start and end times in milliseconds to download an MP4 clip." },
-          { name: "find_edit_templates", body: "Find source-linked techniques and your own templates." },
+          { name: "find_edit_templates", body: "Find source-linked techniques and templates shared by accessible series." },
           { name: "get_style_card", body: "Read a reference video’s visual signals and their source exemplars." },
           { name: "get_edit_template", body: "Read a specific or default revision, its files, sources and feedback." },
           { name: "list_edit_template_versions", body: "List versions, lineage and the current default." },
-          { name: "save_edit_template_version", body: "Save a new revision locally or in your signed-in personal Cloud library." },
+          { name: "save_edit_template_version", body: "Select series_id and save a revision in a series you can edit." },
           { name: "append_edit_template_note", body: "Append feedback or a client-reported render check." },
           { name: "set_default_edit_template_version", body: "Select the default version and record why." },
         ] },

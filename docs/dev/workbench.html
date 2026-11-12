@@ -5366,9 +5366,9 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "status": "verifying",
    "priority": "P1",
    "description": "从剧本寻找可剪表演和有原片依据的手法，编辑在本机选入点、出点并判断如何使用。",
-   "next": "片主决定何时由 Claude 用剧本、MCP 和本地工具独立验收。",
-   "verification": "同一 #50 应用在独立 MySQL、ES 和临时媒体目录从两支上传贯通六个 MCP 工具、带毫秒引证的新卡及两段 MP4。真实 P5R 回看 34 帧。11 月 11 日隔离验证了 11 个工具、Skill 文件摘要、两个普通账户之间的模板权限和重复写入。",
-   "updatedAt": "2026-11-11",
+   "next": "核对 #123 的正式发布文件，继续 review 后再决定 main 发布与生产升级；动态人物分离和剧本匹配效果待实际采用后的整段验收。",
+   "verification": "同一 #50 应用在隔离环境贯通六个 MCP 工具、带毫秒引证的新卡及两段 MP4。真实 P5R 回看 34 帧。series 修复两分支各 159 项回归通过、7 项 Redis 跳过，原镜头模块与 main 一致。中文正文及剧本表演指引补充后两分支各 35 项 MCP 回归通过，三项 Skill、八份资源不变；分别校验上游来源、原许可证及改写正文摘要。YAML、标题、代码块、标识符、链接和非文案 Python AST 未改，独立语义复核的问题已修正。原固定包安装验证为 video-shotcraft 1,221 份、motion-showreel 114 份文件一致。开发类型检查和两分支构建此前通过；与最新 dev 整合后，200 项后端回归通过、7 项独立 Redis 测试跳过，122 项前端单测及含类型检查的构建通过。成片、文案效果与生产升级待验收。",
+   "updatedAt": "2026-11-12",
    "tags": [
     "参考片",
     "MCP"
@@ -5377,8 +5377,9 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
     "EDIT-CLIP-01",
     "EDIT-ANIME-01"
    ],
-   "branch": "docs/editing-skill-style-reference",
+   "branch": "feat/guest-editing-mcp",
    "links": [
+    {"label": "series 共享修正 #121", "kind": "pr", "url": "https://github.com/owariband/Seekino/pull/121"},
     {
      "label": "双召回需求与交付 #50",
      "kind": "pr",
