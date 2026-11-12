@@ -17,6 +17,31 @@ Use `find_edit_templates` to search for a visible change, such as a diagonal wip
 
 Choose what fits the current film. Keep borrowed timing, composition or motion distinct from your own variations. Keep the implementation, rendering, rights decisions and creative judgment on the editing computer.
 
+## Camera motion references and suggestions
+
+Choose camera timing to suit the shot's intent, rhythm and source material. One available approach for continuous pans and pushes is a bell-shaped speed profile: slow departure, a fast middle and a settled arrival. Treat it as a reference to consider alongside other easing, measured motion, holds and cuts. If it fits the shot, read the portable module with `resources/read` at `skill://seekino-editing-materials/camera/viewport-v1.mjs`. Import `cameraAt` for a viewport or `gaussianMotionAt` for other pure trajectories. The position is the normalized integral of a Gaussian-shaped velocity with its boundary speed removed, so both ends are at rest.
+
+```js
+const params = {
+  duration_ms: 1200,
+  easing: "EASE_IN_OUT",
+  from: [0, 0.5, 1],
+  to: [1, 0.5, 1],
+  velocity_curve: {kind: "gaussian", sigma: 0.18},
+};
+const pace = gaussianMotionAt(elapsedMs, params.duration_ms, 0.18);
+const x = fromX + (toX - fromX) * pace.progress;
+const pixelsPerFrame = Math.abs(toX - fromX) * pace.velocity_per_ms * 1000 / fps;
+```
+
+Smaller sigma concentrates motion around the middle; larger sigma spreads it out. The supported range is 0.05–0.5. Keep departure and landing frames, the peak-speed span and any reading hold visible in review. Source replay retains its observed easing or measured progress samples by default. Setting velocity_curve is an authored change for the new composition; record that choice in template feedback.
+
+When the shot calls for speed-linked stretch, skew or smear, use instantaneous speed and direction to drive its intensity and let it settle at rest. video-shotcraft supplies velocityAt and relevant shot recipes. Position easing shapes timing; a geometric treatment needs its own transform or filter. Hard cuts and deliberately stepped techniques retain their intended timing.
+
+## Use video-shotcraft
+
+Read `skill://video-shotcraft/SKILL.md` for the pinned upstream guide and complete local installation command. Use it for shot cards, Remotion composition and velocity-linked motion treatment after retrieving source footage from Seekino. The local package supplies its referenced cards, demos and rendering helpers. Seekino's template writes follow the selected series permissions.
+
 ## Prepare a cutout when the shot calls for it
 
 For an animated subject, start with the source clip. Watch for flicker, edge loss and drift if matting successive frames. For a freeze frame or graphic insert, the bundled `scripts/split_frame.py` uses the CPU and the original canvas. Install its optional dependencies in a local Python 3.12 environment (`numpy`, `pillow`, `onnxruntime`). Download the [pinned anime-seg ONNX weights](https://huggingface.co/skytnt/anime-seg/resolve/a0a563c41338cbe0d23dfb4bfc3e243c518e5768/isnetis.onnx) once. The script verifies the file's SHA-256.
