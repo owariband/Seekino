@@ -27,6 +27,7 @@ COPY agent/ ./agent/
 COPY engine/ ./engine/
 COPY gateway/ ./gateway/
 COPY server/ ./server/
+COPY scripts/migrate_edit_template_series.py ./scripts/migrate_edit_template_series.py
 COPY config/ ./config/
 COPY config.yaml ./
 RUN useradd --create-home --uid 10001 seekino \

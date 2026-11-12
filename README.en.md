@@ -262,7 +262,7 @@ The web interface and external tools use the same service APIs. Your tools can c
 | Track analysis tasks | `GET /api/jobs/video-parse/get`, `GET /api/jobs/video-parse/events` |
 | Retrieve footage | `POST /api/search`, returning source clips, time ranges and evidence. |
 | Find footage through Agent chat | `/api/agent/conversations/*` and `/api/agent/messages/*`, with ongoing conversations and streamed answers. |
-| Let an external agent fetch clips (MCP) | Streamable HTTP at `/mcp` (local library or published Cloud series, see [connection instructions](server/README.md#cloud-mcp)), 11 tools for footage, visual references and personal templates, plus the editing skill. |
+| Let an external agent fetch clips (MCP) | Streamable HTTP at `/mcp` (local library or published Cloud series, see [connection instructions](server/README.md#cloud-mcp)), 11 tools for footage, visual references and shared series templates, plus the editing skill. |
 
 After starting the service, inspect requests and responses in the [OpenAPI docs](http://127.0.0.1:9621/api/docs). See [Server](server/README.md) for integration details. The current scope field is `tenantId`. Video time fields use integer milliseconds relative to the original video, including fields that retain legacy `*Seconds` names; follow the current contract when integrating.
 
@@ -561,3 +561,9 @@ These are key sources consulted during the project's research and design. The pa
 ### Engineering practice
 
 - [Anthropic — Writing effective tools for agents — with agents](https://www.anthropic.com/research/writing-tools-for-agents): applied to the project's Agent tool design, including clear tool responsibilities, on-demand context reads, pagination and actionable error feedback.
+
+## Acknowledgements
+
+[video-shotcraft](https://github.com/Vincentwei1021/video-shotcraft) supplies shot recipes and production guidance for editing agents. Its Seekino MCP distribution entry retains the Apache-2.0 license, pinned revision and source attribution. If you find it useful, consider starring the upstream project.
+
+[motion-showreel](https://github.com/ConardLi/garden-skills/tree/2b9a89340b70f632d31c0f1c69fce94a7912423e/skills/motion-showreel) supplies references and production scripts for code-driven animation and layer compositing. It comes from ConardLi/garden-skills under MIT; the MCP entry retains the original copyright, license and pinned revision. If it helps, consider starring the upstream project.

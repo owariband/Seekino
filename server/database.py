@@ -315,6 +315,12 @@ def create_schema(engine: Engine) -> None:
 
     inspector = inspect(engine)
     existing_tables = set(inspector.get_table_names())
+    if "edit_template" in existing_tables and "series_id" not in {
+        column["name"] for column in inspector.get_columns("edit_template")
+    }:
+        raise SchemaUpgradeRequiredError(
+            "editing templates require scripts/migrate_edit_template_series.py before init-db"
+        )
     retired = existing_tables.intersection({"series_parse_job", "video_chunk_checkpoint", "parse_usage_attempt"})
     retired_links = {
         f"{table_name}.job_id"

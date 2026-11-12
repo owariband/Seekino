@@ -43,26 +43,50 @@
 
    例如：“在 Seekino 里找出 Anon 咬牙切齿的镜头，核对来源后把片段存到 clips/。”
 
-## 选片、风格和个人模板工具
+## 选片、风格和 series 共享模板工具
 
 - `list_series` — 看看素材库里有哪些系列。
 - `retrieve` — 用一句描述检索片段，返回原片与时间范围。
 - `browse_events` — 按时间顺序浏览一集里发生了什么。
 - `read_evidence` — 核对原片上下文。给出起止毫秒后，可取得该区间的 MP4 下载地址。
 
-- `find_edit_templates` 检索带原片区间的剪辑技法与自己的模板。用 `get_style_card` 查看整片风格和例证。
+- `find_edit_templates` 检索带原片区间的剪辑技法和可见 series 的共享模板。用 `get_style_card` 查看整片风格和例证。
 - `get_edit_template` 读取指定或默认版本的代码、来源与反馈。`list_edit_template_versions` 列出版本和派生关系。
-- `save_edit_template_version` 保存新版本，`append_edit_template_note` 追加反馈或本机渲染检查，`set_default_edit_template_version` 明确选择默认版本。
+- `save_edit_template_version` 指定 `series_id` 保存新版本，`append_edit_template_note` 追加反馈或本机渲染检查，`set_default_edit_template_version` 明确选择默认版本。
 
-## 使用剪辑 Skill 与个人 Cloud 库
+## 使用剪辑 Skill 与 series 共享模板
 
-在 Cloud 登录后，打开账号菜单，选择“复制个人 MCP 凭据”。在剪辑终端将它设为 `SEEKINO_MCP_TOKEN`，再启动客户端。个人凭据可读取平台公开素材，并访问该账号自己的剪辑模板。游客凭据仍可取公开素材，本机连接可直接保存到本机。
+模板、版本与反馈归属 series。任何有权查看该 series 的人都能读取，不受作者或游客身份影响。换一枚有效游客凭据仍能找回同一公开 series 的模板。创建模板时传入 series_id，已有版本按模板 ID 读取。
+
+写入沿用 series 的编辑权限。Cloud 编辑者可登录后从账号菜单选择“复制剪辑写入凭据”，或通过当前会话 Cookie、CSRF 请求头和 `POST /api/auth/mcp-token?scope=personal` 领取写入凭据。本机沿用本地权限。
 
 在 MCP 上用 `resources/read` 读取 `skill://seekino-editing-materials/SKILL.md`，也可以用 `skills/list` 和 `skills/get` 发现完整文件清单。要在剪辑机上同时给 Claude Code 和 Codex 安装指引与本机分层脚本，可以运行下面的命令。
 
 ```sh
 npx skills add https://github.com/owariband/Seekino/tree/main/server/skills/seekino-editing-materials -a claude-code -a codex -g -y
 ```
+
+## 镜头库与运动参考
+
+下面两份 MCP 正文由 Seekino 按固定上游版本改写为中文，保留原有操作规则。资源中提供原文版本、原文与改写正文的 SHA-256，以及修改说明；安装命令取得对应版本的上游完整包。
+
+MCP 提供 `skill://motion-showreel/SKILL.md`，用于代码驱动的图形、文字、界面动画和支持的人物分层合成。完整安装包含风格参考、starter、时间线和逐帧制作脚本。它原生要求先在工作区预览、确认后导出，除非用户明确免除预览。
+
+```sh
+npx skills add https://github.com/ConardLi/garden-skills/tree/2b9a89340b70f632d31c0f1c69fce94a7912423e/skills/motion-showreel -a claude-code -a codex -g -y
+```
+
+MCP 还提供 `skill://video-shotcraft/SKILL.md` 及原 Apache-2.0 许可证。在剪辑机上完整安装后，Agent 可以读取其镜头卡、demo、模板和工作台，供剪辑时参考。
+
+```sh
+npx skills add https://github.com/Vincentwei1021/video-shotcraft/tree/6700db2ba80572ebc777b99d72049679fed9840c -a claude-code -a codex -g -y
+```
+
+Seekino 剪辑指引提供镜头运动的参考和建议。Agent 根据镜头意图、节奏与素材，在剪辑工程里自行编写速度、位移和形变代码。例如，钟形速度及其积分形成的 S 形位移，可以作为慢起、加速、落定的参考；具体时长、快段、对称性与落点由镜头代码决定，也可以复用或调整上游辅助函数。
+
+拉伸、拖影等也可按镜头需要编写，用瞬时速度和方向控制强度，再回看实际画面调整。制作与渲染在本机完成。喜欢这套镜头库，欢迎给 [video-shotcraft](https://github.com/Vincentwei1021/video-shotcraft) 点一个 Star。
+
+motion-showreel 来自 [ConardLi/garden-skills](https://github.com/ConardLi/garden-skills)，使用 MIT，MCP 分发中保留原版权、许可证和固定版本。它提供动画与合成参考，常规原片选取与裁剪沿用 Seekino 剪辑指引。觉得有帮助，欢迎给上游项目 Star。
 
 ## 接下来
 

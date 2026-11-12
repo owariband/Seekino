@@ -1,4 +1,4 @@
-"""Publish the installed editing guide and its script through MCP Resources and SEP-2640."""
+"""Publish packaged editing guides and supporting files through MCP Resources and SEP-2640."""
 
 from hashlib import sha256
 from pathlib import Path
@@ -18,20 +18,30 @@ class EditingSkill(Extension):
     identifier = "io.modelcontextprotocol/skills"
 
     def __init__(self, directory: Path):
-        name = directory.name
         self._resources = []
-        manifest = []
-        for filename, mime in (("SKILL.md", "text/markdown"), ("scripts/split_frame.py", "text/x-python")):
-            raw = (directory / filename).read_bytes()
-            uri = f"skill://{name}/{filename}"
-            resource = TextResource(uri=uri, name=filename, mime_type=mime, text=raw.decode("utf-8"))
-            self._resources.append(ResourceBinding(resource))
-            manifest.append({"uri": uri, "size": len(raw), "digest": "sha256:" + sha256(raw).hexdigest()})
-        guide = self._resources[0].resource.text
-        frontmatter = yaml.safe_load(guide.split("---\n", 2)[1])
-        if frontmatter["name"] != name:
-            raise ValueError("Packaged skill name does not match its directory")
-        self.entry = {"uri": manifest[0]["uri"], "frontmatter": frontmatter, "resources": manifest}
+        self.entries = []
+        packages = {
+            "seekino-editing-materials": ("SKILL.md", "scripts/split_frame.py"),
+            "video-shotcraft": ("SKILL.md", "LICENSE", "UPSTREAM.json"),
+            "motion-showreel": ("SKILL.md", "LICENSE", "UPSTREAM.json"),
+        }
+        mime_types = {".md": "text/markdown", ".py": "text/x-python", ".json": "application/json"}
+        for name, filenames in packages.items():
+            manifest = []
+            guide = None
+            for filename in filenames:
+                raw = (directory / name / filename).read_bytes()
+                uri = f"skill://{name}/{filename}"
+                resource = TextResource(uri=uri, name=filename,
+                                        mime_type=mime_types.get(Path(filename).suffix, "text/plain"), text=raw.decode("utf-8"))
+                self._resources.append(ResourceBinding(resource))
+                manifest.append({"uri": uri, "size": len(raw), "digest": "sha256:" + sha256(raw).hexdigest()})
+                if filename == "SKILL.md":
+                    guide = resource.text
+            frontmatter = yaml.safe_load(guide.split("---\n", 2)[1])
+            if frontmatter["name"] != name:
+                raise ValueError("Packaged skill name does not match its directory")
+            self.entries.append({"uri": manifest[0]["uri"], "frontmatter": frontmatter, "resources": manifest})
 
     def resources(self):
         return self._resources
@@ -44,13 +54,14 @@ class EditingSkill(Extension):
     async def list_skills(self, ctx, params):
         if params.cursor:
             raise MCPError(INVALID_PARAMS, "Unknown skill cursor")
-        return {"resultType": "complete", "skills": [self.entry]}
+        return {"resultType": "complete", "skills": self.entries}
 
     async def get_skill(self, ctx, params):
-        if params.uri != self.entry["uri"]:
-            raise MCPError(INVALID_PARAMS, "Unknown skill URI")
-        return {"resultType": "complete", "skill": self.entry}
+        for entry in self.entries:
+            if params.uri == entry["uri"]:
+                return {"resultType": "complete", "skill": entry}
+        raise MCPError(INVALID_PARAMS, "Unknown skill URI")
 
 
 def editing_skill() -> EditingSkill:
-    return EditingSkill(Path(__file__).resolve().parents[1] / "skills" / "seekino-editing-materials")
+    return EditingSkill(Path(__file__).resolve().parents[1] / "skills")

@@ -109,7 +109,7 @@ function AccountControls({ onLogin, onSettings, mobile = false }: { onLogin: () 
           setCopied(true);
         } catch (failure) { setError({ failure }); }
         finally { setBusy(false); }
-      }}>{t(copied ? "已复制个人 MCP 凭据" : "复制个人 MCP 凭据")}</button> : null}
+      }}>{t(copied ? "已复制剪辑写入凭据" : "复制剪辑写入凭据")}</button> : null}
     {sources.length > 1 ? <label><span>{t("资料来源")}</span><select className="field" aria-label={t("选择资料来源")}
       value={activeSource.key} onChange={(event) => selectSource(event.target.value)}>
       {sources.map((source) => <option key={source.key} value={source.key}>{t(source.kind === "local" ? "本机资料" : source.kind === "public" ? "公开资料" : "我的资料")}</option>)}

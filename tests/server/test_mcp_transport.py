@@ -166,8 +166,7 @@ def test_modern_skills_manifest_and_legacy_resources_serve_identical_packaged_by
 
     version = "2026-07-28"
     capability = "io.modelcontextprotocol/skills"
-    uri = "skill://seekino-editing-materials/SKILL.md"
-    root = Path(__file__).resolve().parents[2] / "server/skills/seekino-editing-materials"
+    project = Path(__file__).resolve().parents[2]
     with _client() as client:
         def modern(method, **params):
             headers = {"Mcp-Method": method, "MCP-Protocol-Version": version}
@@ -177,18 +176,49 @@ def test_modern_skills_manifest_and_legacy_resources_serve_identical_packaged_by
             return _rpc(client, method, {**params, "_meta": meta}, headers=headers).json()
 
         assert capability in modern("server/discover")["result"]["capabilities"]["extensions"]
-        entry, = modern("skills/list")["result"]["skills"]
-        assert modern("skills/get", uri=uri)["result"]["skill"] == entry
-        assert modern("skills/get", uri=uri + "/absent")["error"]["code"] == -32602
-        assert entry["uri"] == uri and entry["frontmatter"]["name"] == root.name
+        entries = modern("skills/list")["result"]["skills"]
+        assert {entry["frontmatter"]["name"] for entry in entries} == {
+            "seekino-editing-materials", "video-shotcraft", "motion-showreel"}
+        assert len(entries) == 3
         resources = {item["uri"] for item in _rpc(client, "resources/list").json()["result"]["resources"]}
-        assert {r["uri"] for r in entry["resources"]} == resources
-        assert len(resources) == 2
-        for item in entry["resources"]:
-            contents, = _rpc(client, "resources/read", {"uri": item["uri"]}).json()["result"]["contents"]
-            raw = contents["text"].encode()
-            assert raw == (root / item["uri"].removeprefix(f"skill://{root.name}/")).read_bytes()
-            assert item["size"] == len(raw) and item["digest"] == "sha256:" + hashlib.sha256(raw).hexdigest()
+        assert {item["uri"] for entry in entries for item in entry["resources"]} == resources
+        assert len(resources) == 8
+        for entry in entries:
+            name = entry["frontmatter"]["name"]
+            assert entry["uri"] == f"skill://{name}/SKILL.md"
+            assert modern("skills/get", uri=entry["uri"])["result"]["skill"] == entry
+            for item in entry["resources"]:
+                contents, = _rpc(client, "resources/read", {"uri": item["uri"]}).json()["result"]["contents"]
+                raw = contents["text"].encode()
+                filename = item["uri"].removeprefix(f"skill://{name}/")
+                assert raw == (project / "server/skills" / name / filename).read_bytes()
+                assert item["size"] == len(raw) and item["digest"] == "sha256:" + hashlib.sha256(raw).hexdigest()
+        assert modern("skills/get", uri="skill://video-shotcraft/absent")["error"]["code"] == -32602
+
+
+@pytest.mark.parametrize("name,license_name,repository,upstream_sha256", [
+    ("video-shotcraft", "Apache-2.0", "https://github.com/Vincentwei1021/video-shotcraft",
+     "9e6b2d68f50cae3d5405178d35d2bd305ee2045691fa726b63bae3ab8bb62e6b"),
+    ("motion-showreel", "MIT", "https://github.com/ConardLi/garden-skills",
+     "1f4c26afebac69aa2b6a8e61c3440c636c686623161f74905143993bcf4af343"),
+])
+def test_skill_records_upstream_source_and_adapted_guide(name, license_name, repository, upstream_sha256):
+    import hashlib
+    import json
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2] / "server/skills" / name
+    metadata = json.loads((root / "UPSTREAM.json").read_text())
+    guide = (root / "SKILL.md").read_bytes()
+    assert metadata["skill_sha256"] == upstream_sha256
+    assert metadata["adaptation"]["modified_by"] == "Seekino"
+    assert hashlib.sha256(guide).hexdigest() == metadata["adaptation"]["guide_sha256"]
+    assert hashlib.sha256((root / "LICENSE").read_bytes()).hexdigest() == metadata["license_sha256"]
+    assert metadata["license"] == license_name
+    assert metadata["repository"] == repository
+    assert re.fullmatch(r"[0-9a-f]{40}", metadata["commit"])
+    assert "/tree/" + metadata["commit"] in metadata["complete_install_command"]
 
 
 def test_media_absolute_url_cannot_be_supplied_by_service_result():

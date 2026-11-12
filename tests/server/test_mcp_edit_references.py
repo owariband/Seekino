@@ -95,7 +95,34 @@ def test_search_and_style_card_replay_the_same_current_publication(repository, s
     assert "startMs=50&endMs=300" in chosen["media"]["clip_url"]
     cloud_media = service.read_evidence(token, cloud=True)["media"]
     assert cloud_media["original_url"] is None and cloud_media["clip_url"] == found["media"]["clip_url"]
-    revision = dict(new_template={"name": "登场"}, template_id=None, parent_version_id=None, spec={}, runtime={},
+    from server.error.auth import AuthError
+    from server.model.dto.authDTO import AuthIdentity
+    from server.model.tenant import Tenant
+    from server.model.video import Series, SeriesVisibility
+
+    with factory.begin() as session:
+        session.add(Tenant(id=src.tenant_id, type="public", name="Reference publisher"))
+        session.get(Series, src.series_id).visibility = SeriesVisibility.PUBLIC
+    cloud = McpRetrievalService(library=service._library, media=service._media,
+        editing_repository=service._editing, event_retrieval=None, parse_persistence=persistence,
+        local_tenant_id="unused", public_tenant_id="another-platform-tenant", reference_store=service._reference_store)
+    viewers = [AuthIdentity(user_id=name, email=None, is_guest=True, tenant_id=None,
+        public_tenant_id="another-platform-tenant", role="user", auth_version=1, auth_level="guest", mode="cloud")
+        for name in ("guest-a", "guest-b")]
+    for viewer in viewers:
+        assert cloud.find_edit_templates("人物登场", viewer=viewer)["techniques"][0]["evidence_ref"] == token
+        assert cloud.get_style_card(src.video_id, viewer=viewer)["exemplars"][0]["evidence_ref"] == token
+        assert cloud.read_evidence(token, viewer=viewer)["note"] == obs.note.model_dump()
+    with factory.begin() as session:
+        session.get(Series, src.series_id).visibility = SeriesVisibility.PRIVATE
+    for viewer in viewers:
+        assert cloud.find_edit_templates("人物登场", viewer=viewer)["techniques"] == []
+        with pytest.raises(AuthError):
+            cloud.get_style_card(src.video_id, viewer=viewer)
+        with pytest.raises(AuthError):
+            cloud.read_evidence(token, viewer=viewer)
+
+    revision = dict(series_id=src.series_id, new_template={"name": "登场"}, template_id=None, parent_version_id=None, spec={}, runtime={},
                     visual_requirements={}, slots=[], params_schema={}, files={"cut.js": "export default 1"},
                     entry="cut.js", evaluation={"context": "first edit"}, check=None, request_id="first", source_refs=[token])
     saved = service.save_edit_template_version(**revision)

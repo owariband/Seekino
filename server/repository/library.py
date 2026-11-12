@@ -263,6 +263,18 @@ class LibraryRepository:
         return len(self.list_series(tenant_id, status=status, query=query))
 
 
+    def series_address(self, *, series_id: str | None = None, video_id: str | None = None) -> tuple[str, str]:
+        statement = select(Series.tenant_id, Series.id)
+        if video_id is not None:
+            statement = statement.join(Video, Video.series_id == Series.id).where(Video.id == video_id)
+        else:
+            statement = statement.where(Series.id == series_id)
+        with self._session_factory() as session:
+            row = session.execute(statement).one_or_none()
+            if row is None:
+                raise SeriesNotFoundError("Series is unavailable")
+            return row[0], row[1]
+
     def get_series(self, series_id: str, tenant_id: str, *, owner_user_id: str = LOCAL_USER_ID) -> SeriesState:
         with self._session_factory() as session:
             series = session.scalar(
