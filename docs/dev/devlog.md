@@ -6088,7 +6088,7 @@ Flash worker 改写两份第三方正文，主 Agent 完成公共 Skill、服务
 
 ### 方案验证
 
-使用九条动作输出和三条 JSON 原始响应在同一 observe_segments 入口前后回放，不发起新模型请求；逐字段比较文字和步骤时间。反例覆盖越界、未知来源和非闭合符截断。主 Agent 复跑 215 项 Engine/相关用例、31 项聚焦用例；独立 SQLite 与新建 Elasticsearch 测试实例的 3 项完整链路全部通过，部分与重复更新能够持久提交、建立索引并通过 MCP 核对。实现提交为 `76baa67d`，详见 [报告](../report/agent/video_parse_v2/reference-model-judgment-20261112/README.md)。正式 development 的重新运行与内容质量不由这些检查替代。
+使用九条动作输出和三条 JSON 原始响应在同一 observe_segments 入口前后回放，不发起新模型请求；逐字段比较文字和步骤时间。反例覆盖越界、未知来源和非闭合符截断。主 Agent 复跑 215 项 Engine/相关用例、31 项聚焦用例；独立 SQLite 与新建 Elasticsearch 测试实例的 3 项完整链路全部通过，部分与重复更新能够持久提交、建立索引并通过 MCP 核对。实现提交为 `76baa67d`，详见 [报告](../report/agent/video_parse_v2/reference-model-judgment-20261112/README.md)。正式 development 的重新运行与内容质量不由这些检查替代。 整合并行 dev 后，215 项再次通过；完整链路的两项新参考用例通过，既有正片出现一次 Event 目标变化而失败，定向重跑通过。该波动保留在报告中，未顺带改动正片索引策略。
 
 ### 指标对比
 
