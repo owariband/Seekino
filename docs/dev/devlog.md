@@ -196,7 +196,7 @@ Apple 式视觉刷新以字体和界面质感为出发点，同时将全站灰�
 
 ### 指标对比
 
-本次衡量用户能直接看到的大面积配色和既有交互保留情况，不涉及模型耗时或 token。白天画布从 `#f5f5f7` 恢复为 `#e4eae5`，黑夜从 `#000000` 恢复为 `#121816`；Hero 从 `#0b0b0c` 恢复为 `#10251f`。代价是恢复原有色彩氛围，同时保留新字体及动效。实现与本地验证通过，main 发布和真实环境加载分别记录，[PR #127](https://github.com/owariband/Seekino/pull/127) 跟踪开发交付；状态以[工作台](workbench.html)为准。
+本次衡量用户能直接看到的大面积配色和既有交互保留情况，不涉及模型耗时或 token。白天画布从 `#f5f5f7` 恢复为 `#e4eae5`，黑夜从 `#000000` 恢复为 `#121816`；Hero 从 `#0b0b0c` 恢复为 `#10251f`。代价是恢复原有色彩氛围，同时保留新字体及动效。实现与本地验证通过，main 发布和真实环境加载分别记录，[PR #127](https://github.com/owariband/Seekino/pull/127) 跟踪开发交付，[发布 PR #128](https://github.com/owariband/Seekino/pull/128) 只含 4 个 CSS，发布构建与 release-files 通过；状态以[工作台](workbench.html)为准。
 
 
 <a id="devlog-watch-theme-20261109"></a>

@@ -2,7 +2,7 @@
 
 2026-11-12，前端在 Apple 式视觉刷新后失去原有青瓷底色。页面大面积背景、面板和正文一起改成中性灰白／纯黑，与此前使用的配色差异明显。本次按已明确的恢复要求，将配色恢复到该次改版之前。
 
-工作分支：`fix/restore-celadon-palette`；目标分支：`dev`；PR：[PR #127](https://github.com/owariband/Seekino/pull/127)。上游为 [Apple 式视觉刷新 TRD](apple-style-refresh-trd.md) / [PR #90](https://github.com/owariband/Seekino/pull/90)，已于 2026-11-10 合入，随后经 [PR #93](https://github.com/owariband/Seekino/pull/93) 进入 main；本次不回退其字体、动效、菜单和功能改进。main 发布使用独立 PR，只携带运行必需的样式文件。
+工作分支：`fix/restore-celadon-palette`；目标分支：`dev`；PR：[PR #127](https://github.com/owariband/Seekino/pull/127)。上游为 [Apple 式视觉刷新 TRD](apple-style-refresh-trd.md) / [PR #90](https://github.com/owariband/Seekino/pull/90)，已于 2026-11-10 合入，随后经 [PR #93](https://github.com/owariband/Seekino/pull/93) 进入 main；本次不回退其字体、动效、菜单和功能改进。main 发布使用独立 [PR #128](https://github.com/owariband/Seekino/pull/128)，只携带运行必需的样式文件；先合入 #127，再合入 #128。
 
 现状证据：`cee43f96` 在 2026-11-10 18:03:21（UTC+8）替换 `web/src/styles/global.css` 色板，并修改顶栏、首页和系列页的背景。恢复基准为该提交的父版本 `cee43f96^`；当前色板在 `origin/dev` 与 `origin/main` 中一致。11 月 9 日的主题渐变保留原色值，不是本次底色变化的来源。
 
@@ -52,6 +52,6 @@ Chrome 隔离 fixture 在 390 × 1000 与 1440 × 1000 视口，分别验证白�
 
 # 6. 结果验收与闭环
 
-已恢复并通过本地构建、主题回归与日夜／桌面／窄屏精确色值验证。运行代码仅修改 4 个 CSS，未更改组件逻辑、接口、持久数据或依赖。独立预览在 `http://127.0.0.1:4190`；现有 5173 服务尚未替换，main 发布 PR 待补充。实体手机、Safari 和远端部署尚未验证。
+已恢复并通过本地构建、主题回归与日夜／桌面／窄屏精确色值验证。运行代码仅修改 4 个 CSS，未更改组件逻辑、接口、持久数据或依赖。独立预览在 `http://127.0.0.1:4190`；现有 5173 服务尚未替换，[main 发布 PR #128](https://github.com/owariband/Seekino/pull/128) 已准备，仅含同样 4 个运行 CSS；main 的资产路径注释和 `.gitignore` 保持原样。发布分支从 `49ea0590` 建立，按其锁文件独立安装后构建通过，本地发布树检查与 GitHub `release-files` 均通过。实体手机、Safari 和远端部署尚未验证。
 
 当前执行状态统一见 [管理工作台](../../dev/workbench.html)，问题与过程分别记入 [problems](../../dev/problems.md) 和 [devlog](../../dev/devlog.md)，不在本 TRD 维护任务看板。

@@ -427,7 +427,7 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
  "updatedAt": "2026-11-12T13:43:08+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 40,
+ "revision": 41,
  "categories": [
   {
    "id": "parse",
@@ -5390,8 +5390,8 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "status": "verifying",
    "priority": "P1",
    "description": "恢复 PR #90 前的背景、面板、文字与 Hero 遮罩，保留字体、动效及模型菜单。",
-   "next": "合入 PR #127 并按独立发布 PR 恢复 main；线上合并由用户执行。",
-   "verification": "构建、2 项主题单测及现有渐变浏览器用例通过。Chrome 在 390px／1440px、日夜四页共 16 个状态精确色值通过；4 个 CSS 之外的布局、字体、动效未改。现有 5173 和远端部署尚未替换。",
+   "next": "先合入开发修复 #127；用户在 GitHub 合并发布 PR #128 后，按实际部署验证线上配色。",
+   "verification": "构建、2 项主题单测及现有渐变浏览器用例通过。Chrome 在 390px／1440px、日夜四页共 16 个状态精确色值通过；4 个 CSS 之外的布局、字体、动效未改。发布构建及 GitHub release-files 通过。现有 5173 和远端部署尚未替换。",
    "updatedAt": "2026-11-12",
    "tags": [
     "UI"
@@ -5410,6 +5410,11 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
     {
      "label": "PR #127",
      "url": "https://github.com/owariband/Seekino/pull/127",
+     "kind": "pr"
+    },
+    {
+     "label": "发布 PR #128",
+     "url": "https://github.com/owariband/Seekino/pull/128",
      "kind": "pr"
     }
    ]
