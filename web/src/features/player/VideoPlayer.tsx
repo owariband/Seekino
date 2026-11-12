@@ -1,5 +1,5 @@
 import { Maximize, Minimize, Pause, Play, RotateCcw, RotateCw, Search, Volume2, VolumeX } from "lucide-react";
-import { forwardRef, type KeyboardEvent, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
+import { forwardRef, type CSSProperties, type KeyboardEvent, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
 
 import { errorMessage, mediaUrl } from "../../api/client";
 import type { VideoSummary } from "../../api/contracts";
@@ -253,6 +253,9 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(funct
     </div>;
   }
 
+  const timelinePosition = Math.min(currentSeconds, durationSeconds);
+  const timelinePercent = durationSeconds > 0 ? timelinePosition / durationSeconds * 100 : 0;
+
   return (
     <div ref={playerRef} className={styles.videoPlayer} tabIndex={0} onKeyDown={onKeyboard} aria-label={t("视频播放器")}
       data-controls-visible={controlsVisible}
@@ -294,7 +297,8 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(funct
           min={0}
           max={durationSeconds}
           step={1}
-          value={Math.min(currentSeconds, durationSeconds)}
+          value={timelinePosition}
+          style={{ "--timeline-progress": `${timelinePercent}%` } as CSSProperties}
           disabled={!mediaReady || durationSeconds <= 0}
           onChange={(event) => seekTo(Number(event.currentTarget.value))}
           aria-label={t("播放进度")}
