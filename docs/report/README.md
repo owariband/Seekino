@@ -15,6 +15,8 @@
 
 ## Docs / dev / workbench
 
+[2026-11-13 Chat 模型窗口与同步压缩本地对照](gateway/agent_model/chat-context-compaction-20261113/README.md)：模型窗口自动发现、85% 触发接线、冻结真实模型边界的对照方法与验证范围；真实秒数与整轮效果按报告证据理解。
+
 [2026-11-03 管理工作台与课程闭环地图](docs/dev/workbench/README.md)：同步 Kimi 工作区 revision 4，新增里程碑概览、闭环地图、验收门槛与四列看板，36 项浏览器检查。门槛结果引用已有 QA 报告，未重跑业务验收。
 
 ## Docs / dev / kanban

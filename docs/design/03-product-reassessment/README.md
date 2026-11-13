@@ -6,6 +6,8 @@
 
 ## 本阶段的提出背景
 
+2026-11-13，Chat 命中证据后仍等待同步摘要；本次从模型容量与压缩阈值的装配关系核对原因，以本地真实请求边界对照验证。设计与证据入口见 [Chat 模型窗口与压缩 TRD](chat-model-context-compaction-trd.md) / [PR #144](https://github.com/owariband/Seekino/pull/144)，当前状态由工作台 `CHAT-COMPACT-01` 维护。
+
 2026-11-12，手机访客找不到抽屉内的文档入口，系列选集的全宽大图也使连续浏览困难。本次以现有导航与选集组件为边界，参考横向细条布局，设计与验证见[移动端文档与紧凑选集 TRD](mobile-docs-episodes-trd.md) / [PR #129](https://github.com/owariband/Seekino/pull/129)，执行状态见工作台 `MOBILE-UI-01`。
 
 本阶段的转向至少可以追溯到 [2026-10-23 的 reflection](../../dev/reflection.md)。字节二面的直接反馈让 hypnos 重新看待其作为产品 owner 的职责：最初想做的是“本地素材自动解析＋Codex 剪视频一条龙”，实际推进中却不断扩展技术和功能，交付期限、外部反馈与整体收益没有得到同样的重视。同行同样在做剧本和分镜，却能收敛复杂度，这个对照成为 hypnos 重新审视 Seekino 的触发点。10 月 23 日是反思记录日期，原文没有单独确认面试当天的日期。

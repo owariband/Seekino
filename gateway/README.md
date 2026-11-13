@@ -9,6 +9,8 @@ Gateway 是 seekino 的模型调用边界。除把统一输入转换成 Provider
 Tool Loop、Adapter 选择和 Provider fallback。它不拥有 Video、Query、Speaker、
 Conversation 或 Parse Job 等领域语义。
 
+Deep Agents Supervisor 的模型绑定可设置 `auto_compact_ratio: 0.85`，由 Gateway 从当前模型能力解析触发值；未提供能力字段时使用明确的绑定声明，省略该字段则保留旧策略。缓存、主备容量及输出预留的合同见 [模型窗口配置](../docs/model-config.md#deep-agents-按模型窗口触发压缩)。该机制仍同步等待摘要；性能证据及验证边界见 [TRD](../docs/design/03-product-reassessment/chat-model-context-compaction-trd.md)。
+
 Gateway 可控的 API 工具循环在上下文压缩时优先保留近期、有长度上限的工具反馈。
 Schema 错误和重试提示、写入的 batch/revision 回执不会被笼统改写成“已完成”；
 硬预算释放大块结果时也保留最多 500 字符的控制反馈。摘要不是业务事实来源，

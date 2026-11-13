@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
@@ -25,7 +26,10 @@ from gateway.config import (
     OpenAIModelSourceConfig,
     resolve_source_api_key,
 )
-from gateway.agent_model.context import ContextWindowPolicy
+from gateway.agent_model.context import (
+    ContextWindowPolicy,
+    derive_auto_compact_policy,
+)
 from gateway.agent_model.contracts import (
     AgentLoopModel,
     StructuredToolAgentModel,
@@ -35,9 +39,12 @@ from gateway.agent_model.deepagents import (
     DeepAgentSessionStore,
     DeepAgentsSupervisorModel,
 )
+from gateway.model_discovery import discover_model_context_windows
 from gateway.openai.agent import OpenAIAgentModel
 from gateway.openai.structured import OpenAIStructuredToolAgentModel
 
+
+_logger = logging.getLogger(__name__)
 AgentReasoningEffort = Literal["none", "low", "high", "max"]
 
 
@@ -156,6 +163,8 @@ class AgentModelFactory:
         )
         self._close_lock = Lock()
         self._closed = False
+        self._capacity_lock = Lock()
+        self._context_capacity_cache: dict[tuple[str, str], int | None] = {}
         self._supervisor_sessions = supervisor_sessions or DeepAgentSessionStore()
         self._owns_supervisor_sessions = supervisor_sessions is None
 
@@ -195,16 +204,16 @@ class AgentModelFactory:
             if not native_context:
                 max_input_chars = min(max_input_chars, binding.max_input_chars)
                 # API fallbacks share the compaction hints for their active request.
-                context_window_policy = _shared_context_policy(
-                    context_window_policy, _context_policy(binding), output_reserve_tokens=max_output_tokens,
-                )
-                fallback = binding.fallback
-                while fallback is not None:
-                    max_input_chars = min(max_input_chars, fallback.max_input_chars)
-                    context_window_policy = _shared_context_policy(
-                        context_window_policy, _context_policy(fallback), output_reserve_tokens=max_output_tokens,
-                    )
-                    fallback = fallback.fallback
+                declared = binding
+                while declared is not None:
+                    if declared.context_window_tokens is not None or binding.auto_compact_ratio is None:
+                        context_window_policy = _shared_context_policy(
+                            context_window_policy, _context_policy(declared),
+                            output_reserve_tokens=max_output_tokens,
+                        )
+                    if declared is not binding:
+                        max_input_chars = min(max_input_chars, declared.max_input_chars)
+                    declared = declared.fallback
         if native_context:
             # Native runtimes own compaction and their model's actual capacity.
             max_input_chars = None
@@ -220,6 +229,100 @@ class AgentModelFactory:
             return model
         return _BoundAgentModel(model, timeout=controls["request_timeout_seconds"],
                                 max_input_chars=controls["max_input_chars"])
+
+    def _discovered_context_capacity(
+        self, *, source_name: str, source: ModelSourceConfig, model: str,
+    ) -> int | None:
+        if not isinstance(source, OpenAIModelSourceConfig):
+            return None
+        key = (source_name, model)
+        with self._capacity_lock:
+            if key in self._context_capacity_cache:
+                return self._context_capacity_cache[key]
+            try:
+                windows = discover_model_context_windows(
+                    "openai_chat", source.base_url, self._api_keys.get(source_name),
+                    allow_local=False,
+                )
+                capacity = windows.get(model) if windows is not None else None
+                reason = None if capacity is not None else "model context window not listed"
+            except ValueError as error:
+                capacity = None
+                reason = str(error)
+            self._context_capacity_cache[key] = capacity
+            if capacity is None:
+                _logger.warning(
+                    "event=agent_model_context_capacity_unavailable model=%s source=%s reason=%s",
+                    model, source_name, reason,
+                )
+            return capacity
+
+    def _context_capacity(
+        self, *, source_name: str, source: ModelSourceConfig | None, model: str | None,
+        declared: int | None,
+    ) -> tuple[int | None, str]:
+        if source is None or model is None:
+            return None, "unconfigured"
+        capacity = self._discovered_context_capacity(
+            source_name=source_name, source=source, model=model,
+        )
+        if capacity is not None:
+            return capacity, "metadata"
+        if declared is not None:
+            return declared, "binding"
+        return None, "unavailable"
+
+    def _dynamic_context_policy(
+        self, *, model: str, controls: dict,
+    ) -> ContextWindowPolicy:
+        binding = self._binding
+        previous = controls["context_window_policy"]
+        if binding is None or binding.auto_compact_ratio is None or previous is None:
+            return previous
+        primary_capacity, primary_source = self._context_capacity(
+            source_name=self._config.source, source=self._primary, model=model,
+            declared=binding.context_window_tokens,
+        )
+        if primary_capacity is None:
+            return previous
+        fallback_capacity = None
+        fallback_provenance = "none"
+        fallback_model = None
+        if self._fallback is not None and self._config.fallback is not None:
+            fallback_model = self._fallback_model
+            fallback_binding = binding.fallback
+            fallback_capacity, fallback_provenance = self._context_capacity(
+                source_name=self._config.fallback.source, source=self._fallback,
+                model=fallback_model,
+                declared=(
+                    fallback_binding.context_window_tokens
+                    if fallback_binding is not None else None
+                ),
+            )
+            if fallback_capacity is None:
+                # A configured fallback without capacity metadata keeps the old shared window.
+                fallback_capacity = previous.context_window_tokens
+                fallback_provenance = "shared-static"
+        effective = (
+            min(primary_capacity, fallback_capacity)
+            if fallback_capacity is not None else primary_capacity
+        )
+        policy = derive_auto_compact_policy(
+            context_window_tokens=effective,
+            output_reserve_tokens=controls["max_output_tokens"],
+            safety_margin_tokens=previous.safety_margin_tokens,
+            auto_compact_ratio=binding.auto_compact_ratio,
+            previous=previous,
+        )
+        _logger.info(
+            "event=agent_context_capacity_resolved model=%s source=%s capacity_source=%s "
+            "fallback_model=%s fallback_capacity_source=%s context_window_tokens=%d "
+            "trigger=%d keep=%d",
+            model, self._config.source, primary_source, fallback_model or "-",
+            fallback_provenance, policy.context_window_tokens,
+            policy.auto_compact_tokens, policy.compact_target_tokens,
+        )
+        return policy
 
     def build_deep_agent(
         self,
@@ -250,14 +353,14 @@ class AgentModelFactory:
         with self._close_lock:
             if self._closed:
                 raise RuntimeError("Agent model factory is closed")
-            adapter = self.build_loop(
-                    model=model,
-                    reasoning_effort=reasoning_effort,
-                    **controls,
-                )
-            # The internal harness selects its transport by concrete adapter type.
-            if isinstance(adapter, _BoundAgentModel):
-                adapter = adapter._delegate
+            controls["context_window_policy"] = self._dynamic_context_policy(
+                model=model, controls=controls,
+            )
+            adapter = self._build_loop(
+                model=model,
+                reasoning_effort=reasoning_effort,
+                **controls,
+            )
             return self._bound(DeepAgentsSupervisorModel(
                 agent_model=adapter,
                 session_store=self._supervisor_sessions,

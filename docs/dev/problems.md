@@ -2938,3 +2938,12 @@ micrograd v5 共 146 块，整集 90 分 04.884 秒。调度反复锁取候选�
 2026-11-12。剪辑素材库首轮 8 支公开视频中 4 支完成，P4、《人是猫》《快使用恋爱笔记》因动作时间分段未命中检测候选或未铺满区间被拒，P5R 因逐段 JSON 少外层右括号被拒。冻结的九条动作响应和三条 JSON 响应经过既有 observe_segments 入口回放，基线为 0/12 接收，不涉及新模型调用。进一步审计发现风格卡锚点只允许检测位置、有观察就必须有风格信号、Refine 必须全量复述且恰好一次等同类门槛；这些限制与来源归属、视频范围及租约版本不同。
 
 验收要求：保持原始中文和动作时间，12 条真实失败响应进入既有解析链路；合法的非切点动作/风格锚点、空风格卡和部分 Refine 更新可以提交并由 MCP 回源；外部来源、越界、过期版本仍被拒绝。真实模型批量完成率与业务质量另行记录，不由离线回放推定。设计与证据见 [TRD](../design/03-product-reassessment/reference-model-judgment-trd.md)，当前状态只维护在 [工作台](workbench.html) 的 EDIT-REFERENCE-02。
+
+
+### CHAT-COMPACT-01：模型容量与静态窗口不匹配，Chat 同步摘要延迟需本地验证
+
+记录日期：2026-11-13。关联历史上下文职责 C20，但不据此重写或关闭 C20 的验收边界。Cloud T01–T03 的摘要占整轮 58%–63%；实际 64k／48k 策略与当前 DeepSeek Flash 1M 能力不同。候选方案通过模型绑定显式 ratio，从当前模型容量派生 85% 触发点，保留输出／安全／主备预算与同步摘要合同。
+
+验收需固定模型、思考、输出、prompt/tools 与真实历史，分别记录摘要与正常调用耗时、完整输入前后 token、provider 用量和交付质量；不能用更少的摘要次数直接代替时延收益，不能把局部模型边界当作整个 Chat。当前证据与未覆盖范围见[TRD](../design/03-product-reassessment/chat-model-context-compaction-trd.md)、[本地对照报告](../report/gateway/agent_model/chat-context-compaction-20261113/README.md)、[devlog](devlog.md#devlog-chat-model-context-compaction-20261113)和 [PR #144](https://github.com/owariband/Seekino/pull/144)。执行状态以[工作台](workbench.html) `CHAT-COMPACT-01` 为准。
+
+2026-11-13 本地同输入的 9 次真实生成验证了三处模型边界：总耗时 84.481→14.940 秒、摘要 75.414→0 秒。完整 Chat、视频卡与近满窗质量尚未验收，不据此关闭整体问题。详细 token、缓存和质量差异保留在同一报告。

@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-12T20:25:13.887090+08:00",
+ "updatedAt": "2026-11-13T17:23:47+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 53,
+ "revision": 55,
  "categories": [
   {
    "id": "parse",
@@ -5626,6 +5626,41 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "label": "冻结回放与完整链路证据",
      "kind": "evidence",
      "url": "https://github.com/owariband/Seekino/blob/fix/reference-model-judgment/docs/report/agent/video_parse_v2/reference-model-judgment-20261112/README.md"
+    }
+   ]
+  },
+  {
+   "id": "CHAT-COMPACT-01",
+   "title": "静态小窗口提前触发 Chat 同步摘要，需按模型容量对照",
+   "category": "chat",
+   "type": "requirement",
+   "status": "verifying",
+   "priority": "P1",
+   "description": "Cloud三条慢请求的摘要占58%–63%。模型能力1M与实际64k/48k策略不匹配；以真实历史的固定模型边界验证85%动态触发。",
+   "next": "用完整Chat／视频卡回源验收与近满窗试点补证；当前三对模型边界已确认摘要等待与85%策略净改善，Cloud尚未部署。",
+   "verification": "320项回归通过，3项既有失败在干净dev复现。9次真实生成全部完成，Flash/high/8192及三对入口哈希一致；模型边界25.283/33.496/25.702秒降至2.752/6.891/5.297秒，摘要75.414秒降至0。正常模型耗时及未缓存输入增加；完整业务与近满窗质量未验收。",
+   "updatedAt": "2026-11-13",
+   "tags": ["Chat", "性能", "上下文", "边界实测", "待完整业务验收"],
+   "related": [
+    "MOD-CHAT",
+    "C20"
+   ],
+   "branch": "perf/chat-model-context-compact",
+   "links": [
+    {
+     "label": "PR #144",
+     "kind": "pr",
+     "url": "https://github.com/owariband/Seekino/pull/144"
+    },
+    {
+     "label": "TRD",
+     "kind": "trd",
+     "url": "https://github.com/owariband/Seekino/blob/perf/chat-model-context-compact/docs/design/03-product-reassessment/chat-model-context-compaction-trd.md"
+    },
+    {
+     "label": "实验报告",
+     "kind": "source",
+     "url": "https://github.com/owariband/Seekino/blob/perf/chat-model-context-compact/docs/report/gateway/agent_model/chat-context-compaction-20261113/README.md"
     }
    ]
   }
