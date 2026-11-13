@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-13T19:08:42+08:00",
+ "updatedAt": "2026-11-13T22:47:08+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 59,
+ "revision": 60,
  "categories": [
   {
    "id": "parse",
@@ -2074,19 +2074,21 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "title": "ASR 匿名说话人分组不准，Refine 看帧后仍未纠正目标归属",
    "category": "parse",
    "type": "requirement",
-   "status": "done",
+   "status": "progressing",
    "priority": "unset",
-   "description": "排序日期：2026-10-19。",
-   "next": "核对原始记录及当前实现，确定本轮是否继续推进。",
-   "verification": "按历史 TODO 导入；当前优先级、执行人和后续验收仍需核对。 优先级：高。类型：解析语义质量、音频分段、证据供给与可观测性。状态：截至 2026-10-22 仍未全面闭环；v25 两句固定目标本轮均正确。历史 v5 曾纠正爽世单例，不代表后续版本稳定识别正确；v11～v18 暴露参考错名、跨人合并及 Refine 决策三类问题。最新归因与未完成项见下，旧轮次记录保留。记录日期：2026-10-16；更新日期：2026-10-22。",
-   "updatedAt": "2026-10-19",
+   "description": "2026-11-13 整集 CUDA WhisperX 已实际执行 diarization 并返回六个匿名标签，EP04 47–49 秒爽世目标仍被并入爱音长段且句尾切到另一标签；返回 speaker ID 未解决人物归属。历史各轮事实保留在 B12。",
+   "next": "由 DS worker 继续核对本机 1fps/prefill 整集的首次 Understanding、B0 评分与实际 Refine 输入/最终实名结果；目标应为长崎爽世，不以 speaker 非空或 COMPLETE 验收。",
+   "verification": "2026-11-13：4090 / large-v3 / CUDA FP16 / batch16 / 日语对齐 / community-1 CUDA / 8线程；本机成功保存166条ASR，其中130条有ID、36条未标注。cue5 33251–48324ms为SPEAKER_04，含爱音长段与爽世目标；cue6 48324–59553ms为SPEAKER_03，含目标末尾「い」。已知目标分组失败，全片错归率与本轮内部声纹修正效果未在此验收。",
+   "updatedAt": "2026-11-13",
    "tags": [
-    "待核对"
+    "CUDA实测",
+    "人物归属",
+    "声纹待验收"
    ],
    "related": [
     "MOD-PARSE"
    ],
-   "branch": "",
+   "branch": "docs/ep04-voiceprint-1fps-validation",
    "links": [
     {
      "label": "问题记录",
@@ -2096,6 +2098,21 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
     {
      "label": "TRD",
      "url": "https://github.com/owariband/Seekino/blob/56e7977721e51a61b20894c9d38fa775d9300c70/docs/design/02-agent-harness/voiceprint-trd.md",
+     "kind": "trd"
+    },
+    {
+     "label": "2026-11-13 CUDA 实测",
+     "url": "https://github.com/owariband/Seekino/blob/docs/ep04-voiceprint-1fps-validation/docs/dev/devlog.md#devlog-whisperx-cuda-speaker-attribution-20261113",
+     "kind": "source"
+    },
+    {
+     "label": "CUDA 结果证据",
+     "url": "https://github.com/owariband/Seekino/blob/docs/ep04-voiceprint-1fps-validation/docs/report/gateway/local/whisperx-cuda-speakers-20261113.json",
+     "kind": "source"
+    },
+    {
+     "label": "EP04 1fps 验证 TRD",
+     "url": "https://github.com/owariband/Seekino/blob/docs/ep04-voiceprint-1fps-validation/docs/design/03-product-reassessment/ep04-voiceprint-validation-trd.md",
      "kind": "trd"
     }
    ],

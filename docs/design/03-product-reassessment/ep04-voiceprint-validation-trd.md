@@ -20,13 +20,19 @@ CPU 旧正式 EP04 将约 47–49 秒「祥ちゃんも悪くない／也不是�
 
 # 3. 执行方案与职责
 
+运行边界明确为本机：API / Consumer、测试 MySQL / ES、CAM++ 与验证产物均放本机，仅通过 SSH 访问 GPU 模型服务。禁止连接或修改 CPU/prod server。此前误在 CPU 建立的准备目录与源码压缩包不再访问，临时转发已关闭；未创建测试库、容器或启动解析任务。
+
 运行最新 dev 的独立 API / Consumer，复用 GPU WhisperX CUDA/FP16/thread=8，视觉输入 ordered_frames / 1.0 fps，按既有配置选择 Understanding/Refine 模型并记录。配置 `voiceprint_mode=prefill` 与已验证 revision 的 CAM++ speaker embedding；声纹编码按既有 CPU/FP32 合同执行、8 线程，不擅改算法或阈值。
 
 通过正式 Series / Upload / Parse 配置入口提交完整 EP04，使用已有背景与人物资料，不提供目标句答案。固定视频 SHA、源码 SHA、有效配置与数据库/索引身份。首次理解、B0 artifact、Refine 输入/输出与最终正文分别保存。若环境或代码失败，先保存失败与最小原因，不把修过的代码冒充原始 dev 结果。
 
 # 4. 整集执行与结果分析
 
-待执行。报告应至少列出任务身份、24 个 Chunk 和覆盖窗口状态、声纹 ready 与条目数、目标句在各阶段的 speaker/候选/分数/分档，以及实际耗时、模型调用和失败原因。没有全片真值时仅验收已确认目标，不扩展为全片准确率。
+2026-11-13 已经通过本机标准上传与重试入口执行整集任务 `368fec7e-b1f3-42b3-9ed6-fd0766be471b`。GPU 停机造成的连接拒绝、恢复时遗漏 `NLTK_DATA` 的启动错误均保留为运行失败记录；恢复后整集 ASR 已成功持久化，冻结 1 fps / `prefill`。本机 22:26:55（UTC+8）核实 166 条 ASR、130 条非空 speaker_id、36 条未标注、六个匿名标签。
+
+成功输出的 cue 5（33251–48324 ms，`SPEAKER_04`）包含爱音长段与爽世目标大部分，cue 6（48324–59553 ms，`SPEAKER_03`）又从目标末尾「い」开始。**CUDA WhisperX 的目标分组未正确隔离，返回 speaker ID 不构成人物身份验收。**可版本化[实测证据](../../report/gateway/local/whisperx-cuda-speakers-20261113.json)、[B12](../../dev/problems.md#problem-b12-whisperx-cuda-20261113)与 [devlog](../../dev/devlog.md#devlog-whisperx-cuda-speaker-attribution-20261113)保留失败事实；44.163 秒是此前独立 GPU 整集 ASR 测量，不是本机整集解析耗时。
+
+完整声纹/Refine 验收继续由 DS worker 追踪。本条尚不判定其修正效果；报告仍需列出 24 个 Chunk 和覆盖窗口状态、声纹 ready 与条目数、目标句在各阶段的 speaker/候选/分数/分档，以及实际耗时、模型调用和失败原因。没有全片真值时仅验收已确认目标，不扩展为全片准确率。
 
 # 5. 整集验证与取舍
 
@@ -34,4 +40,4 @@ CPU 旧正式 EP04 将约 47–49 秒「祥ちゃんも悪くない／也不是�
 
 # 6. 验收与闭环
 
-本次需要明确回答：1）开启内部声纹后能否跑通；2）目标短句是否正确。当前均待测。交付时同步报告、问题与 devlog，并在工作台维护本次执行状态；源码功能、测试、真实运行和效果分别报告。
+本次需要明确回答：1）开启内部声纹后能否跑通；2）目标短句是否正确。本次已确认 ASR 实际返回 speaker ID 且目标分组仍错误；两项内部声纹验收尚未在本条完成。阶段性问题与 devlog 已同步，当前执行状态在工作台维护；源码功能、测试、真实运行和效果分别报告。

@@ -1,0 +1,134 @@
+{
+  "schema_version": 1,
+  "recorded_date": "2026-11-13",
+  "timezone": "Asia/Singapore",
+  "problem_id": "B12",
+  "scope": "MyGO EP04 整集 CUDA WhisperX；仅复核开头已知短句的匿名分段归属，不代表全片准确率",
+  "runtime_parameters": {
+    "gpu": "NVIDIA GeForce RTX 4090",
+    "gpu_memory_mib": 24564,
+    "whisper_model": "large-v3",
+    "device": "cuda",
+    "compute_type": "float16",
+    "batch_size": 16,
+    "forced_alignment_language": "ja",
+    "diarization_model": "pyannote community-1",
+    "diarization_device": "cuda",
+    "speaker_assignment": "exclusive diarization turns -> word speakers -> split at speaker changes",
+    "asr_cpu_threads": 8,
+    "diarization_cpu_threads": 8
+  },
+  "independent_gpu_benchmark": {
+    "scope": "complete EP04",
+    "audio_seconds": 1420.178375,
+    "audio_sha256": "f7ed6206b7b886bfae9b2089c5244b929e97c39ce4c1ef4057722ad6c3ad80f1",
+    "device": "cuda",
+    "compute_type": "float16",
+    "asr_cpu_threads": 8,
+    "diarization_cpu_threads": 8,
+    "wall_seconds": 44.163,
+    "timings": {
+      "asr_seconds": 30.194614234380424,
+      "diarization_seconds": 13.497806809842587
+    },
+    "segments": 166,
+    "labeled_segments": 130,
+    "speakers": [
+      "SPEAKER_00",
+      "SPEAKER_01",
+      "SPEAKER_02",
+      "SPEAKER_03",
+      "SPEAKER_04",
+      "SPEAKER_05"
+    ],
+    "sampled_gpu_memory_peak_mib": 9476,
+    "sampled_gpu_utilization_peak": 100
+  },
+  "local_standard_parse": {
+    "source_sha": "0893780aafa3fc8deab5e7784533c52ef87fcc52",
+    "gpu_implementation_pr": "https://github.com/owariband/Seekino/pull/146",
+    "gpu_implementation_boundary": "GPU wrapper 已启用 diarization；此 PR 不因此视为已经合入 dev 或部署 CPU/prod",
+    "task_id": "368fec7e-b1f3-42b3-9ed6-fd0766be471b",
+    "checked_utc": "2026-11-13T14:26:55.530735+00:00",
+    "video_sha256": "50e981e49a3d74e8c0aca7571ffae8265b88f6388f1d34849876b61ad8bf5814",
+    "visual_fps": 1.0,
+    "voiceprint_mode": "prefill",
+    "asr_present": true,
+    "cue_count": 166,
+    "labeled_cue_count": 130,
+    "unlabeled_cue_count": 36,
+    "nonempty_speaker_ratio": 0.7831325301204819,
+    "speaker_labels": [
+      "SPEAKER_00",
+      "SPEAKER_01",
+      "SPEAKER_02",
+      "SPEAKER_03",
+      "SPEAKER_04",
+      "SPEAKER_05"
+    ],
+    "saved_standalone_diarization_present": false,
+    "standalone_diarization_note": "独立 diarization 列为空；原生匿名标签已保存到 asr.transcript[*].speaker_id，GPU 日志确认实际执行 CUDA diarization。",
+    "pipeline_total_seconds": null,
+    "tokens": null,
+    "cost": null
+  },
+  "known_target": {
+    "approximate_start_ms": 46800,
+    "approximate_end_ms": 48900,
+    "text": "祥ちゃんも悪くない／也不是小祥的错",
+    "expected_speaker": "長崎そよ",
+    "expected_speaker_alias": "长崎爽世",
+    "ground_truth_source": "既有 B12 已确认的原片目标；本次没有将具体台词真值注入解析背景",
+    "cue_excerpts": [
+      {
+        "cue_index": 5,
+        "start_ms": 33251,
+        "end_ms": 48324,
+        "speaker_id": "SPEAKER_04",
+        "text": "ック… 解散したの?別に トモリちゃんのせいじゃないと思うけどてか 急に辞めた子の方が悪くない?理由も言わなかったんでしょ?ちょっと勝手じゃない?それでトモリちゃんたち傷つけてサキちゃんも悪くな"
+      },
+      {
+        "cue_index": 6,
+        "start_ms": 48324,
+        "end_ms": 59553,
+        "speaker_id": "SPEAKER_03",
+        "text": "い誰も悪くないんだよ久しぶり"
+      }
+    ],
+    "observation": "目标句大部分被并入前面爱音的 SPEAKER_04 长段，末尾「い」被切到 SPEAKER_03；没有按人物换声准确隔离。",
+    "whisperx_anonymous_attribution_result": "failed_for_this_known_target",
+    "internal_voiceprint_and_final_refine_result": "not_evaluated_by_this_asr_record"
+  },
+  "verification_boundaries": {
+    "der": null,
+    "wer": null,
+    "cer": null,
+    "full_episode_identity_accuracy": null,
+    "strict_same_input_off_comparison": false,
+    "gpu_benchmark_is_separate_from_local_retry": true,
+    "runtime_failure_boundary": "GPU停机连接拒绝和恢复时NLTK_DATA缺失为运行故障；质量失败只依据恢复后成功ASR的cue5/6。",
+    "production_boundary": "本次成功ASR与声纹验证只使用本机隔离服务/数据和用户GPU；本次记录工作不连接CPU/prod。"
+  },
+  "original_evidence": [
+    {
+      "local_path": "/private/tmp/seekino-ep04-voiceprint-run/evidence/recovered-asr.json",
+      "sha256": "cdf2501b54bf61ff0ed97166f76e80328fc78f9e36acd52603558b2517081090"
+    },
+    {
+      "local_path": "/private/tmp/seekino-ep04-voiceprint-run/evidence/recovered-asr-speaker-check.json",
+      "sha256": "efa32c206cb308b634ac1b065f25dd093f6c352d28ff23d194e1aa5e05c31bd0"
+    },
+    {
+      "local_path": "/private/tmp/seekino-ep04-voiceprint-run/evidence/recovered-target-asr.json",
+      "sha256": "a2f87d46c8f893c1e50e5d47e4b4f30d2a067c0ce7939e6a4d48fda2cd386479"
+    },
+    {
+      "local_path": "/Users/hypnos/workspace/agent/Seekino/outputs/verification/gpu-asr-speakers-20261113/ep04-full-cuda-thread8-summary.json",
+      "sha256": "14e761cb6db217401b319157ae134ee3a9c06d40ae5e51105f254702b19bcec5"
+    },
+    {
+      "local_path": "/Users/hypnos/workspace/agent/Seekino/outputs/verification/gpu-asr-speakers-20261113/ep04-full-cuda-thread8.json",
+      "sha256": "35b0ed0b1cc5d6b97410ef971b437b4d334b7ca3de7e9375aedd025fb49b6cff"
+    }
+  ]
+}

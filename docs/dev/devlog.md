@@ -27,6 +27,7 @@
 
 | 记录 | 原问题编号 |
 |---|---|
+| [2026-11-13：CUDA WhisperX 仍合并跨人台词，匿名 speaker ID 不能证明人物归属](#devlog-whisperx-cuda-speaker-attribution-20261113) | B12；EP04 整集 CUDA/FP16/8 线程实测 |
 | [2026-11-13：删除原因重复渲染，回答中的历史列表额外占高](#devlog-chat-delete-hint-20261113) | CHAT-DELETE-HINT-01 |
 | [2026-11-13：前置配置覆盖 JEV，省去路由未必缩短 Chat 等待](#devlog-chat-intent-routing-20261113) | CHAT-INTENT-01；C19；PR #145 |
 | [2026-11-13：固定小窗口让 Chat 提前同步摘要，命中后多等数十秒](#devlog-chat-model-context-compaction-20261113) | CHAT-COMPACT-01；PR #144 |
@@ -191,6 +192,49 @@
 | [日期未明确（2026-10-23归档）：当前播放窗口的按需理解与复用](#devlog-history-60) | 独立实验/设计 |
 
 </details>
+
+<a id="devlog-whisperx-cuda-speaker-attribution-20261113"></a>
+## 2026-11-13：CUDA WhisperX 仍合并跨人台词，匿名 speaker ID 不能证明人物归属
+
+### 问题与现状
+
+关联 [B12](problems.md#problem-b12-whisperx-cuda-20261113)。MyGO EP04 约 47–49 秒「祥ちゃんも悪くない／也不是小祥的错」应由长崎爽世（長崎そよ）说出。启用 CUDA 转写、强制对齐和说话人分组后，成功返回的整集 ASR 仍把这句大部分并进爱音的长段，句尾又落到另一标签。问题已经超出“没有开启 diarization”：该路径实际执行并返回了 speaker ID，但这个目标的换人边界和匿名归属依旧不正确。直接沿用其标签，会影响实名对白和按人物检索；混合长段还存在被误当成单人声纹参考的风险，后者本轮未证实已发生。
+
+### 方案候选
+
+本轮已按完整配置运行整集：**RTX 4090、WhisperX large-v3、CUDA/FP16、batch_size=16、日语 forced alignment、pyannote community-1 CUDA diarization、exclusive turns 逐词分配后按 speaker 变化拆段，ASR 与 diarization 的 CPU 线程均为 8**。这就是本轮所说的 CUDA“满配”，并非对所有模型和参数组合上限的证明。
+
+匿名聚类与实名角色映射仍需分别验收。后续沿用已开启的内部 B0/CAM++ `prefill` 和 Refine 核对本轮目标；本条没有改算法、阈值或提示词，也没有其修正效果的验收结论。[整集验证 TRD](../design/03-product-reassessment/ep04-voiceprint-validation-trd.md)保留验证范围与后续证据要求。
+
+### 方案验证
+
+独立 GPU 整集测量的音轨为 1420.178375 秒。GPU 停机恢复后，本机标准解析以同一 EP04 重试，真实 ASR 已成功持久化；本机 API 源码冻结在启动时的 `dev` `0893780a`，GPU diarization wrapper 对应 [PR #146](https://github.com/owariband/Seekino/pull/146)，不因此视为该 PR 已合入 dev 或部署 CPU/prod。标准解析冻结 **1 fps、voiceprint_mode=prefill**。
+
+本机任务 `368fec7e-b1f3-42b3-9ed6-fd0766be471b` 的成功 ASR 在 2026-11-13 22:26:55（UTC+8）核实如下；表中时间均为原视频绝对毫秒：
+
+| 原始 cue（从 0 编号） | 时间范围（ms） | speaker_id | 实际内容与错误 |
+| --- | --- | --- | --- |
+| 5 | 33251–48324 | `SPEAKER_04` | 爱音的一长段追问后又包含目标句大部分「サキちゃんも悪くな」，换人处没有隔开 |
+| 6 | 48324–59553 | `SPEAKER_03` | 从目标句最后的「い」开始，接「誰も悪くないんだよ久しぶり」，目标句内部又换了标签 |
+
+质量失败依据是**成功返回后的 cue 5/6**。此前连接拒绝与恢复时 `NLTK_DATA` 漏配属于已恢复的运行故障，不用于证明分组质量差。原始台词字形保留「サキ」，按原片时间和语义对应已确认目标，不将其改写成原始转写已正确识别「祥」。本次成功 ASR 与后续声纹验证使用本机隔离服务/数据和用户 GPU；本次记录工作未连接 CPU/prod。
+
+精简证据、运行参数、视频 SHA、原始产物 SHA 和目标原文保存在[可版本化证据 JSON](../report/gateway/local/whisperx-cuda-speakers-20261113.json)。没有同输入同变量的 off 对照，也没有全片实名金标、DER、WER 或 CER；结论限定为这个已知目标，未推断底层模型内部机制。
+
+### 指标对比
+
+这次要回答的是带标签的 ASR 能否支持可靠的人物归属，因此同时记录覆盖度、目标正确性和计算成本。两个运行的速度与产物分别统计，不把独立 ASR 测量当成本机整集解析耗时。
+
+| 指标 | 独立 GPU 整集测量 | 本机标准解析保存的 ASR |
+| --- | --- | --- |
+| 段数与匿名标签 | 166 段、6 类 | 166 条、`SPEAKER_00`–`SPEAKER_05` 六类 |
+| 带 speaker ID 的段 | 130/166 | 130/166（78.31%）；36 条未标注 |
+| ASR 请求实际用时 | 44.163 秒；转写/对齐 30.195 秒，diarization 13.498 秒 | 本条未测量独立 ASR 请求耗时 |
+| 采样峰值 GPU 显存 | 9476 MiB | 本条未测量 |
+| 47–49 秒目标的分段与归属 | 本条以右列原始 cue 为复核证据 | **仍错误**：跨人合并，且目标句尾被切到另一标签 |
+| 完整解析耗时、token 与费用 | 不适用：这是独立 ASR 运行 | 本条未验收；内部声纹/Refine 的目标修正效果另行核对 |
+
+CUDA 的执行与 speaker ID 的返回已经证实，但这一个身份问题没有被 WhisperX 解决。**本轮不把匿名标签作为已核实的实名身份，也不把混合长段认证为单人声纹样本。**继续由内部声纹与 Refine 验证最终归属；不以 78.31% 非空率、六个标签或任务 COMPLETE 代替质量验收，也不外推全片错归率。
 
 <a id="devlog-chat-intent-routing-20261113"></a>
 
