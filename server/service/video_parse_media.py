@@ -254,7 +254,7 @@ class VideoParseMediaService:
             raise FileNotFoundError(source)
         if type(start_ms) is not int or type(end_ms) is not int or not 0 <= start_ms < end_ms:
             raise ValueError("Speaker audio bounds must be increasing integer milliseconds")
-        with self._workspace(identity) as directory:
+        with self._workspace(identity, unique=True) as directory:
             check_active()
             audio = directory / "speaker.wav"
             self._execute([
@@ -503,8 +503,8 @@ class VideoParseMediaService:
         return reaped
 
     @contextmanager
-    def _workspace(self, identity: MediaLeaseIdentity) -> Iterator[Path]:
-        directory = self._create_workspace(identity)
+    def _workspace(self, identity: MediaLeaseIdentity, *, unique: bool = False) -> Iterator[Path]:
+        directory = self._create_workspace(identity, unique=unique)
         with self._workspace_lock(directory, blocking=True):
             try:
                 yield directory
@@ -530,18 +530,21 @@ class VideoParseMediaService:
             finally:
                 fcntl.flock(lock, fcntl.LOCK_UN)
 
-    def _create_workspace(self, identity: MediaLeaseIdentity) -> Path:
+    def _create_workspace(self, identity: MediaLeaseIdentity, *, unique: bool = False) -> Path:
         video_task = canonical_uuid(
             identity.video_parse_task_id, "video_parse_task_id"
         )
         execution_task = canonical_uuid(
             identity.execution_task_id, "execution_task_id"
         )
+        lease_name = f"lease-{identity.lease_version:08d}"
+        if unique:
+            lease_name += f"-{uuid4()}"
         directory = (
             self.base_directory
             / video_task
             / f"{identity.execution_kind}-{execution_task}"
-            / f"lease-{identity.lease_version:08d}"
+            / lease_name
         )
         directory.mkdir(parents=True, exist_ok=False)
         marker_payload = {
@@ -695,6 +698,9 @@ class VideoParseMediaService:
         name = directory.name
         if not name.startswith("lease-"):
             raise ValueError("not a Parse V2 lease workspace")
+        lease_version, operation_separator, operation_id = name.removeprefix("lease-").partition("-")
+        if operation_separator:
+            canonical_uuid(operation_id, "workspace_operation_id")
         execution_kind, separator, execution_task_id = (
             directory.parent.name.partition("-")
         )
@@ -703,7 +709,7 @@ class VideoParseMediaService:
         return MediaLeaseIdentity(
             video_parse_task_id=directory.parent.parent.name,
             execution_task_id=execution_task_id,
-            lease_version=int(name.removeprefix("lease-")),
+            lease_version=int(lease_version),
             execution_kind=execution_kind,
         )
 

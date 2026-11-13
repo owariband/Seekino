@@ -31,6 +31,8 @@
 
 ## Agent / video_parse_v2
 
+[2026-11-14 声纹媒体工作区修复实测](server/service/video_parse_media/voiceprint-workspaces-20261114.json)：123 项相关回归通过；本机复用 24 个理解成果，真实完成 298 次 CAM++ 编码并 ready。Refine 上下文溢出仍待独立修复，最终人物未验收。
+
 - [剪辑参考模型观察的过度校验修复（2026-11-12）](agent/video_parse_v2/reference-model-judgment-20261112/README.md)：12 条真实失败响应对照、来源边界与独立上传到 MCP 验证；真实批次运行另行记录。
 
 11 月 9 日，片主在《Weekend》两支匿名成片中选了 02。两组收到同样的八段 P5R 笔记，02 的导演多拿到一张自动风格卡。[成片盲评与动态试剪](agent/video_parse_v2/film-refine-ab-20261109/README.md) · [同日文字选片评分](agent/video_parse_v2/refine-ab-20261109/README.md)

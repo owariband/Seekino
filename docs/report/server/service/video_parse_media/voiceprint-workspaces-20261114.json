@@ -1,0 +1,190 @@
+{
+  "date": "2026-11-14",
+  "timezone": "Asia/Singapore",
+  "problem_id": "B12",
+  "task_id": "368fec7e-b1f3-42b3-9ed6-fd0766be471b",
+  "base_dev_sha": "9a18c6fb097a1dfffea5b7c9b06ddff9b3f55439",
+  "fix_sha": "c777ef72961d5ace29a1b191f9ba09970a76b5cc",
+  "code_scope": [
+    "server/service/video_parse_media.py"
+  ],
+  "regression": {
+    "before": "new episode/speaker coexistence regression raises FileExistsError",
+    "after_media_and_asr_recovery_passed": 71,
+    "after_speaker_worker_passed": 52,
+    "total_passed": 123
+  },
+  "real_runtime_after_fix": {
+    "checked_utc": "2026-11-13T16:36:45.730660+00:00",
+    "task_id": "368fec7e-b1f3-42b3-9ed6-fd0766be471b",
+    "task_status": "PARSING",
+    "understanding_persisted": 24,
+    "voiceprint": {
+      "ready": true,
+      "method_version": "B0-trimmed-centroid-v1",
+      "line_count": 298,
+      "sample_count": 298
+    },
+    "preparation_active": false,
+    "preparation_failures": 0,
+    "voiceprint_calls": [
+      {
+        "status": "completed",
+        "n": 298
+      }
+    ],
+    "refine": [
+      {
+        "status": "WAITING",
+        "n": 22
+      }
+    ],
+    "last_error": null
+  },
+  "followup": {
+    "api_source_sha": "c777ef72961d5ace29a1b191f9ba09970a76b5cc",
+    "workspace_fix_real_run": "voiceprint ready and 298 CAM++ calls completed",
+    "voiceprint_calls_completed": 298,
+    "understanding_reused": 24,
+    "refine_attempted": true,
+    "refine_blocker": "ContextWindowOverflow before provider request",
+    "refine_budget_observations": [
+      {
+        "serialized_characters": 965685,
+        "character_limit": 600000,
+        "estimated_tokens": 328611,
+        "token_limit": 208048
+      },
+      {
+        "serialized_characters": 990003,
+        "character_limit": 600000,
+        "estimated_tokens": 336533,
+        "token_limit": 208048
+      },
+      {
+        "serialized_characters": 1042470,
+        "character_limit": 600000,
+        "estimated_tokens": 354686,
+        "token_limit": 208048
+      },
+      {
+        "serialized_characters": 1043474,
+        "character_limit": 600000,
+        "estimated_tokens": 354882,
+        "token_limit": 208048
+      },
+      {
+        "serialized_characters": 1098363,
+        "character_limit": 600000,
+        "estimated_tokens": 374009,
+        "token_limit": 208048
+      },
+      {
+        "serialized_characters": 1106202,
+        "character_limit": 600000,
+        "estimated_tokens": 376228,
+        "token_limit": 208048
+      },
+      {
+        "serialized_characters": 1159698,
+        "character_limit": 600000,
+        "estimated_tokens": 394206,
+        "token_limit": 208048
+      },
+      {
+        "serialized_characters": 1203423,
+        "character_limit": 600000,
+        "estimated_tokens": 409342,
+        "token_limit": 208048
+      },
+      {
+        "serialized_characters": 1232097,
+        "character_limit": 600000,
+        "estimated_tokens": 419345,
+        "token_limit": 208048
+      },
+      {
+        "serialized_characters": 1254297,
+        "character_limit": 600000,
+        "estimated_tokens": 426703,
+        "token_limit": 208048
+      },
+      {
+        "serialized_characters": 1332000,
+        "character_limit": 600000,
+        "estimated_tokens": 452665,
+        "token_limit": 208048
+      },
+      {
+        "serialized_characters": 1339924,
+        "character_limit": 600000,
+        "estimated_tokens": 455292,
+        "token_limit": 208048
+      },
+      {
+        "serialized_characters": 1346702,
+        "character_limit": 600000,
+        "estimated_tokens": 457526,
+        "token_limit": 208048
+      },
+      {
+        "serialized_characters": 1351107,
+        "character_limit": 600000,
+        "estimated_tokens": 459361,
+        "token_limit": 208048
+      },
+      {
+        "serialized_characters": 1355119,
+        "character_limit": 600000,
+        "estimated_tokens": 460285,
+        "token_limit": 208048
+      },
+      {
+        "serialized_characters": 1430350,
+        "character_limit": 600000,
+        "estimated_tokens": 485709,
+        "token_limit": 208048
+      },
+      {
+        "serialized_characters": 1479044,
+        "character_limit": 600000,
+        "estimated_tokens": 502015,
+        "token_limit": 208048
+      },
+      {
+        "serialized_characters": 1494496,
+        "character_limit": 600000,
+        "estimated_tokens": 507468,
+        "token_limit": 208048
+      },
+      {
+        "serialized_characters": 1576058,
+        "character_limit": 600000,
+        "estimated_tokens": 534621,
+        "token_limit": 208048
+      },
+      {
+        "serialized_characters": 1848736,
+        "character_limit": 600000,
+        "estimated_tokens": 627078,
+        "token_limit": 208048
+      },
+      {
+        "serialized_characters": 1885356,
+        "character_limit": 600000,
+        "estimated_tokens": 638961,
+        "token_limit": 208048
+      },
+      {
+        "serialized_characters": 2123311,
+        "character_limit": 600000,
+        "estimated_tokens": 719299,
+        "token_limit": 208048
+      }
+    ],
+    "gpu_health": "original ASR and embedding health both 200 after reconnect",
+    "timing_note": "父任务start_time包括历史停机与多次重试，不作为补丁后耗时。"
+  },
+  "final_identity": "unverified: Refine input blocked by ContextWindowOverflow; directory fix does not establish voice attribution quality",
+  "production_boundary": "Only local isolated API/test data and existing GPU; no CPU/prod access."
+}

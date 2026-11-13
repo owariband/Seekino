@@ -109,6 +109,84 @@ def test_episode_chunk_rejects_lost_lease_after_last_link(tmp_path):
         assert not (service.base_directory / task / f"chunk-{chunk.execution_task_id}").exists()
 
 
+def test_speaker_audio_isolated_from_active_episode_and_other_samples(tmp_path):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source")
+    service = VideoParseMediaService(tmp_path / "work", command_runner=_fake_runner([]),
+                                     probe_duration=lambda _: 1000)
+    task = str(uuid4())
+    identity = MediaLeaseIdentity(task, task, 1, execution_kind="video")
+    with service.prepare_episode(
+        identity, source_video=source, duration_ms=1000, chunk_duration=1,
+        visual_mode="video", frame_fps=1, max_height=72, ocr_enabled=False,
+        overlap_ms=0, check_active=lambda: None,
+    ) as manifest:
+        original = manifest.read_bytes()
+        with service.prepare_speaker_audio(
+            identity, source_video=source, start_ms=0, end_ms=500, check_active=lambda: None,
+        ) as first:
+            assert first.parent != manifest.parent
+            assert service._read_identity(first.parent / ".lease.json") == identity
+            with service.prepare_speaker_audio(
+                identity, source_video=source, start_ms=500, end_ms=1000, check_active=lambda: None,
+            ) as second:
+                assert first != second and first.is_file() and second.is_file()
+                assert service.reap_stale(older_than_seconds=0, is_active=lambda _: False) == 0
+            assert not second.exists() and first.is_file()
+        assert not first.exists() and manifest.read_bytes() == original
+        assert (manifest.parent / "0000.wav").is_file()
+    assert list(service.base_directory.rglob("*")) == []
+
+
+@pytest.mark.parametrize("execution_kind", ["video", "interval"])
+@pytest.mark.parametrize("failure", ["cancel", "encode"])
+def test_speaker_audio_failure_preserves_owner_media(tmp_path, execution_kind, failure):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source")
+    service = VideoParseMediaService(tmp_path / "work", command_runner=_fake_runner([]))
+    task = str(uuid4())
+    identity = MediaLeaseIdentity(task, task, 1, execution_kind=execution_kind)
+    checks = []
+
+    def check_active():
+        checks.append(True)
+        if failure == "cancel" and len(checks) == 2:
+            raise RuntimeError("lease lost")
+
+    with service._workspace(identity) as owner:
+        retained = owner / "retained.mp4"
+        retained.write_bytes(b"owner media")
+        with pytest.raises(RuntimeError, match="lease lost|encoder failed"):
+            with service.prepare_speaker_audio(
+                identity, source_video=source, start_ms=0, end_ms=500, check_active=check_active,
+            ):
+                raise RuntimeError("encoder failed")
+        assert retained.read_bytes() == b"owner media"
+        assert list(owner.parent.glob("lease-*")) == [owner]
+    assert list(service.base_directory.rglob("*")) == []
+
+
+@pytest.mark.parametrize("marker_state", ["missing", "corrupt"])
+def test_reaper_recovers_unique_speaker_workspace_owner(tmp_path, marker_state):
+    service = VideoParseMediaService(tmp_path / "work", clock=lambda: 10_000.0)
+    identity = _identity()
+    directory = service._create_workspace(identity, unique=True)
+    marker = directory / ".lease.json"
+    if marker_state == "missing":
+        marker.unlink()
+        os.utime(directory, (9_000, 9_000))
+    else:
+        marker.write_text("{not-json")
+        os.utime(marker, (9_000, 9_000))
+    seen = []
+    assert service.reap_stale(older_than_seconds=60, is_active=lambda owner: seen.append(owner) or True) == 0
+    assert seen == [identity] and directory.is_dir()
+    if marker_state == "missing":
+        os.utime(directory, (9_000, 9_000))
+    assert service.reap_stale(older_than_seconds=60, is_active=lambda _: False) == 1
+    assert not directory.exists()
+
+
 def test_episode_wait_stops_when_producer_has_failed(tmp_path):
     service = VideoParseMediaService(tmp_path / "media")
     checks = []
