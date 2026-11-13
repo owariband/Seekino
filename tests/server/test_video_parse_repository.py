@@ -10,7 +10,7 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import event, select
+from sqlalchemy import event, inspect, select
 from sqlalchemy.orm.attributes import flag_modified
 
 from engine.parsev2.schemas import VideoParseResult
@@ -2773,6 +2773,60 @@ def test_v2_retrieval_scope_and_hydrate_are_pinned_to_latest_complete_task(
         session.get(VideoParseTask, task_id).is_deleted = True
     with pytest.raises(VideoChunkNotFoundError):
         repo.get_chunk_evidence(chunk_id, tenant_id="mine")
+
+
+def test_retrieval_hydration_keeps_compact_and_camera_hints_without_loading_detail(repository):
+    factory, repo, _video, identity, chunk_id = _seed_retrieval_chunk(repository)
+    camera_hints = [{
+        "first_sample_ms": 1000, "last_sample_ms": 8000,
+        "if_background_is_fixed": "PAN_RIGHT", "sampled_timing": "EASE_IN_OUT",
+        "travel_in_frame_widths": 0.5,
+    }]
+    with factory.begin() as session:
+        content = session.scalar(select(ChunkParseContent))
+        expected_child_id = content.chunk_task_id
+        content.detail = {
+            **content.detail,
+            "evidence": {"camera_hints": camera_hints},
+            INDEX_EMBEDDINGS_DETAIL_KEY: {
+                **content.detail[INDEX_EMBEDDINGS_DETAIL_KEY],
+                "representations": {"vector": [0.123456789] * 4096},
+            },
+        }
+    engine = repository[0]
+    loaded, statements = [], []
+
+    def record_content(content, _context):
+        assert "detail" in inspect(content).unloaded
+        loaded.append(content.chunk_task_id)
+
+    def record_sql(_connection, _cursor, statement, _parameters, _context, _many):
+        if "chunk_parse_content" in statement:
+            statements.append(statement)
+
+    event.listen(ChunkParseContent, "load", record_content)
+    event.listen(engine, "before_cursor_execute", record_sql)
+    try:
+        evidence = repo.hydrate_retrieval_evidence([(chunk_id, identity)])[0]
+        current = repo.get_chunk_evidence(chunk_id, tenant_id="mine")
+    finally:
+        event.remove(ChunkParseContent, "load", record_content)
+        event.remove(engine, "before_cursor_execute", record_sql)
+
+    assert evidence.video_compact == "她表示自己没事。"
+    assert evidence.context_after_compact == "她表示自己没事。"
+    assert evidence.camera_hints == camera_hints
+    assert current == evidence
+    assert set(loaded) == {expected_child_id}
+    for statement in statements:
+        columns = statement.split("FROM", 1)[0]
+        assert ", chunk_parse_content.detail" not in columns
+        detail_references = columns.count("chunk_parse_content.detail")
+        assert detail_references == columns.upper().count(
+            "JSON_EXTRACT(CHUNK_PARSE_CONTENT.DETAIL"
+        )
+        assert detail_references in (0, 2)
+        assert "_index_embeddings_v2" not in statement and "representations" not in statement
 
 
 @pytest.mark.parametrize("enabled,weights", [(False, {"17": 0.5}), (True, None), (True, {}), (True, {"17": -1.0})])

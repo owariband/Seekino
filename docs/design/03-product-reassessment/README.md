@@ -30,6 +30,7 @@ hypnos 于 **2026-04-27 入职实习**，到这次面试复盘时已接近半年
 
 | 文档 | 时间归属与证据 | 提出时的视角与背景 | 本次整理时的阅读边界 |
 |---|---|---|---|
+| [Event 查询有界内容读取](event-query-bounded-content-trd.md) | 2026-11-13，Event 查询在 ES 召回前加载选中范围的全部 Chunk 正文与索引缓存 | 前置只读 COMPLETE 任务、冻结 Event 目标与 INDEX 版本元数据；候选回源有界，完整 detail 延迟加载、仅投影 compact / camera_hints，发布写入与显式审计保留 | 实现完成，修正前定向回归通过；小字段保留待最终回归，部署与真实效果待验，见 [#154](https://github.com/owariband/Seekino/pull/154) 与工作台 `RAG-QUERY-MEM-01` |
 | [首页明暗主题切换](theme-transition-trd.md) | 2026-11-09，线上观看首页的封面与页面换色不同步 | 让画布与预览画面协调变亮或变暗，保留正片色彩 | [PR #80](https://github.com/owariband/Seekino/pull/80) |
 | [parse-media-link-lease-trd.md](parse-media-link-lease-trd.md) | 2026-11-07，198 帧交付逐个触发 chunk 续租 | 清单就绪后与交付前各校验一次 | [PR #75](https://github.com/owariband/Seekino/pull/75) |
 | [parse-ready-dispatch-trd.md](parse-ready-dispatch-trd.md) | 2026-11-07，micrograd 的索引在 refine 结束后继续约 39 分钟 | 提交后按 ID 派发、有限等锁与轻量收尾；记录同一素材的真实索引对照 | [PR #70](https://github.com/owariband/Seekino/pull/70) |

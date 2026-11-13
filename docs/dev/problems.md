@@ -2938,3 +2938,9 @@ micrograd v5 共 146 块，整集 90 分 04.884 秒。调度反复锁取候选�
 2026-11-12。剪辑素材库首轮 8 支公开视频中 4 支完成，P4、《人是猫》《快使用恋爱笔记》因动作时间分段未命中检测候选或未铺满区间被拒，P5R 因逐段 JSON 少外层右括号被拒。冻结的九条动作响应和三条 JSON 响应经过既有 observe_segments 入口回放，基线为 0/12 接收，不涉及新模型调用。进一步审计发现风格卡锚点只允许检测位置、有观察就必须有风格信号、Refine 必须全量复述且恰好一次等同类门槛；这些限制与来源归属、视频范围及租约版本不同。
 
 验收要求：保持原始中文和动作时间，12 条真实失败响应进入既有解析链路；合法的非切点动作/风格锚点、空风格卡和部分 Refine 更新可以提交并由 MCP 回源；外部来源、越界、过期版本仍被拒绝。真实模型批量完成率与业务质量另行记录，不由离线回放推定。设计与证据见 [TRD](../design/03-product-reassessment/reference-model-judgment-trd.md)，当前状态只维护在 [工作台](workbench.html) 的 EDIT-REFERENCE-02。
+
+### RAG-QUERY-MEM-01：Event 查询在 ES 召回前加载全部 Chunk 正文，内存随素材库增长
+
+2026-11-13。`VideoEventRetrievalService.search` 先调用 `resolve_retrieval_scope`，后者通过 `validate_event_coverage` 读取选中范围的全部 Chunk 正文和 `ChunkParseContent.detail`，逐块重建 Event 投影后才执行 ES 有界召回。`top_k` 不限制前置数据读取；detail 中的 `_index_embeddings_v2.representations` 也会被 ORM 二次解码。影响的是单用户搜索的内存峰值和范围扩展成本，而不是召回分数或排序合同。
+
+验收要求：ES 前只读取权限、最新 COMPLETE 任务、冻结 Event target 以及 INDEX 完成且 content version 一致的 Chunk 元数据，正文与完整 detail（含 `_index_embeddings_v2`）读取为 0；ES 后候选正文只读取 `candidate_budget` 内候选，不读取完整 detail 与 `_index_embeddings_v2`，仅投影 `detail.compact` / `detail.evidence.camera_hints`，单条证据身份查询仍不投影 detail；发布回执缺少事件集合、回执哈希被伪造或索引缓存被移除时仍按持久完成状态可检索，版本不一致、未完成 Chunk 或 target 不符的视频被排除；INDEX 发布写入校验和显式审计保持原强度。相关八模块隔离回归 248 passed、4 skipped，摘要与运镜提示在搜索和直接证据读取中保留；合并、部署、真实 RSS/延迟与业务质量仍待验证。证据见[报告](../report/server/service/video_event_retrieval/bounded-query-20261113.md)；设计见 [TRD](../design/03-product-reassessment/event-query-bounded-content-trd.md)，当前状态见[工作台](workbench.html) `RAG-QUERY-MEM-01`。

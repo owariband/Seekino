@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-12T20:25:13.887090+08:00",
+ "updatedAt": "2026-11-13T12:00:00+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 53,
+ "revision": 54,
  "categories": [
   {
    "id": "parse",
@@ -5626,6 +5626,49 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "label": "冻结回放与完整链路证据",
      "kind": "evidence",
      "url": "https://github.com/owariband/Seekino/blob/fix/reference-model-judgment/docs/report/agent/video_parse_v2/reference-model-judgment-20261112/README.md"
+    }
+   ]
+  },
+  {
+   "id": "RAG-QUERY-MEM-01",
+   "title": "Event 查询在 ES 召回前读取全部 Chunk 正文",
+   "category": "search",
+   "type": "requirement",
+   "status": "verifying",
+   "priority": "P1",
+   "description": "Event 查询先加载授权范围内全部 Chunk 正文与 detail 重建发布投影，内存随素材库增长；本次改为发布元数据配对、候选有界回源，完整 detail 延迟加载、仅投影 compact / camera_hints。",
+   "next": "等待 PR #154 合并及部署后的真实检索效果；不以生成数据代替 RSS、延迟或业务质量验收。",
+   "verification": "生成隔离数据（8 视频×2 Chunk；6 视频有匹配 Event 发布，1 个 Chunk-only，1 个 INDEXING）下，top_k/candidate_budget 1/5 均为 ES 前 12 个元数据来源、0 正文、0 完整 detail，ES 后 1 次正文查询且加载/返回 1/5 个正文实体；实现上候选仅投影 compact / evidence.camera_hints、不读 _index_embeddings_v2（搜索及直接证据读取均已验证小字段保留）；回执缺失/伪造或索引缓存被移除仍可检索，stale version/pending Chunk/wrong target 排除对应视频。相关八模块隔离回归 248 passed、4 skipped；合并、部署与真实效果待验。",
+   "updatedAt": "2026-11-13",
+   "tags": [
+    "性能",
+    "Event 检索",
+    "内存"
+   ],
+   "related": [
+    "MOD-SEARCH"
+   ],
+   "branch": "perf/event-query-bounded-content",
+   "links": [
+    {
+     "label": "PR #154",
+     "kind": "pr",
+     "url": "https://github.com/owariband/Seekino/pull/154"
+    },
+    {
+     "label": "TRD",
+     "kind": "trd",
+     "url": "https://github.com/owariband/Seekino/blob/perf/event-query-bounded-content/docs/design/03-product-reassessment/event-query-bounded-content-trd.md"
+    },
+    {
+     "label": "生成数据报告",
+     "kind": "source",
+     "url": "https://github.com/owariband/Seekino/blob/perf/event-query-bounded-content/docs/report/server/service/video_event_retrieval/bounded-query-20261113.md"
+    },
+    {
+     "label": "devlog",
+     "kind": "source",
+     "url": "https://github.com/owariband/Seekino/blob/perf/event-query-bounded-content/docs/dev/devlog.md#devlog-event-query-bounded-content-20261113"
     }
    ]
   }

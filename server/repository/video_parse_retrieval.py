@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from copy import deepcopy
+from typing import Any
 
 from sqlalchemy import Select, and_, exists, func, or_, select
 from sqlalchemy.orm import Session, aliased, defer, load_only
@@ -205,7 +206,13 @@ def load_task_chunk_rows(
 
 
 def _candidate_query(*, task_ids: Sequence[str], task_status: str, phase: int, status: str):
-    return select(Series, Video, VideoChunk, VideoParseTask, ChunkParseTask, ChunkParseContent).join(
+    # Retrieval only needs these two small metadata paths from the otherwise
+    # heavy detail column; the indexing cache is never projected.
+    return select(
+        Series, Video, VideoChunk, VideoParseTask, ChunkParseTask, ChunkParseContent,
+        ChunkParseContent.detail["compact"].as_string().label("detail_compact"),
+        ChunkParseContent.detail[("evidence", "camera_hints")].label("detail_camera_hints"),
+    ).join(
         Video, Video.series_id == Series.id,
     ).join(VideoParseTask, VideoParseTask.video_id == Video.id).join(
         ChunkParseTask, ChunkParseTask.video_task_id == VideoParseTask.id,
@@ -217,6 +224,23 @@ def _candidate_query(*, task_ids: Sequence[str], task_status: str, phase: int, s
         ChunkParseTask.status == status,
         ChunkParseTask.indexed_content_version == ChunkParseContent.version,
     )
+
+
+def _candidate_content_data(
+    content: ChunkParseContent, *, include_detail: bool,
+    compact: str | None, camera_hints: list[dict[str, Any]] | None,
+) -> ChunkParseContentData:
+    if include_detail:
+        # Published references still need the complete detail and receipt.
+        return chunk_store.content_data(content)
+    detail = {}
+    if compact is not None:
+        detail["compact"] = compact
+    if camera_hints is not None:
+        detail["evidence"] = {"camera_hints": camera_hints}
+    data = chunk_store.content_data(content, include_detail=False)
+    data.detail = detail or None
+    return data
 
 
 def load_candidate_rows(
@@ -234,8 +258,10 @@ def load_candidate_rows(
     rows = session.execute(query)
     return [(task_store.series_data(series), task_store.video_data(video),
              chunk_store.video_chunk_data(chunk), task_store.task_data(task),
-             chunk_store.task_data(child), chunk_store.content_data(content, include_detail=include_detail))
-            for series, video, chunk, task, child, content in rows]
+             chunk_store.task_data(child), _candidate_content_data(
+                 content, include_detail=include_detail, compact=compact, camera_hints=camera_hints,
+             ))
+            for series, video, chunk, task, child, content, compact, camera_hints in rows]
 
 
 def load_neighbor_rows(
@@ -250,8 +276,10 @@ def load_neighbor_rows(
     ).options(defer(ChunkParseContent.detail, raiseload=True)).where(or_(*conditions)))
     return [(task_store.series_data(series), task_store.video_data(video),
              chunk_store.video_chunk_data(chunk), task_store.task_data(task),
-             chunk_store.task_data(child), chunk_store.content_data(content, include_detail=False))
-            for series, video, chunk, task, child, content in rows]
+             chunk_store.task_data(child), _candidate_content_data(
+                 content, include_detail=False, compact=compact, camera_hints=camera_hints,
+             ))
+            for series, video, chunk, task, child, content, compact, camera_hints in rows]
 
 
 def load_chunk_evidence_video(

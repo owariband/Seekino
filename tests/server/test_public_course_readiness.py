@@ -379,10 +379,20 @@ def test_event_queries_use_each_videos_chunk_generation(public_course):
 @pytest.mark.parametrize("top_k", [1, 5])
 def test_event_search_reads_only_bounded_candidate_bodies_without_index_cache(public_course, monkeypatch, top_k):
     course = public_course
+    camera_hints = [{
+        "first_sample_ms": 1000, "last_sample_ms": 8000,
+        "if_background_is_fixed": "PAN_RIGHT", "sampled_timing": "EASE_IN_OUT",
+        "travel_in_frame_widths": 0.5,
+    }]
     with course.api.sessions.begin() as session:
         for content in session.scalars(select(ChunkParseContent)):
             detail = deepcopy(content.detail)
-            detail.setdefault(INDEX_EMBEDDINGS_DETAIL_KEY, {})["representations"] = {"vector": [0.123456789] * 4096}
+            detail["evidence"] = {
+                **(detail.get("evidence") or {}), "camera_hints": deepcopy(camera_hints),
+            }
+            detail.setdefault(INDEX_EMBEDDINGS_DETAIL_KEY, {})["representations"] = {
+                "vector": [0.123456789] * 4096,
+            }
             content.detail = detail
     course.events._policy = course.events._policy.model_copy(update={"candidate_budget": top_k})
     loaded, body_queries = [], []
@@ -393,7 +403,13 @@ def test_event_search_reads_only_bounded_candidate_bodies_without_index_cache(pu
 
     def record_sql(_connection, _cursor, statement, _parameters, _context, _many):
         columns = statement.split("FROM", 1)[0]
-        assert "chunk_parse_content.detail" not in columns
+        assert ", chunk_parse_content.detail" not in columns
+        detail_references = columns.count("chunk_parse_content.detail")
+        assert detail_references == columns.upper().count(
+            "JSON_EXTRACT(CHUNK_PARSE_CONTENT.DETAIL"
+        )
+        assert detail_references in (0, 2)
+        assert "_index_embeddings_v2" not in columns and "representations" not in columns
         if "chunk_parse_content.content" in columns:
             body_queries.append(statement)
 
@@ -418,6 +434,9 @@ def test_event_search_reads_only_bounded_candidate_bodies_without_index_cache(pu
         event.remove(engine, "before_cursor_execute", record_sql)
     assert len(result.hits) == len(loaded) == len(set(loaded)) == top_k
     assert len(body_queries) == 1
+    assert all(hit.evidence.video_compact == f"第 {hit.evidence.sequence_no + 1} 段摘要" for hit in result.hits)
+    assert all(hit.evidence.context_after_compact == hit.evidence.video_compact for hit in result.hits)
+    assert all(hit.evidence.camera_hints == camera_hints for hit in result.hits)
 
 
 @pytest.mark.parametrize("issue", ["missing", "forged", "absent_cache"])
