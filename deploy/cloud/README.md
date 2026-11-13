@@ -15,6 +15,7 @@
 索引就绪的系列才发布，普通用户不会看到尚未发布的内容。
 
 服务器使用独立的 API 模型 YAML，通过 `SEEKINO_MODEL_CONFIG` 指定。
+Chat hook 默认只由 Jev 分类，`query_hook.rewriter_enabled: false`，无需 `models.query_rewriter`。已有部署的显式配置不会被镜像升级覆盖，须在实际挂载的 YAML 中关闭改写；`models.query_hook` 会选择合并决策并绕过 Jev，Jev-only 部署不能保留这个 Chat 绑定。修改后重启 API，并用真实 route 日志和调用记录核对。
 将 [API 模型模板](models.example.yaml) 配置为服务器的 `/etc/seekino/models.yaml`，
 核对供应商账户实际可用的模型或 endpoint；模板沿用项目已有 API 模型绑定，未做真实调用验收。
 cloud 要求 `supervisor_harness: deepagents`，不得绑定本机 Codex/Claude runtime；模型来源与

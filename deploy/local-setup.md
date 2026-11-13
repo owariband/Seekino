@@ -62,6 +62,10 @@ docker compose --env-file .env.docker up --build -d --wait
 
 首次启动前可以直接编辑源 YAML；已经启动过的实例，按本节末尾的步骤重新导入。凭据始终写在 `.env.docker`，不要放进 YAML。
 
+Chat hook 默认由 Jev 分类，独立改写关闭（`query_hook.rewriter_enabled: false`），无需 `models.query_rewriter`。旧配置中的显式 `true` 会保留；升级已有实例时，须在生效 YAML 中关闭改写并重启 API。`models.query_hook` 会选择合并决策并绕过 Jev；要使用 Jev-only，不能保留这个 Chat 绑定。显式需要独立改写时，可同时配置 `rewriter_enabled: true` 和 `models.query_rewriter`。
+
+可在已有 `models.supervisor` 节点添加 `auto_compact_ratio: 0.85`，按当前模型的 context 大小计算压缩阈值。模型容量优先读取供应商能力，读取失败时使用绑定的 `context_window_tokens`；输出预算与安全余量仍会预留。省略比例时沿用已有静态策略，`compact_target_tokens` 继续控制压缩后的保留目标。模型 YAML 和独立的 Agent 运行配置都应备份，再按实际加载结果核对，不能只根据配置文件判断策略已生效。
+
 ### 可选 Kimi
 
 项目已经声明 `kimi_coding` 来源，沿用 `adapter: openai`、`profile: kimi` 和 `https://api.kimi.com/coding/v1`。将同一份 YAML 中以下字段改为对应值，保留其余模型和预算设置：

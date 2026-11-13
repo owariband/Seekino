@@ -47,6 +47,42 @@ def test_temperature_rejects_invalid_values_at_configuration_boundary(schema, va
         schema.model_validate(data)
 
 
+@pytest.mark.parametrize("value", [0, 1, -0.1, 1.1, True, False, "0.85", float("nan"), float("inf"), float("-inf")])
+def test_auto_compact_ratio_rejects_invalid_values_at_configuration_boundary(value):
+    with pytest.raises(ValidationError, match="auto_compact_ratio"):
+        ModelBinding.model_validate({"source": "source", "model": "model", "auto_compact_ratio": value})
+
+
+def test_auto_compact_ratio_is_optional_and_survives_resolution():
+    data = payload()
+    data["supervisor_harness"] = "deepagents"
+    data["models"]["supervisor"] = deepcopy(data["models"]["agent"])
+    data["models"]["supervisor"]["auto_compact_ratio"] = 0.85
+    config = GatewayConfig.model_validate(data)
+
+    binding = config.resolve_model_binding("supervisor", environ={})
+
+    assert binding.auto_compact_ratio == 0.85
+    assert config.resolve_model_binding(ModelBinding.model_validate_json(binding.model_dump_json()), environ={}) == binding
+    assert config.resolve_model_binding("agent", environ={}).auto_compact_ratio is None
+    assert "auto_compact_ratio" not in config.resolve_model_binding("agent", environ={}).model_dump()
+
+
+@pytest.mark.parametrize("kind,source", [
+    ("speaker_embedding", {"adapter": "campplus", "checkpoint_path": "/unused/model.bin"}),
+    ("diarization", {"adapter": "pyannote"}),
+])
+def test_non_generative_models_reject_auto_compact_ratio(kind, source):
+    data = payload()
+    data["model_sources"]["non_generative"] = source
+    data["models"]["non_generative"] = {
+        "source": "non_generative", "model": "local", "kind": kind,
+        "auto_compact_ratio": 0.85,
+    }
+    with pytest.raises(ValidationError, match="does not use generative context budgets"):
+        GatewayConfig.model_validate(data)
+
+
 def test_legacy_agent_temperature_defaults_to_zero_and_preserves_explicit_values():
     data = yaml.safe_load(LEGACY.read_text())
     default = GatewayConfig.model_validate(data).resolve_model_binding("agent", environ={})
