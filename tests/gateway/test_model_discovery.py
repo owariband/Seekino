@@ -39,6 +39,38 @@ def test_missing_later_page_is_an_error_not_an_empty_list(monkeypatch):
         discovery.discover_models("anthropic_messages", "https://api.anthropic.com", "key", allow_local=False)
 
 
+def test_context_windows_are_returned_per_listed_model_with_invalid_values_absent(monkeypatch):
+    _serve(monkeypatch, lambda request: httpx.Response(200, json={"data": [
+        {"id": "deepseek-flash", "context_window": 1048576},
+        {"id": "deepseek-v4-pro", "context_window": "1048576"},
+        {"id": "deepseek-v4-lite", "context_window": True},
+        {"id": "deepseek-v4-nano", "context_window": -1},
+        {"id": "deepseek-v4-mini"},
+    ]}))
+    assert discovery.discover_model_context_windows(
+        "openai_chat", "https://api.example.com", "key", allow_local=False,
+    ) == {
+        "deepseek-flash": 1048576,
+        "deepseek-v4-pro": None,
+        "deepseek-v4-lite": None,
+        "deepseek-v4-nano": None,
+        "deepseek-v4-mini": None,
+    }
+
+
+def test_context_window_discovery_preserves_list_endpoint_policies(monkeypatch):
+    _serve(monkeypatch, lambda request: httpx.Response(404))
+    assert discovery.discover_model_context_windows(
+        "openai_chat", "https://api.example.com", "key", allow_local=False,
+    ) is None
+
+    _serve(monkeypatch, lambda request: httpx.Response(500))
+    with pytest.raises(ValueError, match="HTTP 500"):
+        discovery.discover_model_context_windows(
+            "openai_chat", "https://api.example.com", "key", allow_local=False,
+        )
+
+
 def test_audio_transcription_servers_are_not_offered_discovery():
     from server.service.yaml_chat_models import DISCOVERABLE_PROTOCOLS
     assert "openai_audio" not in DISCOVERABLE_PROTOCOLS

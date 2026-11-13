@@ -131,7 +131,10 @@ def test_combined_late_result_is_discarded_and_parent_deadline_is_not_swallowed(
 
 def hook(models, rewrite=None, **config):
     rewrite_model = RewriteModel() if rewrite is None else rewrite
-    return QueryHook(QueryHookConfig(enabled=True, **config), models, rewrite_model=rewrite_model)
+    return QueryHook(
+        QueryHookConfig(**{"enabled": True, "rewriter_enabled": True, **config}),
+        models, rewrite_model=rewrite_model,
+    )
 
 
 def test_rewrite_injects_slot_options_into_injected_model():
@@ -218,12 +221,14 @@ def test_admission_failures_are_not_silently_bypassed(stage):
             hook(models, rewrite)(_inputs(), ExecutionControl(None))
 
 
-def test_disabled_rewriter_skips_model_call_and_logs_once(caplog):
+@pytest.mark.parametrize("config", [{}, {"rewriter_enabled": False}])
+def test_disabled_rewriter_skips_model_call_and_logs_once(caplog, config):
     models = Models("retrieve")
     rewrite = RewriteModel()
     inputs = _inputs()
+    before = QueryHook(QueryHookConfig(enabled=True, **config), models, rewrite_model=rewrite)
     with caplog.at_level(logging.INFO):
-        output = hook(models, rewrite, rewriter_enabled=False)(inputs, ExecutionControl(None))
+        output = before(inputs, ExecutionControl(None))
     assert [call[0] for call in models.calls] == ["route"]
     assert not rewrite.calls
     assert "简单检索" in output
@@ -236,7 +241,7 @@ def test_disabled_rewriter_skips_model_call_and_logs_once(caplog):
 def test_missing_rewrite_model_skips_and_logs_once(caplog):
     models = Models("retrieve")
     inputs = _inputs()
-    before = QueryHook(QueryHookConfig(enabled=True), models)
+    before = QueryHook(QueryHookConfig(enabled=True, rewriter_enabled=True), models)
     with caplog.at_level(logging.INFO):
         output = before(inputs, ExecutionControl(None))
     assert [call[0] for call in models.calls] == ["route"]
@@ -355,7 +360,7 @@ def test_supervisor_receives_append_once_while_tools_history_and_inputs_keep_ori
         video, supervisor, FakeWebSearcher(),
         max_web_results=5, web_timeout_seconds=12, execution_timeout_seconds=60,
         max_tool_result_bytes=4096, max_prompt_chars=10000,
-        query_hook=QueryHook(QueryHookConfig(enabled=True), models,
+        query_hook=QueryHook(QueryHookConfig(enabled=True, rewriter_enabled=True), models,
             decision_model=DecisionModel("retrieve", "真是高高在上呢") if combined else None,
             rewrite_model=None if combined else rewrite),
     )

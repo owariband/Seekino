@@ -4,7 +4,7 @@ import json
 import logging
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
-from math import ceil
+from math import ceil, isfinite
 from typing import Any, Callable, Literal
 from uuid import uuid4
 
@@ -69,6 +69,49 @@ class ContextWindowPolicy:
             - self.output_reserve_tokens
             - self.safety_margin_tokens
         )
+
+
+def derive_auto_compact_policy(
+    *,
+    context_window_tokens: int,
+    output_reserve_tokens: int,
+    safety_margin_tokens: int,
+    auto_compact_ratio: float,
+    previous: ContextWindowPolicy,
+) -> ContextWindowPolicy:
+    """Derive a model-capacity policy while preserving the output reserve and recent keep."""
+    for name, value in (
+        ("context_window_tokens", context_window_tokens),
+        ("output_reserve_tokens", output_reserve_tokens),
+        ("safety_margin_tokens", safety_margin_tokens),
+    ):
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise ValueError(f"{name} must be a positive integer")
+    if (
+        isinstance(auto_compact_ratio, bool)
+        or not isinstance(auto_compact_ratio, (int, float))
+        or not isfinite(auto_compact_ratio)
+        or not 0 < auto_compact_ratio < 1
+    ):
+        raise ValueError("auto_compact_ratio must be a finite number between 0 and 1")
+    available = context_window_tokens - output_reserve_tokens - safety_margin_tokens
+    if available <= 2:
+        raise ValueError(
+            "resolved context window must exceed output and safety reserves"
+        )
+    trigger = min(int(context_window_tokens * auto_compact_ratio), available - 1)
+    if trigger <= 1:
+        raise ValueError("resolved context window is too small to compact")
+    keep = min(previous.compact_target_tokens, trigger - 1)
+    if keep <= 0:
+        raise ValueError("resolved context window is too small to keep recent messages")
+    return ContextWindowPolicy(
+        context_window_tokens=context_window_tokens,
+        output_reserve_tokens=output_reserve_tokens,
+        safety_margin_tokens=safety_margin_tokens,
+        auto_compact_tokens=trigger,
+        compact_target_tokens=keep,
+    )
 
 
 @dataclass(slots=True)

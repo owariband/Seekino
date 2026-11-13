@@ -588,9 +588,9 @@ def test_omitted_search_config_keeps_keyless_ddgs_default(tmp_path):
     assert load_config(path).web_search.backend == "duckduckgo"
 
 
-def test_query_hook_rewriter_enabled_defaults_to_true_and_rejects_non_bool():
-    assert QueryHookConfig().rewriter_enabled is True
-    assert QueryHookConfig(rewriter_enabled=False).rewriter_enabled is False
+def test_query_hook_rewriter_enabled_defaults_to_false_and_rejects_non_bool():
+    assert QueryHookConfig().rewriter_enabled is False
+    assert QueryHookConfig(rewriter_enabled=True).rewriter_enabled is True
     with pytest.raises(ValidationError):
         QueryHookConfig(rewriter_enabled="false")
 
@@ -606,13 +606,9 @@ def test_query_hook_config_rejects_removed_llama_cpp_fields(field, value):
         QueryHookConfig.model_validate({field: value})
 
 
-def test_default_config_binds_query_rewriter_to_deepseek_flash():
+def test_default_config_uses_jev_only_without_rewriter_bindings():
     config = load_config()
     assert config.query_hook.enabled
-    assert config.query_hook.rewriter_enabled
-    binding = config.resolve_model_binding("query_rewriter", environ={})
-    assert binding.model == "deepseek-flash"
-    assert binding.source == "deepseek_api"
-    assert binding.reasoning_effort == "none"
-    assert binding.max_output_tokens == 256
-    assert binding.stream is False
+    assert not config.query_hook.rewriter_enabled
+    assert "query_rewriter" not in config.normalized_models
+    assert "query_hook" not in config.normalized_models
