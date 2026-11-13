@@ -1352,9 +1352,12 @@ describe("application shell", () => {
     const deletion = await screen.findByRole("button", { name: /^删除对话 雨天门口，/ });
     expect(deletion).toBeDisabled();
     expect(deletion).toHaveAttribute("title", "当前回答进行中，完成后才能删除");
-    expect(screen.getByText("回答完成后可删除")).toBeInTheDocument();
+    expect(screen.queryByText("回答完成后可删除")).not.toBeInTheDocument();
+    await user.click(deletion);
+    expect(screen.queryByRole("button", { name: /^确认删除对话 雨天门口，/ })).not.toBeInTheDocument();
     act(finishAnswer);
     await waitFor(() => expect(deletion).toBeEnabled());
+    expect(deletion).toHaveAttribute("title", "删除对话");
   });
 
   it("locks deletion while the first-send Conversation request is in flight", async () => {

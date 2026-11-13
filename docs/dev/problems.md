@@ -2947,3 +2947,8 @@ micrograd v5 共 146 块，整集 90 分 04.884 秒。调度反复锁取候选�
 验收需固定模型、思考、输出、prompt/tools 与真实历史，分别记录摘要与正常调用耗时、完整输入前后 token、provider 用量和交付质量；不能用更少的摘要次数直接代替时延收益，不能把局部模型边界当作整个 Chat。当前证据与未覆盖范围见[TRD](../design/03-product-reassessment/chat-model-context-compaction-trd.md)、[本地对照报告](../report/gateway/agent_model/chat-context-compaction-20261113/README.md)、[devlog](devlog.md#devlog-chat-model-context-compaction-20261113)和 [PR #144](https://github.com/owariband/Seekino/pull/144)。执行状态以[工作台](workbench.html) `CHAT-COMPACT-01` 为准。
 
 2026-11-13 本地同输入的 9 次真实生成验证了三处模型边界：总耗时 84.481→14.940 秒、摘要 75.414→0 秒。完整 Chat、视频卡与近满窗质量尚未验收，不据此关闭整体问题。详细 token、缓存和质量差异保留在同一报告。
+
+
+### CHAT-DELETE-HINT-01 · 回答中的删除说明常驻占用历史列表空间
+
+2026-11-13。当前对话正在回答时，垃圾桶已有说明原因的原生 title，但列表项下方还渲染“回答完成后可删除”，造成重复信息和额外高度。验收要求未悬停时不出现这行说明，鼠标命中垃圾桶可读取原有提示；回答中不能触发删除，回答结束后按钮和普通 title 恢复。[设计与验收](../design/03-product-reassessment/chat-delete-hint-tooltip-trd.md) · [决策记录](devlog.md#devlog-chat-delete-hint-20261113)。当前状态见[工作台](workbench.html) CHAT-DELETE-HINT-01。
