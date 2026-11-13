@@ -1,0 +1,36 @@
+{
+  "database": "seekino_intent_20261113_test",
+  "series_id": "411de40c-ed6d-58c8-ab95-e542879f18f9",
+  "video_id": "8d479de5-d0c8-5ee5-93af-65a07a8ff9d1",
+  "task_id": "bedbcb6b-223b-4c9e-b910-622fddbf801c",
+  "tables": {
+    "series": 1,
+    "video": 1,
+    "video_chunk": 1,
+    "video_parse_task": 4,
+    "chunk_parse_task": 4,
+    "video_parse_content": 1,
+    "chunk_parse_content": 2
+  },
+  "indexes": [
+    {
+      "source": "seekino_video_chunks_development_251215",
+      "target": "seekino_intent_chunks_20261113_test",
+      "copied": 1
+    },
+    {
+      "source": "seekino_video_events_development_251215_v3",
+      "target": "seekino_intent_events_20261113_test",
+      "copied": 6
+    }
+  ],
+  "excluded": "No existing chat history, personal model settings, credentials or model usage copied",
+  "relocated_index_receipts": {
+    "fields_changed": 2,
+    "names": {
+      "seekino_video_chunks_development_251215": "seekino_intent_chunks_20261113_test",
+      "seekino_video_events_development_251215_v3": "seekino_intent_events_20261113_test"
+    },
+    "method": "Only exact index_name values rebound in isolated copied publication receipts after projection copy; original facts and source storage unchanged"
+  }
+}

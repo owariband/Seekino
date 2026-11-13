@@ -23,6 +23,10 @@
 
 [2026-11-02 单文件项目看板设计与验收](docs/dev/kanban/README.md)：真实条目导入、唯一状态入口迁移、桌面/移动端与离线保存重开验证。历史业务状态未重新验收。
 
+## Agent / chat
+
+[2026-11-13 Chat 三路径意图判断完整对照](agent/chat/query-intent-routing-20261113/README.md)：Cloud 恢复 JEV 的配置证据，及 DeepSeek 前置决策、JEV＋改写器、Supervisor 直接判断的相同模型实验；首字、完成耗时、用量与内容分别核对。
+
 ## Agent / video_parse_v2
 
 - [剪辑参考模型观察的过度校验修复（2026-11-12）](agent/video_parse_v2/reference-model-judgment-20261112/README.md)：12 条真实失败响应对照、来源边界与独立上传到 MCP 验证；真实批次运行另行记录。

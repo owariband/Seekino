@@ -1,0 +1,74 @@
+[
+  {
+    "case_id": "mixed_feedback_and_search",
+    "round": 1,
+    "same_supervisor_prompt": true,
+    "same_tool_schemas": true,
+    "same_history_role_content": true,
+    "same_A_B_model_message": true
+  },
+  {
+    "case_id": "mixed_feedback_and_search",
+    "round": 2,
+    "same_supervisor_prompt": true,
+    "same_tool_schemas": true,
+    "same_history_role_content": true,
+    "same_A_B_model_message": true
+  },
+  {
+    "case_id": "respond_existing_evidence",
+    "round": 1,
+    "same_supervisor_prompt": true,
+    "same_tool_schemas": true,
+    "same_history_role_content": true,
+    "same_A_B_model_message": true
+  },
+  {
+    "case_id": "respond_feedback",
+    "round": 1,
+    "same_supervisor_prompt": true,
+    "same_tool_schemas": true,
+    "same_history_role_content": true,
+    "same_A_B_model_message": true
+  },
+  {
+    "case_id": "respond_feedback",
+    "round": 2,
+    "same_supervisor_prompt": true,
+    "same_tool_schemas": true,
+    "same_history_role_content": true,
+    "same_A_B_model_message": true
+  },
+  {
+    "case_id": "respond_stop_retrieval",
+    "round": 1,
+    "same_supervisor_prompt": true,
+    "same_tool_schemas": true,
+    "same_history_role_content": true,
+    "same_A_B_model_message": true
+  },
+  {
+    "case_id": "retrieve_original_quote",
+    "round": 1,
+    "same_supervisor_prompt": true,
+    "same_tool_schemas": true,
+    "same_history_role_content": true,
+    "same_A_B_model_message": false
+  },
+  {
+    "case_id": "retrieve_original_quote",
+    "round": 2,
+    "same_supervisor_prompt": true,
+    "same_tool_schemas": true,
+    "same_history_role_content": true,
+    "same_A_B_model_message": false
+  },
+  {
+    "case_id": "retrieve_reference",
+    "round": 1,
+    "same_supervisor_prompt": true,
+    "same_tool_schemas": true,
+    "same_history_role_content": true,
+    "same_A_B_model_message": false
+  }
+]
