@@ -1,0 +1,387 @@
+{
+  "method": "程序提取工具、事件时间、原句与最终卡片；解释性观察由 Codex 主 Agent 核对原始正文和正式 Timeline。",
+  "independent_human_review": false,
+  "semantic_pass_rate": null,
+  "turns": [
+    {
+      "index": 0,
+      "arm": "deepseek_decider",
+      "case_id": "respond_feedback",
+      "retrieval_tool_calls": 0,
+      "first_body_before_first_retrieval": null,
+      "original_quote_present": null,
+      "final_video_cards_ms": []
+    },
+    {
+      "index": 1,
+      "arm": "jev_only",
+      "case_id": "respond_feedback",
+      "retrieval_tool_calls": 0,
+      "first_body_before_first_retrieval": null,
+      "original_quote_present": null,
+      "final_video_cards_ms": []
+    },
+    {
+      "index": 2,
+      "arm": "supervisor_direct",
+      "case_id": "respond_feedback",
+      "retrieval_tool_calls": 2,
+      "first_body_before_first_retrieval": false,
+      "original_quote_present": null,
+      "final_video_cards_ms": []
+    },
+    {
+      "index": 3,
+      "arm": "jev_only",
+      "case_id": "respond_existing_evidence",
+      "retrieval_tool_calls": 0,
+      "first_body_before_first_retrieval": null,
+      "original_quote_present": null,
+      "final_video_cards_ms": []
+    },
+    {
+      "index": 4,
+      "arm": "supervisor_direct",
+      "case_id": "respond_existing_evidence",
+      "retrieval_tool_calls": 0,
+      "first_body_before_first_retrieval": null,
+      "original_quote_present": null,
+      "final_video_cards_ms": []
+    },
+    {
+      "index": 5,
+      "arm": "deepseek_decider",
+      "case_id": "respond_existing_evidence",
+      "retrieval_tool_calls": 0,
+      "first_body_before_first_retrieval": null,
+      "original_quote_present": null,
+      "final_video_cards_ms": []
+    },
+    {
+      "index": 6,
+      "arm": "supervisor_direct",
+      "case_id": "respond_stop_retrieval",
+      "retrieval_tool_calls": 0,
+      "first_body_before_first_retrieval": null,
+      "original_quote_present": null,
+      "final_video_cards_ms": []
+    },
+    {
+      "index": 7,
+      "arm": "deepseek_decider",
+      "case_id": "respond_stop_retrieval",
+      "retrieval_tool_calls": 0,
+      "first_body_before_first_retrieval": null,
+      "original_quote_present": null,
+      "final_video_cards_ms": []
+    },
+    {
+      "index": 8,
+      "arm": "jev_only",
+      "case_id": "respond_stop_retrieval",
+      "retrieval_tool_calls": 0,
+      "first_body_before_first_retrieval": null,
+      "original_quote_present": null,
+      "final_video_cards_ms": []
+    },
+    {
+      "index": 9,
+      "arm": "deepseek_decider",
+      "case_id": "mixed_feedback_and_search",
+      "retrieval_tool_calls": 2,
+      "first_body_before_first_retrieval": true,
+      "original_quote_present": null,
+      "final_video_cards_ms": [
+        {
+          "videoChunkId": "73742add-52ff-5dcc-ab75-d4893b4fcf29",
+          "startSeconds": 3100,
+          "endSeconds": 12012
+        }
+      ]
+    },
+    {
+      "index": 10,
+      "arm": "jev_only",
+      "case_id": "mixed_feedback_and_search",
+      "retrieval_tool_calls": 3,
+      "first_body_before_first_retrieval": true,
+      "original_quote_present": null,
+      "final_video_cards_ms": [
+        {
+          "videoChunkId": "73742add-52ff-5dcc-ab75-d4893b4fcf29",
+          "startSeconds": 3100,
+          "endSeconds": 12012
+        }
+      ]
+    },
+    {
+      "index": 11,
+      "arm": "supervisor_direct",
+      "case_id": "mixed_feedback_and_search",
+      "retrieval_tool_calls": 2,
+      "first_body_before_first_retrieval": true,
+      "original_quote_present": null,
+      "final_video_cards_ms": [
+        {
+          "videoChunkId": "73742add-52ff-5dcc-ab75-d4893b4fcf29",
+          "startSeconds": 9252,
+          "endSeconds": 12012
+        }
+      ]
+    },
+    {
+      "index": 12,
+      "arm": "jev_only",
+      "case_id": "retrieve_reference",
+      "retrieval_tool_calls": 2,
+      "first_body_before_first_retrieval": false,
+      "original_quote_present": null,
+      "final_video_cards_ms": [
+        {
+          "videoChunkId": "73742add-52ff-5dcc-ab75-d4893b4fcf29",
+          "startSeconds": 0,
+          "endSeconds": 12012
+        }
+      ]
+    },
+    {
+      "index": 13,
+      "arm": "supervisor_direct",
+      "case_id": "retrieve_reference",
+      "retrieval_tool_calls": 4,
+      "first_body_before_first_retrieval": false,
+      "original_quote_present": null,
+      "final_video_cards_ms": [
+        {
+          "videoChunkId": "73742add-52ff-5dcc-ab75-d4893b4fcf29",
+          "startSeconds": 0,
+          "endSeconds": 9252
+        }
+      ]
+    },
+    {
+      "index": 14,
+      "arm": "deepseek_decider",
+      "case_id": "retrieve_reference",
+      "retrieval_tool_calls": 2,
+      "first_body_before_first_retrieval": false,
+      "original_quote_present": null,
+      "final_video_cards_ms": [
+        {
+          "videoChunkId": "73742add-52ff-5dcc-ab75-d4893b4fcf29",
+          "startSeconds": 9700,
+          "endSeconds": 12012
+        }
+      ]
+    },
+    {
+      "index": 15,
+      "arm": "supervisor_direct",
+      "case_id": "retrieve_original_quote",
+      "retrieval_tool_calls": 1,
+      "first_body_before_first_retrieval": false,
+      "original_quote_present": true,
+      "final_video_cards_ms": [
+        {
+          "videoChunkId": "73742add-52ff-5dcc-ab75-d4893b4fcf29",
+          "startSeconds": 0,
+          "endSeconds": 2300
+        }
+      ]
+    },
+    {
+      "index": 16,
+      "arm": "deepseek_decider",
+      "case_id": "retrieve_original_quote",
+      "retrieval_tool_calls": 2,
+      "first_body_before_first_retrieval": false,
+      "original_quote_present": true,
+      "final_video_cards_ms": [
+        {
+          "videoChunkId": "73742add-52ff-5dcc-ab75-d4893b4fcf29",
+          "startSeconds": 0,
+          "endSeconds": 2300
+        }
+      ]
+    },
+    {
+      "index": 17,
+      "arm": "jev_only",
+      "case_id": "retrieve_original_quote",
+      "retrieval_tool_calls": 2,
+      "first_body_before_first_retrieval": false,
+      "original_quote_present": true,
+      "final_video_cards_ms": [
+        {
+          "videoChunkId": "73742add-52ff-5dcc-ab75-d4893b4fcf29",
+          "startSeconds": 0,
+          "endSeconds": 3084
+        }
+      ]
+    },
+    {
+      "index": 18,
+      "arm": "deepseek_decider",
+      "case_id": "retrieve_original_quote",
+      "retrieval_tool_calls": 2,
+      "first_body_before_first_retrieval": false,
+      "original_quote_present": true,
+      "final_video_cards_ms": [
+        {
+          "videoChunkId": "73742add-52ff-5dcc-ab75-d4893b4fcf29",
+          "startSeconds": 0,
+          "endSeconds": 2300
+        }
+      ]
+    },
+    {
+      "index": 19,
+      "arm": "jev_only",
+      "case_id": "retrieve_original_quote",
+      "retrieval_tool_calls": 1,
+      "first_body_before_first_retrieval": false,
+      "original_quote_present": true,
+      "final_video_cards_ms": [
+        {
+          "videoChunkId": "73742add-52ff-5dcc-ab75-d4893b4fcf29",
+          "startSeconds": 0,
+          "endSeconds": 2300
+        }
+      ]
+    },
+    {
+      "index": 20,
+      "arm": "supervisor_direct",
+      "case_id": "retrieve_original_quote",
+      "retrieval_tool_calls": 2,
+      "first_body_before_first_retrieval": false,
+      "original_quote_present": true,
+      "final_video_cards_ms": [
+        {
+          "videoChunkId": "73742add-52ff-5dcc-ab75-d4893b4fcf29",
+          "startSeconds": 0,
+          "endSeconds": 2300
+        }
+      ]
+    },
+    {
+      "index": 21,
+      "arm": "jev_only",
+      "case_id": "mixed_feedback_and_search",
+      "retrieval_tool_calls": 1,
+      "first_body_before_first_retrieval": true,
+      "original_quote_present": null,
+      "final_video_cards_ms": [
+        {
+          "videoChunkId": "73742add-52ff-5dcc-ab75-d4893b4fcf29",
+          "startSeconds": 0,
+          "endSeconds": 12012
+        }
+      ]
+    },
+    {
+      "index": 22,
+      "arm": "supervisor_direct",
+      "case_id": "mixed_feedback_and_search",
+      "retrieval_tool_calls": 2,
+      "first_body_before_first_retrieval": true,
+      "original_quote_present": null,
+      "final_video_cards_ms": [
+        {
+          "videoChunkId": "73742add-52ff-5dcc-ab75-d4893b4fcf29",
+          "startSeconds": 3100,
+          "endSeconds": 12012
+        }
+      ]
+    },
+    {
+      "index": 23,
+      "arm": "deepseek_decider",
+      "case_id": "mixed_feedback_and_search",
+      "retrieval_tool_calls": 1,
+      "first_body_before_first_retrieval": true,
+      "original_quote_present": null,
+      "final_video_cards_ms": [
+        {
+          "videoChunkId": "73742add-52ff-5dcc-ab75-d4893b4fcf29",
+          "startSeconds": 0,
+          "endSeconds": 12012
+        }
+      ]
+    },
+    {
+      "index": 24,
+      "arm": "jev_only",
+      "case_id": "respond_feedback",
+      "retrieval_tool_calls": 0,
+      "first_body_before_first_retrieval": null,
+      "original_quote_present": null,
+      "final_video_cards_ms": []
+    },
+    {
+      "index": 25,
+      "arm": "supervisor_direct",
+      "case_id": "respond_feedback",
+      "retrieval_tool_calls": 0,
+      "first_body_before_first_retrieval": null,
+      "original_quote_present": null,
+      "final_video_cards_ms": []
+    },
+    {
+      "index": 26,
+      "arm": "deepseek_decider",
+      "case_id": "respond_feedback",
+      "retrieval_tool_calls": 0,
+      "first_body_before_first_retrieval": null,
+      "original_quote_present": null,
+      "final_video_cards_ms": []
+    }
+  ],
+  "codex_observations": [
+    {
+      "indices": [
+        2
+      ],
+      "finding": "C 在仅反馈场景调用 get_series_overview 和 search_video_events，发生额外检索；其余五个反馈 turn 未检索。"
+    },
+    {
+      "indices": [
+        6
+      ],
+      "finding": "C 在要求压缩成一句时，又追加一段索取更早文本的说明；A/B 对应 turn 只返回一句。"
+    },
+    {
+      "indices": [
+        9,
+        10,
+        11,
+        21,
+        22,
+        23
+      ],
+      "finding": "三组混合任务都先有正文回应反馈，再进行检索；部分最终正文重复认领同一反馈。"
+    },
+    {
+      "indices": [
+        9,
+        10,
+        11,
+        14,
+        22
+      ],
+      "finding": "最终卡片只保留同 Chunk 后一次提交的范围，未覆盖正文描述的开头原句；14 也未覆盖燈回应。11 的正文却声称两段合并为全片。"
+    },
+    {
+      "indices": [
+        17
+      ],
+      "finding": "B 原句检索回答保留了原话，但把切远景描述成发生在燈回应之后，和正式 Timeline 的镜头顺序不一致。"
+    },
+    {
+      "indices": [
+        26
+      ],
+      "finding": "A 前置结构化决策 ValidationError 后跳过提示追加，Supervisor 仍正常完成。该样本及用量不剔除。"
+    }
+  ]
+}

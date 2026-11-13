@@ -1,0 +1,32 @@
+[
+  {
+    "arm": "deepseek_decider",
+    "previous_profile": "deepseek_decider",
+    "only_semantic_changes": [
+      "query_hook.rewriter_enabled=false",
+      "models.query_rewriter removed"
+    ],
+    "new_sha256": "09200aafee26a9ec5878d1b4d96b646ec8873f8df04b9b8faff323f8d21898b2",
+    "main_model_controls_unchanged": true
+  },
+  {
+    "arm": "jev_only",
+    "previous_profile": "jev_rewriter",
+    "only_semantic_changes": [
+      "query_hook.rewriter_enabled=false",
+      "models.query_rewriter removed"
+    ],
+    "new_sha256": "b5718a21f468217cf2c4e501044fde0fed8dc05908faf2ff2c82966a386713b6",
+    "main_model_controls_unchanged": true
+  },
+  {
+    "arm": "supervisor_direct",
+    "previous_profile": "supervisor_direct",
+    "only_semantic_changes": [
+      "query_hook.rewriter_enabled=false",
+      "models.query_rewriter removed"
+    ],
+    "new_sha256": "3f9d12a46bd27fb21c54e7b38f6e9bd305b609f2ac735303726479946ea626bb",
+    "main_model_controls_unchanged": true
+  }
+]

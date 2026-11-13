@@ -1,0 +1,26 @@
+[
+  {
+    "index": 26,
+    "arm": "deepseek_decider",
+    "operation": "query_hook_decision",
+    "status": "failed",
+    "usage": {
+      "input_tokens": 602,
+      "output_tokens": 71,
+      "total_tokens": 673,
+      "cached_input_tokens": 384,
+      "reasoning_tokens": 46,
+      "text_input_tokens": null,
+      "image_input_tokens": null,
+      "audio_input_tokens": null,
+      "cached_audio_input_tokens": null,
+      "cache_write_input_tokens": null,
+      "cache_write_5m_input_tokens": null,
+      "cache_write_1h_input_tokens": null
+    },
+    "runtime_log": "query_hook_decide status=fallback action=None error=ValidationError",
+    "turn_status": "COMPLETED",
+    "hook_elapsed_seconds": 1.2124839589996554,
+    "all_costs_included": true
+  }
+]

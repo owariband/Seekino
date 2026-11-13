@@ -1,5 +1,7 @@
 # 1. 问题与现状
 
+2026-11-13 复测更正：本轮目标是 **JEV 单独分类，关闭独立改写器**。前一轮 B 为 JEV＋改写器，不能代表这个目标；此前相对 B 的速度判断仅适用于含改写器的历史实验。新工作分支为 `perf/query-intent-jev-only`，目标 `dev`，关联 [PR #151](https://github.com/owariband/Seekino/pull/151)。复测协议见第 7 节，原始数据和历史记录保留。
+
 需求：核对 Cloud Chat 前置意图判断的实际配置，恢复 JEV，并比较 DeepSeek 前置决策、JEV＋改写器与 Supervisor 直接判断。提出日期：2026-11-13；工作分支：`perf/query-intent-routing-comparison`；目标分支：`dev`；PR：[#145](https://github.com/owariband/Seekino/pull/145)。依赖：动态模型窗口与 85% compact 策略已通过 [#144](https://github.com/owariband/Seekino/pull/144) 集成到 `dev`，本轮作为共同实验基线。
 
 Chat 可能先分类和改写，再让 Supervisor 组织回复及检索。多一次串行请求可能增加等待；省去前置层又可能把反馈、否定、混合任务和指代误解为新的检索，导致额外工具调用和错误回答。需要比较完整交付，不能只根据省去一次模型调用推断收益。
@@ -85,3 +87,47 @@ H1 在本批未获支持：DeepSeek 合并决策平均 1.452 秒，JEV＋改写�
 本次有界比较已完成，Cloud 继续使用 JEV，不自动推广 C。三组均存在部分输出、顺序或卡片问题，C19 全场景仍未关闭。后续优先核对重复检索／相同 cursor 读取、单 Chunk 更新卡片语义，再按同条件扩大样本；这些生产改造没有纳入本轮。整季、大索引、长历史、附件／回放、Query 子 Agent、并发、浏览器播放和完整费用未验证。测试启动的本地服务已按自有 PID 停止，数据保留。
 
 2026-11-13 文档纠正：[#145](https://github.com/owariband/Seekino/pull/145) 初版将 Codex 主 Agent 的逐条评阅误写为“人工审阅”。后续以 `docs/chat-intent-review-attribution` 分支纠正评阅来源，关联 [PR #148](https://github.com/owariband/Seekino/pull/148)；这是同一实验的说明纠正，不变更数据、规则或分数。评分模型为本次会话的 Codex 主 Agent，具体模型 ID 未导出；依据为冻结 expected、真实工具轨迹、已发布 Timeline 与最终卡片，程序审计只校验用量、输入、时间及持久化。没有独立模型评委或人工盲评，语义评分仍有判断性。
+
+# 7. 关闭独立改写器的同条件复测
+
+## 7.1 问题与现状
+
+前一轮把可选改写器作为 B 的默认组成，测量了不符合预期的路径，不能据其结果判断 JEV-only 的代价。当前授权重新测量表格；仅变更隔离实验，不改 Cloud 配置或重启云端服务。
+
+## 7.2 因素、假设与指标
+
+H4：关闭独立改写能减少 B 的串行模型调用，但后续 Supervisor 的生成与工具选择可能抵消收益。指标沿用原表：前置平均、服务层首段正文 FTT 平均／中位、整轮 TT 平均／中位、全阶段 input／output／total token、Supervisor 请求数、完成数，以及逐例内容／卡片。不得直接从旧表减去改写耗时或混合新旧组数据。
+
+护栏：B 的 JEV 调用存在，独立改写调用为 0；A／B／C 都显式关闭 `rewriter_enabled` 并移除未用的 `models.query_rewriter`。A 保留原合并决策职责和 prompt，C 保留原始消息直接判断。主模型、effort、预算、工具、样本、素材与容量策略不变。
+
+## 7.3 方案与装配
+
+复用既有真实 Chat harness，增加明确的 JEV-only 模式，保留历史 JEV＋改写器协议的复跑能力。A=`deepseek_decider`，B=`jev_only`，C=`supervisor_direct`。B 仅分类和追加固定处理说明，不生成候选检索词；metadata 与真实 usage 均验证关闭生效。生成调用由主 Agent 运行，Flash 只修改必要评测装配，主 Agent复核。
+
+## 7.4 冻结与实验计划
+
+沿用已提交的六类样本和三个复测项，三组各 9 turn、共 27 个完整 turn，顺序保持原轮换和反序规则。重新跑全部三组，不只补测 B。沿用独立 `*_test` 库、两个索引、generation=1 和已发布 12.012 秒 MyGO 片段，expected 不进模型。当前 dev 的 17 个旧协议关键源码哈希与上一轮一致；本轮只调整评测模式。
+
+正式前检查 Event／Chunk 回源和一次非正式 JEV-only 集成探针，随后冻结新配置与源码。300 秒观察上限，连续三个基础设施失败停下处理；全部失败保留。旧结果不可覆盖，新结果目录独立。冻结提交为 `0bc42b6734f183b5dad12446d70a24396c0999d8`；27 个正式 turn 均已完成，新表见第 7.6 节。
+
+## 7.5 试点与取舍
+
+复测仍为小素材有界试点，不推广到 Cloud，不改变 prompt 或生产工具语义。检索／混合任务、事实和卡片由本次 Codex 主 Agent 逐条核对；未做独立人工盲评，本轮不发布语义通过率。观察缓存明细，不把总 token 比例当费用比例。B 本批平均 TT 与总 token 最低，C 平均首段正文只早 0.13 秒；直接判断仍有一次反馈误检索和一次未遵守单句约束。三组都存在同 Chunk 更新卡片范围的问题，不能把正常完成等同于内容验收通过。
+
+## 7.6 验收与闭环
+
+已交付全部重新实测的三路径表。三组实际独立改写调用均为 0，B 有 9 次成功的 JEV 分类、无候选检索词追加；九组三方的 Supervisor prompt、工具 schema、角色／正文历史一致。A 保留原 `action + retrieval_query` 合并判断，出现一次 `ValidationError` 后跳过提示追加；该请求耗时与 token 均纳入统计。27 条均自然完成、无超时，129 次 provider usage 完整，27 条 SQL 正文及终态一致，测试库无 PROCESSING。
+
+| 复测结果 | A DeepSeek 前置决策 | B JEV-only | C Supervisor 直接判断 |
+| --- | ---: | ---: | ---: |
+| 前置平均（秒） | 1.405 | 1.674 | 0 |
+| FTT 平均／中位（秒） | 7.069 / 6.233 | 6.729 / 5.967 | 6.596 / 4.806 |
+| TT 平均／中位（秒） | 9.995 / 10.280 | 9.489 / 8.289 | 9.722 / 10.393 |
+| 全阶段 input／output token | 274684 / 10250 | 248674 / 8565 | 297434 / 11356 |
+| 总 token | 284934 | 257239 | 308790 |
+| Supervisor 请求数 | 29 | 27 | 32 |
+| 完成数 | 9/9 | 9/9 | 9/9 |
+
+C 相对 B 的平均 TT 多 2.5%、总 token 多 20.0%；这不是关闭改写器带来的因果收益估计，样本少且有生成和缓存变化。FTT 仍为服务层正文口径，27 条首次均为 `answer.snapshot`。没有 Query 子 Agent 或 compact 调用，不能由此推断对应场景效果。
+
+完整证据见[新报告](../../report/agent/chat/query-intent-jev-only-20261113/README.md)与[新 devlog](../../dev/devlog.md#devlog-chat-intent-jev-only-20261113)，旧报告和原始数据独立保留。测试服务已按自有 PID 停止，数据保留。Cloud 配置和改写器状态未在本轮变更；C19 全场景、整季／长历史／并发／浏览器交付未验收。当前状态只在工作台 `CHAT-INTENT-01` 维护。

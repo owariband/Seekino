@@ -28,6 +28,7 @@
 | 记录 | 原问题编号 |
 |---|---|
 | [2026-11-13：Event 查询在 ES 召回前加载全部 Chunk 正文，检索内存随素材库增长](#devlog-event-query-bounded-content-20261113) | RAG-QUERY-MEM-01；PR #154 |
+| [2026-11-13：可选改写器混入基线，JEV 的净耗时被算错](#devlog-chat-intent-jev-only-20261113) | CHAT-INTENT-01；C19；PR #151 |
 | [2026-11-13：删除原因重复渲染，回答中的历史列表额外占高](#devlog-chat-delete-hint-20261113) | CHAT-DELETE-HINT-01 |
 | [2026-11-13：前置配置覆盖 JEV，省去路由未必缩短 Chat 等待](#devlog-chat-intent-routing-20261113) | CHAT-INTENT-01；C19；PR #145 |
 | [2026-11-13：固定小窗口让 Chat 提前同步摘要，命中后多等数十秒](#devlog-chat-model-context-compaction-20261113) | CHAT-COMPACT-01；PR #144 |
@@ -234,6 +235,8 @@ Event 查询先从 `resolve_retrieval_scope` 进入 `validate_event_coverage`，
 <a id="devlog-chat-intent-routing-20261113"></a>
 
 ## 2026-11-13：前置配置覆盖 JEV，省去路由未必缩短 Chat 等待
+
+> 本条 B 为 JEV＋独立改写器，保留为历史实验。关闭独立改写后的完整新表见[同日 JEV-only 复测](#devlog-chat-intent-jev-only-20261113)，不能用下表评价纯 JEV。
 
 ### 1. 问题与现状
 
@@ -6229,6 +6232,39 @@ Flash worker 改写两份第三方正文，主 Agent 完成公共 Skill、服务
 ### 指标对比
 
 本次指标针对“可用描述被规则拒绝”的作用因素，固定响应能隔离模型随机性及 30000→50000 配置变化。动作输出由 0/9 接收变为 9/9，JSON 由 0/3 变为 3/3，合计 0/12→12/12；原始中文和动作时间保持，新增模型调用为 0。离线无模型费，真实解析耗时、token、费用和整片完成率仍需试点记录。收益是减少重复纠错和整片误终止，代价是描述标签更自由，编辑仍需回原片判断语义质量。基于本轮证据采用代码改造，继续验证正式任务，不把接纳率当成长期运行稳定性。
+
+<a id="devlog-chat-intent-jev-only-20261113"></a>
+## 2026-11-13：可选改写器混入基线，JEV 的净耗时被算错
+
+### 问题与现状
+
+我们要判断 JEV 是否值得保留，需要比较实际希望使用的 JEV 单独分类。上一轮却把可选改写器放进 B，测成“JEV 分类后再由 DeepSeek 改写”，因此前置平均 2.70 秒和平均 TT 10.40 秒只属于该历史路径，不能代表 JEV-only。根据旧表认为直接判断优于纯 JEV，会把不需要的串行调用成本算到 JEV 头上。
+
+### 方案候选
+
+沿用同一三路比较，A 保留 DeepSeek 的 `action + retrieval_query` 合并决策，B 改为 JEV 分类后直接进入 Supervisor，C 由 Supervisor 自己判断。三份隔离配置都关闭独立改写器并移除其 binding；不改共同的 prompt、工具、模型与 85% 容量策略。不能从旧 B 减掉一次改写耗时后填表，因为前置结果会影响后续生成和检索；本次重新跑完整 A／B／C，各 9 turn。
+
+### 方案验证
+
+使用相同六类样本、历史和已发布的 12.012 秒 MyGO 短片，隔离测试库与索引、generation=1、原编码合同保持。三个 runtime 均为 Flash/high/8192，模型窗口 1048576、compact 阈值 891289。源码和配置冻结后正式 27/27 完成，无超时；129 次 provider usage 完整、27 条 SQL 正文及终态一致、无遗留 PROCESSING。B 有 9 次成功 JEV 分类，三组实际独立改写调用均为 0；九组三方 prompt、工具 schema 和角色／正文历史一致。
+
+A 有一次前置结构化决策 ValidationError 后跳过提示追加，Supervisor 仍完成，耗时和 token 不剔除。Codex 主 Agent 逐条核对发现 C 一次把反馈转成检索、一次未守单句要求，B 一次镜头顺序描述错误，三组均仍有同 Chunk 更新卡片而漏掉前一段的问题。本轮不发布语义通过率，没有独立人工盲评。完整输出与证据见[JEV-only 报告](../report/agent/chat/query-intent-jev-only-20261113/README.md)、[TRD 第 7 节](../design/03-product-reassessment/query-intent-routing-comparison-trd.md#7-关闭独立改写器的同条件复测)和[PR #151](https://github.com/owariband/Seekino/pull/151)。仅完成有界复测，未改 Cloud，未关闭 C19 全场景；测试服务已停、数据保留。
+
+### 指标对比
+
+前置层决定初始等待，后续模型与工具又可能抵消省去的时间，因此同时看首段正文、整轮完成、全阶段 token 和 Supervisor 请求数。FTT 是服务层首个非空正文事件，排除思考／状态／工具；本批首次均为 snapshot，不等于 provider 原生 TTFT 或浏览器首字。以下全为本次新数据；reasoning 已包含在 output，不重复相加。
+
+| 指标 | A DeepSeek 前置决策 | B JEV-only，独立改写关闭 | C Supervisor 直接判断 |
+| --- | ---: | ---: | ---: |
+| 前置平均（秒） | 1.40 | 1.67 | 0 |
+| FTT 平均／中位（秒） | 7.07 / 6.23 | 6.73 / 5.97 | 6.60 / 4.81 |
+| TT 平均／中位（秒） | 9.99 / 10.28 | 9.49 / 8.29 | 9.72 / 10.39 |
+| 全阶段 input／output token | 274684 / 10250 | 248674 / 8565 | 297434 / 11356 |
+| 总 token，9 turn | 284934 | 257239 | 308790 |
+| Supervisor 请求数 | 29 | 27 | 32 |
+| 完成数 | 9/9 | 9/9 | 9/9 |
+
+本批 B 的平均 TT 和总 token 最低；C 的平均正文仅早 0.13 秒，却多 20.0% 总 token、平均 TT 多 2.5%。跳过前置层并没有稳定减少后续工作，不能把少一次分类调用直接当收益。每组只有 9 turn，素材小且有生成、网络和缓存变化，不能将该排序外推到整季、长历史、Query 子 Agent、并发或实际费用；也不能把和旧表的差值全部当成关闭改写器的因果收益。
 
 <a id="devlog-chat-delete-hint-20261113"></a>
 ## 2026-11-13：删除原因重复渲染，回答中的历史列表额外占高

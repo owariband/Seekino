@@ -886,6 +886,12 @@ Whisper/音轨对齐由另一项工作处理，因此不再执行课程、回看
 
 优先级：高。类型：多轮对话意图识别、Query 改写与回答目标偏移。状态：**`query_hook` 已接入 Chat；当前优先测试短对话效果，长对话上下文截断与 harness 对接暂缓。** 下方 2026-10-20 的 schema 与“待接入”描述保留为历史方案，当前实现以本次更新为准；分类准确率、回答效果与长对话稳定性仍待验收。
 
+#### 2026-11-13：关闭独立改写器后重新比较 JEV-only
+
+旧三路径实验的 B 含独立改写器，不能代表 JEV-only。本轮三组均关闭独立改写，使用相同源码、六类样本和短片，全量重跑各 9 turn：A／B／C 平均 FTT 为 7.069／6.729／6.596 秒，平均 TT 为 9.995／9.489／9.722 秒，总 token 为 284934／257239／308790。B 实际 9 次成功 JEV 分类、0 次改写；C 比 B 首段正文早约 0.13 秒，但总 token 多 20.0%。A 有一次结构化决策 ValidationError 后跳过提示追加，耗时和用量保留，三组均 9/9 完成。
+
+C 仍有一次把反馈转成检索、一次未遵守单句约束，三组仍有卡片覆盖范围问题。这里只完成了有界复测，未关闭 C19 全场景，未改 Cloud。证据见[JEV-only 报告](../report/agent/chat/query-intent-jev-only-20261113/README.md)、[devlog](devlog.md#devlog-chat-intent-jev-only-20261113)及[PR #151](https://github.com/owariband/Seekino/pull/151)；当前状态由工作台 `CHAT-INTENT-01` 维护。
+
 #### 2026-11-13：Cloud 配置覆盖 JEV 与三路径隔离对照
 
 Cloud 同时存在 JEV 参数和 `models.query_hook=deepseek-flash/high/256`，后者通过 `decision_model` 选择合并决策图，实际跳过 JEV。已备份并只删除该 binding，重启后新建真实 API 测试消息确认 JEV/respond，路由 1.533 秒、整轮 4.690 秒。改写器保留既有 Flash/high/256。
