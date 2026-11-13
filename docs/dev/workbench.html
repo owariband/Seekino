@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-13T17:23:47+08:00",
+ "updatedAt": "2026-11-13T19:12:09+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 55,
+ "revision": 57,
  "categories": [
   {
    "id": "parse",
@@ -5661,6 +5661,47 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "label": "实验报告",
      "kind": "source",
      "url": "https://github.com/owariband/Seekino/blob/perf/chat-model-context-compact/docs/report/gateway/agent_model/chat-context-compaction-20261113/README.md"
+    }
+   ]
+  },
+  {
+   "id": "ASR-GPU-01",
+   "title": "云端 ASR 缺少声音分组，EP04 短句错归人物",
+   "category": "parse",
+   "type": "requirement",
+   "status": "verifying",
+   "priority": "P1",
+   "description": "GPU 已按 CUDA/FP16/thread=8 完整处理 EP04，44.163 秒、6 声源、130/166 cues 带标签。目标短句仍与爱音同组；旧任务未启用内部声纹核验。CPU 兼容与整片 scope 候选在 PR #146，未部署，旧解析未修改。",
+   "next": "优先核对并接回既有声纹准备/评分与 Refine 消费，在完整 EP04 验收短句归属；不再进行短样本试点。",
+   "verification": "485 项定向测试通过；90 秒、整集和密集采样真实 GPU 对照均保留。字段、Schema 与原文/字词保留通过，目标人物归属未通过；CPU 实际转发与重启恢复未验收。",
+   "updatedAt": "2026-11-13",
+   "tags": [
+    "ASR",
+    "GPU",
+    "声源分组",
+    "目标短句未通过"
+   ],
+   "related": [
+    "B20",
+    "B12",
+    "MOD-PARSE"
+   ],
+   "branch": "fix/gpu-asr-speakers",
+   "links": [
+    {
+     "label": "PR #146",
+     "kind": "pr",
+     "url": "https://github.com/owariband/Seekino/pull/146"
+    },
+    {
+     "label": "TRD",
+     "kind": "trd",
+     "url": "https://github.com/owariband/Seekino/blob/fix/gpu-asr-speakers/docs/design/03-product-reassessment/cloud-whisperx-diarization-trd.md"
+    },
+    {
+     "label": "实测报告",
+     "kind": "evidence",
+     "url": "https://github.com/owariband/Seekino/blob/fix/gpu-asr-speakers/docs/report/gateway/local/gpu-asr-speakers-20261113/README.md"
     }
    ]
   }

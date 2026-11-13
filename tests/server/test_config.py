@@ -685,9 +685,13 @@ def test_request_generation_uses_the_es_version_boundary():
     ("openai_audio", "whisper.cpp", "video"),
     ("openai_audio", "other-provider", "chunk"),
 ])
-def test_audio_defaults_freeze_scope_and_explicit_chunk_scope_round_trips(monkeypatch, adapter, provider, expected_scope):
+@pytest.mark.parametrize("scope_override", [None, "chunk", "video"])
+def test_audio_defaults_freeze_scope_and_explicit_chunk_scope_round_trips(monkeypatch, adapter, provider, expected_scope, scope_override):
     from gateway.config import OpenAIAudioSourceConfig, WhisperXSourceConfig
     _clean_seekino_environment(monkeypatch)
+    if scope_override:
+        monkeypatch.setenv("SEEKINO_ASR_SCOPE", scope_override)
+        expected_scope = scope_override
     settings, gateway = ServerSettings.from_environment(), load_config()
     binding = gateway.resolve_model_binding("transcription").model_copy(update={"source": "local_asr"})
     source = (WhisperXSourceConfig(alignment_models={"en": "/align"}) if adapter == "whisperx"
@@ -706,6 +710,13 @@ def test_audio_defaults_freeze_scope_and_explicit_chunk_scope_round_trips(monkey
     old = profile.model_copy(update={"asr": profile.asr.model_copy(update={"scope": "chunk"})})
     assert "scope" not in old.model_dump()["asr"]
     assert "scope" not in old.to_video_parse_v2().models.asr.model_dump()
+
+
+def test_invalid_asr_scope_is_rejected(monkeypatch):
+    _clean_seekino_environment(monkeypatch)
+    monkeypatch.setenv("SEEKINO_ASR_SCOPE", "speaker")
+    with pytest.raises(ValueError, match="SEEKINO_ASR_SCOPE"):
+        ServerSettings.from_environment()
 
 
 def test_vision_controls_reach_frozen_task_without_changing_asr(monkeypatch):

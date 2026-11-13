@@ -1,0 +1,63 @@
+{
+  "full_exclusive_turns": [
+    {
+      "start": 33.22409375,
+      "end": 34.10159375,
+      "speaker": "SPEAKER_04"
+    },
+    {
+      "start": 35.13096875,
+      "end": 37.57784375,
+      "speaker": "SPEAKER_04"
+    },
+    {
+      "start": 38.438468750000006,
+      "end": 42.79221875,
+      "speaker": "SPEAKER_04"
+    },
+    {
+      "start": 43.079093750000006,
+      "end": 44.39534375,
+      "speaker": "SPEAKER_04"
+    },
+    {
+      "start": 44.69909375,
+      "end": 48.63096875,
+      "speaker": "SPEAKER_04"
+    },
+    {
+      "start": 53.001593750000005,
+      "end": 53.47409375,
+      "speaker": "SPEAKER_03"
+    },
+    {
+      "start": 53.828468750000006,
+      "end": 54.73971875,
+      "speaker": "SPEAKER_03"
+    }
+  ],
+  "full_result_excerpt": [
+    {
+      "start": 31.65,
+      "end": 33.251,
+      "text": "クライシ",
+      "speaker": "SPEAKER_01",
+      "speaker_id": "SPEAKER_01"
+    },
+    {
+      "start": 33.251,
+      "end": 48.324,
+      "text": "ック… 解散したの?別に トモリちゃんのせいじゃないと思うけどてか 急に辞めた子の方が悪くない?理由も言わなかったんでしょ?ちょっと勝手じゃない?それでトモリちゃんたち傷つけてサキちゃんも悪くな",
+      "speaker": "SPEAKER_04",
+      "speaker_id": "SPEAKER_04"
+    },
+    {
+      "start": 48.324,
+      "end": 59.553,
+      "text": "い誰も悪くないんだよ久しぶり",
+      "speaker": "SPEAKER_03",
+      "speaker_id": "SPEAKER_03"
+    }
+  ],
+  "interpretation": "Target short line remains grouped with Anon rather than the later Soyo line. IDs alone do not certify a person."
+}

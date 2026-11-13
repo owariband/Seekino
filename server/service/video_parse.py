@@ -15,6 +15,7 @@ import wave
 from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager, nullcontext
 from contextvars import ContextVar
+from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
@@ -369,6 +370,12 @@ class VideoParseRuntimeService:
         self._require_video_active(lease)
         value = (assign_video_speakers(transcript, diarization, scope_id=lease.video_parse_task_id)
                  if diarization is not None else transcript)
+        if diarization is None:
+            speakers = sorted({cue["speaker_id"] for cue in transcript["transcript"] if cue.get("speaker_id")})
+            if speakers:
+                value = deepcopy(transcript)
+                value.update(speaker_scope="video", speaker_scope_id=lease.video_parse_task_id,
+                             speaker_ids=speakers)
         self._video_transcripts[(lease.video_parse_task_id, lease.lease_version)] = value
 
     async def understand(self, lease: ChunkParseLease) -> None:

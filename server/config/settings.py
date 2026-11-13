@@ -95,6 +95,9 @@ class ServerSettings:
         asr_mode = os.getenv("SEEKINO_ASR_MODE", parse_defaults.asr_mode).strip().casefold()
         if asr_mode not in {"lite", "none"}:
             raise ValueError("SEEKINO_ASR_MODE must be 'lite' or 'none'")
+        asr_scope = os.getenv("SEEKINO_ASR_SCOPE", "").strip().casefold() or None
+        if asr_scope not in {None, "chunk", "video"}:
+            raise ValueError("SEEKINO_ASR_SCOPE must be 'chunk' or 'video'")
         parse_execution_mode = resolve_execution_mode()
         origins = tuple(
             item.strip()
@@ -186,6 +189,7 @@ class ServerSettings:
                     "SEEKINO_ASR_CONCURRENCY", parse_defaults.asr_concurrency
                 ),
                 asr_mode=cast(Literal["lite", "none"], asr_mode),
+                asr_scope=cast(Literal["chunk", "video"] | None, asr_scope),
                 request_timeout_seconds=_environment_float(
                     "SEEKINO_PARSE_REQUEST_TIMEOUT_SECONDS",
                     parse_defaults.request_timeout_seconds,

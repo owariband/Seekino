@@ -22,6 +22,44 @@ _logger = logging.getLogger(__name__)
 _PROGRESS_INTERVAL_SECONDS = 30.0
 
 
+def split_speaker_segments(segments: list[dict]) -> list[dict]:
+    """Split aligned WhisperX text at word-level voice changes without losing text.
+
+    WhisperX's segment speaker is a majority vote. It cannot label a short second
+    speaker reliably when ASR merged their utterance into a longer segment.
+    """
+    result = []
+    for segment in segments:
+        words, text = segment.get("words", []), segment["text"]
+        positions, cursor, previous_end = [], 0, -math.inf
+        for word in words:
+            token = word.get("word", "")
+            start, end = word.get("start"), word.get("end")
+            position = text.find(token, cursor) if token else -1
+            if (position < 0 or not isinstance(start, (int, float))
+                    or not isinstance(end, (int, float)) or not math.isfinite(start)
+                    or not math.isfinite(end) or not previous_end <= start < end):
+                break
+            positions.append(position)
+            cursor, previous_end = position + len(token), end
+        if not words or len(positions) != len(words):
+            # Retain the entire observation when a safe text/time split is unavailable.
+            result.append({**segment, "speaker_id": None})
+            continue
+        boundaries = [0] + [i for i in range(1, len(words))
+                            if words[i].get("speaker") != words[i-1].get("speaker")] + [len(words)]
+        for left, right in zip(boundaries, boundaries[1:]):
+            speaker = words[left].get("speaker")
+            result.append({
+                **segment,
+                "start": words[left]["start"] if left else segment["start"],
+                "end": words[right-1]["end"] if right < len(words) else segment["end"],
+                "text": text[positions[left] if left else 0:positions[right] if right < len(words) else len(text)],
+                "words": words[left:right], "speaker": speaker, "speaker_id": speaker,
+            })
+    return result
+
+
 class _WhisperXProgress:
     """Per-call diagnostics; percentages describe upstream segments in one phase."""
 

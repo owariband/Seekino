@@ -33,6 +33,27 @@ RAW = {"segments": [{"start": 0.0, "end": 1.0, "speaker": "SPEAKER_00"}],
 DIARIZATION = normalize_diarization(RAW, duration_ms=20000)
 
 
+def test_provider_native_labels_keep_full_video_catalog_across_chunk_windows():
+    asr = {"transcript": [
+        {"start_seconds": 0, "end_seconds": 1000, "text": "first", "speaker_id": "SPEAKER_00"},
+        {"start_seconds": 1000, "end_seconds": 2000, "text": "second", "speaker_id": "SPEAKER_01"},
+    ]}
+    runtime = object.__new__(VideoParseRuntimeService)
+    runtime._persistence = SimpleNamespace(load_or_begin_video_asr=lambda *args: deepcopy(asr))
+    runtime._video_asr_identity = lambda *_: {}
+    runtime._video_transcripts = {}
+    runtime._require_video_active = lambda _: None
+    lease = SimpleNamespace(video_parse_task_id="native-voices", lease_version=1)
+    asyncio.run(runtime._prepare_video_asr(lease, None, None))
+    result = runtime._video_transcripts[("native-voices", 1)]
+    selected = select_asr_window(result, start_ms=1000, end_ms=2000)
+    assert selected["speaker_scope"] == "video"
+    assert selected["speaker_scope_id"] == "native-voices"
+    assert selected["speaker_ids"] == ["SPEAKER_00", "SPEAKER_01"]
+    assert selected["transcript"][0]["speaker_id"] == "SPEAKER_01"
+    assert "speaker_scope" not in asr
+
+
 def enable_diarization(factory, task_id, identity):
     with factory.begin() as session:
         task = session.get(VideoParseTask, task_id)

@@ -2947,3 +2947,10 @@ micrograd v5 共 146 块，整集 90 分 04.884 秒。调度反复锁取候选�
 验收需固定模型、思考、输出、prompt/tools 与真实历史，分别记录摘要与正常调用耗时、完整输入前后 token、provider 用量和交付质量；不能用更少的摘要次数直接代替时延收益，不能把局部模型边界当作整个 Chat。当前证据与未覆盖范围见[TRD](../design/03-product-reassessment/chat-model-context-compaction-trd.md)、[本地对照报告](../report/gateway/agent_model/chat-context-compaction-20261113/README.md)、[devlog](devlog.md#devlog-chat-model-context-compaction-20261113)和 [PR #144](https://github.com/owariband/Seekino/pull/144)。执行状态以[工作台](workbench.html) `CHAT-COMPACT-01` 为准。
 
 2026-11-13 本地同输入的 9 次真实生成验证了三处模型边界：总耗时 84.481→14.940 秒、摘要 75.414→0 秒。完整 Chat、视频卡与近满窗质量尚未验收，不据此关闭整体问题。详细 token、缓存和质量差异保留在同一报告。
+
+
+### ASR-GPU-01：云端 ASR 缺少声音分组使短句错归人物
+
+2026-11-13，公开 MyGO EP04 首段「祥ちゃんも悪くない」错归高松燈，人工正确归属为长崎爽世。CPU 保存的 59 条 ASR 全无标签，GPU 实际只执行转写/对齐，CPU 还忽略原生 speaker 字段。补齐 GPU 后完整 EP04 已按 CUDA/FP16/thread=8 处理，能够返回匿名组，但目标短句仍与爱音同组；密集采样也未修复。这一残余错误发生在声源分组与字词对齐，不能再归咎于标签未透传。旧任务未配置 voiceprint / voiceprint_mode，内部声纹准备未启用；当前 Refine 不绑定 compare_speaker，需要消费宿主预备好的核验证据。
+
+验收条件：完整 EP04 的目标短句能与爱音隔离，并与后续爽世发言对应；文字和时间证据保留；CPU 明确整片声源作用域并通过新任务、姓名映射与回看。声源非空和合法 JSON 不能代替此验收。旧正式成果未改写，CPU 候选未部署。当前执行状态见工作台 ASR-GPU-01；[TRD](../design/03-product-reassessment/cloud-whisperx-diarization-trd.md)、[报告](../report/gateway/local/gpu-asr-speakers-20261113/README.md)、[PR #146](https://github.com/owariband/Seekino/pull/146)。

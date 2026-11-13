@@ -6,9 +6,34 @@ import pytest
 import yaml
 
 from gateway.config import ModelBinding, WhisperXSourceConfig, load_config
-from gateway.local.whisperx import WhisperXRuntime, WhisperXTranscriptionModel
+from gateway.local.whisperx import WhisperXRuntime, WhisperXTranscriptionModel, split_speaker_segments
 from gateway.model_factory import GatewayClient
 from gateway.transcription import build_transcription_model
+
+
+def test_split_voice_changes_preserves_japanese_text_words_and_unknown_voice():
+    words = [{"word": text, "start": i, "end": i+0.5, "speaker": voice}
+             for i, (text, voice) in enumerate([
+                 ("愛音", "SPEAKER_00"), ("。", "SPEAKER_00"),
+                 ("小祥", "SPEAKER_01"), ("も", "SPEAKER_01"),
+                 ("悪くない", "SPEAKER_01"), ("？", None),
+             ])]
+    original = {"text": " 愛音。 小祥も悪くない？ ", "start": 0, "end": 6,
+                "words": words, "speaker": "SPEAKER_00"}
+    result = split_speaker_segments([original])
+    assert [part["speaker_id"] for part in result] == ["SPEAKER_00", "SPEAKER_01", None]
+    assert "".join(part["text"] for part in result) == original["text"]
+    assert [word for part in result for word in part["words"]] == words
+    assert [(part["start"], part["end"]) for part in result] == [(0, 1.5), (2, 4.5), (5, 6)]
+    assert "speaker_id" not in original
+
+
+@pytest.mark.parametrize("words", [[], [{"word": "hello", "speaker": "SPEAKER_00"}],
+                                   [{"word": "other", "start": 0, "end": 1, "speaker": "SPEAKER_00"}]])
+def test_incomplete_alignment_retains_text_without_majority_speaker(words):
+    segment = {"text": "hello", "start": 0, "end": 1, "words": words, "speaker": "SPEAKER_00"}
+    result = split_speaker_segments([segment])
+    assert result == [{**segment, "speaker_id": None}]
 
 
 @pytest.fixture

@@ -10,6 +10,18 @@ from engine.common.transcription import (
 from gateway.multimodal import TextInput, VideoInput
 
 
+@pytest.mark.parametrize(("labels", "expected"), [
+    ({"speaker": "SPEAKER_00"}, "SPEAKER_00"),
+    ({"speaker": "SPEAKER_00", "speaker_id": "SPEAKER_01"}, "SPEAKER_01"),
+    ({"speaker": "SPEAKER_00", "speaker_id": None}, None),
+])
+def test_native_whisperx_speaker_preserves_explicit_unknown(labels, expected):
+    result = normalize_transcription({"segments": [{
+        "start": 0, "end": 1, "text": "台词", **labels,
+    }]}, duration_seconds=1000)
+    assert result.transcript[0].speaker_id == expected
+
+
 def test_asr_segments_are_sorted_clamped_and_converted_to_integer_milliseconds():
     result = normalize_transcription(
         {

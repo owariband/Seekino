@@ -567,7 +567,7 @@ class ParseConfig(ContractModel):
                 stream=asr_binding.stream,
                 temperature=asr_binding.temperature,
                 mode=runtime.asr_mode,
-                scope="video" if whole_video_asr else "chunk",
+                scope=runtime.asr_scope or ("video" if whole_video_asr else "chunk"),
                 model=asr_binding.model if "transcription" in gateway.model_roles else runtime.transcript_model or asr_binding.model,
                 fps=runtime.transcript_fps or float(os.getenv("SEEKINO_TRANSCRIPT_FPS") or parser.transcript_fps),
                 concurrency=runtime.asr_concurrency,

@@ -1,0 +1,78 @@
+{
+  "sample_text_equal": true,
+  "sample_flat_words_equal": true,
+  "cpu_normalized_cues": 166,
+  "cpu_labeled_cues": 130,
+  "cpu_schema_valid": true,
+  "target_quality_pass": false,
+  "full_request": {
+    "wall_seconds": 30.11,
+    "timings": {
+      "asr_seconds": 17.489653260447085,
+      "diarization_seconds": 12.246867682784796
+    },
+    "segments": 166,
+    "labeled_segments": 130,
+    "speakers": [
+      "SPEAKER_00",
+      "SPEAKER_01",
+      "SPEAKER_02",
+      "SPEAKER_03",
+      "SPEAKER_04",
+      "SPEAKER_05"
+    ]
+  },
+  "cpu_deployed": false,
+  "gpu_deployed": true,
+  "dense_step_adopted": false,
+  "tests": {
+    "adapter_engine_config": 447,
+    "video_asr_persistence_scope": 38
+  },
+  "deployment": {
+    "pid": 574,
+    "backup": "/root/seekino-gpu/e01-runtime/speaker-deploy-backup-20261113",
+    "model_revision": "3533c8cf8e369892e6b79ff1bf80f7b0286a54ee",
+    "wrapper_sha256": "6a486e2f37ff562abfb100086e61953e727e5ea8a8423042b2d8cf7d3e0af6b2",
+    "runtime_sha256": "e4252c1eed214324b7a5651139af27e03fd7c22f820400147185c90c68edcc9d",
+    "cpu_threads": 8,
+    "device": "cuda",
+    "compute_type": "float16"
+  },
+  "latest_full_request": {
+    "scope": "complete EP04",
+    "audio_seconds": 1420.178375,
+    "audio_sha256": "f7ed6206b7b886bfae9b2089c5244b929e97c39ce4c1ef4057722ad6c3ad80f1",
+    "device": "cuda",
+    "compute_type": "float16",
+    "asr_cpu_threads": 8,
+    "diarization_cpu_threads": 8,
+    "wall_seconds": 44.163,
+    "timings": {
+      "asr_seconds": 30.194614234380424,
+      "diarization_seconds": 13.497806809842587
+    },
+    "segments": 166,
+    "labeled_segments": 130,
+    "speakers": [
+      "SPEAKER_00",
+      "SPEAKER_01",
+      "SPEAKER_02",
+      "SPEAKER_03",
+      "SPEAKER_04",
+      "SPEAKER_05"
+    ],
+    "sampled_gpu_memory_peak_mib": 9476,
+    "sampled_gpu_utilization_peak": 100,
+    "cpu_schema_valid": true,
+    "cpu_normalized_cues": 166,
+    "target_quality_pass": false
+  },
+  "voiceprint_followup": {
+    "task_snapshot_has_voiceprint": false,
+    "task_snapshot_has_voiceprint_mode": false,
+    "effective_mode": "off",
+    "current_refine_compare_tool_binding": false,
+    "scope": "Previously read CPU task configuration and current code; latest CPU SSH recheck unavailable."
+  }
+}

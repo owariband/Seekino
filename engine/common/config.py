@@ -14,6 +14,7 @@ class VideoParseRuntimeConfig:
     max_height: int = 720
     asr_concurrency: int = 4
     asr_mode: Literal["lite", "none"] = "lite"
+    asr_scope: Literal["chunk", "video"] | None = None
     request_timeout_seconds: float = 600
     max_context_events: int = 8
     max_context_chars: int = 2000
@@ -38,6 +39,8 @@ class VideoParseRuntimeConfig:
     index_execution_timeout_seconds: float = 1800
 
     def __post_init__(self) -> None:
+        if self.asr_scope not in {None, "chunk", "video"}:
+            raise ValueError("asr_scope must be chunk or video")
         for name in ("video_concurrency", "parse_concurrency", "refine_concurrency", "index_concurrency"):
             value = getattr(self, name)
             if type(value) is not int or value <= 0:

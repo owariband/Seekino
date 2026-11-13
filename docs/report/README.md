@@ -47,6 +47,8 @@
 
 ## Gateway
 
+[2026-11-13 GPU WhisperX 声源分组与 EP04 验证](gateway/local/gpu-asr-speakers-20261113/README.md)：补接 GPU 分组并验证 CPU 标签合同；短样本、整集和密集采样均保留，目标短句仍未隔离，CPU 正式部署另验。
+
 [2026-11-03 Flash逐块费用、耗时与质量审计](gateway/deepseek-flash-chunk-audit-20261103.md)，附[117块及115个Refine区间明细](gateway/deepseek-flash-chunk-audit-20261103.html)。只读真实任务；区分none／low、共享Refine费用、原话丢失和时间错配，不把结构通过写成质量通过。
 
 [2026-11-03 DeepSeek Flash 整课费用与恢复](gateway/deepseek-flash-parse-20261103.md)：按同一任务记录协议接线、网络恢复、纯排序与完整 ASR 对白权限修复；保留真实提交／索引身份证据、分段用时及未知用量，不以运行快照替代整课验收。

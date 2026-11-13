@@ -401,6 +401,8 @@ Server 按原有正式解析链路准备 16 kHz、单声道 PCM16 WAV；Gateway 
 
 ### 整片 ASR 的配置与兼容
 
+2026-11-13 增加 `SEEKINO_ASR_SCOPE=video|chunk` 显式默认策略，Docker Compose 同步透传；不设置时保留既有自动选择。远程 WhisperX 若在单次完整请求中完成声源分组，应选择 `video`，避免把各 Chunk 独立生成的编号混用。该设置只影响新任务，整片来源直接返回的标签会附带当前任务 scope 和完整声音目录；原生 `speaker` 也可进入既有 `speaker_id` 合同，显式未知不被覆盖。[GPU 接线与质量验证](report/gateway/local/gpu-asr-speakers-20261113/README.md)仍未通过 EP04 目标短句验收，CPU 正式部署和重解析另验。
+
 新建 WhisperX 解析任务默认冻结 `models.asr.scope: video`：先转写完整原片音轨，再由原 Chunk ASR 节点读取与窗口相交的完整 cues。时间已经是原片绝对毫秒，不重复加 Chunk 偏移；Understanding 的输出仍受本段可写范围约束。上传解析配置可显式选择 `asr.scope: chunk` 回退逐块转写。未指定 scope 的历史任务仍按 chunk 执行，普通重试不会改变冻结配置。
 
 仅为观看问答新建的按需任务仍冻结 `scope: chunk`；它不启动整片协调器。完整解析恢复时，在当前租约的 ASR 与媒体都准备好之前不会领取新的 Chunk，避免排队等待提前耗尽 Chunk 的执行时限；准备错误和准备租约过期受既有 Prepare 重试预算约束。

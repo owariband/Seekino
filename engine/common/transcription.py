@@ -181,7 +181,7 @@ def normalize_transcription(
                 cues.append(
                     TranscriptCue(
                         start_seconds=start_seconds, end_seconds=end_seconds, text=text,
-                        speaker_id=segment.get("speaker_id"),
+                        speaker_id=segment.get("speaker_id", segment.get("speaker")),
                         words=_normalize_words(segment.get("words"), start_seconds, end_seconds),
                     )
                 )
