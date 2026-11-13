@@ -47,6 +47,10 @@ ARM_FILES = {arm: f"{arm}.yaml" for arm in ARMS}
 TURN_TIMEOUT_SECONDS = 300.0
 CHILD_WATCHDOG_SECONDS = 360.0
 EVAL_PREFIX = "query-intent"
+DATA_ENV_FIELDS = (
+    "SEEKINO_ENVIRONMENT", "SEEKINO_ELASTICSEARCH_INDEX",
+    "SEEKINO_ELASTICSEARCH_EVENT_INDEX", "SEEKINO_ELASTICSEARCH_INDEX_GENERATION",
+)
 ARTIFACTS = (
     "result.json", "final.json", "input.json", "model_inputs.jsonl",
     "tools.jsonl", "usage.jsonl", "hook.jsonl", "events.jsonl",
@@ -598,6 +602,8 @@ def _assert_protocol(protocol: dict, args, step: dict, config_path: Path, case: 
         raise RuntimeError("arm config changed after protocol freeze")
     if protocol["case_sha256"].get(case["id"]) != _case_hash(case):
         raise RuntimeError("case changed after protocol freeze")
+    if protocol["data_environment"] != {name: os.environ.get(name) for name in DATA_ENV_FIELDS}:
+        raise RuntimeError("data environment changed after protocol freeze")
 
 
 def _observed_from_terminal(terminal) -> tuple[dict, dict | None]:
@@ -941,6 +947,7 @@ def _freeze_protocol(args, document: dict, schedule: list[dict], configs: dict) 
         "turn_timeout_seconds": TURN_TIMEOUT_SECONDS,
         "child_watchdog_seconds": CHILD_WATCHDOG_SECONDS,
         "concurrency": 1,
+        "data_environment": {name: os.environ.get(name) for name in DATA_ENV_FIELDS},
     }
 
 
