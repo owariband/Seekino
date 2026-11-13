@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-13T23:01:02+08:00",
+ "updatedAt": "2026-11-14T00:45:20+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 63,
+ "revision": 64,
  "categories": [
   {
    "id": "parse",
@@ -5680,9 +5680,9 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "status": "verifying",
    "priority": "P1",
    "description": "Cloud三条慢请求的摘要占58%–63%。模型能力1M与实际64k/48k策略不匹配；以真实历史的固定模型边界验证85%动态触发。",
-   "next": "用完整Chat／视频卡回源验收与近满窗试点补证；当前三对模型边界已确认摘要等待与85%策略净改善，Cloud尚未部署。",
-   "verification": "320项回归通过，3项既有失败在干净dev复现。9次真实生成全部完成，Flash/high/8192及三对入口哈希一致；模型边界25.283/33.496/25.702秒降至2.752/6.891/5.297秒，摘要75.414秒降至0。正常模型耗时及未缓存输入增加；完整业务与近满窗质量未验收。",
-   "updatedAt": "2026-11-13",
+   "next": "Cloud已部署并加载85%动态策略；仍需完整Chat／视频卡回源、近满窗、并发与长期延迟验收，不能宣称完整问题已解决。",
+   "verification": "320项回归通过，3项既有失败在干净dev复现。9次真实生成全部完成，Flash/high/8192及三对入口哈希一致；模型边界25.283/33.496/25.702秒降至2.752/6.891/5.297秒，摘要75.414秒降至0。正常模型耗时及未缓存输入增加；完整业务与近满窗质量未验收。2026-11-14 Cloud实际上线后日志为1048576/891289/24000，keep 24000为最近消息尾部目标；并发与长期延迟仍未验收。",
+   "updatedAt": "2026-11-14",
    "tags": ["Chat", "性能", "上下文", "边界实测", "待完整业务验收"],
    "related": [
     "MOD-CHAT",
@@ -5704,6 +5704,11 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "label": "实验报告",
      "kind": "source",
      "url": "https://github.com/owariband/Seekino/blob/perf/chat-model-context-compact/docs/report/gateway/agent_model/chat-context-compaction-20261113/README.md"
+    },
+    {
+     "label": "生产上线报告",
+     "kind": "source",
+     "url": "https://github.com/owariband/Seekino/blob/dev/docs/report/agent/chat/query-intent-jev-only-20261113/production-rollout-20261114.md"
     }
    ]
   },
@@ -5758,12 +5763,12 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "title": "默认关闭独立改写器，发布JEV-only并验收Cloud与CPU接线",
    "category": "chat",
    "type": "requirement",
-   "status": "progressing",
+   "status": "done",
    "priority": "P1",
-   "description": "统一类默认值和三份示例为JEV-only，补齐6种query与27turn质量/耗时/用量；运行文件发布main，内部证据留dev，双端实际生效分别验收。",
-   "next": "完成dev/main发布；恢复CPU/Cloud访问后先备份配置，再核对Flash/high/8192、动态85%、JEV路由与零独立改写请求。",
-   "verification": "默认/显式关闭与显式opt-in回归已通过；285项QueryHook/Gateway/Bootstrap/Parse路由测试通过，1条既有Starlette弃用警告。完整交付A/B/C为7/9、7/9、4/9（C宽松5/9）。线上尚未改动；现有SSH固定节点不可用，其他入口仍在交叉核对。",
-   "updatedAt": "2026-11-13",
+   "description": "统一类默认值和三份示例为JEV-only，补齐6种query与27turn质量/耗时/用量；运行文件发布main，内部证据留dev，Cloud/CPU实例实际生效验收。",
+   "next": "默认／发布／配置范围已完成；C19全场景、完整生产检索质量与并发／长期延迟仍在对应任务继续。",
+   "verification": "dev #155以9a18c6fb合入，main #157以8a86883f合入；main发布树808路径/8资产与release-files通过，回归543通过/3项既有基线失败，dev定向285、容量262，范围重叠不相加。Cloud API实际运行在CPU主机seekino-server的seekino-local-api-1一处；兼容镜像在上一运行时覆盖5文件，gateway/config.py保留内部embedding URL校验与document_base_urls。active/seed均hook=true、rewriter=false，无query_hook/query_rewriter；Supervisor Flash/high/8192、85%，日志1048576/891289/24000。公网healthz 200，真实JEV与Supervisor各1次、独立改写0；检索hook探针只到retrieve，未跑完整生产检索。后续Event内存热修镜像已接续，5个Chat文件与3份配置哈希保持，最新API健康，85%容量日志保持。",
+   "updatedAt": "2026-11-14",
    "tags": [
     "Chat",
     "JEV-only",
@@ -5792,6 +5797,16 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "label": "全量query与质量",
      "kind": "source",
      "url": "https://github.com/owariband/Seekino/blob/dev/docs/report/agent/chat/query-intent-jev-only-20261113/query-quality-review.md"
+    },
+    {
+     "label": "发布PR #157",
+     "kind": "pr",
+     "url": "https://github.com/owariband/Seekino/pull/157"
+    },
+    {
+     "label": "生产上线报告",
+     "kind": "source",
+     "url": "https://github.com/owariband/Seekino/blob/dev/docs/report/agent/chat/query-intent-jev-only-20261113/production-rollout-20261114.md"
     }
    ]
   },

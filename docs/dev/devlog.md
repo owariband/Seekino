@@ -328,6 +328,8 @@ reasoning 属于 output，不能重复相加。B 的正常请求保留了更多�
 
 本轮真实数据支持把提前同步摘要列为这些边界的主要等待原因，并支持保留动态模型窗口策略。六次正常续推均返回工具调用，参数 Schema 校验通过；T03 压缩组出现无法解析的 cursor，动态组 cursor 可解析且匹配冻结回执，T02 两组片段结束点却有 5 秒差异，不能宣布完整质量相同。样本各一对且先 A 后 B，缓存与决策存在差异，不报告 p95/p99 或 85% 最优结论。当前为实现、离线回归和选定真实模型边界验证完成；完整交付与近满窗质量待验收，未合入 dev、未部署 Cloud。
 
+2026-11-14 上线跟进：`auto_compact_ratio: 0.85` 已随 main `8a86883f` 对应的 Cloud API 实际加载，日志为 context 1048576、trigger 891289、keep 24000；全局 `agent-runtime.yaml` 字节哈希未变。keep 是最近消息尾部目标，不是整段压缩后请求的大小。这里只确认配置和容量解析已接入生产，完整业务交付、近满窗质量、并发与长期延迟仍未验收，`CHAT-COMPACT-01` 保持 verifying。证据见[生产上线报告](../report/agent/chat/query-intent-jev-only-20261113/production-rollout-20261114.md)。
+
 <a id="devlog-mobile-drawer-motion-20261112"></a>
 ## 2026-11-12：dialog瞬时关闭并卸载内容，手机导航缺少开合过渡
 
@@ -6274,6 +6276,8 @@ A 有一次前置结构化决策 ValidationError，跳过提示追加后由 Supe
 
 这些卡片与内容问题不能全归因于路由；C19全场景仍未关闭。质量、用量与执行证据见[JEV-only报告](../report/agent/chat/query-intent-jev-only-20261113/README.md)和[原TRD第7节](../design/03-product-reassessment/query-intent-routing-comparison-trd.md#7-关闭独立改写器的同条件复测)。本次据此采用JEV-only默认值，关闭改写；dev/main发布及Cloud/CPU的实际生效证据单独记在[上线TRD](../design/03-product-reassessment/jev-only-hook-rollout-trd.md)与[PR #155](https://github.com/owariband/Seekino/pull/155)，不能把实验已完成写成两台服务都已切换。
 
+2026-11-14 发布补充：dev PR #155 已以 `9a18c6fb` 合入，main PR #157 以 `8a86883f` 合入，27 turn 基准仍是 11 月 13 日的数据，没有重跑。Cloud API 实际运行在 CPU 主机 `seekino-server` 的 `seekino-local-api-1`，是一个实例，不是两台独立部署；镜像为 `seekino-api:jev-only-8a86883f-compat`，在上一 `main-a0fb93d9` 运行时上只覆盖 5 个文件，`gateway/config.py` 保留该部署已有的内部 embedding URL 校验和 `document_base_urls`，不能称为与 main 逐字相同。active 与 seed 均为 hook=true、rewriter=false，没有合并决策或改写绑定；Supervisor 为 Flash/high/8192、85% 动态 compact，日志实际为 1048576／891289／24000。API stop/recreate 到 ready 的 17.891 秒是部署操作耗时，不是精确用户停机。公网健康 200，新建游客身份，经认证的会话创建与 SSE 请求到 `answer.completed`；真实 JEV 与 Supervisor 各 1 次、独立改写 0 次。检索 hook 探针只到 `retrieve`，没有执行后续完整生产检索，单次探针也不与 27 turn 平均耗时比较。原始收据与兼容边界见[生产上线报告](../report/agent/chat/query-intent-jev-only-20261113/production-rollout-20261114.md)。
+
 ### 指标对比
 
 前置层决定初始等待，后续模型与工具又可能抵消省去的时间，因此同时看首段正文、整轮完成、全阶段 token 和 Supervisor 请求数。FTT 是服务层首个非空正文事件，排除思考／状态／工具；本批首次均为 snapshot，不等于 provider 原生 TTFT 或浏览器首字。以下全为本次新数据；reasoning 已包含在 output，不重复相加。
@@ -6308,6 +6312,22 @@ A 有一次前置结构化决策 ValidationError，跳过提示追加后由 Supe
 原始[metrics.json](../report/agent/chat/query-intent-jev-only-20261113/metrics.json)保留各模型、角色、operation和stage的input/output/total、cache与reasoning明细；没有提供的字段仍为未知，不补0。三组总计850963 token，reasoning是output的子集，不能再加一次，也不能把总token比例当实际费用比例。
 
 本批 B 的平均 TT 和总 token 最低；C 的平均正文仅早 0.13 秒，却多 20.0% 总 token、平均 TT 多 2.5%。跳过前置层并没有稳定减少后续工作，不能把少一次分类调用直接当收益。每组只有 9 turn，素材小且有生成、网络和缓存变化，不能将该排序外推到整季、长历史、Query 子 Agent、并发或实际费用；也不能把和旧表的差值全部当成关闭改写器的因果收益。
+
+2026-11-14 的线上探针另行记录。两次 HTTP 请求都使用“请不要检索视频，只用一句话确认：配置检查完成。”，JEV 均选择 `respond`，都完成；第一次正文为“配置检查完成，未检索任何视频。”，第二次为“配置检查完成。”。第一次在回答完成后才发生采集 SQL 错误，随后修正采集器重跑，第一次客户端计时未保留，用量已从这条自建消息回源补齐。检索 hook 原文为“请帮我找一下视频里讲反向传播的片段。”，只验证到真实 JEV 返回 `retrieve`，没有继续跑完整片库检索。
+
+| 线上接线探针 | 首次 HTTP | 修正采集后的 HTTP | 检索 hook |
+| --- | ---: | ---: | ---: |
+| 公网客户端 FTT／TT（秒） | 未保留 | 3.617 / 4.750 | 不适用 |
+| 服务端整轮／hook 总耗时（秒） | 4.310 | 3.273 | 2.170 |
+| JEV 路由日志耗时（秒） | 2.0692 | 2.1659 | 2.1560 |
+| JEV／Supervisor 请求数 | 1 / 1 | 1 / 1 | 1 / 0 |
+| 独立改写／合并决策调用数 | 0 / 0 | 0 / 0 | 0 / 0 |
+| input／output／total token | 16775 / 48 / 16823 | 16775 / 43 / 16818 | 631 / 38 / 669 |
+| 终态／路由 | COMPLETED / respond | COMPLETED / respond | hook 返回 / retrieve |
+
+这三条探针共 5 次 provider 调用，input 34181、output 129、total 34310 token，不并入原 27 turn 的表格。公网 HTTP FTT 从请求开始到首个非空可见正文，包含网络传输，排除思考、状态和工具；它与原实验的服务层 FTT 口径不同。配置备份、仅 API 重建及健康恢复已核实，其他五个容器未变，没有迁移或重建索引。由此采用 JEV-only 默认配置；完整生产检索、近满窗质量、并发和长期延迟仍需验证，不能把本次接线成功写成整体 Chat 延迟与正确性问题已经解决。
+
+00:37:52（UTC+8）另一项 Event 内存修复接续更新 API 为 `seekino-api:hotfix-event-memory-8f0f14d3`。最终复核的 5 个 Chat/Gateway 文件和 active／seed／runtime 配置哈希都与本次上线一致，最新 API 健康，容量日志仍为 1048576／891289／24000。原兼容镜像上的两次 HTTP 探针与后续镜像的配置复核分别保存；本次没有覆盖后续部署，也没有新增模型调用来评测其内存效果。
 
 <a id="devlog-chat-delete-hint-20261113"></a>
 ## 2026-11-13：删除原因重复渲染，回答中的历史列表额外占高
