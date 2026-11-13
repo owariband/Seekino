@@ -25,7 +25,9 @@
 
 ## Agent / chat
 
-[2026-11-13 关闭独立改写器后的 Chat 三路径复测](agent/chat/query-intent-jev-only-20261113/README.md)：三组全部重跑，B 为 JEV 单独分类，实际 9 次成功分类、零独立改写；完整 FTT／TT／token、输出及卡片证据。本次没有改 Cloud。
+[2026-11-14 JEV-only 默认配置生产上线](agent/chat/query-intent-jev-only-20261113/production-rollout-20261114.md)：dev #155 / main #157 合并、兼容镜像、Cloud API 配置与真实 HTTP／检索 hook 探针；区分部署操作耗时与用户停机，保留未验证范围。
+
+[2026-11-13 关闭独立改写器后的 Chat 三路径复测](agent/chat/query-intent-jev-only-20261113/README.md)：三组全部重跑，B 为 JEV 单独分类，实际 9 次成功分类、零独立改写；完整 FTT／TT／token、输出及卡片证据。原实验没有改 Cloud；后续上线见上一项。
 
 [2026-11-13 Chat 三路径意图判断完整对照](agent/chat/query-intent-routing-20261113/README.md)：Cloud 恢复 JEV 的配置证据，及 DeepSeek 前置决策、JEV＋改写器、Supervisor 直接判断的相同模型实验；首字、完成耗时、用量与内容分别核对。
 

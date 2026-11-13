@@ -6,6 +6,8 @@
 
 同日补充：六条query、完整历史、27条逐字回答和评分依据已整理为[按query排列的评阅](query-quality-review.md)与[结构化评分](reviews.json)。默认值、dev/main发布及Cloud/CPU切换另由[上线TRD](../../../../design/03-product-reassessment/jev-only-hook-rollout-trd.md)和[PR #155](https://github.com/owariband/Seekino/pull/155)记录；下文“不改Cloud”限定原实验时点。
 
+> 2026-11-14 发布跟进：JEV-only 默认值与 Cloud/CPU 实例已完成上线核查，dev #155 以 `9a18c6fb`、main #157 以 `8a86883f` 合入。生产配置、兼容镜像、真实 HTTP 对话和检索 hook 探针见[上线报告](production-rollout-20261114.md)。原实验的 27 turn、指标和质量评阅没有重跑，本文表格仍按 2026-11-13 的口径阅读。
+
 ## 重新实测的结果
 
 | 指标 | A：DeepSeek 前置决策 | B：JEV 单独分类，改写器关闭 | C：Supervisor 直接判断 |
