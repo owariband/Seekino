@@ -526,7 +526,8 @@ def test_process_assembly_receives_runtime_configuration(
         assert runtime._query_model.reasoning_effort == "low"
         # Only Query needs a separate structured agent binding.
         assert [options["mcp"] for options in structured_builds] == [False]
-        assert {options["mcp"] for options in loop_builds} == (set() if supervisor_backend == "codex" else {False})
+        # JEV-only does not build a standalone rewriting loop model.
+        assert loop_builds == []
         supervisor_model = services.agent._runtime._model
         assert callable(supervisor_model.run_agent)
         assert callable(supervisor_model.confirm_turn)
@@ -595,7 +596,7 @@ def test_process_assembly_receives_runtime_configuration(
             assert replacement._max_read_chars_per_call == 4_096
             assert replacement._query_model.reasoning_effort == "max"
             assert [options["mcp"] for options in structured_builds] == [False] * 2
-            assert {options["mcp"] for options in loop_builds} == (set() if supervisor_backend == "codex" else {False})
+            assert loop_builds == []
             assert callable(replacement_supervisor._model.run_agent)
             if supervisor_backend != "codex":
                 assert replacement_supervisor._model.session_store is supervisor_model.session_store

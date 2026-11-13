@@ -1,0 +1,27 @@
+{
+  "checked_at": "2026-11-13T15:05:35.081275+00:00",
+  "default_hook_regression": {
+    "command": "python -m pytest tests/gateway/test_config.py tests/gateway/test_query_hook.py tests/agent/chat/test_query_hook.py tests/server/test_bootstrap.py tests/server/test_video_content_route.py -m \"not live_agent\" -q --tb=short",
+    "passed": 285,
+    "failed": 0,
+    "warnings": 1,
+    "warning": "Existing Starlette TestClient anyio.abc.BlockingPortal deprecation",
+    "initial_bootstrap_failures": 24,
+    "initial_failure_reason": "Old tests expected a standalone rewrite model to be built by the default profile. Assertions now check no standalone loop model is built."
+  },
+  "capacity_related_regression": {
+    "command": "python -m pytest tests/gateway/test_context_window.py tests/gateway/test_agent_factory.py tests/gateway/test_model_config_v2.py tests/gateway/test_model_discovery.py -m \"not live_agent\" -q --tb=short",
+    "passed": 262,
+    "failed": 3,
+    "known_baseline_failures": [
+      "test_default_model_migration_preserves_asr_embedding_agent_and_parse_strategy",
+      "test_independent_supervisor_keeps_agent_models_and_environment_overrides_separate",
+      "test_codex_supervisor_without_independent_binding_requires_the_agent_source_to_match"
+    ],
+    "baseline_commit": "96d43e20663656420ebb7d20cc4db595fbedc93d",
+    "baseline_result": "All same 3 failures reproduced; 130 deselected",
+    "scope": "Historical default-model fixture assertions; not changed in this rollout"
+  },
+  "new_benchmark_calls": 0,
+  "runtime_deployment_verified": false
+}

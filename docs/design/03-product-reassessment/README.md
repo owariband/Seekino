@@ -6,6 +6,8 @@
 
 ## 本阶段的提出背景
 
+2026-11-13，JEV-only复测确认没有独立改写调用，现将该路径设为默认，并补齐query、质量和用量记录。dev/main发布与Cloud/CPU实际生效分别验收，见[JEV-only上线TRD](jev-only-hook-rollout-trd.md)／[PR #155](https://github.com/owariband/Seekino/pull/155)，状态由工作台`CHAT-JEV-DEFAULT-01`维护。
+
 2026-11-13，三路径实验的旧 B 含独立改写器，不能代表只用 JEV 的预期。关闭独立改写后已全量重测三组，见[同一 TRD 第 7 节](query-intent-routing-comparison-trd.md#7-关闭独立改写器的同条件复测)／[PR #151](https://github.com/owariband/Seekino/pull/151)；本轮未改 Cloud，当前状态仍由工作台 `CHAT-INTENT-01` 维护。
 
 2026-11-13，Cloud 的 `models.query_hook` 使 DeepSeek 合并决策覆盖了保留的 JEV 配置。本轮恢复 Cloud JEV，并在相同 Supervisor、工具与动态 85% 基线下比较三种意图路径；见 [三路径对照 TRD](query-intent-routing-comparison-trd.md) / [PR #145](https://github.com/owariband/Seekino/pull/145)，当前状态由工作台 `CHAT-INTENT-01` 维护。

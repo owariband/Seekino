@@ -1,6 +1,6 @@
 # 1. 问题与现状
 
-需求：将已测的 JEV-only hook 作为默认路径，完整记录实验用例、用量、耗时和质量，并更新 Cloud 与 CPU server。日期：2026-11-13（UTC+8）；工作分支：`fix/jev-only-hook-default`；目标：`dev`，运行文件另从最新 `main` 建发布分支；PR 待创建后回填。
+需求：将已测的 JEV-only hook 作为默认路径，完整记录实验用例、用量、耗时和质量，并更新 Cloud 与 CPU server。日期：2026-11-13（UTC+8）；工作分支：`fix/jev-only-hook-default`；目标：`dev`，运行文件另从最新 `main` 建发布分支；[PR #155](https://github.com/owariband/Seekino/pull/155)。
 
 前两轮实验分别测了 JEV＋改写器和 JEV-only。旧表没有代表纯 JEV，后续又只突出完成数与耗时，缺少直接可读的 query 和质量判据，无法据此判断实际收益。新一轮 27 turn 的模型、输入和用量已经冻结；质量是随后由 Codex 主 Agent 逐条补评，不能写成预先冻结的盲测。现有 `QueryHookConfig.rewriter_enabled`、根配置、本地开发和 Cloud 示例仍开启可选改写器，后续部署可能重新带回不需要的串行调用。
 
@@ -33,7 +33,9 @@
 
 不重新运行已冻结的 27 turn，不从历史表抽取有利列拼接新表。将已有新旧实验独立记录，原始字符串、数据和哈希保持。按 humanizer-zh 编辑说明性正文，保留所有独立指标、限定、失败和归因；把事后质量评阅与原始采样区分。
 
-先核对读者可见 query、历史、期望、三组输出、卡片和逐条评分，再从原始 usage/结果独立核对汇总。配置修改先跑既有 QueryHook／Gateway／Bootstrap 相关测试，并验证默认关闭和显式启用改写仍各自正确。动态 compact 只复用上游已验证实现，发布选取后跑容量／工厂／配置发现的相关检查。具体执行结果待补充。
+已把六条query、完整历史、27条逐字回答与扣分原因写入[补充评阅](../../report/agent/chat/query-intent-jev-only-20261113/query-quality-review.md)，全量指标补入[原devlog](../../dev/devlog.md#devlog-chat-intent-jev-only-20261113)。原始usage与结果保持，未重跑被测模型。默认值、三份示例和注释已修正，显式opt-in与合并决策能力保留；没有修改Server优先级或Parse路由。
+
+QueryHook／Gateway／Bootstrap／Parse路由相关回归最终285项通过，1条既有Starlette弃用警告。首次Bootstrap有24项失败，因为旧断言依赖启动时创建改写模型；改为断言JEV-only不创建该模型后，按同一范围重跑通过。容量／工厂／配置发现四文件为262通过、3项失败，失败均为历史默认模型fixture的断言；已在修改前的`96d43e20`工作树复现同名3项失败，未顺带修改业务模型。命令和结果见[回归收据](../../report/agent/chat/query-intent-jev-only-20261113/default-rollout-checks.json)。发布选取后继续验证必要运行文件和配置加载。
 
 # 5. 试点验证与方案取舍
 
@@ -43,6 +45,8 @@
 
 # 6. 结果验收与闭环
 
-当前仅完成原始证据汇总和实施前检查；默认值、发布及线上切换均待验证。交付需分别说明：文档是否完整、默认路径是否回归通过、dev/main是否合入、Cloud/CPU配置是否实际生效、真实探针与健康是否通过。验收结果、部署收据、回退备份位置和剩余限制在执行后补入本TRD与devlog；唯一当前状态由工作台维护。
+当前已补齐实验记录并通过默认JEV-only的285项相关回归；dev/main发布及线上切换尚未完成。现有SSH固定节点不可用，独立TCP出口和GPU跳板均未取得CPU SSH banner；GPU侧到CPU的22/443端口可建立TCP，Cloud的TLS握手仍超时。尚未写入、重启或修改远端配置，连接问题不能记为部署完成。
+
+交付分别记录文档、默认路径、dev/main、Cloud/CPU生效和真实探针的证据。实际部署收据、回退备份与剩余限制在执行后补入本TRD与devlog；唯一当前状态由工作台`CHAT-JEV-DEFAULT-01`维护。
 
 大索引、长历史、并发、长期延迟分布与完整费用仍未由原始小样本实验覆盖。视频卡片范围和既有内容错误是原实验保留的问题，不在本次 hook 默认值与部署范围内修复。

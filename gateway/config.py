@@ -460,7 +460,7 @@ class QueryHookConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
     enabled: bool = False
-    rewriter_enabled: bool = Field(default=True, strict=True)
+    rewriter_enabled: bool = Field(default=False, strict=True)
     router_endpoint: Annotated[_HttpsBaseUrl, AfterValidator(_query_hook_url)] = (
         "https://openrouter.ai/api/alpha/decisions"
     )

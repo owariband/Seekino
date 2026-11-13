@@ -214,12 +214,11 @@ Git 忽略不等于删除或备份；媒体仍须和 MySQL 做配套备份。Doc
 
 | 能力 | 必需文件与关联依赖 | 恢复依据 |
 |---|---|---|
-| 查询改写 | 无本地权重；改用 `models.query_rewriter` 绑定（默认 `deepseek-flash` API） | 不再依赖本机 Qwen3-8B llama-server；历史权重与实验见 [查询改写实验记录](../evals/benchmark/intent_routing/README.md) |
+| 查询路由／可选改写 | 默认由 Jev 分类，独立改写关闭，无需本地权重；显式启用改写时才配置 `models.query_rewriter` | 不再依赖本机 Qwen3-8B llama-server；历史权重与实验见 [查询改写实验记录](../evals/benchmark/intent_routing/README.md) |
 | ASR | `outputs/local-models/whisper/ggml-large-v3-turbo.bin`，约 1.51 GiB；`outputs/tools/whisper.cpp/build/bin/whisper-server` | 本次 whisper.cpp 源码为 `48f628a`；保留版本，按其 `models/download-ggml-model.sh` 获取 `large-v3-turbo`，用 [启动脚本](../scripts/local_whisper.py) 读取当前模型绑定 |
 | 声纹 | `outputs/local-models/campplus/campplus_cn_common.bin`，约 27 MiB；`outputs/local-models/campplus/3D-Speaker` 中的 `speakerlab` 和 `speaker` 可选依赖（extra） | [CAM++ 适配器](../gateway/local/campplus.py) 校验权重和源码 SHA；恢复相同实现，修正 `PYTHONPATH` 与 YAML 中的 `checkpoint_path`，不能只复制权重 |
 
-查询改写现在使用 `models.query_rewriter` 绑定（默认 `deepseek-flash` API），不再启动本机 `18841` 的 Qwen3-8B llama-server。
-Jev 还需要 `.env.local` 中的 `OPENROUTER_JEV_API_KEY`。
+默认 Chat hook 只由 Jev 分类，`query_hook.rewriter_enabled` 为 `false`；无需启动本机 `18841` 的 Qwen3-8B llama-server。Jev 需要 `.env.local` 中的 `OPENROUTER_JEV_API_KEY`。旧部署需在实际挂载的模型 YAML 中显式关闭改写，并核对没有绕过 Jev 的 `models.query_hook` 绑定，重启 API 后用实际调用确认；升级代码不会覆盖已有配置。
 
 **2026-10-31 更新：** 本机活动 ASR 已切换到 `ggml-large-v3-turbo-q5_0.bin`（574,041,195 字节），上表 ASR FP16 文件大小属于原部署记录。当前运行 PR #18 工作树的启动脚本，显式指定主工作区配置／binary／模型目录并加 `--require-metal`；命令和控制记录见[接线报告](../docs/report/gateway/local/whisper-metal-activation-20261031.md)。旧 WhisperX 来源仅保留给冻结任务，不是新任务默认。
 
