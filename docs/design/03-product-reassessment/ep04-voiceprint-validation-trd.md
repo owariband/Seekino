@@ -1,6 +1,6 @@
 # 1. 问题与现状
 
-需求：最新 dev 的 EP04 整集 1fps 内部声纹验证。日期：2026-11-13。分支：`docs/ep04-voiceprint-1fps-validation`，PR 创建后回填，目标 dev。运行源码基线为 `0893780aafa3fc8deab5e7784533c52ef87fcc52`（本次开始时最新 origin/dev）；不混入未合并的 GPU 修复分支代码。
+需求：最新 dev 的 EP04 整集 1fps 内部声纹验证。日期：2026-11-13。分支：`docs/ep04-voiceprint-1fps-validation`，[PR #156](https://github.com/owariband/Seekino/pull/156)，目标 dev。运行源码基线为 `0893780aafa3fc8deab5e7784533c52ef87fcc52`（本次开始时最新 origin/dev）；不混入未合并的 GPU 修复分支代码。
 
 CPU 旧正式 EP04 将约 47–49 秒「祥ちゃんも悪くない／也不是小祥的错」归给高松燈，人工已确认应为长崎爽世。GPU WhisperX 整集 CUDA/FP16/thread=8 能返回匿名声源，仍把目标短句与爱音合并。旧正式任务未启用内部声纹准备。现有 dev 的 B0 `prefill` 可以在完整 Understanding 后计算声纹候选，将支持的候选交给 Refine；是否能跑通并纠正该句，需要用整集实测回答。
 
