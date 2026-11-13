@@ -27,6 +27,7 @@
 
 | 记录 | 原问题编号 |
 |---|---|
+| [2026-11-13：前置配置覆盖 JEV，省去路由未必缩短 Chat 等待](#devlog-chat-intent-routing-20261113) | CHAT-INTENT-01；C19；PR #145 |
 | [2026-11-13：固定小窗口让 Chat 提前同步摘要，命中后多等数十秒](#devlog-chat-model-context-compaction-20261113) | CHAT-COMPACT-01；PR #144 |
 | [2026-11-12：检测切点被当成动作边界，真实素材在理解阶段被拒](#devlog-reference-model-judgment-20261112) | EDIT-REFERENCE-02；PR #139 |
 | [2026-11-12：dialog瞬时关闭并卸载内容，手机导航缺少开合过渡](#devlog-mobile-drawer-motion-20261112) | MOBILE-UI-01；PR #129第二轮 |
@@ -189,6 +190,53 @@
 | [日期未明确（2026-10-23归档）：当前播放窗口的按需理解与复用](#devlog-history-60) | 独立实验/设计 |
 
 </details>
+
+<a id="devlog-chat-intent-routing-20261113"></a>
+
+## 2026-11-13：前置配置覆盖 JEV，省去路由未必缩短 Chat 等待
+
+### 1. 问题与现状
+
+Chat 已有前置意图判断，但服务“有 JEV 参数”和“正在用 JEV”并不等价。核对 Cloud 配置发现，`models.query_hook=deepseek-flash/high/256` 会被启动代码作为 `decision_model` 注入，选择一次输出 action 与检索候选的合并决策图，因此绕过 JEV 分类和独立改写。这使此前围绕 JEV 职责的讨论与实际运行路径不一致。
+
+Cloud 已在没有处理中聊天时备份原配置，只删除该 binding，保留 JEV 1.14 与既有 Flash/high/256 改写器。API 重启健康，新建无私密内容的反馈测试消息经真实 HTTP 链路完成，JEV 返回 `respond`，路由 1.533 秒，整轮 4.690 秒。备份、前后哈希与消息证据见[配置收据](../report/agent/chat/query-intent-routing-20261113/cloud-config-switch.json)。这次只切配置，Cloud 镜像仍是原版本；动态 85% compact 已入 dev，本轮未将新代码发布至 Cloud。
+
+### 2. 方案候选
+
+本次比较 A 原 Cloud 的 DeepSeek 合并决策、B JEV 分类后按需调用改写器、C 让 Supervisor 接原文自行判断。A／B 都追加当前轮处理说明，C 由当前 Supervisor prompt 承担同样职责。前置层可能只多一两秒，也可能避免一次多余检索；省去前置不等于后续循环会相同，必须连同正文、工具、完整交付与 token 比较。
+
+Cloud 维持已授权切换的 JEV。直接判断只做隔离实验，没有据平均速度自动推广。没有同步修改 prompt、工具语义或 reasoning effort，以免多因素变化失去可比性。
+
+### 3. 方案验证
+
+在 `dev` 同一实现、Flash/high/8192 Supervisor、相同 prompt／历史／工具及动态 85% 策略下运行 27 个完整 turn，三组各 9 个，全部自然完成。当前模型窗口实测 1,048,576，触发值 891,289；本批输入远低于阈值，未观察到 compact，不能将本轮路由差异写成压缩收益。每个 turn 新建会话，使用真实模型、数据库、ES 和回源；不是单次续推或替身工具。
+
+旧整季 MyGO 评测数据已不在本机当前库，本轮使用真实已发布的 12.012 秒台阶夜谈片段，复制必要事实到独立 `*_test` 库和索引。没有复制旧 Cloud 聊天、个人模型或凭据。正式前保留了 16-turn 环境诊断：5 个请求因测试环境 generation=2 与素材 generation=1 不符失败，连续三个失败后停止；两条检索预检通过后，固定 generation=1 全量重跑原先同一份 27 turn，不只重跑失败例，诊断数字单列。
+
+逐一核对九个三元组，Supervisor prompt、工具 schema、历史正文一致，A／B 追加后的模型消息有 6/9 对也完全一致；因此几例生成或工具选择差异不能都归因于分类器。A／B action 均 9/9 正确，B 改写 5/5 成功，未发生失败开放。独立 SQL 核对正式 27/27 正文与 COMPLETED 一致，测试库无 PROCESSING。测试启动的 MySQL、ES、embedding 已按自有 PID 停止，保留数据与结果。
+
+输出并非全部无问题：A 把“高高在上”错误定位到所选短片，另有一次重新确认未核验历史、一次多给压缩版本；B／C 首轮 mixed 都先检索后回应，并把同一 Chunk 提交两次后误称有两段卡片。现有合同按 Chunk ID 原地更新，最终只留后一张卡。复测三组均做到先答后查且一次提交完整片段。意图标签正确不能代替交付验收。逐字回答、逐例评分、数据与版本见[完整报告](../report/agent/chat/query-intent-routing-20261113/README.md)及 [TRD](../design/03-product-reassessment/query-intent-routing-comparison-trd.md)，关联 [PR #145](https://github.com/owariband/Seekino/pull/145)。
+
+### 4. 指标对比
+
+首字等待与整轮等待分别影响可感知响应和任务完成，因此同时比较 FTT、TT、完整用量和输出。FTT 是 send 至首个非空可见正文事件，排除思考／状态；本批首次均为 snapshot，是服务层首段正文时间，不是 provider 原生 TTFT 或浏览器渲染。TT 到自然终态及提交完成。每组仅九个 turn，不报告 p95／p99；总 token 含全部阶段，reasoning 属于 output 子集。
+
+| 指标 | A DeepSeek 前置决策 | B JEV＋改写器 | C Supervisor 直接判断 |
+| --- | ---: | ---: | ---: |
+| FTT 平均／中位（秒） | 6.099 / 4.994 | 8.886 / 7.416 | 7.713 / 6.872 |
+| TT 平均／中位（秒） | 8.319 / 9.560 | 10.404 / 11.488 | 9.588 / 8.102 |
+| 前置平均（秒） | 1.452 | 2.701 | 0 |
+| 全部 input／output token | 230,188 / 8,144 | 251,037 / 9,602 | 299,718 / 11,508 |
+| 全部 total token | 238,332 | 260,639 | 311,226 |
+| Supervisor provider 请求数 | 24 | 27 | 31 |
+| 主要意图行为通过 | 9/9 | 9/9 | 9/9 |
+| mixed 检索前已公开回应 | 2/2 | 1/2 | 1/2 |
+| 严格人工审阅 pass／partial／fail | 6 / 2 / 1 | 8 / 1 / 0 | 8 / 1 / 0 |
+
+C 相比 B 的平均 FTT 减少 13.2%、平均 TT 减少 7.8%，总 token 增加 19.4%；相比 A，平均 TT 增加 15.2%、总 token 增加 30.6%。C 的 TT 中位数又比 A 低，不能说某一路每种 query 都快。前置 token 只占 A／B 总量约 2.5%／3.6%，后续重复携带工具和证据的请求才是本批主要消耗。DeepSeek 已报告的未缓存 input 分别为 33,692／28,807／32,948，费用还受缓存及供应商计价影响，不能按总 token 比例推算账单。
+
+本批支持的判断是：省去一个前置调用能减少固定开销，却可能被后续循环抵消；JEV 的当前串行成本也没有带来可直接归因的质量优势。维持已切换的 Cloud JEV，保留 Direct 为候选，优先另行处理重复检索、相同 cursor 反复读取及单 Chunk 多次提交后的交付说明。本轮没有扩大为这些生产修复。整季、大索引、长对话、图片／回放、Query 子 Agent、并发、浏览器播放和完整账单仍未验证；本次结果不能直接宣布 C19 或全部 Chat 延迟问题已解决。
+
 
 <a id="devlog-chat-model-context-compaction-20261113"></a>
 ## 2026-11-13：固定小窗口让 Chat 提前同步摘要，命中后多等数十秒

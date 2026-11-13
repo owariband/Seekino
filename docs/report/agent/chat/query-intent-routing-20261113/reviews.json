@@ -1,0 +1,549 @@
+{
+  "rubric": {
+    "pass": "本轮主要意图、明确输出要求、混合任务先答后查及视频卡与正文一致。",
+    "partial": "核心任务已答，但格式、处理顺序、未核验历史的再确认或视频卡交付存在可定位问题。",
+    "fail": "错任务、缺必要交付、明显编造来源或执行失败。"
+  },
+  "reviewer": "Codex，逐字正文与工具／最终卡片人工复核；非独立盲评，不作统计显著性或泛化准确率",
+  "ground_truth": "隔离复制的真实已发布12.012s MyGO片段，一条Chunk六个Event；未对原片逐帧另做人工重标",
+  "intent_behavior_definition": "非检索例未新检索，检索例有实际检索；mixed双方任务在最终答案出现。先答后查和卡片一致另列，不能以意图通过替代交付通过。",
+  "turns": [
+    {
+      "index": 0,
+      "case_id": "respond_feedback",
+      "round": 1,
+      "arm": "deepseek_decider",
+      "grade": "partial",
+      "note": "正面回应反馈且未检索，但又把历史中未经核验的第13集定位说成“确实查到”；当前素材范围无第13集。",
+      "intent_behavior_pass": true,
+      "no_new_retrieval": true,
+      "first_text_seconds": 3.9995101250005973,
+      "first_retrieval_seconds": null,
+      "feedback_visible_before_retrieval": null,
+      "final_videos": [],
+      "persisted_status": "COMPLETED",
+      "persisted_content_matches": true
+    },
+    {
+      "index": 1,
+      "case_id": "respond_feedback",
+      "round": 1,
+      "arm": "jev_rewriter",
+      "grade": "pass",
+      "note": "满足本轮主要意图、输出约束及已发布证据范围；素材身份或全集覆盖的限制按原回答理解。",
+      "intent_behavior_pass": true,
+      "no_new_retrieval": true,
+      "first_text_seconds": 5.401154249999308,
+      "first_retrieval_seconds": null,
+      "feedback_visible_before_retrieval": null,
+      "final_videos": [],
+      "persisted_status": "COMPLETED",
+      "persisted_content_matches": true
+    },
+    {
+      "index": 2,
+      "case_id": "respond_feedback",
+      "round": 1,
+      "arm": "supervisor_direct",
+      "grade": "pass",
+      "note": "满足本轮主要意图、输出约束及已发布证据范围；素材身份或全集覆盖的限制按原回答理解。",
+      "intent_behavior_pass": true,
+      "no_new_retrieval": true,
+      "first_text_seconds": 7.577524459000415,
+      "first_retrieval_seconds": null,
+      "feedback_visible_before_retrieval": null,
+      "final_videos": [],
+      "persisted_status": "COMPLETED",
+      "persisted_content_matches": true
+    },
+    {
+      "index": 3,
+      "case_id": "respond_existing_evidence",
+      "round": 1,
+      "arm": "jev_rewriter",
+      "grade": "pass",
+      "note": "满足本轮主要意图、输出约束及已发布证据范围；素材身份或全集覆盖的限制按原回答理解。",
+      "intent_behavior_pass": true,
+      "no_new_retrieval": true,
+      "first_text_seconds": 5.9106302079999296,
+      "first_retrieval_seconds": null,
+      "feedback_visible_before_retrieval": null,
+      "final_videos": [],
+      "persisted_status": "COMPLETED",
+      "persisted_content_matches": true
+    },
+    {
+      "index": 4,
+      "case_id": "respond_existing_evidence",
+      "round": 1,
+      "arm": "supervisor_direct",
+      "grade": "pass",
+      "note": "满足本轮主要意图、输出约束及已发布证据范围；素材身份或全集覆盖的限制按原回答理解。",
+      "intent_behavior_pass": true,
+      "no_new_retrieval": true,
+      "first_text_seconds": 5.982141042000876,
+      "first_retrieval_seconds": null,
+      "feedback_visible_before_retrieval": null,
+      "final_videos": [],
+      "persisted_status": "COMPLETED",
+      "persisted_content_matches": true
+    },
+    {
+      "index": 5,
+      "case_id": "respond_existing_evidence",
+      "round": 1,
+      "arm": "deepseek_decider",
+      "grade": "pass",
+      "note": "满足本轮主要意图、输出约束及已发布证据范围；素材身份或全集覆盖的限制按原回答理解。",
+      "intent_behavior_pass": true,
+      "no_new_retrieval": true,
+      "first_text_seconds": 4.791249458001403,
+      "first_retrieval_seconds": null,
+      "feedback_visible_before_retrieval": null,
+      "final_videos": [],
+      "persisted_status": "COMPLETED",
+      "persisted_content_matches": true
+    },
+    {
+      "index": 6,
+      "case_id": "respond_stop_retrieval",
+      "round": 1,
+      "arm": "supervisor_direct",
+      "grade": "pass",
+      "note": "满足本轮主要意图、输出约束及已发布证据范围；素材身份或全集覆盖的限制按原回答理解。",
+      "intent_behavior_pass": true,
+      "no_new_retrieval": true,
+      "first_text_seconds": 1.8576960000009421,
+      "first_retrieval_seconds": null,
+      "feedback_visible_before_retrieval": null,
+      "final_videos": [],
+      "persisted_status": "COMPLETED",
+      "persisted_content_matches": true
+    },
+    {
+      "index": 7,
+      "case_id": "respond_stop_retrieval",
+      "round": 1,
+      "arm": "deepseek_decider",
+      "grade": "partial",
+      "note": "遵守停止检索，但给出两个版本及额外解释，没有按要求只压成一句话。",
+      "intent_behavior_pass": true,
+      "no_new_retrieval": true,
+      "first_text_seconds": 3.4727874170002906,
+      "first_retrieval_seconds": null,
+      "feedback_visible_before_retrieval": null,
+      "final_videos": [],
+      "persisted_status": "COMPLETED",
+      "persisted_content_matches": true
+    },
+    {
+      "index": 8,
+      "case_id": "respond_stop_retrieval",
+      "round": 1,
+      "arm": "jev_rewriter",
+      "grade": "pass",
+      "note": "满足本轮主要意图、输出约束及已发布证据范围；素材身份或全集覆盖的限制按原回答理解。",
+      "intent_behavior_pass": true,
+      "no_new_retrieval": true,
+      "first_text_seconds": 2.542728917000204,
+      "first_retrieval_seconds": null,
+      "feedback_visible_before_retrieval": null,
+      "final_videos": [],
+      "persisted_status": "COMPLETED",
+      "persisted_content_matches": true
+    },
+    {
+      "index": 9,
+      "case_id": "mixed_feedback_and_search",
+      "round": 1,
+      "arm": "deepseek_decider",
+      "grade": "pass",
+      "note": "先发布对吐槽的实质回应，再检索；最终视频卡覆盖0–12012ms并与台阶夜谈证据一致。",
+      "intent_behavior_pass": true,
+      "no_new_retrieval": false,
+      "first_text_seconds": 5.85136166600023,
+      "first_retrieval_seconds": 7.211190707999776,
+      "feedback_visible_before_retrieval": true,
+      "final_videos": [
+        {
+          "videoChunkId": "73742add-52ff-5dcc-ab75-d4893b4fcf29",
+          "startSeconds": 0,
+          "endSeconds": 12012,
+          "claim": null
+        }
+      ],
+      "persisted_status": "COMPLETED",
+      "persisted_content_matches": true
+    },
+    {
+      "index": 10,
+      "case_id": "mixed_feedback_and_search",
+      "round": 1,
+      "arm": "jev_rewriter",
+      "grade": "partial",
+      "note": "回应和检索内容都提供；首次正文晚于检索开始，未先回应；同一Chunk两次提交互相覆盖，正文称两段而最终仅一张卡，遗漏开场台词。",
+      "intent_behavior_pass": true,
+      "no_new_retrieval": false,
+      "first_text_seconds": 17.867955042000176,
+      "first_retrieval_seconds": 7.558981750000385,
+      "feedback_visible_before_retrieval": false,
+      "final_videos": [
+        {
+          "videoChunkId": "73742add-52ff-5dcc-ab75-d4893b4fcf29",
+          "startSeconds": 3084,
+          "endSeconds": 12012,
+          "claim": null
+        }
+      ],
+      "persisted_status": "COMPLETED",
+      "persisted_content_matches": true
+    },
+    {
+      "index": 11,
+      "case_id": "mixed_feedback_and_search",
+      "round": 1,
+      "arm": "supervisor_direct",
+      "grade": "partial",
+      "note": "两项任务均回答；首次正文晚于检索开始，未先回应；同一Chunk重复提交后只留下后一张卡，与“两段已放好”的正文不符。",
+      "intent_behavior_pass": true,
+      "no_new_retrieval": false,
+      "first_text_seconds": 13.73436833300002,
+      "first_retrieval_seconds": 4.209597790999396,
+      "feedback_visible_before_retrieval": false,
+      "final_videos": [
+        {
+          "videoChunkId": "73742add-52ff-5dcc-ab75-d4893b4fcf29",
+          "startSeconds": 3084,
+          "endSeconds": 12012,
+          "claim": null
+        }
+      ],
+      "persisted_status": "COMPLETED",
+      "persisted_content_matches": true
+    },
+    {
+      "index": 12,
+      "case_id": "retrieve_reference",
+      "round": 1,
+      "arm": "jev_rewriter",
+      "grade": "pass",
+      "note": "正确解析“第一种”为台阶夜谈，交付燈回应和可回看片段；范围覆盖回应至8900ms。",
+      "intent_behavior_pass": true,
+      "no_new_retrieval": false,
+      "first_text_seconds": 12.792764249999891,
+      "first_retrieval_seconds": 6.71282916599921,
+      "feedback_visible_before_retrieval": null,
+      "final_videos": [
+        {
+          "videoChunkId": "73742add-52ff-5dcc-ab75-d4893b4fcf29",
+          "startSeconds": 0,
+          "endSeconds": 9252,
+          "claim": null
+        }
+      ],
+      "persisted_status": "COMPLETED",
+      "persisted_content_matches": true
+    },
+    {
+      "index": 13,
+      "case_id": "retrieve_reference",
+      "round": 1,
+      "arm": "supervisor_direct",
+      "grade": "pass",
+      "note": "正确解析“第一种”为台阶夜谈，交付燈回应和可回看片段；范围覆盖回应至8900ms。",
+      "intent_behavior_pass": true,
+      "no_new_retrieval": false,
+      "first_text_seconds": 17.407004999999117,
+      "first_retrieval_seconds": 5.606743750000533,
+      "feedback_visible_before_retrieval": null,
+      "final_videos": [
+        {
+          "videoChunkId": "73742add-52ff-5dcc-ab75-d4893b4fcf29",
+          "startSeconds": 0,
+          "endSeconds": 9252,
+          "claim": null
+        }
+      ],
+      "persisted_status": "COMPLETED",
+      "persisted_content_matches": true
+    },
+    {
+      "index": 14,
+      "case_id": "retrieve_reference",
+      "round": 1,
+      "arm": "deepseek_decider",
+      "grade": "pass",
+      "note": "正确解析“第一种”为台阶夜谈，交付燈回应和可回看片段；范围覆盖回应至8900ms。",
+      "intent_behavior_pass": true,
+      "no_new_retrieval": false,
+      "first_text_seconds": 11.367846291001115,
+      "first_retrieval_seconds": 5.193017500001588,
+      "feedback_visible_before_retrieval": null,
+      "final_videos": [
+        {
+          "videoChunkId": "73742add-52ff-5dcc-ab75-d4893b4fcf29",
+          "startSeconds": 0,
+          "endSeconds": 9252,
+          "claim": null
+        }
+      ],
+      "persisted_status": "COMPLETED",
+      "persisted_content_matches": true
+    },
+    {
+      "index": 15,
+      "case_id": "retrieve_original_quote",
+      "round": 1,
+      "arm": "supervisor_direct",
+      "grade": "pass",
+      "note": "新检索与原话保留均完成；最终卡片0–2300ms与已发布原句一致。",
+      "intent_behavior_pass": true,
+      "no_new_retrieval": false,
+      "first_text_seconds": 6.871754124998915,
+      "first_retrieval_seconds": 2.4158197500000824,
+      "feedback_visible_before_retrieval": null,
+      "final_videos": [
+        {
+          "videoChunkId": "73742add-52ff-5dcc-ab75-d4893b4fcf29",
+          "startSeconds": 0,
+          "endSeconds": 2300,
+          "claim": null
+        }
+      ],
+      "persisted_status": "COMPLETED",
+      "persisted_content_matches": true
+    },
+    {
+      "index": 16,
+      "case_id": "retrieve_original_quote",
+      "round": 1,
+      "arm": "deepseek_decider",
+      "grade": "pass",
+      "note": "新检索与原话保留均完成；最终卡片0–2300ms与已发布原句一致。",
+      "intent_behavior_pass": true,
+      "no_new_retrieval": false,
+      "first_text_seconds": 7.542301375000534,
+      "first_retrieval_seconds": 4.391922458000408,
+      "feedback_visible_before_retrieval": null,
+      "final_videos": [
+        {
+          "videoChunkId": "73742add-52ff-5dcc-ab75-d4893b4fcf29",
+          "startSeconds": 0,
+          "endSeconds": 2300,
+          "claim": null
+        }
+      ],
+      "persisted_status": "COMPLETED",
+      "persisted_content_matches": true
+    },
+    {
+      "index": 17,
+      "case_id": "retrieve_original_quote",
+      "round": 1,
+      "arm": "jev_rewriter",
+      "grade": "pass",
+      "note": "新检索与原话保留均完成；最终卡片0–2300ms与已发布原句一致。",
+      "intent_behavior_pass": true,
+      "no_new_retrieval": false,
+      "first_text_seconds": 12.274996083000588,
+      "first_retrieval_seconds": 9.981068666000283,
+      "feedback_visible_before_retrieval": null,
+      "final_videos": [
+        {
+          "videoChunkId": "73742add-52ff-5dcc-ab75-d4893b4fcf29",
+          "startSeconds": 0,
+          "endSeconds": 2300,
+          "claim": null
+        }
+      ],
+      "persisted_status": "COMPLETED",
+      "persisted_content_matches": true
+    },
+    {
+      "index": 18,
+      "case_id": "retrieve_original_quote",
+      "round": 2,
+      "arm": "deepseek_decider",
+      "grade": "pass",
+      "note": "新检索与原话保留均完成；最终卡片0–2300ms与已发布原句一致。",
+      "intent_behavior_pass": true,
+      "no_new_retrieval": false,
+      "first_text_seconds": 8.434942583999145,
+      "first_retrieval_seconds": 4.9339702500001295,
+      "feedback_visible_before_retrieval": null,
+      "final_videos": [
+        {
+          "videoChunkId": "73742add-52ff-5dcc-ab75-d4893b4fcf29",
+          "startSeconds": 0,
+          "endSeconds": 2300,
+          "claim": null
+        }
+      ],
+      "persisted_status": "COMPLETED",
+      "persisted_content_matches": true
+    },
+    {
+      "index": 19,
+      "case_id": "retrieve_original_quote",
+      "round": 2,
+      "arm": "jev_rewriter",
+      "grade": "pass",
+      "note": "新检索与原话保留均完成；最终卡片0–2300ms与已发布原句一致。",
+      "intent_behavior_pass": true,
+      "no_new_retrieval": false,
+      "first_text_seconds": 10.228207000000111,
+      "first_retrieval_seconds": 7.029478374999599,
+      "feedback_visible_before_retrieval": null,
+      "final_videos": [
+        {
+          "videoChunkId": "73742add-52ff-5dcc-ab75-d4893b4fcf29",
+          "startSeconds": 0,
+          "endSeconds": 2300,
+          "claim": null
+        }
+      ],
+      "persisted_status": "COMPLETED",
+      "persisted_content_matches": true
+    },
+    {
+      "index": 20,
+      "case_id": "retrieve_original_quote",
+      "round": 2,
+      "arm": "supervisor_direct",
+      "grade": "pass",
+      "note": "新检索与原话保留均完成；最终卡片0–2300ms与已发布原句一致。",
+      "intent_behavior_pass": true,
+      "no_new_retrieval": false,
+      "first_text_seconds": 8.267319875001704,
+      "first_retrieval_seconds": 2.7692767920016195,
+      "feedback_visible_before_retrieval": null,
+      "final_videos": [
+        {
+          "videoChunkId": "73742add-52ff-5dcc-ab75-d4893b4fcf29",
+          "startSeconds": 0,
+          "endSeconds": 2300,
+          "claim": null
+        }
+      ],
+      "persisted_status": "COMPLETED",
+      "persisted_content_matches": true
+    },
+    {
+      "index": 21,
+      "case_id": "mixed_feedback_and_search",
+      "round": 2,
+      "arm": "jev_rewriter",
+      "grade": "pass",
+      "note": "先发布对吐槽的实质回应，再检索；最终视频卡覆盖0–12012ms并与台阶夜谈证据一致。",
+      "intent_behavior_pass": true,
+      "no_new_retrieval": false,
+      "first_text_seconds": 7.415898333001678,
+      "first_retrieval_seconds": 9.03914900000018,
+      "feedback_visible_before_retrieval": true,
+      "final_videos": [
+        {
+          "videoChunkId": "73742add-52ff-5dcc-ab75-d4893b4fcf29",
+          "startSeconds": 0,
+          "endSeconds": 12012,
+          "claim": null
+        }
+      ],
+      "persisted_status": "COMPLETED",
+      "persisted_content_matches": true
+    },
+    {
+      "index": 22,
+      "case_id": "mixed_feedback_and_search",
+      "round": 2,
+      "arm": "supervisor_direct",
+      "grade": "pass",
+      "note": "先发布对吐槽的实质回应，再检索；最终视频卡覆盖0–12012ms并与台阶夜谈证据一致。",
+      "intent_behavior_pass": true,
+      "no_new_retrieval": false,
+      "first_text_seconds": 3.6902839170015795,
+      "first_retrieval_seconds": 6.713747792000504,
+      "feedback_visible_before_retrieval": true,
+      "final_videos": [
+        {
+          "videoChunkId": "73742add-52ff-5dcc-ab75-d4893b4fcf29",
+          "startSeconds": 0,
+          "endSeconds": 12012,
+          "claim": null
+        }
+      ],
+      "persisted_status": "COMPLETED",
+      "persisted_content_matches": true
+    },
+    {
+      "index": 23,
+      "case_id": "mixed_feedback_and_search",
+      "round": 2,
+      "arm": "deepseek_decider",
+      "grade": "pass",
+      "note": "先发布对吐槽的实质回应，再检索；最终视频卡覆盖0–12012ms并与台阶夜谈证据一致。",
+      "intent_behavior_pass": true,
+      "no_new_retrieval": false,
+      "first_text_seconds": 4.994061208999483,
+      "first_retrieval_seconds": 6.585006916999191,
+      "feedback_visible_before_retrieval": true,
+      "final_videos": [
+        {
+          "videoChunkId": "73742add-52ff-5dcc-ab75-d4893b4fcf29",
+          "startSeconds": 0,
+          "endSeconds": 12012,
+          "claim": null
+        }
+      ],
+      "persisted_status": "COMPLETED",
+      "persisted_content_matches": true
+    },
+    {
+      "index": 24,
+      "case_id": "respond_feedback",
+      "round": 2,
+      "arm": "jev_rewriter",
+      "grade": "pass",
+      "note": "满足本轮主要意图、输出约束及已发布证据范围；素材身份或全集覆盖的限制按原回答理解。",
+      "intent_behavior_pass": true,
+      "no_new_retrieval": true,
+      "first_text_seconds": 5.536194042000716,
+      "first_retrieval_seconds": null,
+      "feedback_visible_before_retrieval": null,
+      "final_videos": [],
+      "persisted_status": "COMPLETED",
+      "persisted_content_matches": true
+    },
+    {
+      "index": 25,
+      "case_id": "respond_feedback",
+      "round": 2,
+      "arm": "supervisor_direct",
+      "grade": "pass",
+      "note": "满足本轮主要意图、输出约束及已发布证据范围；素材身份或全集覆盖的限制按原回答理解。",
+      "intent_behavior_pass": true,
+      "no_new_retrieval": true,
+      "first_text_seconds": 4.025692709001305,
+      "first_retrieval_seconds": null,
+      "feedback_visible_before_retrieval": null,
+      "final_videos": [],
+      "persisted_status": "COMPLETED",
+      "persisted_content_matches": true
+    },
+    {
+      "index": 26,
+      "case_id": "respond_feedback",
+      "round": 2,
+      "arm": "deepseek_decider",
+      "grade": "fail",
+      "note": "回应了反馈但新增错误定位：声称“高高在上”出自本次第1集台阶夜谈开头；已发布六个Event没有该台词或冲突，未检索核实。",
+      "intent_behavior_pass": true,
+      "no_new_retrieval": true,
+      "first_text_seconds": 4.435784749999584,
+      "first_retrieval_seconds": null,
+      "feedback_visible_before_retrieval": null,
+      "final_videos": [],
+      "persisted_status": "COMPLETED",
+      "persisted_content_matches": true
+    }
+  ]
+}
