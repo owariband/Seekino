@@ -13,6 +13,20 @@ The parent supplies `--cases` and `--configs-dir`; the directory must contain
 `deepseek_decider.yaml`, `jev_rewriter.yaml` and `supervisor_direct.yaml`. The
 harness never reads `.env` and never prints raw configs or credentials.
 
+`--jev-only` switches to the JEV-only retest: the directory must instead contain
+`deepseek_decider.yaml`, `jev_only.yaml` and `supervisor_direct.yaml`. A
+(`deepseek_decider`) keeps the original combined decision prompt; B (`jev_only`)
+uses JEV classification with the standalone rewriter disabled and absent; C
+(`supervisor_direct`) keeps no hook. Without the flag the historical JEV-plus-
+rewriter protocol and its saved artifacts are unchanged. Pass the same flag when
+resuming or cancelling a step in a JEV-only run.
+
+```bash
+# JEV-only retest: same 27-step schedule with the A/B/C paths above.
+python -m evals.benchmark.query_intent_compare \
+  --cases cases.json --configs-dir configs --output outputs/run --live --jev-only
+```
+
 ```bash
 # Offline: schedule, case hashes, config hashes and selected policy metadata.
 python -m evals.benchmark.query_intent_compare \

@@ -1,0 +1,65 @@
+[
+  {
+    "case_id": "mixed_feedback_and_search",
+    "round": 1,
+    "same_prompt": true,
+    "same_tools": true,
+    "same_history": true
+  },
+  {
+    "case_id": "mixed_feedback_and_search",
+    "round": 2,
+    "same_prompt": true,
+    "same_tools": true,
+    "same_history": true
+  },
+  {
+    "case_id": "respond_existing_evidence",
+    "round": 1,
+    "same_prompt": true,
+    "same_tools": true,
+    "same_history": true
+  },
+  {
+    "case_id": "respond_feedback",
+    "round": 1,
+    "same_prompt": true,
+    "same_tools": true,
+    "same_history": true
+  },
+  {
+    "case_id": "respond_feedback",
+    "round": 2,
+    "same_prompt": true,
+    "same_tools": true,
+    "same_history": true
+  },
+  {
+    "case_id": "respond_stop_retrieval",
+    "round": 1,
+    "same_prompt": true,
+    "same_tools": true,
+    "same_history": true
+  },
+  {
+    "case_id": "retrieve_original_quote",
+    "round": 1,
+    "same_prompt": true,
+    "same_tools": true,
+    "same_history": true
+  },
+  {
+    "case_id": "retrieve_original_quote",
+    "round": 2,
+    "same_prompt": true,
+    "same_tools": true,
+    "same_history": true
+  },
+  {
+    "case_id": "retrieve_reference",
+    "round": 1,
+    "same_prompt": true,
+    "same_tools": true,
+    "same_history": true
+  }
+]

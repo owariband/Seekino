@@ -1,0 +1,584 @@
+{
+  "started_at": "2026-11-13T11:31:41.151227+00:00",
+  "method": "Real local AgentChatService.start_message(stream=True) with production Supervisor, same prompt/tools/history/series data; only the configured query-intent path differs.",
+  "git_head": "0bc42b6734f183b5dad12446d70a24396c0999d8",
+  "source_sha256": {
+    "evals/benchmark/query_intent_compare.py": "fc189ecdd0b7717a1fe898655319760a6acb63b9499aa7f47c329bdd035f8a8d",
+    "evals/latency/chat_latency.py": "034c9b46ba4c878d4217d81e274da43557e254d474e4a91f5a556a0339b628a2",
+    "agent/chat/query_hook.py": "5dda2badeb77d0e3e7ea6f5c76eb405c1e182ab11faa3a103c0159f5d354aa20",
+    "agent/chat/query_hook_prompts.py": "b69afa81f8dfb1bcb12a00d4efbd03cde15b0ae2222ee83d7b8d5f6241268a2d",
+    "agent/chat/supervisor.py": "a10280dd8b47e9a33da7fa357390bd0ded93c3488adfb48055dd881d8f0a5d7a",
+    "agent/chat/common/state.py": "7d0edb4422eb2348c58c73ebf3e95a80b7d8ac23607bd084c816da6ed63a75d3",
+    "gateway/query_hook.py": "88fd3d06b35c06fc558ed061770cda1e26aa3472649c9fc54f7445efcdb18ae7",
+    "gateway/usage.py": "2b45b52a028272c8fd489798d693ebd5561373397a2fb2fe89549c9d003e41b4",
+    "gateway/config.py": "e30fae940e8da3c5492e50698b97906f47530a5ebaf0ec220e201963c1b3cdff",
+    "gateway/model_events.py": "c735981370ab6fd450b745a5d30b0b3efa543314f961ff082004be1128b389c0",
+    "gateway/agent_model/contracts.py": "d2db2b737c439f3b1401fb11a2304fbda678a8caa2e306dc605e232823411fb6",
+    "gateway/agent_model/deepagents.py": "f0610671fc00b74a96b50ae95099544c7dd5a13c9d8b9ce79a24a7b165ab0133",
+    "gateway/agent_model/factory.py": "45386c2dafe95cebd4141aca4c0ac798e84a2de460349d5a9e816cc10ca9bc6a",
+    "server/service/agent_chat.py": "d59723967f2e7da7a7403044988bb0acd94d6db6955c94bc26468681521e155f",
+    "server/bootstrap.py": "40faed885752cdb9caca4159633a12de84fc603e211c65b3bbb02dbbc9f3f4f2",
+    "server/config/agent.py": "a22d439a70e8c2fdc74f2d180fe1875dd8b5a8bd33f8edb67ef437bfd4b204c2",
+    "server/config/global_agent_settings.py": "ac19dffe2b7eed4999dcce72f0c228f542c0590e965875dee605dc0cee18a75a"
+  },
+  "cases_path": "/private/tmp/seekino-jev-only-retest-20261113/evals/benchmark/intent_routing/three_path_20261113_cases.json",
+  "cases_sha256": "0551bc0706305b9b4c9c78220bddbc06c34b311b774e2de7985d05614d8fe385",
+  "case_sha256": {
+    "respond_feedback": "46668310165a3901228bb0a2546a784b0f6656e22aaa4fa8082f6db8d5f645a4",
+    "respond_existing_evidence": "f0967ae0269dfe20e79dd7780436b7418d5366ed15109e4bfc94d20976c1d9fb",
+    "respond_stop_retrieval": "dc3eea5a6c4af5362187525f60ad064581540d392fe16c5c1e37cc731e2b7cec",
+    "mixed_feedback_and_search": "04ba2e0c3daedcbeb8be692716be640b6737f6590f3390dbe1e0b2ee51213a81",
+    "retrieve_reference": "a89d4977db6cf91c3c830f08ccbd59ea4514e1269dbf34e6717b7dbd2df4cb1a",
+    "retrieve_original_quote": "cceb2e0de16f562f99efd598a97c03906b7e7a122f87b4142236707634a2498a"
+  },
+  "configs_dir": "/private/tmp/seekino-query-intent-jev-only-20261113/configs",
+  "configs": {
+    "deepseek_decider": {
+      "name": "deepseek_decider.yaml",
+      "path": "/private/tmp/seekino-query-intent-jev-only-20261113/configs/deepseek_decider.yaml",
+      "sha256": "09200aafee26a9ec5878d1b4d96b646ec8873f8df04b9b8faff323f8d21898b2",
+      "query_hook": {
+        "enabled": true,
+        "rewriter_enabled": false,
+        "router_model": "typesafe/jev-1.14",
+        "router_timeout_seconds": 3.0,
+        "rewriter_timeout_seconds": 4.0,
+        "total_timeout_seconds": 8.0,
+        "max_output_tokens": 256,
+        "history_message_limit": 6,
+        "history_max_chars": 2000,
+        "query_max_chars": 2000
+      },
+      "wiring": {
+        "has_query_hook_model": true,
+        "has_query_rewriter_model": false
+      },
+      "agent_model": {
+        "source": "deepseek_api",
+        "model": "deepseek-flash",
+        "stream": true,
+        "max_output_tokens": 8192,
+        "request_timeout_seconds": 180.0
+      },
+      "models": {
+        "agent": {
+          "source": "deepseek_api",
+          "model": "deepseek-flash",
+          "stream": true,
+          "temperature": 0.0,
+          "reasoning_effort": "high",
+          "max_output_tokens": 8192,
+          "request_timeout_seconds": 180.0,
+          "context_window_tokens": 262144,
+          "context_safety_margin_tokens": 4096,
+          "auto_compact_ratio": null,
+          "auto_compact_tokens": 200000,
+          "compact_target_tokens": 150000,
+          "max_input_chars": 600000,
+          "fallback_model": null
+        },
+        "supervisor": {
+          "source": "deepseek_api",
+          "model": "deepseek-flash",
+          "stream": true,
+          "temperature": 0.0,
+          "reasoning_effort": "high",
+          "max_output_tokens": 8192,
+          "request_timeout_seconds": 1200.0,
+          "context_window_tokens": 262144,
+          "context_safety_margin_tokens": 4096,
+          "auto_compact_ratio": 0.85,
+          "auto_compact_tokens": 200000,
+          "compact_target_tokens": 150000,
+          "max_input_chars": 600000,
+          "fallback_model": null
+        },
+        "query_hook": {
+          "source": "deepseek_api",
+          "model": "deepseek-flash",
+          "stream": false,
+          "temperature": 0.0,
+          "reasoning_effort": "high",
+          "max_output_tokens": 256,
+          "request_timeout_seconds": 600.0,
+          "context_window_tokens": 64000,
+          "context_safety_margin_tokens": null,
+          "auto_compact_ratio": null,
+          "auto_compact_tokens": 48000,
+          "compact_target_tokens": 24000,
+          "max_input_chars": null,
+          "fallback_model": null
+        }
+      },
+      "effective_supervisor": {
+        "source": "deepseek_api",
+        "model": "deepseek-flash",
+        "stream": true,
+        "temperature": 0.0,
+        "reasoning_effort": "high",
+        "max_output_tokens": 8192,
+        "request_timeout_seconds": 1200.0,
+        "context_window_tokens": 262144,
+        "context_safety_margin_tokens": 4096,
+        "auto_compact_ratio": 0.85,
+        "auto_compact_tokens": 200000,
+        "compact_target_tokens": 150000,
+        "max_input_chars": 600000,
+        "fallback_model": null
+      },
+      "effective_supervisor_reasoning_effort": "high",
+      "agent_runtime": {
+        "limits_enabled": false,
+        "total_timeout_enabled": true,
+        "max_loop_turns": 3,
+        "max_output_tokens": 8192,
+        "max_prompt_chars": 200000,
+        "context_window_tokens": 64000,
+        "context_safety_margin_tokens": 4096,
+        "auto_compact_tokens": 48000,
+        "compact_target_tokens": 24000,
+        "supervisor_reasoning_effort": "high",
+        "query_reasoning_effort": "high",
+        "stage_timeout_seconds": 480,
+        "supervisor_timeout_seconds": 1200,
+        "execution_timeout_seconds": 1200,
+        "maximum_concurrent_kicks": 4,
+        "maximum_parallel_queries": 3
+      }
+    },
+    "jev_only": {
+      "name": "jev_only.yaml",
+      "path": "/private/tmp/seekino-query-intent-jev-only-20261113/configs/jev_only.yaml",
+      "sha256": "b5718a21f468217cf2c4e501044fde0fed8dc05908faf2ff2c82966a386713b6",
+      "query_hook": {
+        "enabled": true,
+        "rewriter_enabled": false,
+        "router_model": "typesafe/jev-1.14",
+        "router_timeout_seconds": 3.0,
+        "rewriter_timeout_seconds": 4.0,
+        "total_timeout_seconds": 8.0,
+        "max_output_tokens": 256,
+        "history_message_limit": 6,
+        "history_max_chars": 2000,
+        "query_max_chars": 2000
+      },
+      "wiring": {
+        "has_query_hook_model": false,
+        "has_query_rewriter_model": false
+      },
+      "agent_model": {
+        "source": "deepseek_api",
+        "model": "deepseek-flash",
+        "stream": true,
+        "max_output_tokens": 8192,
+        "request_timeout_seconds": 180.0
+      },
+      "models": {
+        "agent": {
+          "source": "deepseek_api",
+          "model": "deepseek-flash",
+          "stream": true,
+          "temperature": 0.0,
+          "reasoning_effort": "high",
+          "max_output_tokens": 8192,
+          "request_timeout_seconds": 180.0,
+          "context_window_tokens": 262144,
+          "context_safety_margin_tokens": 4096,
+          "auto_compact_ratio": null,
+          "auto_compact_tokens": 200000,
+          "compact_target_tokens": 150000,
+          "max_input_chars": 600000,
+          "fallback_model": null
+        },
+        "supervisor": {
+          "source": "deepseek_api",
+          "model": "deepseek-flash",
+          "stream": true,
+          "temperature": 0.0,
+          "reasoning_effort": "high",
+          "max_output_tokens": 8192,
+          "request_timeout_seconds": 1200.0,
+          "context_window_tokens": 262144,
+          "context_safety_margin_tokens": 4096,
+          "auto_compact_ratio": 0.85,
+          "auto_compact_tokens": 200000,
+          "compact_target_tokens": 150000,
+          "max_input_chars": 600000,
+          "fallback_model": null
+        }
+      },
+      "effective_supervisor": {
+        "source": "deepseek_api",
+        "model": "deepseek-flash",
+        "stream": true,
+        "temperature": 0.0,
+        "reasoning_effort": "high",
+        "max_output_tokens": 8192,
+        "request_timeout_seconds": 1200.0,
+        "context_window_tokens": 262144,
+        "context_safety_margin_tokens": 4096,
+        "auto_compact_ratio": 0.85,
+        "auto_compact_tokens": 200000,
+        "compact_target_tokens": 150000,
+        "max_input_chars": 600000,
+        "fallback_model": null
+      },
+      "effective_supervisor_reasoning_effort": "high",
+      "agent_runtime": {
+        "limits_enabled": false,
+        "total_timeout_enabled": true,
+        "max_loop_turns": 3,
+        "max_output_tokens": 8192,
+        "max_prompt_chars": 200000,
+        "context_window_tokens": 64000,
+        "context_safety_margin_tokens": 4096,
+        "auto_compact_tokens": 48000,
+        "compact_target_tokens": 24000,
+        "supervisor_reasoning_effort": "high",
+        "query_reasoning_effort": "high",
+        "stage_timeout_seconds": 480,
+        "supervisor_timeout_seconds": 1200,
+        "execution_timeout_seconds": 1200,
+        "maximum_concurrent_kicks": 4,
+        "maximum_parallel_queries": 3
+      }
+    },
+    "supervisor_direct": {
+      "name": "supervisor_direct.yaml",
+      "path": "/private/tmp/seekino-query-intent-jev-only-20261113/configs/supervisor_direct.yaml",
+      "sha256": "3f9d12a46bd27fb21c54e7b38f6e9bd305b609f2ac735303726479946ea626bb",
+      "query_hook": {
+        "enabled": false,
+        "rewriter_enabled": false,
+        "router_model": "typesafe/jev-1.14",
+        "router_timeout_seconds": 3.0,
+        "rewriter_timeout_seconds": 4.0,
+        "total_timeout_seconds": 8.0,
+        "max_output_tokens": 256,
+        "history_message_limit": 6,
+        "history_max_chars": 2000,
+        "query_max_chars": 2000
+      },
+      "wiring": {
+        "has_query_hook_model": false,
+        "has_query_rewriter_model": false
+      },
+      "agent_model": {
+        "source": "deepseek_api",
+        "model": "deepseek-flash",
+        "stream": true,
+        "max_output_tokens": 8192,
+        "request_timeout_seconds": 180.0
+      },
+      "models": {
+        "agent": {
+          "source": "deepseek_api",
+          "model": "deepseek-flash",
+          "stream": true,
+          "temperature": 0.0,
+          "reasoning_effort": "high",
+          "max_output_tokens": 8192,
+          "request_timeout_seconds": 180.0,
+          "context_window_tokens": 262144,
+          "context_safety_margin_tokens": 4096,
+          "auto_compact_ratio": null,
+          "auto_compact_tokens": 200000,
+          "compact_target_tokens": 150000,
+          "max_input_chars": 600000,
+          "fallback_model": null
+        },
+        "supervisor": {
+          "source": "deepseek_api",
+          "model": "deepseek-flash",
+          "stream": true,
+          "temperature": 0.0,
+          "reasoning_effort": "high",
+          "max_output_tokens": 8192,
+          "request_timeout_seconds": 1200.0,
+          "context_window_tokens": 262144,
+          "context_safety_margin_tokens": 4096,
+          "auto_compact_ratio": 0.85,
+          "auto_compact_tokens": 200000,
+          "compact_target_tokens": 150000,
+          "max_input_chars": 600000,
+          "fallback_model": null
+        }
+      },
+      "effective_supervisor": {
+        "source": "deepseek_api",
+        "model": "deepseek-flash",
+        "stream": true,
+        "temperature": 0.0,
+        "reasoning_effort": "high",
+        "max_output_tokens": 8192,
+        "request_timeout_seconds": 1200.0,
+        "context_window_tokens": 262144,
+        "context_safety_margin_tokens": 4096,
+        "auto_compact_ratio": 0.85,
+        "auto_compact_tokens": 200000,
+        "compact_target_tokens": 150000,
+        "max_input_chars": 600000,
+        "fallback_model": null
+      },
+      "effective_supervisor_reasoning_effort": "high",
+      "agent_runtime": {
+        "limits_enabled": false,
+        "total_timeout_enabled": true,
+        "max_loop_turns": 3,
+        "max_output_tokens": 8192,
+        "max_prompt_chars": 200000,
+        "context_window_tokens": 64000,
+        "context_safety_margin_tokens": 4096,
+        "auto_compact_tokens": 48000,
+        "compact_target_tokens": 24000,
+        "supervisor_reasoning_effort": "high",
+        "query_reasoning_effort": "high",
+        "stage_timeout_seconds": 480,
+        "supervisor_timeout_seconds": 1200,
+        "execution_timeout_seconds": 1200,
+        "maximum_concurrent_kicks": 4,
+        "maximum_parallel_queries": 3
+      }
+    }
+  },
+  "mode": "jev_only",
+  "arms": [
+    "deepseek_decider",
+    "jev_only",
+    "supervisor_direct"
+  ],
+  "tenant_id": "local-default",
+  "series_id": "411de40c-ed6d-58c8-ab95-e542879f18f9",
+  "repeat_case_ids": [
+    "respond_feedback",
+    "mixed_feedback_and_search",
+    "retrieve_original_quote"
+  ],
+  "schedule": [
+    {
+      "index": 0,
+      "round": 1,
+      "arm_order": 0,
+      "case_position": 0,
+      "case_id": "respond_feedback",
+      "arm": "deepseek_decider"
+    },
+    {
+      "index": 1,
+      "round": 1,
+      "arm_order": 1,
+      "case_position": 0,
+      "case_id": "respond_feedback",
+      "arm": "jev_only"
+    },
+    {
+      "index": 2,
+      "round": 1,
+      "arm_order": 2,
+      "case_position": 0,
+      "case_id": "respond_feedback",
+      "arm": "supervisor_direct"
+    },
+    {
+      "index": 3,
+      "round": 1,
+      "arm_order": 0,
+      "case_position": 1,
+      "case_id": "respond_existing_evidence",
+      "arm": "jev_only"
+    },
+    {
+      "index": 4,
+      "round": 1,
+      "arm_order": 1,
+      "case_position": 1,
+      "case_id": "respond_existing_evidence",
+      "arm": "supervisor_direct"
+    },
+    {
+      "index": 5,
+      "round": 1,
+      "arm_order": 2,
+      "case_position": 1,
+      "case_id": "respond_existing_evidence",
+      "arm": "deepseek_decider"
+    },
+    {
+      "index": 6,
+      "round": 1,
+      "arm_order": 0,
+      "case_position": 2,
+      "case_id": "respond_stop_retrieval",
+      "arm": "supervisor_direct"
+    },
+    {
+      "index": 7,
+      "round": 1,
+      "arm_order": 1,
+      "case_position": 2,
+      "case_id": "respond_stop_retrieval",
+      "arm": "deepseek_decider"
+    },
+    {
+      "index": 8,
+      "round": 1,
+      "arm_order": 2,
+      "case_position": 2,
+      "case_id": "respond_stop_retrieval",
+      "arm": "jev_only"
+    },
+    {
+      "index": 9,
+      "round": 1,
+      "arm_order": 0,
+      "case_position": 3,
+      "case_id": "mixed_feedback_and_search",
+      "arm": "deepseek_decider"
+    },
+    {
+      "index": 10,
+      "round": 1,
+      "arm_order": 1,
+      "case_position": 3,
+      "case_id": "mixed_feedback_and_search",
+      "arm": "jev_only"
+    },
+    {
+      "index": 11,
+      "round": 1,
+      "arm_order": 2,
+      "case_position": 3,
+      "case_id": "mixed_feedback_and_search",
+      "arm": "supervisor_direct"
+    },
+    {
+      "index": 12,
+      "round": 1,
+      "arm_order": 0,
+      "case_position": 4,
+      "case_id": "retrieve_reference",
+      "arm": "jev_only"
+    },
+    {
+      "index": 13,
+      "round": 1,
+      "arm_order": 1,
+      "case_position": 4,
+      "case_id": "retrieve_reference",
+      "arm": "supervisor_direct"
+    },
+    {
+      "index": 14,
+      "round": 1,
+      "arm_order": 2,
+      "case_position": 4,
+      "case_id": "retrieve_reference",
+      "arm": "deepseek_decider"
+    },
+    {
+      "index": 15,
+      "round": 1,
+      "arm_order": 0,
+      "case_position": 5,
+      "case_id": "retrieve_original_quote",
+      "arm": "supervisor_direct"
+    },
+    {
+      "index": 16,
+      "round": 1,
+      "arm_order": 1,
+      "case_position": 5,
+      "case_id": "retrieve_original_quote",
+      "arm": "deepseek_decider"
+    },
+    {
+      "index": 17,
+      "round": 1,
+      "arm_order": 2,
+      "case_position": 5,
+      "case_id": "retrieve_original_quote",
+      "arm": "jev_only"
+    },
+    {
+      "index": 18,
+      "round": 2,
+      "arm_order": 0,
+      "case_position": 5,
+      "case_id": "retrieve_original_quote",
+      "arm": "deepseek_decider"
+    },
+    {
+      "index": 19,
+      "round": 2,
+      "arm_order": 1,
+      "case_position": 5,
+      "case_id": "retrieve_original_quote",
+      "arm": "jev_only"
+    },
+    {
+      "index": 20,
+      "round": 2,
+      "arm_order": 2,
+      "case_position": 5,
+      "case_id": "retrieve_original_quote",
+      "arm": "supervisor_direct"
+    },
+    {
+      "index": 21,
+      "round": 2,
+      "arm_order": 0,
+      "case_position": 3,
+      "case_id": "mixed_feedback_and_search",
+      "arm": "jev_only"
+    },
+    {
+      "index": 22,
+      "round": 2,
+      "arm_order": 1,
+      "case_position": 3,
+      "case_id": "mixed_feedback_and_search",
+      "arm": "supervisor_direct"
+    },
+    {
+      "index": 23,
+      "round": 2,
+      "arm_order": 2,
+      "case_position": 3,
+      "case_id": "mixed_feedback_and_search",
+      "arm": "deepseek_decider"
+    },
+    {
+      "index": 24,
+      "round": 2,
+      "arm_order": 0,
+      "case_position": 0,
+      "case_id": "respond_feedback",
+      "arm": "jev_only"
+    },
+    {
+      "index": 25,
+      "round": 2,
+      "arm_order": 1,
+      "case_position": 0,
+      "case_id": "respond_feedback",
+      "arm": "supervisor_direct"
+    },
+    {
+      "index": 26,
+      "round": 2,
+      "arm_order": 2,
+      "case_position": 0,
+      "case_id": "respond_feedback",
+      "arm": "deepseek_decider"
+    }
+  ],
+  "turn_timeout_seconds": 300.0,
+  "child_watchdog_seconds": 360.0,
+  "concurrency": 1,
+  "data_environment": {
+    "SEEKINO_ENVIRONMENT": "test",
+    "SEEKINO_ELASTICSEARCH_INDEX": "seekino_intent_chunks_20261113_test",
+    "SEEKINO_ELASTICSEARCH_EVENT_INDEX": "seekino_intent_events_20261113_test",
+    "SEEKINO_ELASTICSEARCH_INDEX_GENERATION": "1"
+  }
+}

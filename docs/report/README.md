@@ -25,6 +25,8 @@
 
 ## Agent / chat
 
+[2026-11-13 关闭独立改写器后的 Chat 三路径复测](agent/chat/query-intent-jev-only-20261113/README.md)：三组全部重跑，B 为 JEV 单独分类，实际 9 次成功分类、零独立改写；完整 FTT／TT／token、输出及卡片证据。本次没有改 Cloud。
+
 [2026-11-13 Chat 三路径意图判断完整对照](agent/chat/query-intent-routing-20261113/README.md)：Cloud 恢复 JEV 的配置证据，及 DeepSeek 前置决策、JEV＋改写器、Supervisor 直接判断的相同模型实验；首字、完成耗时、用量与内容分别核对。
 
 ## Agent / video_parse_v2
