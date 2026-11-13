@@ -1,6 +1,6 @@
 # 三路径逐字回答（2026-11-13）
 
-仅包含本次公开评测用例的新生成回答；无旧 Cloud 聊天。按冻结执行顺序保存。评分与事实边界见 [reviews.json](reviews.json)，数字见 [metrics.json](metrics.json)。
+仅包含本次公开评测用例的新生成回答；无旧 Cloud 聊天。按冻结执行顺序保存。评分由 Codex 主 Agent 完成；评分方法与事实边界见 [reviews.json](reviews.json)，数字见 [metrics.json](metrics.json)。
 
 
 <a id="turn-00"></a>

@@ -4,7 +4,7 @@
     "partial": "核心任务已答，但格式、处理顺序、未核验历史的再确认或视频卡交付存在可定位问题。",
     "fail": "错任务、缺必要交付、明显编造来源或执行失败。"
   },
-  "reviewer": "Codex，逐字正文与工具／最终卡片人工复核；非独立盲评，不作统计显著性或泛化准确率",
+  "reviewer": "Codex 主 Agent，依据冻结 expected、真实工具日志、已发布 Timeline 和最终卡片逐条评阅；未做独立人工盲评",
   "ground_truth": "隔离复制的真实已发布12.012s MyGO片段，一条Chunk六个Event；未对原片逐帧另做人工重标",
   "intent_behavior_definition": "非检索例未新检索，检索例有实际检索；mixed双方任务在最终答案出现。先答后查和卡片一致另列，不能以意图通过替代交付通过。",
   "turns": [
@@ -545,5 +545,17 @@
       "persisted_status": "COMPLETED",
       "persisted_content_matches": true
     }
-  ]
+  ],
+  "grading_model": {
+    "agent": "本次会话的 Codex 主 Agent",
+    "exact_model_id": "未导出",
+    "independent_judge": false,
+    "human_review": false,
+    "programmatic_cross_checks": [
+      "输入与工具schema一致性",
+      "原始usage独立复算",
+      "SQL正文和完成状态",
+      "公开证据与最终卡片范围"
+    ]
+  }
 }
