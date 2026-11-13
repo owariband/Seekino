@@ -90,6 +90,7 @@ Event / Sub-Chunk 的实施入口是 [sub-chunk-trd.md](02-agent-harness/sub-chu
 | 本地文本向量与可选视觉索引 | [local-text-embedding-trd.md](03-product-reassessment/local-text-embedding-trd.md) | 课程实验：Qwen3-Embedding-0.6B、冻结输入模式、纯文本索引与原多模态兼容。 |
 | Event / Sub-Chunk 检索 | [sub-chunk-trd.md](02-agent-harness/sub-chunk-trd.md) | 主 TRD：独立 Event ES 索引、词法与文本／视觉向量、抽帧、发布及恢复合同。 |
 | Event 查询有界内容读取 | [event-query-bounded-content-trd.md](03-product-reassessment/event-query-bounded-content-trd.md) | 前置只读 COMPLETE 任务、冻结 Event 目标与 INDEX 版本元数据；候选正文有界回源，完整 detail 延迟加载、仅投影 compact / camera_hints，发布写入与显式审计保留。 |
+| Event 范围任务元数据排序 | [event-scope-task-sort-trd.md](02-agent-harness/event-scope-task-sort-trd.md) | 八课程完整 Event 范围因 `list_video_tasks` 同时选择 JSON 投影并用 `ORDER BY` 触发 MySQL 1038；先排序任务 ID 再读取元数据，保持原过滤、顺序与删除语义，不提高全局排序内存。 |
 | 视觉媒体输入与检索 | [visual-retrieval-trd.md](02-agent-harness/visual-retrieval-trd.md) | 专项 TRD：文字与视觉查询分工，图片、GIF、MP4 输入及检索接入。 |
 | Event 早期方案 | [event-retrieval-trd.md](02-agent-harness/event-retrieval-trd.md) | 历史方案与后续合同说明；当前实施依据已转到 Sub-Chunk TRD。 |
 | 多模态检索需求 | [multimodel-retrieve-trd.md](02-agent-harness/multimodel-retrieve-trd.md) | 目标 Query Set、召回与评测研究记录；检索需求与候选路线的来源。 |

@@ -52,6 +52,7 @@ hypnos 于 **2026-04-27 入职实习**，这一阶段覆盖实习约四个半月
 | [visual-retrieval-trd.md](visual-retrieval-trd.md) | 正文 2026-10-15，10-16/17 补充 | 定义图片、GIF、MP4 与文字查询的职责和接入 | 目标设计与已实现能力分开 |
 | [event-retrieval-trd.md](event-retrieval-trd.md) | 正文 2026-10-17 | 弥补 Chunk 粒度下细节证据的检索缺口 | 保留早期 Event 方案，最终合同另见 Sub-Chunk TRD |
 | [sub-chunk-trd.md](sub-chunk-trd.md) | 正文 2026-10-17；更新 10-21 | 确定独立 Event ES、词法/语义/视觉及发布恢复合同 | 这是第三阶段 Event-first 复审的已有技术基础 |
+| [event-scope-task-sort-trd.md](event-scope-task-sort-trd.md) | 2026-11-14；分支 `fix/event-scope-task-sort`，PR [#159](https://github.com/owariband/Seekino/pull/159) | 完整八课程 Event 范围查询因任务列表携带 JSON 投影排序触发 MySQL 1038；改为先排序任务 ID，再读取元数据并按原顺序生成 DTO | 设计与验收依据；880 Chunk 范围、真实 ES 召回及游客 Chat 证据见正文；当前状态见工作台 |
 | [es-chunk-index-review.md](es-chunk-index-review.md) | 正文 2026-09-28–29；10-17 后续合同 | 从 Chunk 样本审查 ES 索引和查询设计 | 附件移到 diagram；旧方案按日期阅读 |
 | [es-development-plan-review.md](es-development-plan-review.md) | 正文 2026-10-01–02 | 分解 Engine-first 检索的职责、计划与实施证据 | 附件移到 diagram；阶段标记是当时快照 |
 | [shot-composition-schema.md](shot-composition-schema.md) | 草案 2026-10-19；10-24 归档说明 | 实验性刻画 camera/composition/subjects 等镜头信息 | 不是生产合同；实验资产另有恢复条件 |

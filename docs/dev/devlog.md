@@ -27,6 +27,7 @@
 
 | 记录 | 原问题编号 |
 |---|---|
+| [2026-11-14：生产镜像未含 Event 查询内存修复，完整课程范围又因任务排序内存溢出](#devlog-event-query-cloud-memory-hotfix-20261114) | RAG-QUERY-MEM-01；PR #154、PR #159 |
 | [2026-11-13：Event 查询在 ES 召回前加载全部 Chunk 正文，检索内存随素材库增长](#devlog-event-query-bounded-content-20261113) | RAG-QUERY-MEM-01；PR #154 |
 | [2026-11-13：可选改写器混入基线，JEV 的净耗时被算错](#devlog-chat-intent-jev-only-20261113) | CHAT-INTENT-01；C19；PR #151 |
 | [2026-11-13：删除原因重复渲染，回答中的历史列表额外占高](#devlog-chat-delete-hint-20261113) | CHAT-DELETE-HINT-01 |
@@ -193,6 +194,61 @@
 | [日期未明确（2026-10-23归档）：当前播放窗口的按需理解与复用](#devlog-history-60) | 独立实验/设计 |
 
 </details>
+
+<a id="devlog-event-query-cloud-memory-hotfix-20261114"></a>
+## 2026-11-14：生产镜像未含 Event 查询内存修复，完整课程范围又因任务排序内存溢出
+
+### 问题与现状
+
+PR #154 已把 Event 查询在 ES 召回前读取全部 Chunk 正文和完整 `detail` 的路径改为只读发布元数据、候选有界回源，并在 2026-11-13 合入 `dev`（`8f0f14d3`）。CPU 生产 API 仍运行旧的 main 镜像（`a0fb93d9`），这次修复没有随镜像进入生产；真实素材库继续走旧路径，单次查询会在召回前按授权范围创建正文、JSON 解码结果和索引缓存对象，内存风险随课程数量增长。当时的任务是在不发布整包 main、不重建 ES、不改模型与媒体资源的前提下，让修复进入生产并保留可回滚镜像。
+
+热修复上线后的第一次真实游客 Chat 用来确认正式链路可用，而不是证明内存已经改善。公开课程素材库收到「attention 是怎么让 token 互相交流的？请检索课程，给出相关原片时间段。」，`topK=5`，实际发生四次 `search_video_graph` 工具调用，最终 9 条命中覆盖 E07，HTTP 200，整轮 41.487 秒。采样对象是 API 的 Python 进程而不是 docker-init，每 200 ms 一次：请求前 297.40 MiB，请求及结束后 15 秒观察窗口内最高 377.88 MiB（+80.48 MiB），请求结束 375.51 MiB，空闲 15 秒 375.63 MiB（相对请求前 +78.23 MiB）；宿主可用内存最低 3,311.17 MiB，swap 与 OOM 增量均为 0。这只有一轮 Chat，没有同请求的旧镜像配对；历史记录里的 GiB 级整轮数据来自其他工作负载，不能拿来计算本次降幅，也不能写成“整轮 Chat 降低 3 GB”。
+
+随后对八部课程的完整 Event 查询范围做只读验收，`list_video_tasks` 报 MySQL 1038：`Out of sort memory`。查询同时选择 `parse_config` 与 `detail._event_index_target_v1`，再按视频、版本和任务 ID 排序，JSON 投影被 filesort 一并携带。第一个热修复只覆盖 Event 查询的有界内容读取，不包含任务列表排序，不能把单次 Chat 成功当成完整范围已经可用。
+
+### 方案候选
+
+1. 等 main 正式发布或从 `dev` 整包重建生产镜像。这样能让代码来源最单一，但会把尚未逐项验收的 agent、gateway、prompt、配置和索引改动一起带入，也无法把本次变化限制在 Event 查询路径。
+2. 保留旧镜像，只提高 MySQL 全局排序缓冲。它能绕过当前 1038，却把单次查询的排序成本转成实例级内存上限，影响其他数据库负载，也没有解决 JSON 投影参与排序的原因。
+3. 在现有生产镜像上只覆盖四个后端运行文件，先验证 Event 查询路径；随后再在第一个镜像上替换一个 Repository 文件，修复完整范围的任务列表。镜像按层保留，旧镜像回滚，Compose 环境变量、挂载和其他服务都不动。
+4. 任务列表改为先按原过滤和排序条件只取任务 ID，再按 ID 读取元数据且不再带 `ORDER BY`，最后按原 ID 顺序生成 DTO。它比直接提高全局缓冲多一次轻量数据库往返，但不改全局数据库配置、排序语义和删除过滤。
+
+最终选择第 3 种部署路径和第 4 种查询改法。没有合并或发布 main，没有修改 agent、gateway、prompt、模型配置、Schema、ES 索引重建或媒体资源，DeepSeek Flash 的 agent 与 supervisor `reasoning_effort=high` 保持原值。
+
+### 方案验证
+
+第一次热修复镜像 `seekino-api:hotfix-event-memory-8f0f14d3` 于 2026-11-14 00:38（UTC+8）部署；整个 Compose 的环境变量、挂载和其他服务逐项比较未变，只有 `api.image` 变化，旧镜像保留回滚。上述游客 Chat 和内存采样都在这个镜像上完成，可确认正式链路能返回带时间段的证据，但不构成旧版与新版的配对实验。
+
+完整范围失败后，分支 `fix/event-scope-task-sort` 以 TRD 为首个提交（`fad02e7b`），实现提交 `2bebd9af`，PR 为 [#159](https://github.com/owariband/Seekino/pull/159)。回归命令覆盖 `tests/server/test_public_course_readiness.py`、`tests/server/test_video_retrieval_service.py`、`tests/server/test_video_event_retrieval.py`，结果 **61 passed、1 skipped**，另有一条 AnyIO 弃用警告；使用项目既有 `.venv` 实际运行。新增用例覆盖任务顺序、最新失败任务保留、删除过滤、空范围及 JSON 查询不携带排序。
+
+候选代码在生产容器的独立只读进程中验证，不修改服务进程。同一八部课程取得 880 个 Chunk 身份，范围阶段 5 次查询、0 个正文 ORM 实体，37.73 ms、RSS 增加 0.50 MiB；随后回源 5 个候选，完整 `detail` 加载 0，累计 RSS 增加 4.89 MiB。真实 ES 词法 Event 召回查询 `attention tokens communicate`，返回 8 个 Event、5 个 Chunk、覆盖 8 个视频，`partial=false`，862.42 ms、进程 RSS 增加 28.50 MiB，完整 `detail` 仍为 0。SQL 捕获和 ORM load 监听确认完整 `detail` 未加载，回归测试验证 `compact` 与 `evidence.camera_hints` 小字段保留。该探针不包含 embedding 与 LLM，不等同端到端 Chat；同一探针早前冷启动为 320.83 ms、RSS +0.38 MiB，冷热缓存差异不作为优化收益。
+
+最终镜像 `seekino-api:hotfix-event-memory-2bebd9af`（`sha256:66b296c2…f9e6`）于 2026-11-14 00:50:20（UTC+8）部署，仅再次替换一个 Repository 文件。直接验证最终运行代码：880 个身份、正文 ORM 0，范围阶段 37.22 ms / RSS +0.50 MiB；回源 5 个候选累计 +4.95 MiB / 完整 detail 0；真实 ES 召回 8 Event / 5 Chunk / 8 视频、612.03 ms / RSS +28.60 MiB，`partial=false`。
+
+最终镜像的同一个 Python 进程连续接受两次新游客 Chat，分别询问 attention 和反向传播课程，均 HTTP 200 / COMPLETED。请求及结束后 15 秒窗口的最大 RSS 增量为 86.57 / 40.36 MiB，结束后 15 秒净增量为 86.57 / 39.04 MiB。第二次结束后 RSS 419.92 MiB；两个窗口内 swap 与 OOM 增量均为 0。采样包括整个 API 进程的后台活动，无法精确分摊到每个对象。发布目录 `releases/event-memory-sort-2bebd9af-20261114/` 保存部署、采样和回滚证据，第二轮在其 `smoke-backprop/` 子目录；详见[生产报告](../report/server/service/video_event_retrieval/cloud-memory-hotfix-20261114.md)。
+
+### 指标对比
+
+这次影响的是单次 Event 查询在 ES 召回前的内存占用随素材库增长，以及完整八课程范围能否完成检索。因此看单轮请求的进程 RSS、隔离探针的范围解析与候选回源、ES 词法召回耗时和内存，以及 1038 是否消失；不能只看最终命中数。修改前没有在同一数据、同一镜像上重跑旧路径，以下只把本次观测与失败现象并列，不计算百分比。
+
+| 指标 | 观测 | 口径与边界 |
+| --- | --- | --- |
+| 游客 Chat HTTP 结果 | 200，41.487 秒，9 条命中覆盖 E07 | 一轮真实 JEV Chat，含 Supervisor、工具调用与模型生成 |
+| 游客 Chat 请求前 RSS | 297.40 MiB | API Python 进程，每 200 ms 采样，非 docker-init |
+| 游客 Chat 观察窗口最高 RSS | 377.88 MiB（+80.48 MiB） | 同上；无旧镜像配对 |
+| 游客 Chat 请求结束 / 空闲 15 秒 | 375.51 / 375.63 MiB | 空闲值相对请求前 +78.23 MiB |
+| 宿主可用内存最低值 / swap / OOM | 3,311.17 MiB / 0 / 0 | 采样窗口内 |
+| 八课程完整 Event 范围 | MySQL 1038 → 最终镜像取得 880 个 Chunk 身份、0 正文 ORM | 候选和最终运行代码均已复测 |
+| 范围阶段资源 | 5 次查询、0 个正文 ORM 实体、37.73 ms、RSS +0.50 MiB | 隔离进程，暖缓存 |
+| 候选回源 | 5 个候选、68.04 ms、累计 RSS +4.89 MiB、完整 detail 0 | 隔离进程 |
+| ES 词法 Event 召回 | 8 Event / 5 Chunk / 8 视频，`partial=false`，862.42 ms、RSS +28.50 MiB、完整 detail 0 | 不含 embedding 与 LLM |
+| 最终镜像 attention Chat | 33.641 s，RSS 最大 +86.57 MiB，结束后 15 秒 376.13 MiB | 含模型生成与工具编排；API 每 200 ms 采样 |
+| 最终镜像反向传播 Chat | 97.811 s，RSS 最大 +40.36 MiB，结束后 15 秒 419.92 MiB | 与上一条为同一进程，未重启，问题不同不比较耗时 |
+| 最终镜像完整 Event 召回 | 612.03 ms、RSS +28.60 MiB、完整 detail 0 | 独立只读进程，词法召回，不含模型生成 |
+| 任务排序回归 | 61 passed、1 skipped | 使用既有 `.venv` 实跑 |
+| 最终镜像第二次重启 RSS | 287,596 KiB | 重启下降不作为修复收益 |
+
+热修复已经进入生产：ES 前只读轻量发布元数据，候选正文和小字段按预算回源；完整课程范围的 1038 在同数据复测中消失，最终镜像连续两次游客 Chat 成功，API RSS 维持在约 420 MiB。当前证据支持上线这一结构性修复。旧新镜像整轮 Chat 的配对对照、长期运行及多用户并发仍未验证，因此不计算相对历史其他负载的降幅，工作台 `RAG-QUERY-MEM-01` 保留验证中并指向长时与并发观察。
 
 <a id="devlog-event-query-bounded-content-20261113"></a>
 ## 2026-11-13：Event 查询在 ES 召回前加载全部 Chunk 正文，检索内存随素材库增长

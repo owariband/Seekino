@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-14T00:45:20+08:00",
+ "updatedAt": "2026-11-14T01:00:59+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 64,
+ "revision": 65,
  "categories": [
   {
    "id": "parse",
@@ -5636,29 +5636,45 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "type": "requirement",
    "status": "verifying",
    "priority": "P1",
-   "description": "Event 查询先加载授权范围内全部 Chunk 正文与 detail 重建发布投影，内存随素材库增长；本次改为发布元数据配对、候选有界回源，完整 detail 延迟加载、仅投影 compact / camera_hints。",
-   "next": "等待 PR #154 合并及部署后的真实检索效果；不以生成数据代替 RSS、延迟或业务质量验收。",
-   "verification": "生成隔离数据（8 视频×2 Chunk；6 视频有匹配 Event 发布，1 个 Chunk-only，1 个 INDEXING）下，top_k/candidate_budget 1/5 均为 ES 前 12 个元数据来源、0 正文、0 完整 detail，ES 后 1 次正文查询且加载/返回 1/5 个正文实体；实现上候选仅投影 compact / evidence.camera_hints、不读 _index_embeddings_v2（搜索及直接证据读取均已验证小字段保留）；回执缺失/伪造或索引缓存被移除仍可检索，stale version/pending Chunk/wrong target 排除对应视频。相关八模块隔离回归 248 passed、4 skipped；合并、部署与真实效果待验。",
-   "updatedAt": "2026-11-13",
+   "description": "Event 查询先加载授权范围内全部 Chunk 正文与 detail 重建发布投影，内存随素材库增长；改为发布元数据配对、候选有界回源，完整 detail 延迟加载、仅投影 compact / camera_hints。热修复后又将任务列表改为先排序 ID 再读取 JSON 元数据，避免完整八课程范围触发 MySQL 1038。",
+   "next": "已上线并完成最终镜像两次连续游客 Chat、880 Chunk 范围和真实 ES 召回复测；继续观察长时与多用户并发。旧新镜像同条件整轮 Chat 内存降幅尚未配对验证。",
+   "verification": "PR #154 已合入 dev；2026-11-14 00:38 上线四文件有界读取热修复。完整课程范围暴露 MySQL 1038，PR #159 改为先排序任务 ID 再读取 JSON 元数据，61 passed、1 skipped（此前有界读取八模块248 passed、4 skipped）。最终镜像2bebd9af于00:50:20上线，只有API镜像变化。最终代码只读验证8视频880个Chunk身份，5次范围查询、0正文ORM、RSS+0.50MiB；5候选回源累计+4.95MiB、完整detail0；真实ES词法召回8Event/5Chunk/8视频，partial=false，612.03ms、RSS+28.60MiB。最终镜像同一Python进程连续两次游客Chat均HTTP200/COMPLETED；200ms采样（含结束后15秒）最大RSS增量86.57/40.36MiB，空闲净增86.57/39.04MiB，第二次结束后419.92MiB，swap及OOM增量均0。首版另有一次41.487秒真实Chat，采样+80.48MiB。无同条件旧新整轮对照；长时/多用户未验证。",
+   "updatedAt": "2026-11-14",
    "tags": [
     "性能",
     "Event 检索",
-    "内存"
+    "内存",
+    "热修复"
    ],
    "related": [
     "MOD-SEARCH"
    ],
-   "branch": "perf/event-query-bounded-content",
+   "branch": "fix/event-scope-task-sort",
    "links": [
     {
-     "label": "PR #154",
+     "label": "PR #154（合并）",
      "kind": "pr",
      "url": "https://github.com/owariband/Seekino/pull/154"
     },
     {
-     "label": "TRD",
+     "label": "PR #159 任务排序",
+     "kind": "pr",
+     "url": "https://github.com/owariband/Seekino/pull/159"
+    },
+    {
+     "label": "有界内容读取 TRD",
      "kind": "trd",
      "url": "https://github.com/owariband/Seekino/blob/perf/event-query-bounded-content/docs/design/03-product-reassessment/event-query-bounded-content-trd.md"
+    },
+    {
+     "label": "任务排序 TRD",
+     "kind": "trd",
+     "url": "https://github.com/owariband/Seekino/blob/fix/event-scope-task-sort/docs/design/02-agent-harness/event-scope-task-sort-trd.md"
+    },
+    {
+     "label": "生产热修复报告",
+     "kind": "source",
+     "url": "https://github.com/owariband/Seekino/blob/fix/event-scope-task-sort/docs/report/server/service/video_event_retrieval/cloud-memory-hotfix-20261114.md"
     },
     {
      "label": "生成数据报告",
@@ -5666,9 +5682,14 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "url": "https://github.com/owariband/Seekino/blob/perf/event-query-bounded-content/docs/report/server/service/video_event_retrieval/bounded-query-20261113.md"
     },
     {
-     "label": "devlog",
+     "label": "devlog（PR #154 有界读取）",
      "kind": "source",
      "url": "https://github.com/owariband/Seekino/blob/perf/event-query-bounded-content/docs/dev/devlog.md#devlog-event-query-bounded-content-20261113"
+    },
+    {
+     "label": "devlog（热修复）",
+     "kind": "source",
+     "url": "https://github.com/owariband/Seekino/blob/fix/event-scope-task-sort/docs/dev/devlog.md#devlog-event-query-cloud-memory-hotfix-20261114"
     }
    ]
   },
