@@ -886,6 +886,14 @@ Whisper/音轨对齐由另一项工作处理，因此不再执行课程、回看
 
 优先级：高。类型：多轮对话意图识别、Query 改写与回答目标偏移。状态：**`query_hook` 已接入 Chat；当前优先测试短对话效果，长对话上下文截断与 harness 对接暂缓。** 下方 2026-10-20 的 schema 与“待接入”描述保留为历史方案，当前实现以本次更新为准；分类准确率、回答效果与长对话稳定性仍待验收。
 
+#### 2026-11-13：Cloud 配置覆盖 JEV 与三路径隔离对照
+
+Cloud 同时存在 JEV 参数和 `models.query_hook=deepseek-flash/high/256`，后者通过 `decision_model` 选择合并决策图，实际跳过 JEV。已备份并只删除该 binding，重启后新建真实 API 测试消息确认 JEV/respond，路由 1.533 秒、整轮 4.690 秒。改写器保留既有 Flash/high/256。
+
+同一 dev Supervisor、模型、历史、工具与动态 85% 基线的正式隔离对照为 27 个完整 turn，三组均 9/9 完成。DeepSeek前置／JEV＋改写器／直接判断的平均 TT 为 8.319／10.404／9.588 秒，总 token 为 238332／260639／311226。两种前置 action 均 9/9 正确；A/B 六对追加后输入相同，回答质量差不能都归于路由。直接判断在本批未表现为总体更优；三路仍有输出或卡片交付问题，尤其同 Chunk 重复提交会原地覆盖。当前试点仅一段真实 12 秒 MyGO 片段，不能替代整季、长历史或全部 C19 验收。
+
+证据见[三路径报告](../report/agent/chat/query-intent-routing-20261113/README.md)、[devlog](devlog.md#devlog-chat-intent-routing-20261113)及[TRD](../design/03-product-reassessment/query-intent-routing-comparison-trd.md)。唯一当前状态由[工作台](workbench.html) `CHAT-INTENT-01` 维护；下方“当前链路”按各自历史日期理解，不把当时本地 8B 设置写成今天 Cloud 实际配置。
+
 #### 2026-10-21：沿用服务层近期消息，先验收短对话
 
 - **当前链路。** Supervisor 进入 harness 前执行一次 `query_hook`：Jev 判定 `respond / retrieve / mixed`；`retrieve / mixed` 再由纯文本 Qwen3-8B 填写 `retrieval_query`，`respond` 跳过 8B；代码将固定模板与候选词追加到模型输入。业务消息仍保留用户原文。当前不采用下方历史方案中的 `clarify / current_task` 输出。
