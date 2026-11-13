@@ -2,7 +2,7 @@
 
 需求：将已测的 JEV-only hook 作为默认路径，完整记录实验用例、用量、耗时和质量，并更新 Cloud 与 CPU server。日期：2026-11-13（UTC+8）；工作分支：`fix/jev-only-hook-default`；目标：`dev`，运行文件另从最新 `main` 建发布分支；[PR #155](https://github.com/owariband/Seekino/pull/155)，发布 [PR #157](https://github.com/owariband/Seekino/pull/157)。
 
-2026-11-14 的部署验收沿用本需求，在 `docs/jev-only-rollout-evidence` 分支补回实际生效收据与 devlog；内部留痕只进入 dev。
+2026-11-14 的部署验收沿用本需求，在 `docs/jev-only-rollout-evidence` 分支、[PR #158](https://github.com/owariband/Seekino/pull/158) 补回实际生效收据与 devlog；内部留痕只进入 dev。
 
 前两轮实验分别测了 JEV＋改写器和 JEV-only。旧表没有代表纯 JEV，后续又只突出完成数与耗时，缺少直接可读的 query 和质量判据，无法据此判断实际收益。新一轮 27 turn 的模型、输入和用量已经冻结；质量是随后由 Codex 主 Agent 逐条补评，不能写成预先冻结的盲测。现有 `QueryHookConfig.rewriter_enabled`、根配置、本地开发和 Cloud 示例仍开启可选改写器，后续部署可能重新带回不需要的串行调用。
 

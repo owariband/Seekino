@@ -2,7 +2,7 @@
 
 本报告记录 JEV-only 默认值从代码合并到 Cloud API 实际上线的过程，以及上线后的真实健康、对话和检索 hook 探针。收据中的时间均为 UTC；部署完成对应本地 2026-11-14 00:25:03（UTC+8），成功的探针结束于本地 00:27:55。27 turn 基准仍是 2026-11-13 的实验，本次没有重跑。
 
-关联：[上线 TRD](../../../../design/03-product-reassessment/jev-only-hook-rollout-trd.md) · [dev PR #155](https://github.com/owariband/Seekino/pull/155) · [main PR #157](https://github.com/owariband/Seekino/pull/157) · [原始脱敏收据](production-rollout-20261114.json) · [兼容补丁](production-embedding-compatibility.patch) · [实验指标与质量评阅](README.md)。
+关联：[上线 TRD](../../../../design/03-product-reassessment/jev-only-hook-rollout-trd.md) · [dev PR #155](https://github.com/owariband/Seekino/pull/155) · [main PR #157](https://github.com/owariband/Seekino/pull/157) · [部署留痕 PR #158](https://github.com/owariband/Seekino/pull/158) · [原始脱敏收据](production-rollout-20261114.json) · [兼容补丁](production-embedding-compatibility.patch) · [实验指标与质量评阅](README.md)。
 
 ## 发布与拓扑
 
