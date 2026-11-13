@@ -1,6 +1,6 @@
 # 1. 问题与现状
 
-2026-11-14；分支 `fix/voiceprint-media-workspaces`，目标 `dev`，PR 创建后回填。上游实测与背景为 [B12](../../dev/problems.md#b12asr-匿名说话人分组不准refine-看帧后仍未纠正目标归属) / [PR #156](https://github.com/owariband/Seekino/pull/156)。
+2026-11-14；分支 `fix/voiceprint-media-workspaces`，目标 `dev`，[PR #160](https://github.com/owariband/Seekino/pull/160)。上游实测与背景为 [B12](../../dev/problems.md#b12asr-匿名说话人分组不准refine-看帧后仍未纠正目标归属) / [PR #156](https://github.com/owariband/Seekino/pull/156)。
 
 本机 EP04 整集 1fps/prefill 任务 `368fec7e-b1f3-42b3-9ed6-fd0766be471b` 已保存 24/24 Understanding，随后声纹准备三次均因 FileExistsError 失败，22 个 Refine 窗口未启动。整集媒体上下文持有 video/lease 工作目录；声纹切片以相同任务和租约调用同一目录创建器，`exist_ok=False` 在编码前拒绝。不能据此判断 CAM++ 的人物识别质量。
 
@@ -30,3 +30,5 @@
 # 6. 验收与闭环
 
 源代码修复、回归测试、真实声纹 ready、Refine 完成及目标是否为长崎爽世分别报告；本修复消除运行阻塞不等于算法准确率达标。同步 devlog、问题 B12 与工作台，关联 PR #156；本修复独立 PR 合入 dev，不混入文档验证 PR。PR #156 是实验文档背景，不是代码依赖；建议先集成 #156，再按本修复 2026-11-14 实测更新 B12，合并时保留两次验证事实。源码和 123 项直接回归已通过；2026-11-14 00:36:45（UTC+8）真实核实 voiceprint.ready=true，298 行/298 个样本、298 次 CAM++ 编码 completed，原 24 份理解仍保留，声纹准备 failures=0。目录冲突的运行阻塞已消除。随后 Refine 的初始输入因 ContextWindowOverflow 被本地预算校验拒绝，全链仍未跑通，最终身份尚未验收；该新问题属于声纹证据向模型呈现的体积控制，另行修复，不以提高窗口上限掩盖。复核证据见 [运行摘要](../../report/server/service/video_parse_media/voiceprint-workspaces-20261114.json)。
+
+DS worker 已核对目标行（47500–49500 ms）：B0 第一候选長崎そよ，相似度 0.7995548577，分档 CONFLICT；原 Understanding 标签仍为千早愛音。相似度不是身份概率，Refine 尚未落地最终归属。

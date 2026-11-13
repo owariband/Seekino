@@ -1056,6 +1056,7 @@ Cloud 同时存在 JEV 参数和 `models.query_hook=deepseek-flash/high/256`，�
 
 - EP04 本机任务在 24 个理解成果提交后，声纹准备三次报同租约目录已存在；Server 媒体服务的固定目录命名造成冲突，未进入编码。通过给 speaker audio 独立目录并沿用租约锁/清理修复，123 项直接回归通过。
 - 同一任务正式重试后，保留 1fps/prefill、既有 ASR 和 24 份理解；真实得到 ready=true、298 行/298 样本和 298 次 CAM++ completed，目录问题已消除。模型/阈值/Prompt/数据库合同未改，未访问 CPU/prod。
+- DS worker 已复核目标行 B0 首位候选为長崎そよ，相似度 0.7996、分档 CONFLICT；原 Understanding 标签仍为千早愛音，最终归属未由 Refine 落地。
 - 新阻塞是 Refine 初始证据超过上下文预算，Gateway 报 ContextWindowOverflow；最终人物结果尚未产生。需要在证据呈现链路控制序列化体积并复核 AI 实际输入，不能用扩大窗口掩盖，也不能把本次 ready 或编码完成当作身份正确。该后续问题归 Parse Harness/Server，独立修复；本轮不改其证据合同。
 - 原始 CUDA ASR 目标混分与历史轮次结论保留，详见 [PR #156](https://github.com/owariband/Seekino/pull/156)；目录修复及实测见 [devlog](devlog.md#devlog-voiceprint-media-workspace-20261114)、[TRD](../design/03-product-reassessment/voiceprint-media-workspace-fix-trd.md)和[运行摘要](../report/server/service/video_parse_media/voiceprint-workspaces-20261114.json)。当前状态统一在工作台维护，实名目标仍为长崎爽世。
 

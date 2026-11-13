@@ -224,7 +224,7 @@
 | Refine / 全链 | 未进入 Refine | 已尝试 Refine，但输入超过上下文预算；全链未完成 |
 | 目标最终实名、完整耗时、费用 | 未验收 | 未验收；父任务起点跨停机与重试，不作纯运行耗时 |
 
-目录冲突已在真实链路消除，内部声纹结果确实生成。后续 Refine 又被 ContextWindowOverflow 阻断，不能据此声称 AI 已消费评分并修正人物。本次保留该新问题，由 Parse Harness/Server 的证据呈现链路另行处理，最终身份仍交 DS worker 根据真实产物核对。
+目录冲突已在真实链路消除，内部声纹结果确实生成。DS worker 复核目标行 47500–49500 ms 的 B0 首位候选为長崎そよ（相似度 0.7996，非概率），分档 CONFLICT；原理解标签仍为千早愛音。后续 Refine 又被 ContextWindowOverflow 阻断，不能据此声称 AI 已消费评分并修正人物。本次保留该新问题，由 Parse Harness/Server 的证据呈现链路另行处理，最终身份仍交 DS worker 根据真实产物核对。
 
 <a id="devlog-event-query-bounded-content-20261113"></a>
 ## 2026-11-13：Event 查询在 ES 召回前加载全部 Chunk 正文，检索内存随素材库增长

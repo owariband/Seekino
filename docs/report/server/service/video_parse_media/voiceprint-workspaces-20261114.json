@@ -186,5 +186,29 @@
     "timing_note": "父任务start_time包括历史停机与多次重试，不作为补丁后耗时。"
   },
   "final_identity": "unverified: Refine input blocked by ContextWindowOverflow; directory fix does not establish voice attribution quality",
-  "production_boundary": "Only local isolated API/test data and existing GPU; no CPU/prod access."
+  "production_boundary": "Only local isolated API/test data and existing GPU; no CPU/prod access.",
+  "target_b0_after_fix": {
+    "start_ms": 47500,
+    "end_ms": 49500,
+    "speaker": "千早愛音",
+    "label": "千早愛音",
+    "band": "CONFLICT",
+    "gap": 0.1268826328682937,
+    "reason": "compared",
+    "candidates": [
+      {
+        "speaker": "長崎そよ",
+        "similarity": 0.7995548576647767
+      },
+      {
+        "speaker": "红发女生",
+        "similarity": 0.672672224796483
+      },
+      {
+        "speaker": "千早愛音",
+        "similarity": 0.5903924252428341
+      }
+    ],
+    "similarity_is_probability": false
+  }
 }

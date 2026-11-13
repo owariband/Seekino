@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-14T00:47:15+08:00",
+ "updatedAt": "2026-11-14T00:52:01+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 64,
+ "revision": 65,
  "categories": [
   {
    "id": "parse",
@@ -2077,7 +2077,7 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "status": "progressing",
    "priority": "unset",
    "description": "本机声纹切片与整集租约目录冲突已修复；原24份理解保留，真实298次CAM++编码完成并ready。人物归属仍待验收，Refine现被初始证据超上下文阻断。",
-   "next": "由DS worker核对本轮B0目标候选；另行修复Refine证据呈现的上下文溢出，再验收实际输入和最终长崎爽世归属。",
+   "next": "DS已核对目标B0首位为長崎そよ0.7996/CONFLICT；另行修复Refine证据呈现的上下文溢出，再验收实际输入和最终归属。",
    "verification": "2026-11-14：123项相关回归通过；本机正式retry得到voiceprint.ready=true、298行/298样本、298次CAM++ completed，preparation failures=0。原24个Understanding和ASR复用。Refine因ContextWindowOverflow未产生最终结果；目录修复不等于人物质量达标。",
    "updatedAt": "2026-11-14",
    "tags": [
@@ -2113,6 +2113,11 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "label": "目录修复devlog",
      "url": "https://github.com/owariband/Seekino/blob/fix/voiceprint-media-workspaces/docs/dev/devlog.md#devlog-voiceprint-media-workspace-20261114",
      "kind": "source"
+    },
+    {
+     "label": "目录修复 PR #160",
+     "url": "https://github.com/owariband/Seekino/pull/160",
+     "kind": "pr"
     }
    ],
    "source": {
