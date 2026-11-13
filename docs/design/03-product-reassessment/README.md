@@ -6,6 +6,10 @@
 
 ## 本阶段的提出背景
 
+2026-11-13，Cloud 的 `models.query_hook` 使 DeepSeek 合并决策覆盖了保留的 JEV 配置。本轮恢复 Cloud JEV，并在相同 Supervisor、工具与动态 85% 基线下比较三种意图路径；见 [三路径对照 TRD](query-intent-routing-comparison-trd.md) / [PR #145](https://github.com/owariband/Seekino/pull/145)，当前状态由工作台 `CHAT-INTENT-01` 维护。
+
+2026-11-13，Chat 命中证据后仍等待同步摘要；本次从模型容量与压缩阈值的装配关系核对原因，以本地真实请求边界对照验证。设计与证据入口见 [Chat 模型窗口与压缩 TRD](chat-model-context-compaction-trd.md) / [PR #144](https://github.com/owariband/Seekino/pull/144)，当前状态由工作台 `CHAT-COMPACT-01` 维护。
+
 2026-11-12，手机访客找不到抽屉内的文档入口，系列选集的全宽大图也使连续浏览困难。本次以现有导航与选集组件为边界，参考横向细条布局，设计与验证见[移动端文档与紧凑选集 TRD](mobile-docs-episodes-trd.md) / [PR #129](https://github.com/owariband/Seekino/pull/129)，执行状态见工作台 `MOBILE-UI-01`。
 
 本阶段的转向至少可以追溯到 [2026-10-23 的 reflection](../../dev/reflection.md)。字节二面的直接反馈让 hypnos 重新看待其作为产品 owner 的职责：最初想做的是“本地素材自动解析＋Codex 剪视频一条龙”，实际推进中却不断扩展技术和功能，交付期限、外部反馈与整体收益没有得到同样的重视。同行同样在做剧本和分镜，却能收敛复杂度，这个对照成为 hypnos 重新审视 Seekino 的触发点。10 月 23 日是反思记录日期，原文没有单独确认面试当天的日期。
@@ -119,6 +123,7 @@ hypnos 于 **2026-04-27 入职实习**，到这次面试复盘时已接近半年
 - [任务历史版本筛选](task-history-filter-trd.md)：2026-10-30，默认当前版本、历史追溯与操作权限说明。
 
 - [独立对话页布局](chat-sidebar-layout-trd.md)：左侧历史与居中草稿，状态见[工作台](../../dev/workbench.html) CHAT-LAYOUT-01。
+- [回答中删除提示](chat-delete-hint-tooltip-trd.md)，2026-11-13。历史列表的重复说明常驻占高，改为复用垃圾桶原生悬停提示；状态见[工作台](../../dev/workbench.html) CHAT-DELETE-HINT-01。
 - [聊天页顶栏与公开范围](chat-header-scope-trd.md)，2026-11-08。游客视角下的紧凑导航、选择器空态与独立聊天侧栏。
 - [个人模型服务](personal-model-connections-trd.md) 记录生效 YAML 的管理接口、凭证掩码、cloud 权限和会话选模。依赖设置工作区 #72。
 - [模型注册与用途](model-registry-roles-trd.md) 延伸 #74，将同一组注册模型接入聊天、解析和检索。

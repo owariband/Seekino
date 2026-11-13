@@ -104,6 +104,7 @@ Event / Sub-Chunk 的实施入口是 [sub-chunk-trd.md](02-agent-harness/sub-chu
 | Feature / 主题 | 文档 | 内容与定位 |
 |---|---|---|
 | 独立对话页布局 | [chat-sidebar-layout-trd.md](03-product-reassessment/chat-sidebar-layout-trd.md) | 左侧历史、居中草稿、简洁输入栏；依赖 #66，状态见工作台 CHAT-LAYOUT-01。 |
+| 回答中删除提示 | [chat-delete-hint-tooltip-trd.md](03-product-reassessment/chat-delete-hint-tooltip-trd.md) | 去掉历史列表常驻说明，复用垃圾桶的原生悬停提示，保留删除保护。 |
 | 公开课程解析期间的访问 | [公开观看、对话与逐集检索](03-product-reassessment/public-course-readiness-trd.md) | 显式公开、原片播放、零索引对话、按集覆盖和撤回校验。 |
 | 聊天页顶栏与公开范围 | [chat-header-scope-trd.md](03-product-reassessment/chat-header-scope-trd.md) | 紧凑的 Seekino 字标导航、公开系列空态及 CPU 侧栏实测。 |
 | 个人模型服务 | [personal-model-connections-trd.md](03-product-reassessment/personal-model-connections-trd.md) | 本机或 cloud 管理员编辑 YAML 中的协议、地址和模型，聊天按会话选模。 |
@@ -136,6 +137,7 @@ Event / Sub-Chunk 的实施入口是 [sub-chunk-trd.md](02-agent-harness/sub-chu
 | ContextCanvas | [context-canvas-design.md](02-agent-harness/context-canvas-design.md) | 专项设计：Parse / Chat 共用上下文工作区、工具协议、读取与修改边界。 |
 | 当前播放位置理解 | [realtime-parse-trd.md](02-agent-harness/realtime-parse-trd.md) | 专项 TRD：实时理解、临时解析与 Supervisor 接线；附执行流程图。 |
 | Agent Loop 参考 | [agent-loop-references.md](01-mvp/agent-loop-references.md) | 源码与设计参考：循环出口、Output Node 及前端消费。 |
+| Chat 模型窗口与压缩延迟 | [动态压缩触发与本地对照](03-product-reassessment/chat-model-context-compaction-trd.md) | 2026-11-13：冻结真实慢请求的模型边界，比较旧阈值与当前模型 context size 的 85%；关联 PR #144。 |
 | 陪看与按需解析 | [agent_harness_refactor.md](02-agent-harness/agent_harness_refactor.md) | 候选产品与 Harness 讨论：当前内容解释、历史召回和按需解析。 |
 | 上下文隔离修复 | [agent_harness_context修复.md](02-agent-harness/agent_harness_context修复.md) | 历史讨论与修复记录：上下文隔离、证据读取、草稿和工具输出约束。 |
 | Harness 调教 | [agent-harness调教log.md](02-agent-harness/agent-harness调教log.md) | 历史故障与调教日志；后续实施记录统一写入 devlog。 |

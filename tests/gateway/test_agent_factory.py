@@ -588,6 +588,254 @@ def test_deep_agent_factory_preserves_provider_controls_and_shares_sessions(
         factory.close()
 
 
+def _ratio_binding(**updates: object) -> ModelBinding:
+    values = dict(
+        source="primary", model="configured-model", request_timeout_seconds=90,
+        max_output_tokens=8_192, max_input_chars=120_000,
+        context_window_tokens=262_144, context_safety_margin_tokens=4_096,
+        auto_compact_tokens=200_000, compact_target_tokens=150_000,
+        auto_compact_ratio=0.85,
+    )
+    values.update(updates)
+    return ModelBinding(**values)
+
+
+def _install_deep_agent_capture(monkeypatch):
+    calls: list[dict[str, object]] = []
+
+    def build(**kwargs: object) -> object:
+        calls.append(kwargs)
+        return SimpleNamespace(**kwargs)
+
+    monkeypatch.setattr(agent_factory, "DeepAgentsSupervisorModel", build)
+    return calls
+
+
+def test_deep_agent_uses_discovered_capacity_for_adapter_and_supervisor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _install_deep_agent_capture(monkeypatch)
+    discovered: list[tuple[str, str, str | None, bool]] = []
+
+    def discover(protocol, base_url, api_key, *, allow_local):
+        discovered.append((protocol, base_url, api_key, allow_local))
+        return {"role-model": 1_048_576}
+
+    monkeypatch.setattr(agent_factory, "discover_model_context_windows", discover)
+    factory = agent_factory.AgentModelFactory(
+        _agent_config(), {"primary": _openai_source()}, binding=_ratio_binding(),
+        environ={"DEEPSEEK_API_KEY": "deepseek-secret"},
+    )
+    try:
+        factory.build_deep_agent(**{**_build_arguments(), "max_output_tokens": 8_192})
+        policy = calls[0]["context_window_policy"]
+        assert discovered == [
+            ("openai_chat", "https://api.deepseek.com", "deepseek-secret", False),
+        ]
+        assert policy.context_window_tokens == 1_048_576
+        assert policy.output_reserve_tokens == 8_192
+        assert policy.safety_margin_tokens == 4_096
+        assert policy.auto_compact_tokens == 891_289
+        assert policy.compact_target_tokens == 24_000
+        # The SDK adapter and the DeepAgents supervisor must share one effective policy.
+        assert calls[0]["agent_model"].context_window_policy is policy
+    finally:
+        factory.close()
+
+
+def test_deep_agent_context_metadata_is_cached_per_source_and_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _install_deep_agent_capture(monkeypatch)
+    discovered: list[str] = []
+
+    def discover(protocol, base_url, api_key, *, allow_local):
+        discovered.append(base_url)
+        return {"model-a": 1_048_576, "model-b": 200_000}
+
+    monkeypatch.setattr(agent_factory, "discover_model_context_windows", discover)
+    factory = agent_factory.AgentModelFactory(
+        _agent_config(), {"primary": _openai_source()}, binding=_ratio_binding(),
+        environ={"DEEPSEEK_API_KEY": "deepseek-secret"},
+    )
+    try:
+        for model in ("model-a", "model-a", "model-b"):
+            factory.build_deep_agent(**{**_build_arguments(), "model": model})
+        # One metadata request per source/model; rebuilding the same role is cached.
+        assert discovered == ["https://api.deepseek.com", "https://api.deepseek.com"]
+        first, repeated, switched = (call["context_window_policy"] for call in calls)
+        assert first == repeated
+        assert first.auto_compact_tokens == 891_289
+        assert switched.context_window_tokens == 200_000
+        assert switched.auto_compact_tokens == 170_000
+        assert switched.compact_target_tokens == 24_000
+    finally:
+        factory.close()
+
+
+def test_ratio_none_keeps_the_previous_shared_policy_without_discovery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _install_deep_agent_capture(monkeypatch)
+
+    def discover(*args, **kwargs):
+        raise AssertionError("metadata must not be requested without a ratio")
+
+    monkeypatch.setattr(agent_factory, "discover_model_context_windows", discover)
+    factory = agent_factory.AgentModelFactory(
+        _agent_config(), {"primary": _openai_source()},
+        binding=_ratio_binding(auto_compact_ratio=None),
+        environ={"DEEPSEEK_API_KEY": "deepseek-secret"},
+    )
+    try:
+        factory.build_deep_agent(**_build_arguments())
+        policy = calls[0]["context_window_policy"]
+        assert policy.context_window_tokens == 64_000
+        assert policy.auto_compact_tokens == 48_000
+        assert policy.compact_target_tokens == 24_000
+    finally:
+        factory.close()
+
+
+def test_ark_deep_agent_uses_declared_capacity_without_model_list(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _install_deep_agent_capture(monkeypatch)
+
+    def discover(*args, **kwargs):
+        raise AssertionError("Ark has no model-list endpoint")
+
+    monkeypatch.setattr(agent_factory, "discover_model_context_windows", discover)
+    factory = agent_factory.AgentModelFactory(
+        _agent_config(), {"primary": ArkModelSourceConfig()}, binding=_ratio_binding(),
+        environ={"ARK_API_KEY": "ark-secret"},
+    )
+    try:
+        factory.build_deep_agent(**_build_arguments())
+        policy = calls[0]["context_window_policy"]
+        assert policy.context_window_tokens == 262_144
+        assert policy.auto_compact_tokens == 222_822
+        assert policy.compact_target_tokens == 24_000
+    finally:
+        factory.close()
+
+
+def test_deep_agent_without_declared_capacity_keeps_the_shared_static_policy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _install_deep_agent_capture(monkeypatch)
+
+    def discover(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(agent_factory, "discover_model_context_windows", discover)
+    factory = agent_factory.AgentModelFactory(
+        _agent_config(), {"primary": _openai_source()},
+        binding=_ratio_binding(
+            context_window_tokens=None, context_safety_margin_tokens=None,
+            auto_compact_tokens=None, compact_target_tokens=None,
+        ),
+        environ={"DEEPSEEK_API_KEY": "deepseek-secret"},
+    )
+    try:
+        factory.build_deep_agent(**_build_arguments())
+        policy = calls[0]["context_window_policy"]
+        assert policy.context_window_tokens == 64_000
+        assert policy.auto_compact_tokens == 48_000
+        assert policy.compact_target_tokens == 24_000
+    finally:
+        factory.close()
+
+
+def test_deep_agent_metadata_failure_uses_declared_binding_capacity_once(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    calls = _install_deep_agent_capture(monkeypatch)
+    discovered: list[str] = []
+
+    def discover(protocol, base_url, api_key, *, allow_local):
+        discovered.append(base_url)
+        raise ValueError("模型列表接口返回 HTTP 404，可手动填写模型 ID")
+
+    monkeypatch.setattr(agent_factory, "discover_model_context_windows", discover)
+    factory = agent_factory.AgentModelFactory(
+        _agent_config(), {"primary": _openai_source()},
+        binding=_ratio_binding(
+            context_window_tokens=131_072,
+            auto_compact_tokens=100_000, compact_target_tokens=60_000,
+        ),
+        environ={"DEEPSEEK_API_KEY": "deepseek-secret"},
+    )
+    try:
+        factory.build_deep_agent(**_build_arguments())
+        factory.build_deep_agent(**_build_arguments())
+        assert len(discovered) == 1
+        policy = calls[0]["context_window_policy"]
+        assert calls[1]["context_window_policy"].context_window_tokens == 131_072
+        assert policy.context_window_tokens == 131_072
+        assert policy.auto_compact_tokens == 111_411
+        assert policy.compact_target_tokens == 24_000
+        assert caplog.text.count("event=agent_model_context_capacity_unavailable") == 1
+    finally:
+        factory.close()
+
+
+def test_deep_agent_uses_the_smaller_configured_fallback_capacity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _install_deep_agent_capture(monkeypatch)
+    discovered: list[str] = []
+
+    def discover(protocol, base_url, api_key, *, allow_local):
+        discovered.append(base_url)
+        return {"role-model": 1_048_576}
+
+    monkeypatch.setattr(agent_factory, "discover_model_context_windows", discover)
+    fallback = ModelBinding(
+        source="fallback", model="fallback-model", request_timeout_seconds=90,
+        max_output_tokens=8_192, max_input_chars=120_000,
+        context_window_tokens=65_536, context_safety_margin_tokens=4_096,
+        auto_compact_tokens=50_000, compact_target_tokens=24_000,
+    )
+    factory = agent_factory.AgentModelFactory(
+        _agent_config(fallback=True),
+        {"primary": _openai_source(), "fallback": ArkModelSourceConfig()},
+        binding=_ratio_binding(fallback=fallback),
+        environ={"DEEPSEEK_API_KEY": "deepseek-secret", "ARK_API_KEY": "ark-secret"},
+    )
+    try:
+        factory.build_deep_agent(**_build_arguments())
+        policy = calls[0]["context_window_policy"]
+        assert discovered == ["https://api.deepseek.com"]
+        assert policy.context_window_tokens == 65_536
+        assert policy.auto_compact_tokens == 55_705
+        assert policy.compact_target_tokens == 24_000
+        assert policy.auto_compact_tokens < policy.maximum_input_tokens
+    finally:
+        factory.close()
+
+
+@pytest.mark.parametrize("builder", ["build_loop", "build_structured"])
+def test_ratio_does_not_change_loop_or_structured_context_policy(
+    monkeypatch: pytest.MonkeyPatch, builder: str,
+) -> None:
+    def discover(*args, **kwargs):
+        raise AssertionError("only DeepAgents resolves dynamic model capacity")
+
+    monkeypatch.setattr(agent_factory, "discover_model_context_windows", discover)
+    factory = agent_factory.AgentModelFactory(
+        _agent_config(), {"primary": _openai_source()}, binding=_ratio_binding(),
+        environ={"DEEPSEEK_API_KEY": "deepseek-secret"},
+    )
+    try:
+        adapter = getattr(factory, builder)(**_build_arguments())
+        assert adapter.context_window_policy.context_window_tokens == 64_000
+        assert adapter.context_window_policy.auto_compact_tokens == 48_000
+        assert adapter.context_window_policy.compact_target_tokens == 24_000
+    finally:
+        factory.close()
+
+
 @pytest.mark.parametrize("source", [CodexModelSourceConfig(), ClaudeCodeModelSourceConfig()])
 def test_deep_agent_rejects_native_runtime_sources_without_changing_role_models(
     monkeypatch: pytest.MonkeyPatch,

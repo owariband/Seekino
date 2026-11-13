@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-13T12:00:00+08:00",
+ "updatedAt": "2026-11-13T19:23:16+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 54,
+ "revision": 61,
  "categories": [
   {
    "id": "parse",
@@ -5669,6 +5669,129 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "label": "devlog",
      "kind": "source",
      "url": "https://github.com/owariband/Seekino/blob/perf/event-query-bounded-content/docs/dev/devlog.md#devlog-event-query-bounded-content-20261113"
+    }
+   ]
+  },
+  {
+   "id": "CHAT-COMPACT-01",
+   "title": "静态小窗口提前触发 Chat 同步摘要，需按模型容量对照",
+   "category": "chat",
+   "type": "requirement",
+   "status": "verifying",
+   "priority": "P1",
+   "description": "Cloud三条慢请求的摘要占58%–63%。模型能力1M与实际64k/48k策略不匹配；以真实历史的固定模型边界验证85%动态触发。",
+   "next": "用完整Chat／视频卡回源验收与近满窗试点补证；当前三对模型边界已确认摘要等待与85%策略净改善，Cloud尚未部署。",
+   "verification": "320项回归通过，3项既有失败在干净dev复现。9次真实生成全部完成，Flash/high/8192及三对入口哈希一致；模型边界25.283/33.496/25.702秒降至2.752/6.891/5.297秒，摘要75.414秒降至0。正常模型耗时及未缓存输入增加；完整业务与近满窗质量未验收。",
+   "updatedAt": "2026-11-13",
+   "tags": ["Chat", "性能", "上下文", "边界实测", "待完整业务验收"],
+   "related": [
+    "MOD-CHAT",
+    "C20"
+   ],
+   "branch": "perf/chat-model-context-compact",
+   "links": [
+    {
+     "label": "PR #144",
+     "kind": "pr",
+     "url": "https://github.com/owariband/Seekino/pull/144"
+    },
+    {
+     "label": "TRD",
+     "kind": "trd",
+     "url": "https://github.com/owariband/Seekino/blob/perf/chat-model-context-compact/docs/design/03-product-reassessment/chat-model-context-compaction-trd.md"
+    },
+    {
+     "label": "实验报告",
+     "kind": "source",
+     "url": "https://github.com/owariband/Seekino/blob/perf/chat-model-context-compact/docs/report/gateway/agent_model/chat-context-compaction-20261113/README.md"
+    }
+   ]
+  },
+  {
+   "id": "CHAT-INTENT-01",
+   "title": "Cloud 前置模型覆盖 JEV，三路径意图判断的成本与效果需核实",
+   "category": "chat",
+   "type": "requirement",
+   "status": "done",
+   "priority": "P1",
+   "description": "Cloud models.query_hook 选择 DeepSeek 合并决策，JEV 参数未被调用；恢复 JEV 并比较相同 Supervisor 条件下的三条意图路径。",
+   "next": "本轮配置纠正和有界比较已闭环；C19全场景质量另按原问题验收。后续优先核对单Chunk更新卡片与重复检索，再决定更大样本的直接判断试点。",
+   "verification": "Cloud实际JEV/respond已验证，API重启healthy。正式27/27自然完成，SQL正文一致且无PROCESSING；三组平均FTT 6.099/8.886/7.713s，TT 8.319/10.404/9.588s，token 238332/260639/311226。A/B动作均9/9正确，6对输入相同，Codex逐条评阅6/8/8通过；未将诊断批和失败隐藏。仅12秒素材，不证明全局最优或C19完全关闭。",
+   "updatedAt": "2026-11-13",
+   "tags": [
+    "Chat",
+    "意图判断",
+    "性能",
+    "真实模型对照"
+   ],
+   "related": [
+    "MOD-CHAT",
+    "C19",
+    "CHAT-COMPACT-01"
+   ],
+   "branch": "perf/query-intent-routing-comparison",
+   "links": [
+    {
+     "label": "PR #145",
+     "kind": "pr",
+     "url": "https://github.com/owariband/Seekino/pull/145"
+    },
+    {
+     "label": "TRD",
+     "kind": "trd",
+     "url": "https://github.com/owariband/Seekino/blob/perf/query-intent-routing-comparison/docs/design/03-product-reassessment/query-intent-routing-comparison-trd.md"
+    },
+    {
+     "label": "实验报告",
+     "kind": "source",
+     "url": "https://github.com/owariband/Seekino/blob/perf/query-intent-routing-comparison/docs/report/agent/chat/query-intent-routing-20261113/README.md"
+    }
+   ]
+  },
+  {
+   "id": "CHAT-DELETE-HINT-01",
+   "title": "回答中的删除说明只在垃圾桶悬停时显示",
+   "category": "chat",
+   "type": "task",
+   "status": "done",
+   "priority": "P2",
+   "description": "移除历史列表中常驻的“回答完成后可删除”，复用垃圾桶已有原生 title；保留回答中删除禁用和完成后恢复。",
+   "next": "",
+   "verification": "dev 54项与main锁文件55项App回归、TypeScript、构建及本地/GitHub release-files通过。PR #150以4增/3删发布main 271f519f；2026-11-13 19:20（UTC+8）只更新Web。50个镜像/运行文件及公网资源哈希匹配，HTTPS聊天页和健康通过；公网桌面/手机隔离API浏览器检查通过，其他五项服务未重启。无真实聊天或模型调用，旧镜像与rollback-web保留。",
+   "updatedAt": "2026-11-13",
+   "tags": [
+    "UI"
+   ],
+   "related": [
+    "MOD-CHAT",
+    "CHAT-LAYOUT-01"
+   ],
+   "branch": "fix/chat-delete-hint-tooltip",
+   "links": [
+    {
+     "label": "TRD 与本地验收",
+     "url": "https://github.com/owariband/Seekino/blob/fix/chat-delete-hint-tooltip/docs/design/03-product-reassessment/chat-delete-hint-tooltip-trd.md",
+     "kind": "trd"
+    },
+    {
+     "label": "决策与对照",
+     "url": "https://github.com/owariband/Seekino/blob/fix/chat-delete-hint-tooltip/docs/dev/devlog.md#devlog-chat-delete-hint-20261113",
+     "kind": "source"
+    },
+    {
+     "label": "PR #147",
+     "url": "https://github.com/owariband/Seekino/pull/147",
+     "kind": "pr"
+    },
+    {
+     "label": "main发布 PR #150",
+     "url": "https://github.com/owariband/Seekino/pull/150",
+     "kind": "pr"
+    },
+    {
+     "label": "线上聊天页",
+     "url": "https://seekino.hypn0s.cloud/search",
+     "kind": "source"
     }
    ]
   }
