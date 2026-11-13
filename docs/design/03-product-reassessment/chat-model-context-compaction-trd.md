@@ -76,3 +76,5 @@ sequenceDiagram
 # 6. 结果验收与闭环
 
 模型容量解析与 85% 策略已实现，320 项相关回归通过，3 项既有配置失败在干净 dev 复现；三对真实模型边界均确认提前同步摘要的等待与消除后的净改善。当前支持“选定边界的性能机制已验证”，不支持“完整 Chat 问题已解决”。完整业务交付、近满窗质量、长期稳定性与生产试点继续留在验收边界。当前状态见[管理工作台](../../dev/workbench.html)的 `CHAT-COMPACT-01`；本轮不部署 Cloud。
+
+2026-11-14 上线跟进：main `8a86883f` 对应的 Cloud API 已实际加载 `auto_compact_ratio: 0.85`，日志解析为 context 1048576／trigger 891289／keep 24000；全局 `agent-runtime.yaml` 字节哈希未变，实际值来自模型元数据与 Supervisor 绑定。keep 是最近消息尾部的保留目标，不是整段压缩后请求的大小。该证据只说明配置与容量解析已接入生产；完整业务交付、近满窗质量、并发与长期延迟仍未验证，`CHAT-COMPACT-01` 保持 verifying。见[生产上线报告](../../report/agent/chat/query-intent-jev-only-20261113/production-rollout-20261114.md)。
