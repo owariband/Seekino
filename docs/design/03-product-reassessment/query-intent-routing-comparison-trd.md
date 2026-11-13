@@ -84,4 +84,4 @@ H1 在本批未获支持：DeepSeek 合并决策平均 1.452 秒，JEV＋改写�
 
 本次有界比较已完成，Cloud 继续使用 JEV，不自动推广 C。三组均存在部分输出、顺序或卡片问题，C19 全场景仍未关闭。后续优先核对重复检索／相同 cursor 读取、单 Chunk 更新卡片语义，再按同条件扩大样本；这些生产改造没有纳入本轮。整季、大索引、长历史、附件／回放、Query 子 Agent、并发、浏览器播放和完整费用未验证。测试启动的本地服务已按自有 PID 停止，数据保留。
 
-2026-11-13 文档纠正：[#145](https://github.com/owariband/Seekino/pull/145) 初版将 Codex 主 Agent 的逐条评阅误写为“人工审阅”。后续以 `docs/chat-intent-review-attribution` 分支纠正评阅来源，PR 创建后回填；这是同一实验的说明纠正，不变更数据、规则或分数。评分模型为本次会话的 Codex 主 Agent，具体模型 ID 未导出；依据为冻结 expected、真实工具轨迹、已发布 Timeline 与最终卡片，程序审计只校验用量、输入、时间及持久化。没有独立模型评委或人工盲评，语义评分仍有判断性。
+2026-11-13 文档纠正：[#145](https://github.com/owariband/Seekino/pull/145) 初版将 Codex 主 Agent 的逐条评阅误写为“人工审阅”。后续以 `docs/chat-intent-review-attribution` 分支纠正评阅来源，关联 [PR #148](https://github.com/owariband/Seekino/pull/148)；这是同一实验的说明纠正，不变更数据、规则或分数。评分模型为本次会话的 Codex 主 Agent，具体模型 ID 未导出；依据为冻结 expected、真实工具轨迹、已发布 Timeline 与最终卡片，程序审计只校验用量、输入、时间及持久化。没有独立模型评委或人工盲评，语义评分仍有判断性。
