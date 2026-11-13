@@ -215,7 +215,7 @@ Cloud 维持已授权切换的 JEV。直接判断只做隔离实验，没有据�
 
 逐一核对九个三元组，Supervisor prompt、工具 schema、历史正文一致，A／B 追加后的模型消息有 6/9 对也完全一致；因此几例生成或工具选择差异不能都归因于分类器。A／B action 均 9/9 正确，B 改写 5/5 成功，未发生失败开放。独立 SQL 核对正式 27/27 正文与 COMPLETED 一致，测试库无 PROCESSING。测试启动的 MySQL、ES、embedding 已按自有 PID 停止，保留数据与结果。
 
-输出并非全部无问题：A 把“高高在上”错误定位到所选短片，另有一次重新确认未核验历史、一次多给压缩版本；B／C 首轮 mixed 都先检索后回应，并把同一 Chunk 提交两次后误称有两段卡片。现有合同按 Chunk ID 原地更新，最终只留后一张卡。复测三组均做到先答后查且一次提交完整片段。意图标签正确不能代替交付验收。逐字回答、逐例评分、数据与版本见[完整报告](../report/agent/chat/query-intent-routing-20261113/README.md)及 [TRD](../design/03-product-reassessment/query-intent-routing-comparison-trd.md)，关联 [PR #145](https://github.com/owariband/Seekino/pull/145)。
+输出并非全部无问题：A 把“高高在上”错误定位到所选短片，另有一次重新确认未核验历史、一次多给压缩版本；B／C 首轮 mixed 都先检索后回应，并把同一 Chunk 提交两次后误称有两段卡片。现有合同按 Chunk ID 原地更新，最终只留后一张卡。复测三组均做到先答后查且一次提交完整片段。意图标签正确不能代替交付验收。语义评分由本次会话的 Codex 主 Agent 按冻结规则与工具／卡片证据逐条评阅，具体模型 ID 未导出，没有独立模型评委或人工盲评；程序审计只核对输入、时间、用量与持久化。逐字回答、逐例评分、数据与版本见[完整报告](../report/agent/chat/query-intent-routing-20261113/README.md)及 [TRD](../design/03-product-reassessment/query-intent-routing-comparison-trd.md)，关联 [PR #145](https://github.com/owariband/Seekino/pull/145)。
 
 ### 4. 指标对比
 
@@ -231,7 +231,7 @@ Cloud 维持已授权切换的 JEV。直接判断只做隔离实验，没有据�
 | Supervisor provider 请求数 | 24 | 27 | 31 |
 | 主要意图行为通过 | 9/9 | 9/9 | 9/9 |
 | mixed 检索前已公开回应 | 2/2 | 1/2 | 1/2 |
-| 严格人工审阅 pass／partial／fail | 6 / 2 / 1 | 8 / 1 / 0 | 8 / 1 / 0 |
+| Codex 逐条评阅 pass／partial／fail | 6 / 2 / 1 | 8 / 1 / 0 | 8 / 1 / 0 |
 
 C 相比 B 的平均 FTT 减少 13.2%、平均 TT 减少 7.8%，总 token 增加 19.4%；相比 A，平均 TT 增加 15.2%、总 token 增加 30.6%。C 的 TT 中位数又比 A 低，不能说某一路每种 query 都快。前置 token 只占 A／B 总量约 2.5%／3.6%，后续重复携带工具和证据的请求才是本批主要消耗。DeepSeek 已报告的未缓存 input 分别为 33,692／28,807／32,948，费用还受缓存及供应商计价影响，不能按总 token 比例推算账单。
 
