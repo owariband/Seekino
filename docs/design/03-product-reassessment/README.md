@@ -80,6 +80,7 @@ hypnos 于 **2026-04-27 入职实习**，到这次面试复盘时已接近半年
 | [《Weekend Study》宣传片剧本](editing-promo-weekend-study.md) | #50 试点成片，片主 2026-11-10 批准 | 一条 prompt 经 MCP 取材、本地抠像渲染 | 剧本、实测数字与占位项；成片待制作 |
 | [动画表情素材召回](anime-material-recall-trd.md) | 2026-11-08，五集盲评漏选爱音反应 | 剪辑 Agent 按画面表情找素材 | 单独核验语义排名、全量翻页与原片画面。 |
 | [上传视频自动判型](parse-pre-hook-router-trd.md) | 2026-11-09，CPU 普通上传需要自动选策略 | 沿用 Parse V2 及显式覆盖 | [#82](https://github.com/owariband/Seekino/pull/82) |
+| [全季 Event 覆盖校验内存](event-coverage-memory-trd.md) | 2026-11-11，全季查询期间 API 进程触发整机 OOM | 在同一事务按集、按批核对当前来源和回执 | [PR #116](https://github.com/owariband/Seekino/pull/116) |
 | [公开观看、对话与逐集检索](public-course-readiness-trd.md) | 2026-11-10，追加 E08 导致七集已就绪课程消失 | 显式可见性、逐集资料依赖和撤回校验 | [系列分享 §3.7](../02-agent-harness/series-sharing-trd.md#37-首版公开条件整个系列都已就绪) |
 | [剪辑素材的运镜描述与回放](clip-camera-reference-trd.md) | 2026-11-10，镜头平移被看反或按画面内容拆断 | 同一发布事件提供中文描述、来源与可执行镜头 | [实测](../../report/agent/video_parse_v2/clip-camera-reference-20261110.md) |
 | [按证据下载连续原片](mcp-source-clips-trd.md) | #50 媒体部分 | 编辑自选入出点，服务端返回一段 MP4 | [同一应用的双路取片回归](mcp-edit-references-trd.md#6-结果验收与闭环) |

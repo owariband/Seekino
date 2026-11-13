@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from copy import deepcopy
 
-from sqlalchemy import Select, and_, exists, func, or_, select
+from sqlalchemy import JSON, Select, and_, exists, func, or_, select, type_coerce
 from sqlalchemy.orm import Session, aliased, load_only
 
 from ..model.dto.parseContentDTO import ChunkParseContentData
@@ -19,6 +20,7 @@ from ..model.dto.libraryDTO import (
     VideoData,
 )
 from ..model.dto.searchDTO import (
+    EventCoverageChunk,
     PublishedTimelineChunk,
     VideoParseRetrievalChunkData,
     VideoParseRetrievalTaskData,
@@ -275,16 +277,27 @@ def load_indexed_chunk_content(
     return chunk_store.content_data(row) if row is not None else None
 
 
-def load_event_source_rows(
-    session: Session, *, task_ids: Sequence[str],
-) -> list[tuple[ChunkParseTaskData, ChunkParseContentData, VideoChunkData]]:
-    rows = session.execute(select(ChunkParseTask, ChunkParseContent, VideoChunk).join(
+@contextmanager
+def event_source_rows(
+    session: Session, *, task_id: str, embedding_detail_key: str,
+) -> Iterator[Iterator[EventCoverageChunk]]:
+    # Extract the receipt without transferring or decoding cached vectors.
+    detail = type_coerce(func.json_remove(
+        ChunkParseContent.detail, f'$."{embedding_detail_key}".representations',
+    ), JSON)
+    statement = select(
+        ChunkParseTask.chunk_id, VideoChunk.video_id, VideoChunk.sequence_no,
+        VideoChunk.start_ms, VideoChunk.end_ms, ChunkParseTask.phase, ChunkParseTask.status,
+        ChunkParseTask.indexed_content_version, ChunkParseContent.version,
+        ChunkParseContent.content, detail[embedding_detail_key],
+    ).select_from(ChunkParseTask).join(
         ChunkParseContent, ChunkParseContent.chunk_task_id == ChunkParseTask.id,
     ).join(VideoChunk, VideoChunk.id == ChunkParseTask.chunk_id).where(
-        ChunkParseTask.video_task_id.in_(task_ids),
-    ))
-    return [(chunk_store.task_data(child), chunk_store.content_data(content),
-             chunk_store.video_chunk_data(chunk)) for child, content, chunk in rows]
+        ChunkParseTask.video_task_id == task_id,
+    ).execution_options(yield_per=4)
+    # MySQL must close its server-side cursor even when an invalid receipt ends a read early.
+    with session.execute(statement) as rows:
+        yield (EventCoverageChunk(*row) for row in rows)
 
 
 def load_export_rows(
