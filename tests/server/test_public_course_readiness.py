@@ -23,6 +23,7 @@ from server.config.parse_profile import default_video_parse_v2_config
 from server.model.parse_content import ChunkParseContent
 from server.model.task import ChunkParseTask, VideoParseTask
 from server.model.video import Video, VideoChunk
+from server.repository.video_parse_retrieval import list_video_tasks
 from server.service.media import MediaService
 from server.service.video_parse_content import EVENT_INDEX_TARGET_DETAIL_KEY
 from server.service.video_parse_persistence import INDEX_EMBEDDINGS_DETAIL_KEY, VideoParsePersistenceService
@@ -164,6 +165,56 @@ def public_course(cloud_api, seed_video):
     api.services.agent._runtimes.append(api.services.agent._runtime)
     return SimpleNamespace(api=api, series_id=series.series_id, tenant=tenant, episodes=episodes,
                            index=index, embedder=embedder, model=model, source=source, events=events, event_store=event_store)
+
+
+def test_list_video_tasks_sorts_ids_before_metadata_json(public_course):
+    course = public_course
+    base = course.episodes[3]
+    newest_id, deleted_id = str(uuid4()), str(uuid4())
+    with course.api.sessions.begin() as session:
+        base_task = session.get(VideoParseTask, base.video_parse_task_id)
+        session.add_all([
+            VideoParseTask(
+                id=newest_id, video_id=base.video_id, pipeline_version=base_task.pipeline_version,
+                status="PARSING_FAILED", parse_config=deepcopy(base_task.parse_config),
+                chunk_count=base_task.chunk_count, version=2, max_attempts=3, is_test=True,
+                detail=deepcopy(base_task.detail),
+            ),
+            VideoParseTask(
+                id=deleted_id, video_id=base.video_id, pipeline_version=base_task.pipeline_version,
+                status="COMPLETE", parse_config=deepcopy(base_task.parse_config),
+                chunk_count=base_task.chunk_count, version=3, max_attempts=3, is_test=True,
+                is_deleted=True, detail=deepcopy(base_task.detail),
+            ),
+        ])
+    video_ids = [episode.video_id for episode in course.episodes]
+    statements = []
+
+    def capture(_connection, _cursor, statement, _parameters, _context, _many):
+        statements.append(" ".join(statement.split()).lower())
+
+    engine = course.api.sessions.kw["bind"]
+    event.listen(engine, "before_cursor_execute", capture)
+    try:
+        with course.api.sessions() as session:
+            tasks = list_video_tasks(session, video_ids=video_ids)
+            assert list_video_tasks(session, video_ids=()) == []
+    finally:
+        event.remove(engine, "before_cursor_execute", capture)
+
+    assert len(statements) == 2
+    identity, metadata = statements
+    assert "order by video_parse_task.video_id, video_parse_task.version desc, video_parse_task.id desc" in identity
+    assert "parse_config" not in identity and "chunk_count" not in identity and "detail" not in identity
+    assert "order by" not in metadata and "parse_config" in metadata and "detail" in metadata
+
+    ids = [task.id for task in tasks]
+    assert len(ids) == len(course.episodes) + 1 and len(set(ids)) == len(ids)
+    assert deleted_id not in ids
+    assert [task.video_id for task in tasks] == sorted(task.video_id for task in tasks)
+    # The failed v2 task stays the historical latest; ordering follows the ID query.
+    assert ids.index(newest_id) + 1 == ids.index(base.video_parse_task_id)
+    assert next(task for task in tasks if task.id == newest_id).status == "PARSING_FAILED"
 
 
 @pytest.mark.parametrize("searchable", [7, 0])

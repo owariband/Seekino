@@ -60,18 +60,27 @@ def chunk_video_ids(session: Session, *, chunk_ids: set[str], video_ids: Sequenc
 
 
 def list_video_tasks(session: Session, *, video_ids: Sequence[str]) -> list[VideoParseRetrievalTaskData]:
-    rows = session.execute(select(
-        VideoParseTask.id, VideoParseTask.video_id, VideoParseTask.status,
-        VideoParseTask.parse_config, VideoParseTask.chunk_count,
-        VideoParseTask.detail["_event_index_target_v1"].label("event_index_target"),
-    ).where(
+    if not video_ids:
+        return []
+    # Sort only identities. MySQL filesort can otherwise carry parse_config and
+    # the Event target JSON even though they are not sort keys (error 1038).
+    task_ids = list(session.scalars(select(VideoParseTask.id).where(
         VideoParseTask.video_id.in_(video_ids), VideoParseTask.is_deleted.is_(False),
-    ).order_by(VideoParseTask.video_id, VideoParseTask.version.desc(), VideoParseTask.id.desc()))
+    ).order_by(VideoParseTask.video_id, VideoParseTask.version.desc(), VideoParseTask.id.desc())))
+    if not task_ids:
+        return []
+    rows = {
+        row.id: row for row in session.execute(select(
+            VideoParseTask.id, VideoParseTask.video_id, VideoParseTask.status,
+            VideoParseTask.parse_config, VideoParseTask.chunk_count,
+            VideoParseTask.detail["_event_index_target_v1"].label("event_index_target"),
+        ).where(VideoParseTask.id.in_(task_ids), VideoParseTask.is_deleted.is_(False)))
+    }
     return [VideoParseRetrievalTaskData(
-        id=row.id, video_id=row.video_id, status=row.status,
+        id=task_id, video_id=row.video_id, status=row.status,
         parse_config=deepcopy(row.parse_config), chunk_count=row.chunk_count,
         event_index_target=row.event_index_target,
-    ) for row in rows]
+    ) for task_id in task_ids if (row := rows.get(task_id)) is not None]
 
 
 def saved_source_status(session: Session, snapshot: dict) -> str:
