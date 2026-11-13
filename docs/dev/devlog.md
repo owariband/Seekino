@@ -27,6 +27,7 @@
 
 | 记录 | 原问题编号 |
 |---|---|
+| [2026-11-13：小窗口提前触发同步摘要，Chat 命中后的等待需要同输入验证](#devlog-chat-model-context-compaction-20261113) | CHAT-COMPACT-01；PR #144 |
 | [2026-11-12：检测切点被当成动作边界，真实素材在理解阶段被拒](#devlog-reference-model-judgment-20261112) | EDIT-REFERENCE-02；PR #139 |
 | [2026-11-12：dialog瞬时关闭并卸载内容，手机导航缺少开合过渡](#devlog-mobile-drawer-motion-20261112) | MOBILE-UI-01；PR #129第二轮 |
 | [2026-11-12：手机隐藏文档并放大全宽选集，初次引导与连续浏览困难](#devlog-mobile-docs-episodes-20261112) | MOBILE-UI-01；PR #129 |
@@ -188,6 +189,41 @@
 | [日期未明确（2026-10-23归档）：当前播放窗口的按需理解与复用](#devlog-history-60) | 独立实验/设计 |
 
 </details>
+
+<a id="devlog-chat-model-context-compaction-20261113"></a>
+## 2026-11-13：小窗口提前触发同步摘要，Chat 命中后的等待需要同输入验证
+
+### 问题与现状
+
+Cloud 的三条观看问答在获得候选后仍等待，已有诊断中同步摘要占整轮用时的 58%–63%。本地 `dev` 的 DeepAgents 同样先生成摘要再继续主模型请求，而模型 binding 与 runtime 的较小值让实际策略成为 64k／48k／24k。当前 DeepSeek Flash 的真实模型列表返回 1,048,576 context tokens；旧 64k 是应用声明，不能作为该模型的容量。本轮要先验证触发机制，再用同输入区分摘要等待与正常模型耗时，不能只把阈值放大后就宣布提速。
+
+本地没有运行 SQL、ES 或 Chat 服务，默认模型又是 Kimi。为固定变量，我们在获得授权后只读取得三条请求前后的必要 checkpoint，在本机重建 DeltaChannel 消息和旧摘要，冻结“证据已返回、下一次模型调用之前”的真实消息边界。完整历史、图片和工具内容留在私有临时目录；仓库只保存脚本、配置、摘要指标与哈希。[设计与对照计划](../design/03-product-reassessment/chat-model-context-compaction-trd.md)绑定 [PR #144](https://github.com/owariband/Seekino/pull/144)，状态统一在工作台 `CHAT-COMPACT-01`。
+
+### 方案候选
+
+保留现有绝对 token 策略作为 A；B 在 Supervisor 模型绑定显式设置 `auto_compact_ratio: 0.85`，通过已有连接读取选中模型的 context size，按比例推导 trigger，并扣住本轮输出和安全预留。模型列表缺少能力字段时使用明确的 binding 声明，主备取较小容量；不把 runtime 默认 64k 再次合并回动态结果。省略 ratio 保留旧行为，便于回退与对照。
+
+本轮保持 `high` 思考、8192 输出、4096 安全余量、24000 最近消息保留预算及字符控制，不同时改变模型、工具并发或摘要模型。选择显式比例入口，是为了让动态策略可单独开关，避免把未完成的性能验证扩散到其他 Query/Parse 和个人 BYOK 路径。该实现仍同步等待摘要；50% 后台 compact 不是本轮交付。
+
+### 方案验证
+
+新能力发现函数已通过真实 GET 读到 1M，动态 factory 实际策略为 1,048,576／891,289／24,000。主 Agent 运行相关 Gateway/SDK 测试 190 passed，配置测试 130 passed、3 项既有失败排除；这三项在干净 `git archive dev` 中独立复现，未修改无关断言。编译、diff 和三对完整 SDK 离线回放通过。
+
+实验中发现额外 middleware 的位置可能落在 SDK 摘要之后，因此将观测点放在实际 SummarizationMiddleware 入口；请求哈希按 Gateway 可见的 OpenAI 消息、reasoning 与工具定义计算，排除框架随机生成的内部消息 ID。三对入口哈希一致，避免把已经压缩后的输入误记成压缩前输入。
+
+尚未执行真实模型生成，因此没有本地摘要秒数、provider 用量或提速结论。当前脚本只执行 compact 与一次主模型续推，响应后在执行新业务工具前停止；原 Cloud system prompt 未记录，当前 prompt 从 dev 代码和冻结上下文重建，不称为逐字 Cloud 回放。完整 Chat、SQL／ES、HTTP／SSE／DOM、视频卡交付、近 891k 满窗与长期摘要质量均未验证。详细边界见[实验报告](../report/gateway/agent_model/chat-context-compaction-20261113/README.md)与[脱敏指标](../report/gateway/agent_model/chat-context-compaction-20261113/metrics.json)。
+
+### 指标对比
+
+本次首先关注命中证据后的模型等待，所以比较相同输入下摘要是否发生，并记录完整请求 token，避免把历史缩短或跳过工具当成收益。下表是模型使用本地替身的 SDK 触发检查，没有真实时延含义；不能和 Cloud 整轮秒数相减。
+
+| 输入 | 压缩前完整输入估算（token） | A：48k trigger 摘要数 | B：891289 trigger 摘要数 | 正常模型请求输入是否同源 |
+| --- | ---: | ---: | ---: | --- |
+| T01：桥上场景 | 49395 | 1 | 0 | 压缩前哈希相同 |
+| T02：拉手核验 | 48267 | 1 | 0 | 压缩前哈希相同 |
+| T03：17:36 抽帧 | 50152 | 1 | 0 | 压缩前哈希相同 |
+
+证据支持代码已经避开这三个小上下文的提前摘要，但尚不能判定本地等待改善了多少。保留较长输入可能增加 token 和正常推理时间，较晚发生的摘要也可能更重；应继续完成真实模型配对后再决定性能收益。当前为实现与离线验证完成，真实效果待测、未合入 dev、未部署 Cloud。
 
 <a id="devlog-mobile-drawer-motion-20261112"></a>
 ## 2026-11-12：dialog瞬时关闭并卸载内容，手机导航缺少开合过渡

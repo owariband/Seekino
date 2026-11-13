@@ -10,8 +10,10 @@ from .personal_endpoint import endpoint_http_client
 LIST_NOT_PROVIDED = {404, 405, 501}
 
 
-def discover_models(protocol: str, base_url: str, api_key: str | None, *, allow_local: bool) -> list[str] | None:
-    """Return the model IDs the service lists, or None when the service has no model-list endpoint."""
+def _fetch_models(
+    protocol: str, base_url: str, api_key: str | None, *, allow_local: bool,
+) -> list[tuple[str, dict]] | None:
+    """Return listed model entries by ID, or None when the service has no model-list endpoint."""
     headers = {}
     if protocol == "ark":
         raise ValueError("请使用方舟推理接入点的模型 ID")
@@ -33,7 +35,7 @@ def discover_models(protocol: str, base_url: str, api_key: str | None, *, allow_
         path, items, field = "/models", "data", "id"
     if api_key and protocol not in {"gemini", "anthropic_messages"}:
         headers["Authorization"] = "Bearer " + api_key
-    found: dict[str, None] = {}
+    found: dict[str, dict] = {}
     params = {}
     try:
         with endpoint_http_client(base_url, allow_local=allow_local, timeout=8) as client:
@@ -54,7 +56,7 @@ def discover_models(protocol: str, base_url: str, api_key: str | None, *, allow_
                 for entry in data[items]:
                     name = entry.get(field) if isinstance(entry, dict) else None
                     if isinstance(name, str) and 0 < len(name) <= 255 and name.isprintable():
-                        found[name.removeprefix("models/") if protocol == "gemini" else name] = None
+                        found[name.removeprefix("models/") if protocol == "gemini" else name] = entry
                 if protocol == "gemini" and data.get("nextPageToken"):
                     params = {"pageToken": data["nextPageToken"]}
                 elif protocol == "anthropic_messages" and data.get("has_more") and data.get("last_id"):
@@ -63,4 +65,27 @@ def discover_models(protocol: str, base_url: str, api_key: str | None, *, allow_
                     break
     except (httpx.HTTPError, json.JSONDecodeError, UnicodeDecodeError):
         raise ValueError("无法获取模型列表，请检查连接或手动填写模型 ID") from None
-    return list(found)
+    return list(found.items())
+
+
+def discover_models(protocol: str, base_url: str, api_key: str | None, *, allow_local: bool) -> list[str] | None:
+    """Return the model IDs the service lists, or None when the service has no model-list endpoint."""
+    models = _fetch_models(protocol, base_url, api_key, allow_local=allow_local)
+    return None if models is None else [name for name, _entry in models]
+
+
+def discover_model_context_windows(
+    protocol: str, base_url: str, api_key: str | None, *, allow_local: bool,
+) -> dict[str, int | None] | None:
+    """Return each listed model's declared context window, or None when no list endpoint exists."""
+    models = _fetch_models(protocol, base_url, api_key, allow_local=allow_local)
+    return None if models is None else {
+        name: _context_window(entry) for name, entry in models
+    }
+
+
+def _context_window(entry: dict) -> int | None:
+    value = entry.get("context_window")
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        return None
+    return value

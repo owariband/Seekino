@@ -84,6 +84,7 @@ models:
     max_output_tokens: 8192
     request_timeout_seconds: 1200
     context_window_tokens: 262144
+    auto_compact_ratio: 0.85
     context_safety_margin_tokens: 4096
     auto_compact_tokens: 200000
     compact_target_tokens: 150000

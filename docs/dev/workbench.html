@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-12T20:25:13.887090+08:00",
+ "updatedAt": "2026-11-13T16:55:22+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 53,
+ "revision": 54,
  "categories": [
   {
    "id": "parse",
@@ -5626,6 +5626,46 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "label": "冻结回放与完整链路证据",
      "kind": "evidence",
      "url": "https://github.com/owariband/Seekino/blob/fix/reference-model-judgment/docs/report/agent/video_parse_v2/reference-model-judgment-20261112/README.md"
+    }
+   ]
+  },
+  {
+   "id": "CHAT-COMPACT-01",
+   "title": "静态小窗口提前触发 Chat 同步摘要，需按模型容量对照",
+   "category": "chat",
+   "type": "requirement",
+   "status": "verifying",
+   "priority": "P1",
+   "description": "Cloud三条慢请求的摘要占58%–63%。模型能力1M与实际64k/48k策略不匹配；以真实历史的固定模型边界验证85%动态触发。",
+   "next": "执行冻结输入的真实模型配对，记录摘要、正常调用、完整请求token与响应类型；继续核对整轮业务交付和长上下文质量。",
+   "verification": "实现完成：显式ratio、模型容量发现/缓存、声明回退与主备安全预算；320项相关回归通过，3项既有配置失败在干净dev复现。三对离线SDK输入哈希一致，旧策略各触发一次摘要，动态策略均不触发。真实模型秒数和完整Chat效果尚未验证，未部署Cloud。",
+   "updatedAt": "2026-11-13",
+   "tags": [
+    "Chat",
+    "性能",
+    "上下文",
+    "待真实模型对照"
+   ],
+   "related": [
+    "MOD-CHAT",
+    "C20"
+   ],
+   "branch": "perf/chat-model-context-compact",
+   "links": [
+    {
+     "label": "PR #144",
+     "kind": "pr",
+     "url": "https://github.com/owariband/Seekino/pull/144"
+    },
+    {
+     "label": "TRD",
+     "kind": "trd",
+     "url": "https://github.com/owariband/Seekino/blob/perf/chat-model-context-compact/docs/design/03-product-reassessment/chat-model-context-compaction-trd.md"
+    },
+    {
+     "label": "实验报告",
+     "kind": "source",
+     "url": "https://github.com/owariband/Seekino/blob/perf/chat-model-context-compact/docs/report/gateway/agent_model/chat-context-compaction-20261113/README.md"
     }
    ]
   }

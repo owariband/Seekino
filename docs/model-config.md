@@ -201,6 +201,23 @@ models:
 
 使用 Deep Agents 时将 `supervisor_harness` 改为 `deepagents`，并将 `models.supervisor` 设为 OpenAI 兼容或 Ark API 模型，例如沿用 `models.agent` 中的 DeepSeek 与 Ark 回退绑定。该路径由 Deep Agents 管理模型和工具循环；Codex 路径由原生 Codex runtime 执行同一 Supervisor 业务工具。Codex harness 要求 `codex_app_server` 来源，不接受 `fallback`；Deep Agents 只接受 API 来源及单层 Ark API 回退，配置错配明确报错，不自动切换 harness。
 
+### Deep Agents 按模型窗口触发压缩
+
+可以在实际承担 Supervisor 的 API 模型绑定中显式启用比例策略：
+
+```yaml
+models:
+  supervisor:
+    # source、model、输出预算等继续沿用已有配置
+    auto_compact_ratio: 0.85
+```
+
+该字段默认不设置，保留现有绝对 token 策略。设置后，Gateway 在构建 Deep Agents Supervisor 时通过同一连接的模型列表读取选中模型的 `context_window`，按 factory、来源和模型缓存；切换到不同模型时重新解析，新建 factory 或重载配置后刷新。不在每次模型推理前查询。当前自动发现接入 OpenAI 兼容来源；Ark 或未提供该字段的来源使用模型绑定中声明的 `context_window_tokens`，并在解析日志中区分 `metadata` 与 `binding`。请求失败／缺少能力字段会告警；没有可用声明时保留原共享策略，不猜测容量。
+
+触发值为 `min(floor(context_size × auto_compact_ratio), context_size - requested_output_tokens - safety_margin_tokens - 1)`。此模式中的原 binding/runtime 窗口用于缺少模型能力时的回退，不再作为固定的 64k 窗口覆盖已发现的模型容量。配置了 API fallback 时按主备各自的能力／声明取较小容量。主模型与回退的实际输出预算、安全余量、字符控制继续保留；供应商的最大输出能力不会替换本轮请求的输出上限。
+
+最近消息保留预算沿用原共享策略，并确保小于新触发值；它不包含摘要、system prompt 和工具定义，不能直接作为完整压缩后输入。此策略仍为同步摘要，不包含后台 compact。当前消费者是内部 Deep Agents Supervisor，普通 Query/Parse 工具循环、原生 Codex/Claude 及个人 BYOK Supervisor 的预算行为保持原路径。
+
 ### Deep Agents checkpoint 持久化
 
 Cloud Chat 使用 `langgraph-checkpoint-mysql[pymysql]==3.0.0` 和现有 `mysql+pymysql` 数据库。Server 创建共享 `PyMySQLSaver`，`conversation_id` 直接作为 `thread_id`，不需要 `pi_host`、独立 Node 进程或 Conversation↔pi-session 映射。`pi_host` 和 `supervisor_harness: pi` 已退役，旧配置会明确校验失败。

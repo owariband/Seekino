@@ -1,6 +1,6 @@
 # 1. 问题与现状
 
-需求：本地复现 Chat 同步压缩延迟，并对照当前模型 context size 的 85% 动态触发策略。提出日期：2026-11-13；工作分支：`perf/chat-model-context-compact`；目标分支：`dev`；PR：创建后回填。
+需求：本地复现 Chat 同步压缩延迟，并对照当前模型 context size 的 85% 动态触发策略。提出日期：2026-11-13；工作分支：`perf/chat-model-context-compact`；目标分支：`dev`；PR：[#144](https://github.com/owariband/Seekino/pull/144)。
 
 Cloud Chat 在已经找到候选后仍等待数十秒。2026-11-13 的既有诊断中，T01–T03 总用时为 75.659 / 47.880 / 88.877 秒，分别发生 2 / 1 / 2 次同步摘要，摘要合计 45.191 / 30.194 / 51.932 秒。这是既有线上证据，尚不能替代本地复现或修改后的效果验证。
 
@@ -25,7 +25,7 @@ Cloud Chat 在已经找到候选后仍等待数十秒。2026-11-13 的既有诊�
 
 先完成旧策略基线，再修改 Gateway 所属的能力解析与 Supervisor 策略装配。复用既有模型发现连接与出站控制，在模型创建／切换时取得并复用该模型的 context size；不在 Chat 业务工具中硬编码供应商容量，不在每次模型推理前查询模型列表。
 
-动态触发值为 `floor(context_size * 0.85)`，并受 `context_size - requested_output_tokens - safety_margin_tokens` 的安全输入预算约束。具体元数据覆盖规则、缺失回退及现有配置兼容方式，在核对实际装配链后补充；未知容量不得猜测或静默放宽。保持现有尾部保留预算，使首轮实验聚焦容量／触发条件；记录其不等于完整压缩后目标的限制。
+当前实现以模型绑定的可选 `auto_compact_ratio: 0.85` 显式启用，省略该字段保留原策略。动态触发值为 `min(floor(context_size * 0.85), context_size - requested_output_tokens - safety_margin_tokens - 1)`。OpenAI 兼容来源查询当前连接的 `context_window`，按 factory／来源／模型缓存；失败或未提供字段时告警并使用绑定声明，声明也缺失时保留原共享策略。Ark 使用绑定声明；主备容量取较小值。此模式不再让旧 runtime 的默认 64k 覆盖已发现容量。字符限制与请求输出不变，尾部 keep 沿用原共享策略且小于新 trigger；不将供应商最大输出能力写入请求预算。
 
 ```mermaid
 sequenceDiagram
@@ -52,7 +52,12 @@ sequenceDiagram
 
 | 指标 | A：旧策略 | B：动态 85% | 差值与边界 |
 | --- | --- | --- | --- |
-| 完成耗时、摘要次数／耗时、完整请求 token、provider usage、交付正确性 | 待测 | 待测 | 待测 |
+| 真实模型耗时、provider usage、完整交付正确性 | 待测 | 待测 | 尚未生成真实模型结果 |
+| 离线 SDK 边界摘要次数（T01/T02/T03） | 1 / 1 / 1 | 0 / 0 / 0 | 同一输入，模型响应为本地替身；仅验证触发路径 |
+
+2026-11-13 已取得所选请求前后必要 checkpoint，在本地重建消息及旧摘要状态，使用当前 Supervisor prompt/tool schema 冻结三个边界。进入摘要前的完整输入估算为 49395 / 48267 / 50152 token，三对 OpenAI 可见消息与工具定义的哈希一致。新增能力函数已通过真实 GET 确认 1M；320 项相关测试通过，3 项配置断言失败在干净 `git archive dev` 中同样复现。详细方法、脚本、数据哈希和边界见[实验报告](../../report/gateway/agent_model/chat-context-compaction-20261113/README.md)。
+
+本地当前没有运行数据库、ES 或 Chat 服务，本轮冻结的是“证据已经返回、下一次模型调用之前”的真实消息边界；不把它当作整轮 Chat 回放。脚本复用生产 DeepAgents/Filesystem/Summarization/Gateway，只执行摘要及一次续推，随后在执行新工具前停止。原 Cloud system prompt 未记录，不能声称与当时请求逐字相同。近 891k 上下文的摘要质量、完整业务交付和生产性能仍未验证。
 
 # 5. 试点验证与方案取舍
 
@@ -60,4 +65,4 @@ sequenceDiagram
 
 # 6. 结果验收与闭环
 
-初稿尚未实施或验证。闭环时分别报告旧行为是否复现、同步压缩的实测贡献、85% 策略的时间／token／质量变化、代码与测试结果以及未覆盖的生产行为。状态以管理工作台维护；TRD、实验报告与 devlog 互相链接，不另维护任务看板。
+模型容量解析与 85% 策略已实现并完成上述离线验证，尚无真实模型时延对照，不能验收为性能问题已解决。后续以冻结三对输入执行真实模型对照，分别报告旧行为是否复现、同步压缩的实测贡献、85% 策略的时间／token／质量变化，以及未覆盖的完整业务与生产行为。当前状态见[管理工作台](../../dev/workbench.html)的 `CHAT-COMPACT-01`；本轮不部署 Cloud。

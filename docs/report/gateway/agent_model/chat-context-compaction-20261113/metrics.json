@@ -1,0 +1,122 @@
+{
+  "schema_version": 1,
+  "recorded_on": "2026-11-13",
+  "timezone": "Asia/Singapore",
+  "base_dev": "80cd796bba25dd3d0e28ff9d896dc317ace7b2d8",
+  "branch": "perf/chat-model-context-compact",
+  "pr": "https://github.com/owariband/Seekino/pull/144",
+  "model_metadata": {
+    "id": "deepseek-flash",
+    "name": "DeepSeek-V4.1-Flash",
+    "context_window": 1048576,
+    "max_output_tokens": 393216,
+    "input_modalities": [
+      "text",
+      "image"
+    ]
+  },
+  "generation_controls": {
+    "model": "deepseek-flash",
+    "reasoning_effort": "high",
+    "requested_output_tokens": 8192,
+    "safety_margin_tokens": 4096,
+    "recent_keep_tokens": 24000
+  },
+  "scope": "production SDK compact plus one model continuation; no business tool/HTTP/SQL/SSE completion",
+  "private_input_files_not_committed": true,
+  "private_snapshot_sha256": "f96cbe489ff5dadf3f7a7ccfaf8bbee395d22b23d34ae773ae09627438ef2a00",
+  "offline_checks": [
+    {
+      "case": "T01",
+      "fixture_sha256": "721fa5c26d29ef609befba4ca1d52236b52861630eed4417526374919734386a",
+      "before_request": {
+        "estimated_tokens": 49395,
+        "sha256": "4d7c6e9cb3107f70f94c45f69751209e27e7a15a88ef9a1bea24ab8111cc165e"
+      },
+      "same_input": true,
+      "baseline_compact_calls": 1,
+      "dynamic_compact_calls": 0,
+      "baseline_policy": {
+        "context_window_tokens": 64000,
+        "output_reserve_tokens": 8192,
+        "safety_margin_tokens": 4096,
+        "auto_compact_tokens": 48000,
+        "compact_target_tokens": 24000
+      },
+      "dynamic_policy": {
+        "context_window_tokens": 1048576,
+        "output_reserve_tokens": 8192,
+        "safety_margin_tokens": 4096,
+        "auto_compact_tokens": 891289,
+        "compact_target_tokens": 24000
+      },
+      "timings_not_real_model_measurements": true
+    },
+    {
+      "case": "T02",
+      "fixture_sha256": "3eb63d81e9a39293e5c04746ac626da7ae897193031c79e255d083ca62732056",
+      "before_request": {
+        "estimated_tokens": 48267,
+        "sha256": "3205d04323b810e1fd23f324a38b6fbf9699b929c44012b06334c9e0c7cab250"
+      },
+      "same_input": true,
+      "baseline_compact_calls": 1,
+      "dynamic_compact_calls": 0,
+      "baseline_policy": {
+        "context_window_tokens": 64000,
+        "output_reserve_tokens": 8192,
+        "safety_margin_tokens": 4096,
+        "auto_compact_tokens": 48000,
+        "compact_target_tokens": 24000
+      },
+      "dynamic_policy": {
+        "context_window_tokens": 1048576,
+        "output_reserve_tokens": 8192,
+        "safety_margin_tokens": 4096,
+        "auto_compact_tokens": 891289,
+        "compact_target_tokens": 24000
+      },
+      "timings_not_real_model_measurements": true
+    },
+    {
+      "case": "T03",
+      "fixture_sha256": "04f4eac8abbb309d233f023387a5a3675222235bc673687851ed50d934bdf11e",
+      "before_request": {
+        "estimated_tokens": 50152,
+        "sha256": "f5a5c648d04e3d5a3282f857845cae491de7a980628e759a361924cfd296f814"
+      },
+      "same_input": true,
+      "baseline_compact_calls": 1,
+      "dynamic_compact_calls": 0,
+      "baseline_policy": {
+        "context_window_tokens": 64000,
+        "output_reserve_tokens": 8192,
+        "safety_margin_tokens": 4096,
+        "auto_compact_tokens": 48000,
+        "compact_target_tokens": 24000
+      },
+      "dynamic_policy": {
+        "context_window_tokens": 1048576,
+        "output_reserve_tokens": 8192,
+        "safety_margin_tokens": 4096,
+        "auto_compact_tokens": 891289,
+        "compact_target_tokens": 24000
+      },
+      "timings_not_real_model_measurements": true
+    }
+  ],
+  "real_model_runs": [],
+  "real_model_replay_status": "not_run",
+  "tests": {
+    "gateway_sdk": {
+      "passed": 190
+    },
+    "config": {
+      "passed": 130,
+      "deselected_existing_failures": 3
+    },
+    "pristine_dev_same_failures": 3,
+    "compile": "pass",
+    "diff_check": "pass"
+  }
+}
