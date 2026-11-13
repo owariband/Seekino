@@ -87,6 +87,8 @@ API 并发：[2026-10-30 Kimi Code 10 路并发实测](gateway/kimi-concurrency-
 
 ## Server
 
+- [Event 查询有界内容读取（2026-11-13）](server/service/video_event_retrieval/bounded-query-20261113.md)：生成数据验证 ES 前只读元数据、候选正文有界，完整 detail 延迟加载且仅投影 compact / camera_hints；相关八模块隔离回归 248 passed、4 skipped，摘要与运镜提示保留已验证。
+
 11 月 7 日，micrograd v5 在隔离实例跑完 146 个索引块，用时 90 分 04.884 秒，414 份终态草稿都能对上模型调用。[草稿写入、整集计时与合并后的数据库回放](server/service/parse-output-drafts-20261107.md#micrograd-v5)
 
 11 月 8 日，MyGO 第 3 集单独冷跑，14 分 58.684 秒可检索，562 个事件逐一对上。[同集四次运行和对照条件](server/mq/parse-ready-dispatch/animation.md#dev-ep03-reruns)

@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from copy import deepcopy
+from typing import Any
 
 from sqlalchemy import Select, and_, exists, func, or_, select
-from sqlalchemy.orm import Session, aliased, load_only
+from sqlalchemy.orm import Session, aliased, defer, load_only
 
 from ..model.dto.parseContentDTO import ChunkParseContentData
 from ..model.dto.taskDTO import (
@@ -62,12 +63,14 @@ def list_video_tasks(session: Session, *, video_ids: Sequence[str]) -> list[Vide
     rows = session.execute(select(
         VideoParseTask.id, VideoParseTask.video_id, VideoParseTask.status,
         VideoParseTask.parse_config, VideoParseTask.chunk_count,
+        VideoParseTask.detail["_event_index_target_v1"].label("event_index_target"),
     ).where(
         VideoParseTask.video_id.in_(video_ids), VideoParseTask.is_deleted.is_(False),
     ).order_by(VideoParseTask.video_id, VideoParseTask.version.desc(), VideoParseTask.id.desc()))
     return [VideoParseRetrievalTaskData(
         id=row.id, video_id=row.video_id, status=row.status,
         parse_config=deepcopy(row.parse_config), chunk_count=row.chunk_count,
+        event_index_target=row.event_index_target,
     ) for row in rows]
 
 
@@ -126,6 +129,7 @@ def list_indexed_chunk_rows(
 ) -> list[VideoParseRetrievalChunkData]:
     rows = session.execute(select(
         ChunkParseTask.video_task_id, VideoChunk.video_id, VideoChunk.sequence_no,
+        VideoChunk.id.label("video_chunk_id"), ChunkParseContent.version.label("content_version"),
     ).select_from(ChunkParseTask).join(
         VideoChunk, VideoChunk.id == ChunkParseTask.chunk_id,
     ).join(ChunkParseContent, ChunkParseContent.chunk_task_id == ChunkParseTask.id).where(
@@ -135,6 +139,7 @@ def list_indexed_chunk_rows(
     ).order_by(ChunkParseTask.video_task_id, VideoChunk.sequence_no))
     return [VideoParseRetrievalChunkData(
         video_task_id=row.video_task_id, video_id=row.video_id, sequence_no=row.sequence_no,
+        video_chunk_id=row.video_chunk_id, content_version=row.content_version,
     ) for row in rows]
 
 
@@ -201,7 +206,13 @@ def load_task_chunk_rows(
 
 
 def _candidate_query(*, task_ids: Sequence[str], task_status: str, phase: int, status: str):
-    return select(Series, Video, VideoChunk, VideoParseTask, ChunkParseTask, ChunkParseContent).join(
+    # Retrieval only needs these two small metadata paths from the otherwise
+    # heavy detail column; the indexing cache is never projected.
+    return select(
+        Series, Video, VideoChunk, VideoParseTask, ChunkParseTask, ChunkParseContent,
+        ChunkParseContent.detail["compact"].as_string().label("detail_compact"),
+        ChunkParseContent.detail[("evidence", "camera_hints")].label("detail_camera_hints"),
+    ).join(
         Video, Video.series_id == Series.id,
     ).join(VideoParseTask, VideoParseTask.video_id == Video.id).join(
         ChunkParseTask, ChunkParseTask.video_task_id == VideoParseTask.id,
@@ -215,21 +226,42 @@ def _candidate_query(*, task_ids: Sequence[str], task_status: str, phase: int, s
     )
 
 
+def _candidate_content_data(
+    content: ChunkParseContent, *, include_detail: bool,
+    compact: str | None, camera_hints: list[dict[str, Any]] | None,
+) -> ChunkParseContentData:
+    if include_detail:
+        # Published references still need the complete detail and receipt.
+        return chunk_store.content_data(content)
+    detail = {}
+    if compact is not None:
+        detail["compact"] = compact
+    if camera_hints is not None:
+        detail["evidence"] = {"camera_hints": camera_hints}
+    data = chunk_store.content_data(content, include_detail=False)
+    data.detail = detail or None
+    return data
+
+
 def load_candidate_rows(
     session: Session, *, task_ids: Sequence[str], chunk_ids: set[str] | None,
-    task_status: str, phase: int, status: str,
+    task_status: str, phase: int, status: str, include_detail: bool = False,
 ) -> list[tuple[SeriesData, VideoData, VideoChunkData, VideoParseTaskData,
                 ChunkParseTaskData, ChunkParseContentData]]:
     query = _candidate_query(
         task_ids=task_ids, task_status=task_status, phase=phase, status=status,
     )
+    if not include_detail:
+        query = query.options(defer(ChunkParseContent.detail, raiseload=True))
     if chunk_ids is not None:
         query = query.where(VideoChunk.id.in_(chunk_ids))
     rows = session.execute(query)
     return [(task_store.series_data(series), task_store.video_data(video),
              chunk_store.video_chunk_data(chunk), task_store.task_data(task),
-             chunk_store.task_data(child), chunk_store.content_data(content))
-            for series, video, chunk, task, child, content in rows]
+             chunk_store.task_data(child), _candidate_content_data(
+                 content, include_detail=include_detail, compact=compact, camera_hints=camera_hints,
+             ))
+            for series, video, chunk, task, child, content, compact, camera_hints in rows]
 
 
 def load_neighbor_rows(
@@ -241,11 +273,13 @@ def load_neighbor_rows(
                   for task_id, sequences in neighbors]
     rows = session.execute(_candidate_query(
         task_ids=task_ids, task_status=task_status, phase=phase, status=status,
-    ).where(or_(*conditions)))
+    ).options(defer(ChunkParseContent.detail, raiseload=True)).where(or_(*conditions)))
     return [(task_store.series_data(series), task_store.video_data(video),
              chunk_store.video_chunk_data(chunk), task_store.task_data(task),
-             chunk_store.task_data(child), chunk_store.content_data(content))
-            for series, video, chunk, task, child, content in rows]
+             chunk_store.task_data(child), _candidate_content_data(
+                 content, include_detail=False, compact=compact, camera_hints=camera_hints,
+             ))
+            for series, video, chunk, task, child, content, compact, camera_hints in rows]
 
 
 def load_chunk_evidence_video(
@@ -265,14 +299,16 @@ def load_chunk_evidence_video(
 def load_indexed_chunk_content(
     session: Session, *, task_id: str, chunk_id: str, phase: int, status: str,
 ) -> ChunkParseContentData | None:
-    row = session.scalar(select(ChunkParseContent).join(
+    row = session.scalar(select(ChunkParseContent).options(
+        defer(ChunkParseContent.detail, raiseload=True),
+    ).join(
         ChunkParseTask, ChunkParseTask.id == ChunkParseContent.chunk_task_id,
     ).where(
         ChunkParseTask.video_task_id == task_id, ChunkParseTask.chunk_id == chunk_id,
         ChunkParseTask.phase == phase, ChunkParseTask.status == status,
         ChunkParseTask.indexed_content_version == ChunkParseContent.version,
     ))
-    return chunk_store.content_data(row) if row is not None else None
+    return chunk_store.content_data(row, include_detail=False) if row is not None else None
 
 
 def load_event_source_rows(

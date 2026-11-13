@@ -10,7 +10,7 @@ import httpx
 import pytest
 from elastic_transport import ConnectionError as ElasticConnectionError
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import event, inspect, select
 
 from agent.chat.supervisor import SupervisorRuntime
 from agent.chat.video_search.runtime import AgentRuntime
@@ -376,8 +376,71 @@ def test_event_queries_use_each_videos_chunk_generation(public_course):
     assert {hit.evidence.parse_provenance["indexGeneration"] for hit in whole.hits if hit.evidence.episode_order == 2} == {2}
 
 
-@pytest.mark.parametrize("issue", ["missing", "forged", "stale"])
-def test_event_publication_is_verified_per_video(public_course, issue):
+@pytest.mark.parametrize("top_k", [1, 5])
+def test_event_search_reads_only_bounded_candidate_bodies_without_index_cache(public_course, monkeypatch, top_k):
+    course = public_course
+    camera_hints = [{
+        "first_sample_ms": 1000, "last_sample_ms": 8000,
+        "if_background_is_fixed": "PAN_RIGHT", "sampled_timing": "EASE_IN_OUT",
+        "travel_in_frame_widths": 0.5,
+    }]
+    with course.api.sessions.begin() as session:
+        for content in session.scalars(select(ChunkParseContent)):
+            detail = deepcopy(content.detail)
+            detail["evidence"] = {
+                **(detail.get("evidence") or {}), "camera_hints": deepcopy(camera_hints),
+            }
+            detail.setdefault(INDEX_EMBEDDINGS_DETAIL_KEY, {})["representations"] = {
+                "vector": [0.123456789] * 4096,
+            }
+            content.detail = detail
+    course.events._policy = course.events._policy.model_copy(update={"candidate_budget": top_k})
+    loaded, body_queries = [], []
+
+    def record_content(content, _context):
+        assert "detail" in inspect(content).unloaded
+        loaded.append(content.chunk_task_id)
+
+    def record_sql(_connection, _cursor, statement, _parameters, _context, _many):
+        columns = statement.split("FROM", 1)[0]
+        assert ", chunk_parse_content.detail" not in columns
+        detail_references = columns.count("chunk_parse_content.detail")
+        assert detail_references == columns.upper().count(
+            "JSON_EXTRACT(CHUNK_PARSE_CONTENT.DETAIL"
+        )
+        assert detail_references in (0, 2)
+        assert "_index_embeddings_v2" not in columns and "representations" not in columns
+        if "chunk_parse_content.content" in columns:
+            body_queries.append(statement)
+
+    real_search = course.event_store.search_lexical
+
+    def recall(query, **kwargs):
+        assert loaded == body_queries == []
+        assert len(kwargs["sources"]) == 12
+        return real_search(query, **kwargs)
+
+    monkeypatch.setattr(course.event_store, "search_lexical", recall)
+    engine = course.api.sessions.kw["bind"]
+    event.listen(ChunkParseContent, "load", record_content)
+    event.listen(engine, "before_cursor_execute", record_sql)
+    try:
+        result = course.events.search(
+            "动作", tenant_id=course.tenant, series_ids=[course.series_id], top_k=top_k,
+            lexical_weight=1, text_weight=0, vision_weight=0,
+        ).chunk_result
+    finally:
+        event.remove(ChunkParseContent, "load", record_content)
+        event.remove(engine, "before_cursor_execute", record_sql)
+    assert len(result.hits) == len(loaded) == len(set(loaded)) == top_k
+    assert len(body_queries) == 1
+    assert all(hit.evidence.video_compact == f"第 {hit.evidence.sequence_no + 1} 段摘要" for hit in result.hits)
+    assert all(hit.evidence.context_after_compact == hit.evidence.video_compact for hit in result.hits)
+    assert all(hit.evidence.camera_hints == camera_hints for hit in result.hits)
+
+
+@pytest.mark.parametrize("issue", ["missing", "forged", "absent_cache"])
+def test_event_query_uses_completed_publication_instead_of_rechecking_cache(public_course, issue):
     course = public_course
     episode = course.episodes[1]
     with course.api.sessions.begin() as session:
@@ -390,8 +453,31 @@ def test_event_publication_is_verified_per_video(public_course, issue):
         elif issue == "forged":
             receipt["events"]["event_set_sha256"] = "0" * 64
         else:
-            content.version += 1
+            del detail[INDEX_EMBEDDINGS_DETAIL_KEY]
         content.detail = detail
+    options = dict(tenant_id=course.tenant, series_ids=[course.series_id], top_k=20)
+    whole = course.events.search("动作", **options).chunk_result
+    assert whole.searched_video_ids == [ep.video_id for ep in course.episodes[:6]]
+    assert {hit.evidence.video_id for hit in whole.hits} == {ep.video_id for ep in course.episodes[:6]}
+    single = course.events.search("动作", video_chunk_ids=[episode.video_chunk_ids[1]], **options).chunk_result
+    assert len(single.hits) == 1 and not single.partial
+
+
+@pytest.mark.parametrize("issue", ["stale_version", "pending_chunk", "index_target"])
+def test_event_query_excludes_incomplete_current_publications_per_video(public_course, issue):
+    course = public_course
+    episode = course.episodes[1]
+    with course.api.sessions.begin() as session:
+        child = session.scalar(select(ChunkParseTask).where(ChunkParseTask.chunk_id == episode.video_chunk_ids[1]))
+        if issue == "stale_version":
+            session.scalar(select(ChunkParseContent).where(ChunkParseContent.chunk_task_id == child.id)).version += 1
+        elif issue == "pending_chunk":
+            child.status = "QUEUED"
+        else:
+            task = session.get(VideoParseTask, episode.video_parse_task_id)
+            detail = deepcopy(task.detail)
+            detail[EVENT_INDEX_TARGET_DETAIL_KEY]["contract_id"] = "another-contract"
+            task.detail = detail
     options = dict(tenant_id=course.tenant, series_ids=[course.series_id], top_k=20)
     expected = [ep for ep in course.episodes[:6] if ep != episode]
     whole = course.events.search("动作", **options).chunk_result

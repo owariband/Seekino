@@ -27,6 +27,7 @@
 
 | 记录 | 原问题编号 |
 |---|---|
+| [2026-11-13：Event 查询在 ES 召回前加载全部 Chunk 正文，检索内存随素材库增长](#devlog-event-query-bounded-content-20261113) | RAG-QUERY-MEM-01；PR #154 |
 | [2026-11-13：可选改写器混入基线，JEV 的净耗时被算错](#devlog-chat-intent-jev-only-20261113) | CHAT-INTENT-01；C19；PR #151 |
 | [2026-11-13：删除原因重复渲染，回答中的历史列表额外占高](#devlog-chat-delete-hint-20261113) | CHAT-DELETE-HINT-01 |
 | [2026-11-13：前置配置覆盖 JEV，省去路由未必缩短 Chat 等待](#devlog-chat-intent-routing-20261113) | CHAT-INTENT-01；C19；PR #145 |
@@ -192,6 +193,44 @@
 | [日期未明确（2026-10-23归档）：当前播放窗口的按需理解与复用](#devlog-history-60) | 独立实验/设计 |
 
 </details>
+
+<a id="devlog-event-query-bounded-content-20261113"></a>
+## 2026-11-13：Event 查询在 ES 召回前加载全部 Chunk 正文，检索内存随素材库增长
+
+### 问题与现状
+
+Event 查询先从 `resolve_retrieval_scope` 进入 `validate_event_coverage`，读取选中范围内全部 Chunk 的正文和 `ChunkParseContent.detail`，再逐块重建预期 Event 投影核对发布凭据，之后才执行 ES 有界召回。`top_k` 只限制最终返回的片段数，不限制这段前置读取；素材库越大、授权范围越广，单次搜索先创建的 ORM 实体、JSON 解码结果和临时对象越多。`detail` 中的 `_index_embeddings_v2.representations` 还会被一起实例化和深拷贝，使一次普通搜索先承担与候选命中无关的索引缓存成本。授权、当前任务、内容版本、逐视频代次和部分就绪仍需保持准确，不能为了省内存把旧版本或越权来源交给 ES。
+
+### 方案候选
+
+1. 保留逐块重建投影后再查 ES。正确性最直接，但热路径成本仍与授权范围绑定，无法解决原问题。
+2. 删除搜索入口的全部发布校验，只按最新任务查询。这样会把冻结 target 不符、正文版本不一致或 Chunk 未完成的来源放给 ES，实际候选还要回源核对，不能接受。
+3. 前置只读取最新 COMPLETE 任务、冻结 Event target、INDEX 完成且 content version 一致的 Chunk 元数据，保留来源元组配对过滤；候选正文由既有 `candidate_budget` 限制，在 ES 召回后批量回源。搜索入口不再调用 `validate_event_coverage`，但 INDEX 完成事务仍调用 `_require_event_publication`，显式审计仍使用原逐块校验。
+
+最终选择第 3 种。检索回源、相邻上下文和单条证据读取用 `defer(..., raiseload=True)` 延迟完整 `detail`；候选与邻居另以 SQL JSON 路径仅投影 `detail.compact` 和 `detail.evidence.camera_hints`，供 `_video_parse_evidence` 使用，且不读 `_index_embeddings_v2`，单条证据的身份查询仍不投影 detail。`published_reference_sources` 需要读取编辑参考的发布回执才能核对来源，仍显式 `include_detail=True`；这条路径不能算作“编辑参考查询也不读 detail”，本次只覆盖 Event 正文检索的回源。
+
+### 方案验证
+
+使用仓库内生成的隔离数据：8 个视频 × 2 个 Chunk，其中 6 个视频的 2 个 Chunk 都有匹配的 Event 发布，1 个视频只有 Chunk 发布，1 个视频处于 INDEXING。`top_k` / `candidate_budget` 分别取 1 和 5。测试在 ES 调用前断言来源元数据为 12 条、正文实体为 0、完整 `ChunkParseContent.detail`（含 `_index_embeddings_v2`）未加载，ES 调用后只有 1 次批量正文查询，加载并返回 1 或 5 个正文实体。小字段保留修正后，候选查询经测试确认只投影 `compact` / `evidence.camera_hints`、不读 `_index_embeddings_v2`。发布回执缺少事件集合、回执哈希被伪造或索引缓存被移除时，已完成发布仍可检索；正文版本不一致、Chunk 未完成或冻结目标不符时，该视频被排除并返回部分结果。既有公开课程授权、片段子范围和逐视频代次用例仍在。
+
+主 Agent 提供的修正前定向回归命令为 `python -m pytest tests/server/test_public_course_readiness.py tests/server/test_video_parse_repository.py -k 'bounded_candidate or completed_publication or incomplete_current or scope_reads_only' -q`，结果 9 passed、140 deselected。最终相关八模块隔离回归为 **248 passed、4 skipped**，摘要与运镜提示在搜索和直接证据读取中均保留，INDEX/编辑参考回归通过；完整命令见报告。
+
+### 指标对比
+
+这次影响的是单用户 Event 搜索在 ES 召回前的读取结构和范围扩展成本，因此看查询前正文/detail 读取、候选正文读取和来源元数据规模，而不是只看最终命中数。以下“修改前”是按调用路径推导的结构基线，本轮没有在旧实现上复跑同一生成数据；修改后数字来自隔离 SQL/ORM 断言，小字段投影和原值保留均由集成测试确认。
+
+| 指标 | 修改前（调用路径） | 修改后（生成数据） |
+| --- | --- | --- |
+| ES 查询前读取的 Chunk 正文 | 选中范围全部 Chunk；本 fixture 为 6 个已发布视频 × 2 Chunk，等价 12 份 | 0 |
+| ES 查询前读取的完整 ChunkParseContent.detail | 选中范围全部 Chunk | 0；ORM 未加载 |
+| 查询前逐块重建 Event 投影 | 每个 Chunk 一次 | 0；搜索入口不再调用 `validate_event_coverage` |
+| ES 后候选读取的 detail | 原有候选回源 | 完整 detail 延迟加载；仅 SQL 投影 `compact` / `evidence.camera_hints`，不读 `_index_embeddings_v2` |
+| ES 后正文 SQL | 原有候选回源，本轮未单独复测 | 1 次批量查询 |
+| ES 后加载并返回的正文实体 | 原有候选预算内 | `top_k`/`candidate_budget` 1 → 1；5 → 5 |
+| ES 前来源元数据 | 随授权范围 Chunk 数增长 | 仍随范围增长；本 fixture 为 12 条 |
+| RSS、延迟、token、真实召回质量 | 未测 | 未测 |
+
+结构上的改善是：旧路径在任何 ES 请求前就要把授权范围内的正文和索引缓存读入内存；新路径把前置成本压到标量元数据，正文只在候选预算内按批读取，detail 只取 `compact` 和 `evidence.camera_hints` 两个小字段。代价是查询侧信任 INDEX 完成时写入的发布事实，逐块 receipt 重验转移到写入和显式审计；元数据仍是 O(scoped Chunk count)，也没有证据证明所有 SQL 都已按 `top_k` 收敛。由于没有真实环境测量，本次只支持采用结构性修复，不宣称 RSS、延迟或业务质量已经改善。设计与生成数据证据见[TRD](../design/03-product-reassessment/event-query-bounded-content-trd.md)、[报告](../report/server/service/video_event_retrieval/bounded-query-20261113.md)和[工作台](workbench.html) `RAG-QUERY-MEM-01`。
 
 <a id="devlog-chat-intent-routing-20261113"></a>
 
