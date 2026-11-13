@@ -2,7 +2,7 @@
 
 - 需求：回答进行中的删除说明仅在鼠标悬停垃圾桶时显示。
 - 日期：2026-11-13。
-- 分支：`fix/chat-delete-hint-tooltip`；目标分支：`dev`；PR：创建后回填。
+- 分支：`fix/chat-delete-hint-tooltip`；目标分支：`dev`；PR：[ #147](https://github.com/owariband/Seekino/pull/147)。
 - 当前执行状态统一记录于[工作台](../../dev/workbench.html) `CHAT-DELETE-HINT-01`。
 - 上游：[独立对话页布局](chat-sidebar-layout-trd.md)与既有对话管理已在 `dev`，无需等待其他 PR；本次基于 `3d095593`。
 
