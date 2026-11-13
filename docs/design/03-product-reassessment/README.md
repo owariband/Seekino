@@ -6,6 +6,8 @@
 
 ## 本阶段的提出背景
 
+2026-11-13，三路径实验的旧 B 含独立改写器，不能代表只用 JEV 的预期。关闭独立改写后已全量重测三组，见[同一 TRD 第 7 节](query-intent-routing-comparison-trd.md#7-关闭独立改写器的同条件复测)／[PR #151](https://github.com/owariband/Seekino/pull/151)；本轮未改 Cloud，当前状态仍由工作台 `CHAT-INTENT-01` 维护。
+
 2026-11-13，Cloud 的 `models.query_hook` 使 DeepSeek 合并决策覆盖了保留的 JEV 配置。本轮恢复 Cloud JEV，并在相同 Supervisor、工具与动态 85% 基线下比较三种意图路径；见 [三路径对照 TRD](query-intent-routing-comparison-trd.md) / [PR #145](https://github.com/owariband/Seekino/pull/145)，当前状态由工作台 `CHAT-INTENT-01` 维护。
 
 2026-11-13，Chat 命中证据后仍等待同步摘要；本次从模型容量与压缩阈值的装配关系核对原因，以本地真实请求边界对照验证。设计与证据入口见 [Chat 模型窗口与压缩 TRD](chat-model-context-compaction-trd.md) / [PR #144](https://github.com/owariband/Seekino/pull/144)，当前状态由工作台 `CHAT-COMPACT-01` 维护。

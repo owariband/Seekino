@@ -1,0 +1,23 @@
+{
+  "database": "seekino_intent_20261113_test",
+  "formal_source": [
+    {
+      "parse_task_id": "bedbcb6b-223b-4c9e-b910-622fddbf801c",
+      "status": "COMPLETE",
+      "task_version": 4,
+      "content_version": 1,
+      "content_sha256": "5597944eba498f6a248886b223d885270666830b9d75c28880083911a2a36674"
+    }
+  ],
+  "indexes": [
+    {
+      "index": "seekino_intent_chunks_20261113_test",
+      "docs": 1
+    },
+    {
+      "index": "seekino_intent_events_20261113_test",
+      "docs": 6
+    }
+  ],
+  "consumer_started": false
+}

@@ -1,0 +1,22 @@
+{
+  "services": [
+    {
+      "name": "elasticsearch",
+      "pid": 52511,
+      "sent": "SIGTERM",
+      "port": 9200,
+      "port_closed": true
+    },
+    {
+      "name": "mysql",
+      "pid": 52510,
+      "sent": "SIGTERM",
+      "port": 3306,
+      "port_closed": true
+    }
+  ],
+  "data_removed": false,
+  "source_database_migrated": false,
+  "test_database_retained": true,
+  "raw_run_retained": true
+}

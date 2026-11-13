@@ -1,0 +1,30 @@
+{
+  "arms": {
+    "deepseek_decider": {
+      "turns": 9,
+      "standalone_rewriter_enabled": false,
+      "has_rewriter_binding": false,
+      "retrieval_slot_calls": 0,
+      "JEV_route_success": 0,
+      "query_hook_decision_calls": 9
+    },
+    "jev_only": {
+      "turns": 9,
+      "standalone_rewriter_enabled": false,
+      "has_rewriter_binding": false,
+      "retrieval_slot_calls": 0,
+      "JEV_route_success": 9,
+      "query_hook_decision_calls": 0
+    },
+    "supervisor_direct": {
+      "turns": 9,
+      "standalone_rewriter_enabled": false,
+      "has_rewriter_binding": false,
+      "retrieval_slot_calls": 0,
+      "JEV_route_success": 0,
+      "query_hook_decision_calls": 0
+    }
+  },
+  "B_original_message_preserved": true,
+  "B_candidate_hint_absent": true
+}
