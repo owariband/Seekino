@@ -4,6 +4,8 @@
 
 关联：[同一 TRD 第 7 节](../../../../design/03-product-reassessment/query-intent-routing-comparison-trd.md#7-关闭独立改写器的同条件复测) · [PR #151](https://github.com/owariband/Seekino/pull/151) · [devlog](../../../../dev/devlog.md#devlog-chat-intent-jev-only-20261113) · [管理工作台](../../../../dev/workbench.html) `CHAT-INTENT-01`。旧 [JEV＋改写器实验](../query-intent-routing-20261113/README.md)独立保留，不能代表本次 B。
 
+同日补充：六条query、完整历史、27条逐字回答和评分依据已整理为[按query排列的评阅](query-quality-review.md)与[结构化评分](reviews.json)。默认值、dev/main发布及Cloud/CPU切换另由[上线TRD](../../../../design/03-product-reassessment/jev-only-hook-rollout-trd.md)和[PR #155](https://github.com/owariband/Seekino/pull/155)记录；下文“不改Cloud”限定原实验时点。
+
 ## 重新实测的结果
 
 | 指标 | A：DeepSeek 前置决策 | B：JEV 单独分类，改写器关闭 | C：Supervisor 直接判断 |
@@ -36,7 +38,15 @@ FTT 从服务开始执行到首个非空用户可见正文事件，排除 reason
 
 ## 输出内容与实际代价
 
-以下为 Codex 主 Agent 对正文、工具和正式 Timeline 的逐条核对，没有独立人工盲评，本轮不发布语义通过率。完整 27 条原文及最终卡片在 [outputs.md](outputs.md)，可逐例复查。
+以下为Codex主Agent对正文、工具和正式Timeline的逐条核对，没有独立人工盲评。原实验先保留问题明细，同日再补做完整／部分／失败的逐条评阅。query和expected在运行前冻结，细化评分及边界判定属于事后明确。完整27条原文及最终卡片在[outputs.md](outputs.md)，包含query和历史的对照见[query-quality-review.md](query-quality-review.md)。
+
+| 质量口径 | A DeepSeek前置 | B JEV-only | C 直接判断 |
+| --- | ---: | ---: | ---: |
+| 实际任务选择正确 | 9/9 | 9/9 | 8/9 |
+| 完整交付通过 | 7/9（77.8%） | 7/9（77.8%） | 4/9（44.4%） |
+| 完整／部分／失败 | 7 / 2 / 0 | 7 / 2 / 0 | 4 / 4 / 1 |
+
+任务选择看是否正确回应／检索及混合任务先答后查；完整交付还要求主要结论、明确指令和最终卡片满足要求，部分通过不折算半分。C第020条的扣分仅为一句多余过程说明，若忽略此项则为5/9（55.6%）。A有一次前置ValidationError，故有效标签是8/9；9/9是下游实际任务行为。每组9turn只有6种query，这些结果不能作为模型总体准确率。
 
 - C 第 002 条在纯表达反馈中调用了 `get_series_overview` 和 `search_video_events`，仍有额外检索；其余五条反馈样本未检索。C 第 006 条给出一句后又追加解释和索取文本，未严格遵守“压成一句”。A／B 对应压缩样本都只返回一句。
 - 六条混合任务均先有正文回应反馈，再进行检索；部分回答最终又重复了一遍同样的认错说明，不能用更早的 FTT 等同于更简洁的交付。

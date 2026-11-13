@@ -172,7 +172,7 @@ Parse 默认配置从已解析的模型绑定取得温度；配置 HTTP 接口�
 
 顶层 `supervisor_harness` 选择 `deepagents` 或 `codex`，与 `models.supervisor` 一起在 Server 启动时加载。修改 harness、模型或连接配置后重启 Server；`agent_runtime` 中已有的运行预算仍按原规则用于新消息。
 
-仓库默认配置选择 `deepagents`：Supervisor、视觉、转写和 embedding 使用 Ark API，检索 Agent 和重排使用 DeepSeek API。可选的 `kimi_coding` 和 `codex_local` 来源已经声明，未选中时无需准备对应凭据或登录；查询改写使用 `models.query_rewriter`（默认 `deepseek-flash`），不依赖本机模型权重。
+仓库默认配置选择 `deepagents`：Supervisor、视觉、转写和 embedding 使用 Ark API，检索 Agent 和重排使用 DeepSeek API。可选的 `kimi_coding` 和 `codex_local` 来源已经声明，未选中时无需准备对应凭据或登录。Chat hook 默认由 JEV 分类，独立改写器关闭（`query_hook.rewriter_enabled: false`），不需要 `models.query_rewriter` 或本机改写模型。若明确启用独立改写，须同时配置 `rewriter_enabled: true` 和 `models.query_rewriter`。可选的 `models.query_hook` 会让 Chat 改用合并决策并绕过 JEV；要保持 JEV-only，不能声明这个绑定。旧配置若显式开启改写仍按该值运行，升级不会覆盖已保存的配置。
 
 Kimi 继续使用现有 OpenAI 兼容适配器和 `profile: kimi`。在同一份有效 YAML 中将 `models.supervisor.source` 改为 `kimi_coding`、`model` 改为 `k3.1-pro`，保持 `supervisor_harness: deepagents`，并设置 `KIMI_API_KEY`。其他生成式角色也可独立选择相同来源；选择 API 模型名不会自动替换转写或 embedding。
 
