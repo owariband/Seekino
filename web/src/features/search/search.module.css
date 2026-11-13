@@ -41,7 +41,6 @@
 .deleteConversation { display: grid; width: 30px; height: 30px; place-items: center; color: var(--ink-soft); border-radius: 8px; cursor: pointer; background: transparent; }
 .deleteConversation:hover:not(:disabled) { color: var(--red); background: color-mix(in srgb, var(--red) 8%, transparent); }
 .deleteConversation:disabled { opacity: .38; cursor: not-allowed; }
-.deleteHint { grid-column: 1 / -1; padding: 0 6px 4px; color: var(--ink-soft); font-size: .72rem; }
 .deleteConfirmation { display: grid; grid-column: 1 / -1; gap: 9px; margin: 2px; padding: 10px; border: 1px solid color-mix(in srgb, var(--red) 25%, var(--line)); border-radius: 8px; background: color-mix(in srgb, var(--red) 5%, var(--surface)); }
 .deleteConfirmation p { margin: 0; color: var(--ink-soft); font-size: .72rem; line-height: 1.55; }
 .deleteConfirmation > div { display: flex; justify-content: flex-end; gap: 7px; }

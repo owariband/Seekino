@@ -838,7 +838,6 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
               >
                 {deleting ? <LoaderCircle size={14} className={styles.spinning} aria-hidden="true" /> : <Trash2 size={14} aria-hidden="true" />}
               </button>
-              {cannotDelete ? <small className={styles.deleteHint}>{t("回答完成后可删除")}</small> : null}
               {confirmingDeleteId === conversation.conversationId ? (
                 <div className={styles.deleteConfirmation} role="group" aria-label={t("确认删除对话 {value0}", { value0: accessibleName })} aria-describedby={deleteWarningId}>
                   <p id={deleteWarningId}>{t("删除后，这个对话及其中的全部消息都无法恢复。")}</p>
