@@ -57,8 +57,19 @@ npm --prefix web run build
 
 隔离生产构建在本机临时端口 4179 验证，全部 API 由测试响应接管，不创建真实对话或调用真实模型。Chromium 153.0.8010.12 的 1440×1000 桌面及 390×844 手机布局均为 0 个常驻说明；鼠标命中垃圾桶，`:hover=true`、`pointer-events=auto`，title 为“当前回答进行中，完成后才能删除”。禁用点击发出的删除请求为 0，回答完成后按钮启用且 title 恢复“删除对话”，页面 JS 异常为 0，手机页面宽度为 390px。
 
-原生 title 浮层由浏览器控制，本次验证鼠标命中与属性、截图复核常驻说明消失，不声称页面截图捕捉了浏览器原生浮层。未逐浏览器核验浮层外观；未发布到现有开发服务或线上。
+原生 title 浮层由浏览器控制，本次验证鼠标命中与属性、截图复核常驻说明消失，不声称页面截图捕捉了浏览器原生浮层。未逐浏览器核验浮层外观；首次本地验收时未发布，正式发布事实见第 6 节补充。
 
 # 6. 结果验收与闭环
 
-采用移除重复节点的方案。常驻说明消失、垃圾桶原生 title 保留、运行中删除保护与完成后恢复均取得本地证据，54 项对话测试和生产构建通过。无新增组件、状态、配置、请求或数据迁移。该结论仅覆盖本分支本地实现与隔离验收；`dev` 集成及正式发布通过 PR 跟进，不能据此声称截图中的既有服务已经更新。
+采用移除重复节点的方案。常驻说明消失、垃圾桶原生 title 保留、运行中删除保护与完成后恢复均取得本地证据，54 项对话测试和生产构建通过。无新增组件、状态、配置、请求或数据迁移。本地结论通过下述独立发布进一步核对，区分真实公网资源与隔离 API 行为验证。
+
+
+## 2026-11-13 正式发布与线上验收
+
+开发 [PR #147](https://github.com/owariband/Seekino/pull/147) 已合入 dev。正式 [PR #150](https://github.com/owariband/Seekino/pull/150) 从 main `a0fb93d9` 只选取两个运行文件及对应既有回归断言，共 4 行新增、3 行删除；main 的 .gitignore 保持。测试文件同步是因为原断言仍要求已移除的常驻说明存在。main 最终提交为 `271f519f`，其源码树与已验证发布候选完全一致，内部文档和配置均留在 dev。
+
+main 锁文件独立安装后的 55 项 App 回归、TypeScript 编译、生产构建、隔离桌面/手机浏览器及本地和 GitHub release-files 均通过。2026-11-13 19:20（UTC+8）仅更新 Cloud Web 为 `seekino-web:main-271f519f`，镜像与运行容器的 50 个静态文件哈希逐项匹配；公网同样 50 个 HTTPS 资源和 `/search` HTML 均匹配 main 构建，API 健康为 HTTP 200。API、embedding、MySQL、Elasticsearch、Redis 的容器 ID、镜像和启动时间逐项未变。
+
+[正式聊天页](https://seekino.hypn0s.cloud/search) 实际加载线上 JS/CSS，Chromium 153 的 1440×1000 与 390×844 检查通过：无常驻说明、垃圾桶鼠标命中与原有 title 正常、禁用点击无删除请求、回答结束恢复，JS 异常为 0。API 在独立浏览器中全部使用测试响应，没有真实聊天或模型调用；原生浮层外观仍未逐浏览器核对。
+
+原始回执、50 文件清单、公网哈希、浏览器 JSON 与截图在主工作区 `outputs/worktrees/release-chat-delete-hint/outputs/verification/chat-delete-hint-release-20261113/`。旧 Web 镜像保留，远端回滚入口为 `/home/ubuntu/seekino-cloud-runtime/releases/chat-delete-hint-271f519f-20261113/rollback-web`。
