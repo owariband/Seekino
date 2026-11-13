@@ -1,0 +1,145 @@
+{
+  "tenant_id": "local-default",
+  "series_id": "411de40c-ed6d-58c8-ab95-e542879f18f9",
+  "fixture": "isolated copy of real published MyGO 12.012s native-acceptance EP04 clip; one formal Chunk, six Events; no private chat",
+  "cases": [
+    {
+      "id": "respond_feedback",
+      "state": {
+        "recent_messages": [
+          {
+            "role": "user",
+            "content": "真是高高在上呢，哪里出现过？"
+          },
+          {
+            "role": "assistant",
+            "content": "已定位到第13集开头的相近表述。该片段包含人物之间的言语冲突，下面将从集数、时间位置、人物关系三个维度展开说明。"
+          }
+        ],
+        "query": "那又咋了，你说话怎么这么无趣啊"
+      },
+      "expected": {
+        "action": "respond",
+        "no_retrieval": true,
+        "quality": "回应对助手语气的反馈；不得把反馈当角色台词或新增素材需求"
+      }
+    },
+    {
+      "id": "respond_existing_evidence",
+      "state": {
+        "recent_messages": [
+          {
+            "role": "user",
+            "content": "帮我找她拒绝邀请的片段。"
+          },
+          {
+            "role": "assistant",
+            "content": "找到了。片段里她说：我不是不想去，只是已经答应陪妹妹了。"
+          }
+        ],
+        "query": "只根据你刚贴出的这句话，她是在拒绝邀请，还是不喜欢邀请她的人？"
+      },
+      "expected": {
+        "action": "respond",
+        "no_retrieval": true,
+        "quality": "只根据给出的拒绝邀请句解释：已有承诺不能推出讨厌对方；不检索、不编造剧情"
+      }
+    },
+    {
+      "id": "respond_stop_retrieval",
+      "state": {
+        "recent_messages": [
+          {
+            "role": "assistant",
+            "content": "这段主要表达她虽然想去，但因为已经答应陪妹妹而拒绝了邀请。我还可以继续找相似片段。"
+          }
+        ],
+        "query": "不用继续找视频了。刚才那段解释太长，帮我压缩成一句话。"
+      },
+      "expected": {
+        "action": "respond",
+        "no_retrieval": true,
+        "quality": "把已有解释压为一句话；服从停止检索"
+      }
+    },
+    {
+      "id": "mixed_feedback_and_search",
+      "state": {
+        "recent_messages": [
+          {
+            "role": "user",
+            "content": "你刚才完全没回应我对你的吐槽。"
+          },
+          {
+            "role": "assistant",
+            "content": "我可以继续找相关视频。"
+          }
+        ],
+        "query": "先回应一下我刚才对你的吐槽。另外，帮我找爱音和燈坐在台阶上谈《春日影》的片段。"
+      },
+      "expected": {
+        "action": "mixed",
+        "retrieval_required": true,
+        "feedback_before_retrieval": true,
+        "quality": "先实质回应忽略吐槽的问题，再交付或诚实说明可核实片段，不能漏掉独立回应",
+        "video_id": "8d479de5-d0c8-5ee5-93af-65a07a8ff9d1",
+        "valid_range_ms": [
+          0,
+          12012
+        ]
+      }
+    },
+    {
+      "id": "retrieve_reference",
+      "state": {
+        "recent_messages": [
+          {
+            "role": "user",
+            "content": "我想找两种场景：夜晚坐在台阶上谈《春日影》，还有登台演唱。"
+          },
+          {
+            "role": "assistant",
+            "content": "你想先找哪一种？"
+          }
+        ],
+        "query": "第一种，最好能看到燈接着回应她说了什么。"
+      },
+      "expected": {
+        "action": "retrieve",
+        "retrieval_required": true,
+        "quality": "指代解析为台阶夜谈，不是登台演唱；回应内容须与已回源证据一致",
+        "video_id": "8d479de5-d0c8-5ee5-93af-65a07a8ff9d1",
+        "valid_range_ms": [
+          0,
+          12012
+        ]
+      }
+    },
+    {
+      "id": "retrieve_original_quote",
+      "state": {
+        "recent_messages": [],
+        "query": "帮我找“因为《春日影》是首好歌”这句台词的出处，保留原话，不用解释检索过程。"
+      },
+      "expected": {
+        "action": "retrieve",
+        "retrieval_required": true,
+        "quality": "保留台词，服从不解释过程；不能将“不用解释检索过程”误解为不要检索",
+        "video_id": "8d479de5-d0c8-5ee5-93af-65a07a8ff9d1",
+        "valid_range_ms": [
+          0,
+          12012
+        ],
+        "quote_range_ms": [
+          0,
+          2300
+        ]
+      }
+    }
+  ],
+  "repeat_case_ids": [
+    "respond_feedback",
+    "mixed_feedback_and_search",
+    "retrieve_original_quote"
+  ]
+}
