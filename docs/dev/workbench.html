@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-13T19:04:08+08:00",
+ "updatedAt": "2026-11-13T19:08:42+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 58,
+ "revision": 59,
  "categories": [
   {
    "id": "parse",
@@ -5702,6 +5702,43 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "label": "实验报告",
      "kind": "source",
      "url": "https://github.com/owariband/Seekino/blob/perf/query-intent-routing-comparison/docs/report/agent/chat/query-intent-routing-20261113/README.md"
+    }
+   ]
+  },
+  {
+   "id": "CHAT-DELETE-HINT-01",
+   "title": "回答中的删除说明只在垃圾桶悬停时显示",
+   "category": "chat",
+   "type": "task",
+   "status": "verifying",
+   "priority": "P2",
+   "description": "移除历史列表中常驻的“回答完成后可删除”，复用垃圾桶已有原生 title；保留回答中删除禁用和完成后恢复。",
+   "next": "通过 PR #147 合入 dev；正式发布另行执行，现有服务未更新。",
+   "verification": "旧实现的新断言复现失败；修复后 App 54项、TypeScript 编译与生产构建通过。Chromium 桌面1440×1000、手机390×844均无常驻说明；鼠标命中与 title、禁止删除、完成后恢复通过。未逐浏览器检查原生浮层外观，无真实模型或数据操作。",
+   "updatedAt": "2026-11-13",
+   "tags": [
+    "UI"
+   ],
+   "related": [
+    "MOD-CHAT",
+    "CHAT-LAYOUT-01"
+   ],
+   "branch": "fix/chat-delete-hint-tooltip",
+   "links": [
+    {
+     "label": "TRD 与本地验收",
+     "url": "https://github.com/owariband/Seekino/blob/fix/chat-delete-hint-tooltip/docs/design/03-product-reassessment/chat-delete-hint-tooltip-trd.md",
+     "kind": "trd"
+    },
+    {
+     "label": "决策与对照",
+     "url": "https://github.com/owariband/Seekino/blob/fix/chat-delete-hint-tooltip/docs/dev/devlog.md#devlog-chat-delete-hint-20261113",
+     "kind": "source"
+    },
+    {
+     "label": "PR #147",
+     "url": "https://github.com/owariband/Seekino/pull/147",
+     "kind": "pr"
     }
    ]
   }
