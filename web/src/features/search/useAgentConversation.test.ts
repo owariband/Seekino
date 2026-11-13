@@ -787,12 +787,11 @@ describe("Conversation state", () => {
     expect(result.current.error).toBeNull();
   });
 
-  it("keeps an interrupted turn in recovery instead of reporting a new connection", async () => {
+  it("keeps an interrupted turn processing until recovery confirms its result", async () => {
     const { result } = await ready();
     const stream = await send(result);
     act(() => stream.emit({ type: "answer.interrupted", occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 2, error: { code: "STREAM_INTERRUPTED", message: "订阅中断，正在恢复" } }));
     expect(result.current.sending).toBe(true);
-    expect(result.current.connecting).toBe(false);
     expect(result.current.searching).toBe(true);
     expect(result.current.messages[1]?.status).toBe("PROCESSING");
     expect(result.current.error).toBe("订阅中断，正在恢复");
@@ -800,15 +799,13 @@ describe("Conversation state", () => {
     await waitFor(() => expect(result.current.sending).toBe(false));
   });
 
-  it.each(["COMPLETED", "FAILED"] as const)("leaves the connecting phase when a %s terminal arrives before EOF", async (status) => {
+  it.each(["COMPLETED", "FAILED"] as const)("blocks another send when a %s terminal arrives before EOF", async (status) => {
     const { result } = await ready();
     act(() => { void result.current.send("query"); });
     await waitFor(() => expect(streams.has("conv-A")).toBe(true));
     const stream = streams.get("conv-A")!;
     expect(result.current.sending).toBe(true);
-    expect(result.current.connecting).toBe(true);
     act(() => stream.emit(started("conv-A")));
-    expect(result.current.connecting).toBe(false);
 
     const error = { code: "AGENT_MODEL_ERROR", message: "模型失败" };
     const final = status === "FAILED"
@@ -820,23 +817,20 @@ describe("Conversation state", () => {
       : { ...base, type: "answer.completed" };
     act(() => stream.emit(terminal));
     expect(result.current.sending).toBe(true);
-    expect(result.current.connecting).toBe(false);
     expect(result.current.messages[1]?.status).toBe(status);
 
     act(() => { void result.current.send("next"); });
     expect(streamAgentMessage).toHaveBeenCalledOnce();
     act(() => stream.finish());
     await waitFor(() => expect(result.current.sending).toBe(false));
-    expect(result.current.connecting).toBe(false);
   });
 
-  it("keeps connecting off when a trusted snapshot completes the message before the POST closes", async () => {
+  it("retains the send guard when a trusted snapshot completes the message before the POST closes", async () => {
     const { result } = await ready();
     const stream = await send(result);
     const completed = message("conv-A", { status: "COMPLETED", phase: null, content: "快照完成", version: 2 });
     act(() => snapshots.get("conv-A")!({ type: "messages", occurredAt: now, conversationId: "conv-A", messages: [completed] }));
     expect(result.current.sending).toBe(true);
-    expect(result.current.connecting).toBe(false);
     expect(result.current.messages[1]?.status).toBe("COMPLETED");
     act(() => stream.finish());
     await waitFor(() => expect(result.current.sending).toBe(false));

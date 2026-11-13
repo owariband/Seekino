@@ -26,7 +26,7 @@ function latestTiming(message: AgentMessageView, steps: AgentProgressEvent[]): A
   return message.timing ?? [...steps].reverse().find((step) => step.timing)?.timing ?? null;
 }
 
-export function AgentProgress({ message, steps, reasoning = "", displayMode = "release", kinoHost = true, kinoAwake = false }: {
+export function AgentProgress({ message, steps, reasoning = "", displayMode = "release", kinoHost = true }: {
   message: AgentMessageView;
   steps: AgentProgressEvent[];
   /** Accumulated model reasoning for this message; shown above the answer, never persisted. */
@@ -34,8 +34,6 @@ export function AgentProgress({ message, steps, reasoning = "", displayMode = "r
   displayMode?: DisplayMode;
   /** Kino perches on the latest assistant bubble only; it acts out the answer here, then sleeps on it. */
   kinoHost?: boolean;
-  /** A new question is on its way: wake a sleeping Kino before it leaps to the next bubble. */
-  kinoAwake?: boolean;
 }) {
   const { t } = useI18n();
   const processing = message.status === "PROCESSING";
@@ -82,7 +80,7 @@ export function AgentProgress({ message, steps, reasoning = "", displayMode = "r
   }
   const currentPhase = message.phase ?? visibleSteps.at(-1)?.phase ?? steps.at(-1)?.phase;
   const kino = kinoHost
-    ? <ProgressMascot phase={processing ? currentPhase : null} settled={!processing} awake={kinoAwake} arriving={processing}
+    ? <ProgressMascot phase={processing ? currentPhase : null} settled={!processing} arriving={processing}
       farewell={farewell} onFarewellDone={() => setFarewell(null)} />
     : null;
   const status = failed ? t("回答未完成") : processing ? displayMode === "debug" && currentPhase ? t(phases[currentPhase].label) : t("处理中") : t("已完成");

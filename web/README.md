@@ -148,4 +148,6 @@ npm run test:e2e
 
 单独浏览器记录保留候选 `firstProviderTextReceivedMs`，`fttMs` 为 null；结合独立 `SEEKINO_CHAT_TRACE_DIR` 中的原始请求/SSE，由 `scripts/verify_chat_streaming_trace.py` 核验身份与完成前交付后才填写有效 FTT。旧服务、非流式和缺少来源的快照不能计为真实首字。采集方法、模拟与真实验证边界见 [实施报告](../docs/report/server/chat-streaming-20261101.md)。
 
-聊天页按消息和 Markdown 块隔离渲染，连接提示只覆盖本次请求尚未受理的阶段；可信终态到达后，等待 POST 关闭时保留禁用的发送按钮。滚动按帧合并，读者向上滚后停止跟随。固定历史、独立 SSE 与生产构建的性能回放在 `tests/chat-frontend-performance.mjs`，运行方法及浏览器既有失败见 [2026-11-12 验收报告](../docs/report/web/chat-frontend-performance-20261112.md)。
+聊天页按消息和 Markdown 块隔离渲染，发送时不展示“正在连接助手”，也不提前唤醒上一条回答的 Kino；会话加载仍显示恢复提示。可信终态到达后，等待 POST 关闭时保留禁用的发送按钮。滚动按帧合并，读者向上滚后停止跟随。固定历史、独立 SSE 与生产构建的性能回放在 `tests/chat-frontend-performance.mjs`，运行方法及浏览器既有失败见 [2026-11-12 验收报告](../docs/report/web/chat-frontend-performance-20261112.md)。
+
+连接提示及其专用状态已删除，受理对账、停止和恢复沿用原合同；本机隔离验证与公网发布边界见[删除连接提示](../docs/design/03-product-reassessment/chat-remove-connecting-trd.md)。

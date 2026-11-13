@@ -27,6 +27,7 @@
 
 | 记录 | 原问题编号 |
 |---|---|
+| [2026-11-13：发送前置阶段被显示成连接，冗余提示增加等待感](#devlog-chat-remove-connecting-20261113) | CHAT-CONNECT-REMOVE-01；PR #149 |
 | [2026-11-12：检测切点被当成动作边界，真实素材在理解阶段被拒](#devlog-reference-model-judgment-20261112) | EDIT-REFERENCE-02；PR #139 |
 | [2026-11-12：dialog瞬时关闭并卸载内容，手机导航缺少开合过渡](#devlog-mobile-drawer-motion-20261112) | MOBILE-UI-01；PR #129第二轮 |
 | [2026-11-12：手机隐藏文档并放大全宽选集，初次引导与连续浏览困难](#devlog-mobile-docs-episodes-20261112) | MOBILE-UI-01；PR #129 |
@@ -188,6 +189,26 @@
 | [日期未明确（2026-10-23归档）：当前播放窗口的按需理解与复用](#devlog-history-60) | 独立实验/设计 |
 
 </details>
+
+<a id="devlog-chat-remove-connecting-20261113"></a>
+## 2026-11-13：发送前置阶段被显示成连接，冗余提示增加等待感
+
+### 问题与现状
+
+每条 Chat 请求在受理前都显示“正在连接助手”，把权限检查、消息准备和等待首事件混在一个提示里。2026-11-13 下载的公网旧脚本还会在可信终态到达、HTTP 尚未关闭时重新显示连接中；dev 已修正该收尾误报，但仍保留提示及上一条回答 Kino 的预唤醒。本次直接删除这层展示，设计见[TRD](../design/03-product-reassessment/chat-remove-connecting-trd.md)，状态见工作台 `CHAT-CONNECT-REMOVE-01`。
+
+### 方案候选
+
+沿用现有 Search feature 删除连接提示 JSX、React 展示用 `accepted`、`connecting` 和专用 Kino 唤醒透传；`ProgressMascot.awake` 无其他调用，随之删除。请求局部受理记录用于 `onAccepted`、草稿和幂等对账，保留；会话加载、真实处理进度、停止、发送锁和断流恢复继续使用原合同。采用删除冗余分支的方案，不增加新的占位或计时状态。
+
+### 方案验证
+
+3 个相关测试文件共 160 项通过，类型检查与生产构建通过。用 `80cd796b` 与修改后的生产构建运行同一份本机模拟 API：延迟首事件，交付持久完成及终态后保持 HTTP 打开 1 秒，再结束请求。两组均无页面 JS 异常及非预期 API；未调用真实模型或业务数据库。详细布尔结果、源码和构建哈希见[证据](../report/web/chat-remove-connecting-20261113.json)。公网尚未部署，SSH 失败不能用本机结果代替线上验收。
+
+### 指标对比
+
+本次衡量的是冗余展示是否消失，以及原发送合同是否保持；没有测量模型速度或首包性能。每组 1 次隔离回放：待受理连接提示由显示变为不显示；上一条回答的 Kino 由 `look` 变为 `sleep`；受理前草稿保留、受理后清理、收尾防重和 EOF 后恢复发送均保持。采用本次删除，收益是状态与界面更简单；代价是待受理阶段不再额外显示连接提示。真实公网表现待正式发布后核对。[PR #149](https://github.com/owariband/Seekino/pull/149)
+
 
 <a id="devlog-mobile-drawer-motion-20261112"></a>
 ## 2026-11-12：dialog瞬时关闭并卸载内容，手机导航缺少开合过渡

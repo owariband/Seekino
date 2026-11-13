@@ -178,7 +178,6 @@ function renderPage(
     reasoning: {},
     loading: false,
     searching: false,
-    connecting: false,
     cancelling: false,
     error: null,
     modelId: firstModel,
@@ -1511,7 +1510,7 @@ describe("Chat turn closing state", () => {
   it("shows the trusted terminal state without a connection hint or an invalid stop", async () => {
     const view = renderPage(assistantMessage("已完成回答"));
     const active = mocks.useAgentConversation.mock.results.at(-1)!.value;
-    mocks.useAgentConversation.mockReturnValue({ ...active, searching: true, connecting: false });
+    mocks.useAgentConversation.mockReturnValue({ ...active, searching: true });
     view.rerender(<SearchPage />);
     await act(async () => {});
 
@@ -1524,14 +1523,14 @@ describe("Chat turn closing state", () => {
     expect(mocks.send).not.toHaveBeenCalled();
   });
 
-  it("shows the connection hint only before acceptance and keeps the composer blocked meanwhile", async () => {
+  it("keeps the composer blocked without a connection hint while awaiting acceptance", async () => {
     const view = renderPage(assistantMessage("历史回答"));
     const active = mocks.useAgentConversation.mock.results.at(-1)!.value;
-    mocks.useAgentConversation.mockReturnValue({ ...active, searching: true, connecting: true });
+    mocks.useAgentConversation.mockReturnValue({ ...active, searching: true });
     view.rerender(<SearchPage />);
     await act(async () => {});
 
-    expect(screen.getByText("正在连接助手…")).toBeInTheDocument();
+    expect(screen.queryByText("正在连接助手…")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "停止生成" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "发送问题" })).toBeDisabled();
   });
@@ -1664,7 +1663,7 @@ describe("Chat answer rendering boundary", () => {
     mocks.useWorkspace.mockReturnValue({ mode: "live", displayMode: "release", series: [series], isLoading: false });
     const messages = history(20);
     const base = {
-      conversationId: "conversation-1", messages, progress: {}, reasoning: {}, loading: false, searching: false, connecting: false, cancelling: false,
+      conversationId: "conversation-1", messages, progress: {}, reasoning: {}, loading: false, searching: false, cancelling: false,
       error: null, modelId: firstModel, modelSaving: false, modelError: null, selectModel: mocks.selectModel, send: mocks.send, stop: mocks.stop,
     };
     mocks.useAgentConversation.mockReturnValue(base);

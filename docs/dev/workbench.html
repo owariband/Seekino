@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-12T20:25:13.887090+08:00",
+ "updatedAt": "2026-11-13T19:09:45+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 53,
+ "revision": 54,
  "categories": [
   {
    "id": "parse",
@@ -5478,6 +5478,44 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "label": "实测报告",
      "kind": "source",
      "url": "https://github.com/owariband/Seekino/blob/perf/chat-frontend/docs/report/web/chat-frontend-performance-20261112.md"
+    }
+   ]
+  },
+  {
+   "id": "CHAT-CONNECT-REMOVE-01",
+   "title": "删除 Chat 的连接提示与专用唤醒状态",
+   "category": "chat",
+   "type": "requirement",
+   "status": "verifying",
+   "priority": "P1",
+   "description": "每条消息的待受理阶段都显示连接提示，旧公网构建还会在收尾误报。删除提示、React 展示状态和上一条回答的预唤醒，保留受理、草稿、停止与恢复合同。",
+   "next": "按正式发布约定将前端删除纳入 main，再核对 CPU 公网待受理与收尾均无提示；当前尚未部署。",
+   "verification": "2026-11-13：160 项相关测试、类型检查与生产构建通过。相同隔离 API 回放中，待受理连接提示由显示变为不显示，Kino 从 look 变为 sleep；草稿受理、收尾防重和 EOF 后发送保持，页面异常及非预期 API 均为 0。",
+   "updatedAt": "2026-11-13",
+   "tags": [
+    "UI",
+    "SSE"
+   ],
+   "related": [
+    "MOD-CHAT",
+    "CHAT-PERF-01"
+   ],
+   "branch": "fix/remove-chat-connecting",
+   "links": [
+    {
+     "label": "PR #149",
+     "kind": "pr",
+     "url": "https://github.com/owariband/Seekino/pull/149"
+    },
+    {
+     "label": "TRD",
+     "kind": "trd",
+     "url": "https://github.com/owariband/Seekino/blob/fix/remove-chat-connecting/docs/design/03-product-reassessment/chat-remove-connecting-trd.md"
+    },
+    {
+     "label": "隔离回放证据",
+     "kind": "source",
+     "url": "https://github.com/owariband/Seekino/blob/fix/remove-chat-connecting/docs/report/web/chat-remove-connecting-20261113.json"
     }
    ]
   },

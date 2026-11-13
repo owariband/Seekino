@@ -54,8 +54,6 @@ describe("Agent execution timeline", () => {
       expect(view.container.querySelector("[data-kino]")).toHaveAttribute("data-kino-state", "happy");
       act(() => { vi.advanceTimersByTime(4_000); });
       expect(view.container.querySelector("[data-kino]")).toHaveAttribute("data-kino-state", "sleep");
-      view.rerender(<AgentProgress message={{ ...message, status: "COMPLETED", phase: null }} steps={[]} kinoAwake />);
-      expect(view.container.querySelector("[data-kino]")).toHaveAttribute("data-kino-state", "look");
     } finally {
       vi.useRealTimers();
     }

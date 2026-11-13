@@ -156,8 +156,6 @@ interface ConversationState {
   reasoning: Record<string, string>;
   loading: boolean;
   sending: boolean;
-  /** The service accepted the current request; its messages and terminal state are authoritative. */
-  accepted: boolean;
   cancellingMessageId: string | null;
   error: string | null;
   modelId: string;
@@ -191,7 +189,7 @@ export function useAgentConversation(requestedId: string | null = null) {
   localeRef.current = locale;
   const t = (message: string) => translate(localeRef.current, message);
   const [state, setState] = useState<ConversationState>({
-    requestedId, conversationId: null, messages: [], progress: {}, reasoning: {}, loading: true, sending: false, accepted: false, cancellingMessageId: null, error: null,
+    requestedId, conversationId: null, messages: [], progress: {}, reasoning: {}, loading: true, sending: false, cancellingMessageId: null, error: null,
     modelId: DEFAULT_MODEL_ID, modelSaving: false, modelError: null,
   });
   const activeRef = useRef<ActiveConversation | null>(null);
@@ -265,7 +263,7 @@ export function useAgentConversation(requestedId: string | null = null) {
     };
     activeRef.current = active;
     setState({
-      requestedId, conversationId: null, messages: [], progress: {}, reasoning: {}, loading: true, sending: false, accepted: false, cancellingMessageId: null, error: null,
+      requestedId, conversationId: null, messages: [], progress: {}, reasoning: {}, loading: true, sending: false, cancellingMessageId: null, error: null,
       modelId: defaultId, modelSaving: false, modelError: null,
     });
     void (async () => {
@@ -321,7 +319,6 @@ export function useAgentConversation(requestedId: string | null = null) {
       reasoning: {},
       loading: false,
       sending: false,
-      accepted: false,
       cancellingMessageId: null,
       error: null,
       modelId: defaultId,
@@ -437,7 +434,7 @@ export function useAgentConversation(requestedId: string | null = null) {
     active.sendController = sendController;
     const signal = AbortSignal.any([active.controller.signal, sendController.signal]);
     active.recoveryMessageId = null;
-    setState((current) => ({ ...current, sending: true, accepted: false, cancellingMessageId: null, error: null }));
+    setState((current) => ({ ...current, sending: true, cancellingMessageId: null, error: null }));
     let messageId: string | null = null;
     let sequence = -1;
     let reasoningCallId: string | null = null;
@@ -483,7 +480,7 @@ export function useAgentConversation(requestedId: string | null = null) {
           const progress = event.type === "answer.started" && phase && !current.progress[event.messageId]
             ? { ...current.progress, [event.messageId]: [{ type: "answer.progress" as const, conversationId, messageId: event.messageId, sequence: event.sequence, occurredAt: event.occurredAt, phase, timing: event.assistantMessage.timing }] }
             : current.progress;
-          return { ...current, accepted: current.accepted || event.type === "answer.started", progress, messages: mergeMessages(current.messages, [event.userMessage, event.assistantMessage], conversationId, null, event.type === "answer.snapshot") };
+          return { ...current, progress, messages: mergeMessages(current.messages, [event.userMessage, event.assistantMessage], conversationId, null, event.type === "answer.snapshot") };
         }
         if (event.type === "answer.failed") {
           const messages = mergeMessages(current.messages, [event.userMessage, event.assistantMessage], conversationId);
@@ -549,7 +546,7 @@ export function useAgentConversation(requestedId: string | null = null) {
           if (activeRef.current === active && active.requestKey === idempotencyKey && !signal.aborted && pair.userMessage.conversationId === conversationId && pair.assistantMessage.conversationId === conversationId) {
             accept();
             active.recoveryMessageId = pair.assistantMessage.status === "PROCESSING" ? pair.assistantMessage.messageId : null;
-            setState((current) => ({ ...current, accepted: true, error: pair.assistantMessage.status === "PROCESSING" ? current.error : null, messages: mergeMessages(current.messages, [pair.userMessage, pair.assistantMessage], conversationId) }));
+            setState((current) => ({ ...current, error: pair.assistantMessage.status === "PROCESSING" ? current.error : null, messages: mergeMessages(current.messages, [pair.userMessage, pair.assistantMessage], conversationId) }));
           }
         } catch {
           if (activeRef.current === active && active.requestKey === idempotencyKey && !signal.aborted) setState((current) => ({ ...current, error: current.error ?? t("未能确认消息是否已接收，草稿已保留") }));
@@ -579,15 +576,12 @@ export function useAgentConversation(requestedId: string | null = null) {
   }, [ensureConversationId, requestedId, state.loading, state.requestedId, state.messages]);
 
   const visible = state.requestedId === requestedId ? state : {
-    requestedId, conversationId: null, messages: [], progress: {}, reasoning: {}, loading: true, sending: false, accepted: false, cancellingMessageId: null, error: null,
+    requestedId, conversationId: null, messages: [], progress: {}, reasoning: {}, loading: true, sending: false, cancellingMessageId: null, error: null,
     modelId: DEFAULT_MODEL_ID, modelSaving: false, modelError: null,
   };
   return {
     ...visible,
     searching: visible.sending || visible.messages.some((message) => message.status === "PROCESSING"),
-    // The connection hint belongs to the window before this request is accepted; once the
-    // request is accepted it stays off even while a terminal response is still closing.
-    connecting: visible.sending && !visible.accepted,
     cancelling: Boolean(visible.cancellingMessageId),
     clear,
     ensureConversationId,

@@ -1,0 +1,62 @@
+{
+  "recorded_on": "2026-11-13",
+  "branch": "fix/remove-chat-connecting",
+  "pull_request": "https://github.com/owariband/Seekino/pull/149",
+  "baseline_commit": "80cd796b",
+  "scope": "Local isolated API replay using production frontend builds; no business API, database or model calls.",
+  "fixture": "Existing chat-frontend-performance fixture with explicit first-event and EOF gates; one replay per build.",
+  "source_sha256": {
+    "web/src/features/search/SearchPage.tsx": "96df1d7531183810abe64e69bbec9deb7e1b1140b8e95d1edd32ea23e44aeb41",
+    "web/src/features/search/useAgentConversation.ts": "e7dca4f303c9202edd6ff56b14449c0c8df1eee2d2ccc81e4c3ceb3b0bf5d5b6",
+    "web/src/features/search/AgentProgress.tsx": "ede89511459f8c3ca29de0d6b4527c598b6573f8d58a42183fc8e557c18af6e3",
+    "web/src/features/search/ProgressMascot.tsx": "8f97a40b6c19267db8ef51aaddcd5dbff3aee5b6c6bfc43abd596645ac9b16ce",
+    "web/src/shared/messages.ts": "86d7bf89cfd1f087e2198ce0679894d7c1b2686c95e8bbfe15a6c4f8c3e3c8bd"
+  },
+  "checks": {
+    "targeted_test_files": 3,
+    "targeted_tests_passed": 160,
+    "typecheck": "passed",
+    "production_build": "passed",
+    "production_deployed": false
+  },
+  "baseline": {
+    "source": "local_dist_with_isolated_api",
+    "beforeStartedConnecting": true,
+    "pendingDraftRetained": true,
+    "pendingKinoState": "look",
+    "afterStartedConnecting": false,
+    "afterDurableCompleteConnecting": false,
+    "afterTerminalConnecting": false,
+    "afterTerminalStopVisible": false,
+    "connectingAfterOneSecond": false,
+    "tailSendDisabled": true,
+    "clearedOnEOF": true,
+    "postCount": 1,
+    "errors": [],
+    "unexpectedApiPaths": []
+  },
+  "after": {
+    "source": "local_dist_with_isolated_api",
+    "beforeStartedConnecting": false,
+    "pendingDraftRetained": true,
+    "pendingKinoState": "sleep",
+    "afterStartedConnecting": false,
+    "afterDurableCompleteConnecting": false,
+    "afterTerminalConnecting": false,
+    "afterTerminalStopVisible": false,
+    "connectingAfterOneSecond": false,
+    "tailSendDisabled": true,
+    "clearedOnEOF": true,
+    "postCount": 1,
+    "errors": [],
+    "unexpectedApiPaths": []
+  },
+  "builds": {
+    "baseline": {
+      "assets/SearchPage-cFISOhZn.js": "2ff9e09abf1c432f20844d5903cc67b73cd6434cf570f66963c1b0c3714509b0"
+    },
+    "after": {
+      "assets/SearchPage-BZlenloB.js": "d4acde0644a989d00e8089cb2f5ae2adb9d651c1cc971354e9e66c8fd68d9a30"
+    }
+  }
+}

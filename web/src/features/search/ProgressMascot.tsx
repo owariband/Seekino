@@ -25,12 +25,10 @@ interface Arrival {
  * once it settles, `farewell` plays and Kino falls asleep here until the next turn. A perch that mounts
  * for a new turn (`arriving`) takes over the spot Kino just left and Kino leaps down onto it.
  */
-export function ProgressMascot({ phase, settled = false, awake = false, arriving = false, farewell = null, onFarewellDone }: {
+export function ProgressMascot({ phase, settled = false, arriving = false, farewell = null, onFarewellDone }: {
   phase?: AnswerPhase | null;
   /** The answer has finished: Kino sleeps here. */
   settled?: boolean;
-  /** Something is about to happen (a new question is on its way): a settled Kino wakes up and looks. */
-  awake?: boolean;
   /** Mounted for a new turn: leap over from the previous perch if Kino just left one. */
   arriving?: boolean;
   farewell?: KinoReaction | null;
@@ -55,7 +53,7 @@ export function ProgressMascot({ phase, settled = false, awake = false, arriving
     return () => observer?.disconnect();
   }, []);
 
-  const state: KinoState = settled ? (awake ? "look" : "sleep") : phase ? PHASE_STATE[phase] : "wander";
+  const state: KinoState = settled ? "sleep" : phase ? PHASE_STATE[phase] : "wander";
   const reaction = farewell ? { name: farewell, key: `farewell:${farewell}` }
     : arrival?.leapFrom ? { name: "leap" as const, key: "leap" } : null;
 

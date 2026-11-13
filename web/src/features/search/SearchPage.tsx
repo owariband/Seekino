@@ -326,7 +326,6 @@ type MessageRowProps = {
   reasoning: string;
   displayMode: DisplayMode;
   kinoHost: boolean;
-  kinoAwake: boolean;
   selectedChunkId: string | null;
   series: SeriesSummary[];
   onOpenVideo?: SearchPageProps["onOpenVideo"];
@@ -337,7 +336,7 @@ const EMPTY_STEPS: AgentProgressEvent[] = [];
 
 // Kept at module scope so typing and one bubble's updates do not re-render every historical answer.
 const MessageRow = memo(function MessageRow({
-  message, steps, reasoning, displayMode, kinoHost, kinoAwake, selectedChunkId, series, onOpenVideo, onSelect,
+  message, steps, reasoning, displayMode, kinoHost, selectedChunkId, series, onOpenVideo, onSelect,
 }: MessageRowProps) {
   const { t, locale } = useI18n();
   return (
@@ -353,7 +352,7 @@ const MessageRow = memo(function MessageRow({
       ) : (
         <div>
           <AgentProgress message={message} steps={steps} reasoning={reasoning} displayMode={displayMode}
-            kinoHost={kinoHost} kinoAwake={kinoAwake} />
+            kinoHost={kinoHost} />
           {message.status === "FAILED" ? <p className={styles.messageError} role="alert">{message.lastError?.message || t("本次回答未完成")}</p> : null}
           {!message.content && message.status === "COMPLETED" && !message.searchResult ? <p className={styles.messageError}>{t("未生成回答")}</p> : null}
           <SearchCoverage result={message.searchResult} displayMode={displayMode} />
@@ -523,7 +522,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
     return () => document.removeEventListener("pointerdown", closeOutside);
   }, []);
   const {
-    conversationId, messages, progress, reasoning, loading, searching, connecting = false, cancelling = false, error,
+    conversationId, messages, progress, reasoning, loading, searching, cancelling = false, error,
     modelId: storedModelId = DEFAULT_CHAT_MODEL_ID, modelSaving = false, modelError = null,
     clear: clearConversation, ensureConversationId, applyDraftDefault, selectModel, send, stop,
   } = useAgentConversation(requestedConversationId);
@@ -1207,7 +1206,6 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
                   reasoning={reasoning[message.messageId] ?? ""}
                   displayMode={displayMode}
                   kinoHost={kinoHost}
-                  kinoAwake={kinoHost && connecting}
                   selectedChunkId={selection?.messageId === message.messageId ? selectedHit?.evidence.videoChunkId ?? null : null}
                   series={series}
                   onOpenVideo={onOpenVideo}
@@ -1215,7 +1213,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
                 />;
               })}
             </SeekContext.Provider>
-            {loading || connecting ? <p className={styles.connectionState} role="status">{kinoHostId ? null : <Kino state="loading" width={38} scale={2} ground={false} delayed perch />}{loading ? t("正在恢复会话…") : t("正在连接助手…")}</p> : null}
+            {loading ? <p className={styles.connectionState} role="status">{kinoHostId ? null : <Kino state="loading" width={38} scale={2} ground={false} delayed perch />}{t("正在恢复会话…")}</p> : null}
             {error && !messages.some((message) => message.status === "FAILED" && message.lastError?.message === error) ? <p ref={conversationFailureRef} className={`${styles.messageError} ${styles.conversationError}`} role="alert" tabIndex={-1}><Kino state="oops" width={38} scale={2} ground={false} /><span>{error}</span></p> : null}
           </div>
 

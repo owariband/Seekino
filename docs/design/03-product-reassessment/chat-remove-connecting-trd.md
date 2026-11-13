@@ -1,6 +1,6 @@
 # 1. 问题与现状
 
-2026-11-13。删除 Chat 的“正在连接助手”展示逻辑。分支 `fix/remove-chat-connecting`，PR 创建后回填，目标分支 `dev`。关联既有 [Chat 前端性能设计](chat-frontend-performance-trd.md)和工作台 `CHAT-PERF-01`；本次是后续交互收敛，不重写历史验收结论。
+2026-11-13。删除 Chat 的“正在连接助手”展示逻辑。分支 `fix/remove-chat-connecting`，[PR #149](https://github.com/owariband/Seekino/pull/149)，目标分支 `dev`。关联既有 [Chat 前端性能设计](chat-frontend-performance-trd.md)；当前执行状态见工作台 `CHAT-CONNECT-REMOVE-01`，关联 `CHAT-PERF-01`；本次是后续交互收敛，不重写历史验收结论。
 
 每次发送消息时，聊天页在收到 `answer.started` 前展示“正在连接助手”。公网旧构建还把已完成但 HTTP 流尚未关闭的请求误判为连接中；2026-11-13 的当前公网脚本隔离回放已复现该误报。现有 dev 用 `accepted` 展示状态修正收尾误报，但仍保留发送前的连接提示及对上一条回答 Kino 的唤醒。
 
@@ -16,13 +16,13 @@
 
 | 指标 | 基线 | 验收标准 | 方法与证据 |
 | --- | --- | --- | --- |
-| 发送及收尾阶段连接提示 | dev 待受理时展示；公网隔离回放在终态后重新出现 | 两阶段均不展示 | 既有页面测试及生产构建隔离回放，结果待测 |
-| 停止与重复发送 | PROCESSING 可停止，POST 未关闭时拒绝重复提交 | 保持原行为 | Hook / 页面测试，结果待测 |
-| 会话恢复、正文、Kino | 保留已有加载和真实处理阶段 | 既有回归通过，完成态不因新请求唤醒 | 相关组件测试与浏览器回放，结果待测 |
+| 发送及收尾阶段连接提示 | dev 待受理时展示；公网隔离回放在终态后重新出现 | 两阶段均不展示 | 既有页面测试及生产构建隔离回放，结果见第 4 节 |
+| 停止与重复发送 | PROCESSING 可停止，POST 未关闭时拒绝重复提交 | 保持原行为 | Hook / 页面测试，结果见第 4 节 |
+| 会话恢复、正文、Kino | 保留已有加载和真实处理阶段 | 既有回归通过，完成态不因新请求唤醒 | 相关组件测试与浏览器回放，结果见第 4 节 |
 
 # 3. 改造方案与建模
 
-在现有 Search feature 删除连接提示 JSX；加载旧会话仍显示“正在恢复会话”。删除 Hook 中只用于展示的 React `accepted` 和导出的 `connecting`，删除 SearchPage 到 AgentProgress 之间仅为连接阶段透传的 `kinoAwake`。共享 Kino 动画能力若仍有其他调用则保留。
+在现有 Search feature 删除连接提示 JSX；加载旧会话仍显示“正在恢复会话”。删除 Hook 中只用于展示的 React `accepted` 和导出的 `connecting`，删除 SearchPage 到 AgentProgress 之间仅为连接阶段透传的 `kinoAwake`。`ProgressMascot.awake` 也只由该链路消费，已一并删除；共享 Kino 引擎保留。
 
 请求流程沿用：发送锁定 → 必要时创建会话 → 流式 POST → 处理受理与模型事件 → 持久终态 → HTTP 结束后放开发送。请求局部受理记录保留，继续控制 `onAccepted` 与幂等查询，不能通过删除对账来隐藏连接状态。
 
@@ -30,7 +30,18 @@
 
 # 4. 对照实验与结果分析
 
-复用 2026-11-13 的隔离回放思路：模拟 API 延迟交付 `answer.started`，随后交付完成事件但保持 HTTP 打开，核对提示、发送锁和停止按钮。浏览器回放使用真实生产构建，业务接口由本机 fixture 响应，不调用模型或访问业务数据库。修改前后结果、命令及证据在实施后补充。
+复用 2026-11-13 的隔离回放思路：模拟 API 延迟交付 `answer.started`，随后交付完成事件但保持 HTTP 打开，核对提示、发送锁和停止按钮。浏览器回放使用真实生产构建，业务接口由本机 fixture 响应，不调用模型或访问业务数据库。2026-11-13 实测使用同一份隔离 API 回放，基线为 `80cd796b` 构建，方案为本分支工作区生产构建；延迟首事件并在终态后保持 HTTP 打开 1 秒。两组各 1 个场景，不用于推断真实模型速度或线上延迟。数值和源码 / 构建哈希见[验证记录](../../report/web/chat-remove-connecting-20261113.json)。
+
+| 指标 | 基线实测 | 删除后实测 | 判断 |
+| --- | --- | --- | --- |
+| 待受理时连接提示 | 显示 | 不显示 | 符合目标 |
+| 待受理时上一条回答的 Kino | `look` | `sleep` | 专用唤醒分支已移除 |
+| 受理前保留草稿、受理后清理草稿 | 通过 | 通过 | 受理回调未受影响 |
+| 已完成但 HTTP 未关闭时发送锁 | 保持 | 保持 | 防重护栏通过 |
+| HTTP 关闭后恢复发送 | 通过 | 通过 | 收尾护栏通过 |
+| 页面 JS 异常 / 非预期 API | 0 / 0 | 0 / 0 | 隔离回放通过 |
+
+执行 `npm --prefix web test -- src/features/search/useAgentConversation.test.ts src/features/search/SearchPage.test.tsx src/features/search/AgentProgress.test.tsx`：160 passed；`npm --prefix web run typecheck` 与 `npm --prefix web run build` 通过。复用既有生产构建回放 fixture 并在临时脚本中显式控制首事件和 EOF；原始本机脚本 `/private/tmp/seekino-remove-connecting-replay-20261113.mjs`，原始结果 `/private/tmp/seekino-remove-connecting-{baseline,after}-20261113.json`。fixture 不接触真实数据库、模型或用户会话。
 
 # 5. 试点验证与方案取舍
 
@@ -40,4 +51,4 @@
 
 # 6. 结果验收与闭环
 
-待实施。验收分别记录：代码删除、自动化检查、隔离浏览器结果与公网部署事实；工作状态沿用工作台入口。后端首包前分段计时属于独立排查，不作为本次 UI 删除的性能承诺。
+已删除专用展示与状态，160 项相关测试、类型检查、生产构建和隔离浏览器前后对照通过，采用本次删除。公网尚未部署；工作台 `CHAT-CONNECT-REMOVE-01` 保持 VERIFYING，后续核对正式发布与公网页面。后端首包前分段计时属于独立排查，不作为本次 UI 删除的性能承诺。

@@ -14,7 +14,7 @@ Kino is drawn from code, not from image files. `engine.ts` holds the pixel poses
 | `wander` | Walks to one end, turns to the screen, walks back | Answer queued |
 | `look` | Turns to the screen, glances, small hop | Hovering an interactive Kino; waking up while a new question is sent |
 | `think` | Looks up at a floating question mark | Checking evidence; no clips found |
-| `loading` | Walks in place under three blinking dots | Writing the answer; connecting |
+| `loading` | Walks in place under three blinking dots | Writing the answer; restoring a conversation |
 | `run` | Sprints between the ends, skids at each turn | Searching for clips |
 | `dashLeft` / `dashRight` | Sprints in place facing that way while the ground scrolls past | Being dragged on the watch page |
 | `sleep` | Lies down, breathes, floats Zs | On the latest bubble once its answer is done; empty chat after 45 s idle |

@@ -77,6 +77,8 @@ API 并发：[2026-10-30 Kimi Code 10 路并发实测](gateway/kimi-concurrency-
 - [agent-bridge-stages.md](gateway/bridge/agent-bridge-stages.md)
 - [agent-bridge-stages.svg](gateway/bridge/agent-bridge-stages.svg)
 
+[2026-11-13 删除 Chat 连接展示](../design/03-product-reassessment/chat-remove-connecting-trd.md)：160 项相关测试、类型和生产构建通过；[生产构建隔离对照](web/chat-remove-connecting-20261113.json)确认待受理不展示连接提示、不预唤醒 Kino，草稿受理与传输收尾防重保持。公网未部署。
+
 ## Server
 
 11 月 7 日，micrograd v5 在隔离实例跑完 146 个索引块，用时 90 分 04.884 秒，414 份终态草稿都能对上模型调用。[草稿写入、整集计时与合并后的数据库回放](server/service/parse-output-drafts-20261107.md#micrograd-v5)
