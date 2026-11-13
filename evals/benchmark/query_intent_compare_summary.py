@@ -14,7 +14,10 @@ from pathlib import Path
 import re
 from statistics import median
 ROOT = Path(__file__).resolve().parents[2]
-STEPS, ARMS = 27, ("deepseek_decider", "jev_rewriter", "supervisor_direct")
+STEPS = 27
+ARMS = ("deepseek_decider", "jev_rewriter", "supervisor_direct")
+JEV_ONLY_ARMS = ("deepseek_decider", "jev_only", "supervisor_direct")
+KNOWN_ARMS = (ARMS, JEV_ONLY_ARMS)
 ROUNDS = {1: 18, 2: 9}
 TOKENS = ("input_tokens", "output_tokens", "total_tokens", "cached_input_tokens", "reasoning_tokens")
 RETRIEVAL = ("retrieve", "search_video_events", "query_video")
@@ -114,20 +117,21 @@ def load_inputs(raw):
          "repeat_case_ids differ from cases/protocol")
     schedule = protocol.get("schedule")
     need(isinstance(schedule, list) and len(schedule) == STEPS, f"protocol must contain exactly {STEPS} scheduled steps")
-    need(isinstance(protocol.get("arms"), list) and set(protocol["arms"]) == set(ARMS), f"protocol arms must be {list(ARMS)}")
+    arms = tuple(protocol.get("arms") or ())
+    need(arms in KNOWN_ARMS, f"protocol arms must be one of {KNOWN_ARMS}")
     indices, rounds, identities = set(), Counter(), set()
     for step in schedule:
         index = step.get("index") if isinstance(step, dict) else None
         identity = (step.get("round"), step.get("case_id"), step.get("arm")) if isinstance(step, dict) else None
         need(isinstance(index, int) and not isinstance(index, bool) and index not in indices,
              f"schedule step needs a unique integer index: {index}")
-        need(step.get("arm") in ARMS and step.get("case_id") in cases, f"step {index}: unknown arm or case")
+        need(step.get("arm") in arms and step.get("case_id") in cases, f"step {index}: unknown arm or case")
         need(identity not in identities, f"duplicate scheduled identity: {identity}")
         indices.add(index)
         identities.add(identity)
         rounds[step.get("round")] += 1
     need(indices == set(range(STEPS)) and dict(rounds) == ROUNDS and all(
-        sum(step["arm"] == arm for step in schedule) == 9 for arm in ARMS),
+        sum(step["arm"] == arm for step in schedule) == 9 for arm in arms),
         f"schedule must cover indices 0..{STEPS - 1}, rounds {ROUNDS} and 9 steps per arm")
     found = {}
     for result_path in sorted((raw / "runs").glob("*/result.json")):
@@ -152,7 +156,7 @@ def load_inputs(raw):
                 need(call_id not in seen_calls, f"duplicate usage call_id {call_id}")
                 seen_calls.add(call_id)
         found[index] = (directory, found[index][1], rows, hook_log(directory / "runtime.log"))
-    return protocol, cases, repeats, document.get("fixture"), schedule, found
+    return protocol, cases, repeats, document.get("fixture"), arms, schedule, found
 def final_content(directory, result):
     path = directory / "final.json"
     assistant = read_json(path).get("assistant_message") if path.is_file() else None
@@ -187,7 +191,7 @@ def arm_summary(turns, usage_rows):
                               "context_policy_consistent": len(policies) == 1 and len(runtime) == 1},
             "usage": usage_summary(usage_rows)}
 def summarize(raw):
-    protocol, cases, repeats, fixture, schedule, results = load_inputs(raw)
+    protocol, cases, repeats, fixture, arms, schedule, results = load_inputs(raw)
     turns, all_usage, output_matches = [], [], []
     for step in schedule:
         directory, result, usage_rows, logs = results[step["index"]]
@@ -215,27 +219,27 @@ def summarize(raw):
                       "case_expected": cases[step["case_id"]]["expected"], "semantic_quality_review": "required",
                       "_runtime_model": result.get("runtime_model") if isinstance(result.get("runtime_model"), dict) else {}})
         all_usage.extend(usage_rows)
-    arms = {}
-    for arm in ARMS:
+    arms_summary = {}
+    for arm in arms:
         arm_turns = [turn for turn in turns if turn["arm"] == arm]
         rows = [row for step in schedule if step["arm"] == arm for row in results[step["index"]][2]]
-        arms[arm] = arm_summary(arm_turns, rows)
+        arms_summary[arm] = arm_summary(arm_turns, rows)
     usage, statuses = usage_summary(all_usage), Counter(turn["status"] for turn in turns)
-    model_sets = {json.dumps(x["runtime_model"]["models"], sort_keys=True) for x in arms.values()}
+    model_sets = {json.dumps(x["runtime_model"]["models"], sort_keys=True) for x in arms_summary.values()}
     checks = {"schedule_complete": True, "result_ids_unique": True, "usage_call_ids_unique": True,
               "final_matches_observed": all(output_matches),
               "role_buckets_complete": sum(x["calls"] for x in usage["by_role"].values()) == usage["calls"],
-              "arm_usage_matches_total": sum(x["usage"]["calls"] for x in arms.values()) == usage["calls"],
-              "runtime_model_consistent_across_arms": len(model_sets) == 1 and all(x["runtime_model"]["consistent"] for x in arms.values()),
-              "runtime_context_policy_consistent_across_arms": len(model_sets) == 1 and all(x["runtime_model"]["context_policy_consistent"] for x in arms.values())}
+              "arm_usage_matches_total": sum(x["usage"]["calls"] for x in arms_summary.values()) == usage["calls"],
+              "runtime_model_consistent_across_arms": len(model_sets) == 1 and all(x["runtime_model"]["consistent"] for x in arms_summary.values()),
+              "runtime_context_policy_consistent_across_arms": len(model_sets) == 1 and all(x["runtime_model"]["context_policy_consistent"] for x in arms_summary.values())}
     return {"schema_version": 1, "semantic_quality_review": "required",
             "policy": {"response_data": "local_only", "factual_quality": "not_inferred", "quality_flags_source": "case_expected",
                        "reasoning_tokens": "subset_of_output_tokens"},
             "experiment": {"protocol_started_at": protocol.get("started_at"), "git_head": protocol.get("git_head"),
-                           "cases_sha256": protocol.get("cases_sha256"), "fixture": fixture, "arms": list(ARMS),
+                           "cases_sha256": protocol.get("cases_sha256"), "fixture": fixture, "arms": list(arms),
                            "case_ids": sorted(cases), "repeat_case_ids": repeats, "schedule_steps": len(schedule),
                            "rounds": dict(sorted(Counter(step["round"] for step in schedule).items()))},
-            "checks": checks, "arms": arms, "usage": usage,
+            "checks": checks, "arms": arms_summary, "usage": usage,
             "totals": {"turns": len(turns), "status_counts": dict(sorted(statuses.items())),
                        "failures": len(turns) - statuses.get("COMPLETED", 0),
                        "timeouts": sum(1 for turn in turns if turn["timeout"]),

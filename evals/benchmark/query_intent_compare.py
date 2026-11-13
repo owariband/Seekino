@@ -1,11 +1,12 @@
 """Compare the three Chat query-intent paths on real local services.
 
 Path A uses the combined DeepSeek decision model (``models.query_hook``);
-path B uses JEV routing plus the existing rewriter; path C skips the hook and
-lets the current Supervisor decide.  One arm is one fresh conversation and one
-full turn through ``AgentChatService.start_message(stream=True)``.  The parent
-supplies the three model configs and case file; this module never prints or
-serializes raw configs or credentials.
+path B historically uses JEV routing plus the existing rewriter, or with
+``--jev-only`` JEV routing alone; path C skips the hook and lets the current
+Supervisor decide.  One arm is one fresh conversation and one full turn through
+``AgentChatService.start_message(stream=True)``.  The parent supplies the three
+model configs and case file; this module never prints or serializes raw configs
+or credentials.
 
 Default is an offline plan.  ``--live`` runs each frozen step in its own child
 process with a 300 second turn cutoff, retains failures, and resumes without
@@ -16,6 +17,8 @@ Usage:
         --cases cases.json --configs-dir configs --output outputs/run --plan
     python -m evals.benchmark.query_intent_compare \
         --cases cases.json --configs-dir configs --output outputs/run --live
+    python -m evals.benchmark.query_intent_compare \
+        --cases cases.json --configs-dir configs --output outputs/run --plan --jev-only
     python -m evals.benchmark.query_intent_compare \
         --cases cases.json --configs-dir configs --output outputs/run --only-index 4
 """
@@ -42,7 +45,9 @@ import time
 from uuid import uuid4
 
 ROOT = Path(__file__).resolve().parents[2]
-ARMS = ("deepseek_decider", "jev_rewriter", "supervisor_direct")
+HISTORICAL_ARMS = ("deepseek_decider", "jev_rewriter", "supervisor_direct")
+JEV_ONLY_ARMS = ("deepseek_decider", "jev_only", "supervisor_direct")
+ARMS = HISTORICAL_ARMS
 ARM_FILES = {arm: f"{arm}.yaml" for arm in ARMS}
 TURN_TIMEOUT_SECONDS = 300.0
 CHILD_WATCHDOG_SECONDS = 360.0
@@ -284,6 +289,13 @@ def validate_wiring(arm: str, info: dict) -> None:
             raise ValueError("jev_rewriter must not define models.query_hook (that selects the combined decision path)")
         if not hook["rewriter_enabled"] or not wiring["has_query_rewriter_model"]:
             raise ValueError("jev_rewriter must enable and define models.query_rewriter")
+    elif arm == "jev_only":
+        if not hook["enabled"]:
+            raise ValueError("jev_only must enable query_hook")
+        if wiring["has_query_hook_model"]:
+            raise ValueError("jev_only must not define models.query_hook")
+        if hook["rewriter_enabled"] or wiring["has_query_rewriter_model"]:
+            raise ValueError("jev_only must disable and omit models.query_rewriter")
     elif hook["enabled"]:
         raise ValueError("supervisor_direct must disable query_hook")
 
@@ -632,6 +644,10 @@ def _observed_from_terminal(terminal) -> tuple[dict, dict | None]:
 
 def run_worker(args, index: int) -> None:
     protocol = json.loads((args.output / "protocol.json").read_text(encoding="utf-8"))
+    if protocol.get("arms") != list(ARMS):
+        raise RuntimeError(
+            f"protocol arms {protocol.get('arms')} do not match this mode {list(ARMS)}"
+        )
     if not 0 <= index < len(protocol["schedule"]):
         raise ValueError(f"--only-index must be between 0 and {len(protocol['schedule']) - 1}")
     step = protocol["schedule"][index]
@@ -822,6 +838,9 @@ def run_worker(args, index: int) -> None:
             "hook": {
                 "configured": hook_recorder.delegate is not None,
                 "calls": hook_recorder.calls,
+                "route_outputs": [
+                    call["output"] for call in hook_recorder.calls if "output" in call
+                ],
                 "fail_open_suspected": any(
                     not call.get("changed", True) for call in hook_recorder.calls
                 ),
@@ -839,6 +858,14 @@ def run_worker(args, index: int) -> None:
         })
 
         terminal = outcome["terminal"]
+        if terminal is not None and ARMS == JEV_ONLY_ARMS:
+            if any(row.get("operation") == "retrieval_slot" for row in usage_rows):
+                raise RuntimeError("standalone rewriting is forbidden in this retest")
+            if step["arm"] == "jev_only" and not any(
+                row.get("operation") == "query_hook_route" and row.get("status") == "completed"
+                for row in usage_rows
+            ):
+                raise RuntimeError("jev_only completed turn needs a successful JEV route")
         if terminal is not None and (
             not recorder.inputs or not usage_rows
         ):
@@ -896,6 +923,10 @@ def run_worker(args, index: int) -> None:
 
 def cancel_owned(args, index: int) -> None:
     protocol = json.loads((args.output / "protocol.json").read_text(encoding="utf-8"))
+    if protocol.get("arms") != list(ARMS):
+        raise RuntimeError(
+            f"protocol arms {protocol.get('arms')} do not match this mode {list(ARMS)}"
+        )
     if not 0 <= index < len(protocol["schedule"]):
         raise ValueError(f"--cancel-index must be between 0 and {len(protocol['schedule']) - 1}")
     step = protocol["schedule"][index]
@@ -939,6 +970,7 @@ def _freeze_protocol(args, document: dict, schedule: list[dict], configs: dict) 
         "case_sha256": {case["id"]: _case_hash(case) for case in document["cases"]},
         "configs_dir": str(args.configs_dir.resolve()),
         "configs": configs,
+        "mode": "jev_only" if ARMS == JEV_ONLY_ARMS else "jev_rewriter",
         "arms": list(ARMS),
         "tenant_id": document["tenant_id"],
         "series_id": document["series_id"],
@@ -960,6 +992,10 @@ def _live(args, document: dict, schedule: list[dict]) -> None:
     protocol_path = args.output / "protocol.json"
     if protocol_path.exists():
         protocol = json.loads(protocol_path.read_text(encoding="utf-8"))
+        if protocol.get("arms") != list(ARMS):
+            raise RuntimeError(
+                f"protocol arms {protocol.get('arms')} do not match this mode {list(ARMS)}"
+            )
         if protocol["schedule"] != schedule:
             raise RuntimeError("frozen schedule differs from the current cases/configs")
         if protocol["source_sha256"] != source_hashes():
@@ -995,6 +1031,8 @@ def _live(args, document: dict, schedule: list[dict]) -> None:
             "--cases", str(args.cases), "--configs-dir", str(args.configs_dir),
             "--output", str(args.output), "--only-index", str(step["index"]),
         ]
+        if args.jev_only:
+            command.append("--jev-only")
         with (args.output / "workers.log").open("a", encoding="utf-8") as log:
             log.write(json.dumps({"event": "spawn", **step}, ensure_ascii=False) + "\n")
             log.flush()
@@ -1032,12 +1070,15 @@ def _live(args, document: dict, schedule: list[dict]) -> None:
             })
         if timed_out or missing_result:
             try:
+                cancel_command = [
+                    sys.executable, "-m", "evals.benchmark.query_intent_compare",
+                    "--cases", str(args.cases), "--configs-dir", str(args.configs_dir),
+                    "--output", str(args.output), "--cancel-index", str(step["index"]),
+                ]
+                if args.jev_only:
+                    cancel_command.append("--jev-only")
                 cancelled = subprocess.run(
-                    [
-                        sys.executable, "-m", "evals.benchmark.query_intent_compare",
-                        "--cases", str(args.cases), "--configs-dir", str(args.configs_dir),
-                        "--output", str(args.output), "--cancel-index", str(step["index"]),
-                    ],
+                    cancel_command,
                     cwd=ROOT, env=env, timeout=60, check=False,
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 )
@@ -1068,6 +1109,7 @@ def _live(args, document: dict, schedule: list[dict]) -> None:
 
 
 def main() -> None:
+    global ARMS, ARM_FILES
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cases", type=Path, required=True)
     parser.add_argument("--configs-dir", type=Path, required=True)
@@ -1076,7 +1118,13 @@ def main() -> None:
     parser.add_argument("--live", action="store_true", help="run real local Chat turns")
     parser.add_argument("--only-index", type=int, help="run one frozen schedule step")
     parser.add_argument("--cancel-index", type=int, help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--jev-only", action="store_true",
+        help="use jev_only.yaml (JEV routing without the standalone rewriter)",
+    )
     args = parser.parse_args()
+    ARMS = JEV_ONLY_ARMS if args.jev_only else HISTORICAL_ARMS
+    ARM_FILES = {arm: f"{arm}.yaml" for arm in ARMS}
     args.cases = args.cases.resolve()
     args.configs_dir = args.configs_dir.resolve()
     args.output = args.output.resolve()

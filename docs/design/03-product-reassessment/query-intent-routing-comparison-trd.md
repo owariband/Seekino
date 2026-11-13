@@ -1,6 +1,6 @@
 # 1. 问题与现状
 
-2026-11-13 复测更正：本轮目标是 **JEV 单独分类，关闭独立改写器**。前一轮 B 为 JEV＋改写器，不能代表这个目标；此前相对 B 的速度判断仅适用于含改写器的历史实验。新工作分支为 `perf/query-intent-jev-only`，目标 `dev`，PR 创建后回填。复测协议见第 7 节，原始数据和历史记录保留。
+2026-11-13 复测更正：本轮目标是 **JEV 单独分类，关闭独立改写器**。前一轮 B 为 JEV＋改写器，不能代表这个目标；此前相对 B 的速度判断仅适用于含改写器的历史实验。新工作分支为 `perf/query-intent-jev-only`，目标 `dev`，关联 [PR #151](https://github.com/owariband/Seekino/pull/151)。复测协议见第 7 节，原始数据和历史记录保留。
 
 需求：核对 Cloud Chat 前置意图判断的实际配置，恢复 JEV，并比较 DeepSeek 前置决策、JEV＋改写器与 Supervisor 直接判断。提出日期：2026-11-13；工作分支：`perf/query-intent-routing-comparison`；目标分支：`dev`；PR：[#145](https://github.com/owariband/Seekino/pull/145)。依赖：动态模型窗口与 85% compact 策略已通过 [#144](https://github.com/owariband/Seekino/pull/144) 集成到 `dev`，本轮作为共同实验基线。
 
