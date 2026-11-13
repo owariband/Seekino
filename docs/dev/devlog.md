@@ -27,6 +27,7 @@
 
 | 记录 | 原问题编号 |
 |---|---|
+| [2026-11-14：声纹切片复用整集租约目录，首次编码前就发生冲突](#devlog-voiceprint-media-workspace-20261114) | B12；123 项回归与 298 次真实 CAM++ 编码 |
 | [2026-11-13：Event 查询在 ES 召回前加载全部 Chunk 正文，检索内存随素材库增长](#devlog-event-query-bounded-content-20261113) | RAG-QUERY-MEM-01；PR #154 |
 | [2026-11-13：可选改写器混入基线，JEV 的净耗时被算错](#devlog-chat-intent-jev-only-20261113) | CHAT-INTENT-01；C19；PR #151 |
 | [2026-11-13：删除原因重复渲染，回答中的历史列表额外占高](#devlog-chat-delete-hint-20261113) | CHAT-DELETE-HINT-01 |
@@ -193,6 +194,37 @@
 | [日期未明确（2026-10-23归档）：当前播放窗口的按需理解与复用](#devlog-history-60) | 独立实验/设计 |
 
 </details>
+
+<a id="devlog-voiceprint-media-workspace-20261114"></a>
+## 2026-11-14：声纹切片复用整集租约目录，首次编码前就发生冲突
+
+### 问题与现状
+
+关联 [B12](problems.md#problem-b12-media-workspace-20261114)。EP04 本机整集 1fps/prefill 已完成 24/24 Understanding，声纹准备却在 lease 9/10/11 连续三次 FileExistsError 后失败，Refine 未开始。整集媒体上下文仍持有固定租约目录，声纹切片又以相同身份创建同一路径，失败发生在调用 CAM++ 编码之前；这轮失败不能用于评价声纹算法。
+
+### 方案候选
+
+在 Server 媒体服务中仅给 speaker audio 操作增加 UUID 目录后缀，保留原租约 owner marker、执行锁、取消清理和崩溃回收；其余媒体仍使用固定目录并拒绝重复创建。没有放开 exist_ok，避免切片覆盖 speaker.wav 或在退出时清理整集材料。模型、阈值、Prompt 和持久 Schema 保持原值。设计见 [修复 TRD](../design/03-product-reassessment/voiceprint-media-workspace-fix-trd.md)。
+
+### 方案验证
+
+先用仍打开的整集媒体上下文重现 FileExistsError，再验证两个同租约音频切片互相隔离、退出保留父媒体、video/interval 取消与编码异常清理、活动锁及 marker 缺失/损坏回收。媒体与 ASR 持久恢复 71 passed，声纹/说话人 worker 52 passed，共 123 项通过。
+
+仅重启本机隔离 API，加载 `c777ef72` 并通过正式 retry-parse 恢复同一任务；保留同一数据库、ASR、24 份 Understanding 和 1fps/prefill。00:36:45（UTC+8）核实 voiceprint.ready=true，298 行/298 样本，账本 298 次 CAM++ 编码 completed，preparation failures=0。GPU 原入口重连后 ASR/embedding health 均 200；没有访问 CPU/prod。证据见 [运行摘要](../report/server/service/video_parse_media/voiceprint-workspaces-20261114.json)。
+
+### 指标对比
+
+本次验收运行阻塞是否消失，因此同时核对准备结果、保留的上游成果与后续阶段，不用单测或非空人物代替质量。
+
+| 指标 | 原 dev 运行 | 目录补丁后真实重试 |
+| --- | --- | --- |
+| 已保存 Understanding | 24/24 | 24/24 保留 |
+| 声纹准备 | 三次目录冲突，ready=false | failures=0，ready=true |
+| CAM++ 成功编码与评分行 | 未见编码记录，无评分成果 | 298 次 completed；298 行/298 样本 |
+| Refine / 全链 | 未进入 Refine | 已尝试 Refine，但输入超过上下文预算；全链未完成 |
+| 目标最终实名、完整耗时、费用 | 未验收 | 未验收；父任务起点跨停机与重试，不作纯运行耗时 |
+
+目录冲突已在真实链路消除，内部声纹结果确实生成。后续 Refine 又被 ContextWindowOverflow 阻断，不能据此声称 AI 已消费评分并修正人物。本次保留该新问题，由 Parse Harness/Server 的证据呈现链路另行处理，最终身份仍交 DS worker 根据真实产物核对。
 
 <a id="devlog-event-query-bounded-content-20261113"></a>
 ## 2026-11-13：Event 查询在 ES 召回前加载全部 Chunk 正文，检索内存随素材库增长

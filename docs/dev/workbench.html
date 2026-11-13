@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-13T23:01:02+08:00",
+ "updatedAt": "2026-11-14T00:47:15+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 63,
+ "revision": 64,
  "categories": [
   {
    "id": "parse",
@@ -2074,19 +2074,20 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "title": "ASR 匿名说话人分组不准，Refine 看帧后仍未纠正目标归属",
    "category": "parse",
    "type": "requirement",
-   "status": "done",
+   "status": "progressing",
    "priority": "unset",
-   "description": "排序日期：2026-10-19。",
-   "next": "核对原始记录及当前实现，确定本轮是否继续推进。",
-   "verification": "按历史 TODO 导入；当前优先级、执行人和后续验收仍需核对。 优先级：高。类型：解析语义质量、音频分段、证据供给与可观测性。状态：截至 2026-10-22 仍未全面闭环；v25 两句固定目标本轮均正确。历史 v5 曾纠正爽世单例，不代表后续版本稳定识别正确；v11～v18 暴露参考错名、跨人合并及 Refine 决策三类问题。最新归因与未完成项见下，旧轮次记录保留。记录日期：2026-10-16；更新日期：2026-10-22。",
-   "updatedAt": "2026-10-19",
+   "description": "本机声纹切片与整集租约目录冲突已修复；原24份理解保留，真实298次CAM++编码完成并ready。人物归属仍待验收，Refine现被初始证据超上下文阻断。",
+   "next": "由DS worker核对本轮B0目标候选；另行修复Refine证据呈现的上下文溢出，再验收实际输入和最终长崎爽世归属。",
+   "verification": "2026-11-14：123项相关回归通过；本机正式retry得到voiceprint.ready=true、298行/298样本、298次CAM++ completed，preparation failures=0。原24个Understanding和ASR复用。Refine因ContextWindowOverflow未产生最终结果；目录修复不等于人物质量达标。",
+   "updatedAt": "2026-11-14",
    "tags": [
-    "待核对"
+    "声纹运行已验证",
+    "Refine超窗待修"
    ],
    "related": [
     "MOD-PARSE"
    ],
-   "branch": "",
+   "branch": "fix/voiceprint-media-workspaces",
    "links": [
     {
      "label": "问题记录",
@@ -2097,6 +2098,21 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "label": "TRD",
      "url": "https://github.com/owariband/Seekino/blob/56e7977721e51a61b20894c9d38fa775d9300c70/docs/design/02-agent-harness/voiceprint-trd.md",
      "kind": "trd"
+    },
+    {
+     "label": "目录修复TRD",
+     "url": "https://github.com/owariband/Seekino/blob/fix/voiceprint-media-workspaces/docs/design/03-product-reassessment/voiceprint-media-workspace-fix-trd.md",
+     "kind": "trd"
+    },
+    {
+     "label": "真实声纹运行证据",
+     "url": "https://github.com/owariband/Seekino/blob/fix/voiceprint-media-workspaces/docs/report/server/service/video_parse_media/voiceprint-workspaces-20261114.json",
+     "kind": "source"
+    },
+    {
+     "label": "目录修复devlog",
+     "url": "https://github.com/owariband/Seekino/blob/fix/voiceprint-media-workspaces/docs/dev/devlog.md#devlog-voiceprint-media-workspace-20261114",
+     "kind": "source"
     }
    ],
    "source": {

@@ -1051,6 +1051,14 @@ Cloud 同时存在 JEV 参数和 `models.query_hook=deepseek-flash/high/256`，�
 
 优先级：高。类型：解析语义质量、音频分段、证据供给与可观测性。状态：**截至 2026-10-22 仍未全面闭环；v25 两句固定目标本轮均正确**。历史 v5 曾纠正爽世单例，不代表后续版本稳定识别正确；v11～v18 暴露参考错名、跨人合并及 Refine 决策三类问题。最新归因与未完成项见下，旧轮次记录保留。记录日期：2026-10-16；更新日期：2026-10-22。
 
+<a id="problem-b12-media-workspace-20261114"></a>
+#### 2026-11-14：声纹切片与整集目录冲突已修复，Refine 超窗仍阻断最终归属
+
+- EP04 本机任务在 24 个理解成果提交后，声纹准备三次报同租约目录已存在；Server 媒体服务的固定目录命名造成冲突，未进入编码。通过给 speaker audio 独立目录并沿用租约锁/清理修复，123 项直接回归通过。
+- 同一任务正式重试后，保留 1fps/prefill、既有 ASR 和 24 份理解；真实得到 ready=true、298 行/298 样本和 298 次 CAM++ completed，目录问题已消除。模型/阈值/Prompt/数据库合同未改，未访问 CPU/prod。
+- 新阻塞是 Refine 初始证据超过上下文预算，Gateway 报 ContextWindowOverflow；最终人物结果尚未产生。需要在证据呈现链路控制序列化体积并复核 AI 实际输入，不能用扩大窗口掩盖，也不能把本次 ready 或编码完成当作身份正确。该后续问题归 Parse Harness/Server，独立修复；本轮不改其证据合同。
+- 原始 CUDA ASR 目标混分与历史轮次结论保留，详见 [PR #156](https://github.com/owariband/Seekino/pull/156)；目录修复及实测见 [devlog](devlog.md#devlog-voiceprint-media-workspace-20261114)、[TRD](../design/03-product-reassessment/voiceprint-media-workspace-fix-trd.md)和[运行摘要](../report/server/service/video_parse_media/voiceprint-workspaces-20261114.json)。当前状态统一在工作台维护，实名目标仍为长崎爽世。
+
 #### 2026-10-31：整片 speaker 分组与身份映射候选（TODO，先评估现有体系）
 
 用户提出的方向：在完整视频范围内先将 speaker1／2／3 分组，再保留各 speaker 已识别为何人，为后续 Agent 提供统一线索，减小跨 Chunk 身份归因和纠错的难度。**先核验现有体系效果是否足够，只有不足时才决定是否引入；本轮不改模型或解析流程。**
