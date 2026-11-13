@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-13T19:02:03+08:00",
+ "updatedAt": "2026-11-13T19:08:42+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 58,
+ "revision": 59,
  "categories": [
   {
    "id": "parse",
@@ -5673,7 +5673,7 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "priority": "P1",
    "description": "Cloud models.query_hook 选择 DeepSeek 合并决策，JEV 参数未被调用；恢复 JEV 并比较相同 Supervisor 条件下的三条意图路径。",
    "next": "本轮配置纠正和有界比较已闭环；C19全场景质量另按原问题验收。后续优先核对单Chunk更新卡片与重复检索，再决定更大样本的直接判断试点。",
-   "verification": "Cloud实际JEV/respond已验证，API重启healthy。正式27/27自然完成，SQL正文一致且无PROCESSING；三组平均FTT 6.099/8.886/7.713s，TT 8.319/10.404/9.588s，token 238332/260639/311226。A/B动作均9/9正确，6对输入相同，严格审阅6/8/8通过；未将诊断批和失败隐藏。仅12秒素材，不证明全局最优或C19完全关闭。",
+   "verification": "Cloud实际JEV/respond已验证，API重启healthy。正式27/27自然完成，SQL正文一致且无PROCESSING；三组平均FTT 6.099/8.886/7.713s，TT 8.319/10.404/9.588s，token 238332/260639/311226。A/B动作均9/9正确，6对输入相同，Codex逐条评阅6/8/8通过；未将诊断批和失败隐藏。仅12秒素材，不证明全局最优或C19完全关闭。",
    "updatedAt": "2026-11-13",
    "tags": [
     "Chat",
