@@ -485,7 +485,6 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
   const creatingConversation = preparingAttachments || (searching && !conversationId);
   usePublishChatSettings(canConfigure === true, { modelId, modelSaving, modelError, selectModel,
     loading: loading || creatingConversation || mode !== "live" });
-  const connecting = searching && !messages.some((message) => message.status === "PROCESSING");
   // Kino perches on the newest assistant bubble and leaps to the next one when a new turn starts.
   const kinoHostId = messages.findLast((message) => message.role === "ASSISTANT")?.messageId ?? null;
   const attachments = useAgentAttachments(conversationId);
@@ -1148,7 +1147,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
                 ) : (
                   <div>
                     <AgentProgress message={message} steps={progress[message.messageId] ?? []} reasoning={reasoning[message.messageId] ?? ""} displayMode={displayMode}
-                      kinoHost={message.messageId === kinoHostId} kinoAwake={connecting} />
+                      kinoHost={message.messageId === kinoHostId} />
                     {message.status === "FAILED" ? <p className={styles.messageError} role="alert">{message.lastError?.message || t("本次回答未完成")}</p> : null}
                     {!message.content && message.status === "COMPLETED" && !message.searchResult ? <p className={styles.messageError}>{t("未生成回答")}</p> : null}
                     <SearchCoverage result={message.searchResult} displayMode={displayMode} />
@@ -1171,7 +1170,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
                 )}
               </article>
             ))}
-            {loading || connecting ? <p className={styles.connectionState} role="status">{kinoHostId ? null : <Kino state="loading" width={38} scale={2} ground={false} delayed perch />}{loading ? t("正在恢复会话…") : t("正在连接助手…")}</p> : null}
+            {loading ? <p className={styles.connectionState} role="status">{kinoHostId ? null : <Kino state="loading" width={38} scale={2} ground={false} delayed perch />}{t("正在恢复会话…")}</p> : null}
             {error && !messages.some((message) => message.status === "FAILED" && message.lastError?.message === error) ? <p ref={conversationFailureRef} className={`${styles.messageError} ${styles.conversationError}`} role="alert" tabIndex={-1}><Kino state="oops" width={38} scale={2} ground={false} /><span>{error}</span></p> : null}
           </div>
 
