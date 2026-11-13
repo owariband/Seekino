@@ -2643,14 +2643,17 @@ def test_retrieval_scope_reads_only_task_and_chunk_projections_without_lazy_load
     assert len(statements) == 2
     columns = statements[0].split("FROM", 1)[0]
     assert "video_parse_task.parse_config" in columns
-    assert "video_parse_task.detail" not in columns
+    assert ", video_parse_task.detail" not in columns
+    assert "JSON_EXTRACT(video_parse_task.detail" in columns
+    assert "event_index_target" in columns
     assert "video_parse_task.last_error" not in columns
     assert "video_parse_task.lease_owner" not in columns
     chunk_columns = statements[1].split("FROM", 1)[0]
     assert "chunk_parse_task.video_task_id" in chunk_columns
     assert "video_chunk.video_id" in chunk_columns
     assert "video_chunk.sequence_no" in chunk_columns
-    assert "chunk_parse_content" not in chunk_columns
+    assert "chunk_parse_content.version" in chunk_columns
+    assert "chunk_parse_content.content" not in chunk_columns
     assert "detail" not in chunk_columns
 
 

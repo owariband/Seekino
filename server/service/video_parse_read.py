@@ -214,7 +214,7 @@ def published_reference_sources(session, *, tenant_id, task_scope, chunk_ids, in
         return {}
     rows = read_store.load_candidate_rows(
         session, task_ids=tuple(task_scope), chunk_ids=chunk_ids, task_status="COMPLETE",
-        phase=ChunkTaskPhase.INDEX, status="COMPLETE",
+        phase=ChunkTaskPhase.INDEX, status="COMPLETE", include_detail=True,
     )
     published = {}
     for series, video, chunk, task, _child, content in rows:
@@ -303,18 +303,12 @@ def resolve_retrieval_scope(
             "selected Series have no COMPLETE Video Parse V2 task", public_message=message,
         )
 
-    event_sources = ()
     if event_index is not None:
-        complete = {video.id: task.id for video, task in selected}
-        selected_chunks = None if requested is None else {
-            chunk_id: video_id for chunk_id, video_id in requested.items() if video_id in complete
-        }
-        event_sources = tuple(sorted(validate_event_coverage(
-            session, parse_tasks_by_video_id=complete, index_name=event_index[0], contract_id=event_index[1],
-            requested=selected_chunks, allow_partial=True,
-        )))
-        published = {task_id for task_id, _, _ in event_sources}
-        selected = [(video, task) for video, task in selected if task.id in published]
+        # INDEX completion already verifies publication content. Query only its frozen target and versions.
+        selected = [(video, task) for video, task in selected
+                    if isinstance(task.event_index_target, Mapping)
+                    and task.event_index_target.get("index_name") == event_index[0]
+                    and task.event_index_target.get("contract_id") == event_index[1]]
         if not selected:
             raise EventIndexNotReadyError("Event index has not covered the selected videos")
 
@@ -328,7 +322,8 @@ def resolve_retrieval_scope(
 
     shared_contract = None
     selected_config: ParseConfig | None = None
-    event_generations = {}
+    event_source_generations = {}
+    published = []
     for video, task in selected:
         rows = rows_by_task.get(task.id, [])
         if (
@@ -337,6 +332,8 @@ def resolve_retrieval_scope(
             != list(range(task.chunk_count))
             or any(chunk.video_id != video.id for chunk in rows)
         ):
+            if event_index is not None:
+                continue
             raise VideoParseConflictError(
                 "COMPLETE Video Parse V2 task has incomplete Chunk content"
             )
@@ -361,7 +358,11 @@ def resolve_retrieval_scope(
                 config.visual_input.max_height,
             )
             if event_index is not None:
-                event_generations[task.id] = contract[0]
+                published.append((video, task))
+                event_source_generations.update({
+                    (task.id, row.video_chunk_id, row.content_version): contract[0]
+                    for row in rows if requested is None or row.video_chunk_id in requested
+                })
             if shared_contract is None:
                 shared_contract = contract
                 selected_config = config
@@ -370,6 +371,10 @@ def resolve_retrieval_scope(
                     "selected Video Parse V2 tasks use different index contracts"
                 )
 
+    if event_index is not None:
+        selected = published
+        if not event_source_generations:
+            raise EventIndexNotReadyError("Event index has not covered the selected videos")
     if shared_contract is None:
         raise VideoParseConflictError(
             "selected Video Parse V2 tasks have no published Chunks"
@@ -423,7 +428,7 @@ def resolve_retrieval_scope(
         index_generation=shared_contract[0],
         partial=partial,
         warnings=tuple(coverage_messages),
-        event_source_generations={source: event_generations[source[0]] for source in event_sources},
+        event_source_generations=event_source_generations,
     )
 
 
