@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 from concurrent.futures import TimeoutError as FutureTimeoutError
+from contextlib import contextmanager
 from dataclasses import asdict
 from datetime import datetime, timezone
 import hashlib
@@ -695,26 +696,49 @@ def run_worker(args, index: int) -> None:
                 usage_rows.append(row)
                 append_jsonl(directory / "usage.jsonl", row)
 
-        recorder = RecordingModel(runtime._model, directory, began)
-        runtime._model = recorder
-        hook_recorder = RecordingHook(runtime._query_hook, directory, began)
-        runtime._query_hook = hook_recorder
-        original_kick = runtime.kick
+        recorder = hook_recorder = None
 
-        def kick(inputs, **kwargs):
-            save(directory / "active.json", {
-                "conversation_id": inputs["conversation_id"],
-                "message_id": inputs["assistant_message_id"],
-                "tenant_id": inputs["tenant_id"],
-            })
-            try:
-                with capture_model_usage(observe, combine=True):
-                    return original_kick(inputs, **kwargs)
-            except Exception as error:
-                save(directory / "failure.json", error_chain(error))
-                raise
+        def instrument(actual):
+            nonlocal recorder, hook_recorder
+            recorder = RecordingModel(actual._model, directory, began)
+            actual._model = recorder
+            hook_recorder = RecordingHook(actual._query_hook, directory, began)
+            actual._query_hook = hook_recorder
+            policy = getattr(actual._model, "_context_window_policy", None)
+            result["runtime_model"] = {
+                "model_name": actual.model_name,
+                "provider_name": getattr(actual._model, "provider_name", None),
+                "supports_text_deltas": getattr(actual._model, "supports_text_deltas", False),
+                "context_policy": asdict(policy) if policy is not None else None,
+            }
+            original_kick = actual.kick
 
-        runtime.kick = kick
+            def kick(inputs, **kwargs):
+                save(directory / "active.json", {
+                    "conversation_id": inputs["conversation_id"],
+                    "message_id": inputs["assistant_message_id"],
+                    "tenant_id": inputs["tenant_id"],
+                })
+                try:
+                    with capture_model_usage(observe, combine=True):
+                        return original_kick(inputs, **kwargs)
+                except Exception as error:
+                    save(directory / "failure.json", error_chain(error))
+                    raise
+
+            actual.kick = kick
+
+        instrument(runtime)
+        if agent._configured_runtime is not None:
+            original_configured_runtime = agent._configured_runtime
+
+            @contextmanager
+            def configured_runtime(selection, config):
+                with original_configured_runtime(selection, config) as actual:
+                    instrument(actual)
+                    yield actual
+
+            agent._configured_runtime = configured_runtime
 
         conversation_id = agent.create_conversation(
             tenant_id=document["tenant_id"],
@@ -809,6 +833,10 @@ def run_worker(args, index: int) -> None:
         })
 
         terminal = outcome["terminal"]
+        if terminal is not None and (
+            not recorder.inputs or not usage_rows
+        ):
+            raise RuntimeError("completed turn missed active runtime inputs or provider usage")
         if terminal is not None:
             observed, final = _observed_from_terminal(terminal)
             if outcome["timed_out"]:
