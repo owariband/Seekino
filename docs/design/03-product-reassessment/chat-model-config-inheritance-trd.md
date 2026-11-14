@@ -70,6 +70,14 @@ PYTHONPATH="$PWD" /Users/hypnos/workspace/agent/Seekino/.venv/bin/python -m pyte
 
 # 5. 试点验证与方案取舍
 
+## 2026-11-15：本地完整历史回放计划
+
+后续实验分支为 `perf/chat-local-history-replay`，目标 `dev`，PR 创建后回填。以已合入 dev 的父子配置继承修复为运行版本，独立启动本地 Server、MySQL 与 Elasticsearch；只读取得原 T01–T03 所需的素材、索引与历史快照后，装入本地隔离环境。不得让测试读写生产数据库，也不使用一轮模型生成或固定工具返回替代完整 Chat。
+
+三条用例各自恢复原请求前的历史、原生 checkpoint、播放位置和检索范围，不把本轮 T01 的输出当成 T02 的输入。保持 DeepSeek Flash／high／8192、JEV only、改写器关闭和原请求的 100 次调用限制。首轮串行，每条最多观察 300 秒，不自动重试；失败、超时和业务错误均保留。私有快照、逐字 query、模型响应和素材不入 Git。
+
+记录 server TT、客户端 TT、首条可见正文 FTT、角色调用数、input／output／reasoning token、压缩与工具错误。质量先检查是否回答原问题、集数和时间点是否对齐、引用是否支持结论，另记仍需原片人工确认的内容。与先前 Cloud 完整回放比较时明确代码、部署、网络和检索快照差异；单次用例只报告观测值，不宣称统计稳定性或将完成率当作正确率。环境准备与运行结果待实测补充。
+
 配置来源修复先通过直接覆盖的 Gateway、Bootstrap、个人模型与 Agent 回归，再用当前 Cloud 配置做受控预检。预检读取实际生产 YAML，只发一次真实模型元数据 GET；PATCHED Gateway 在同一个容器内、单独的临时进程中导入，未改生产模块文件、未重启服务、未替换在线 Server。输出只保留模型、窗口、阈值和脱敏哈希。
 
 | 项目 | 预检结果 |
