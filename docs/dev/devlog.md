@@ -27,7 +27,7 @@
 
 | 记录 | 原问题编号 |
 |---|---|
-| [2026-11-14：仅 ACCEPT 预填让冲突候选沿用旧身份，原身份评分又被截断](#devlog-voiceprint-conflict-prefill-20261114) | B12 |
+| [2026-11-14：仅 ACCEPT 预填让冲突候选沿用旧身份，原身份评分又被截断](#devlog-voiceprint-conflict-prefill-20261114) | B12；PR #167 |
 | [2026-11-14：Refine 将声纹参考池作为模型输入，逐句预填后仍挤占上下文](#devlog-refine-voiceprint-prefill-context-20261114) | B12；PR #165 |
 | [2026-11-14：生产镜像未含 Event 查询内存修复，完整课程范围又因任务排序内存溢出](#devlog-event-query-cloud-memory-hotfix-20261114) | RAG-QUERY-MEM-01；PR #154、PR #159 |
 | [2026-11-13：Event 查询在 ES 召回前加载全部 Chunk 正文，检索内存随素材库增长](#devlog-event-query-bounded-content-20261113) | RAG-QUERY-MEM-01；PR #154 |

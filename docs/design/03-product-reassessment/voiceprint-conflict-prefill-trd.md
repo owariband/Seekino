@@ -1,6 +1,6 @@
 # 1. 问题与现状
 
-需求：声纹 CONFLICT 先预填人物，再交 Refine 审核。日期：2026-11-14。分支 `fix/voiceprint-conflict-prefill`，PR 创建后回填。依赖 [#165](https://github.com/owariband/Seekino/pull/165) 的精简声纹输入，基线 `4f5238eb`；堆叠 PR 先指向该分支，合并顺序为 #165 → 本修复，最终集成 dev。当前状态统一见[工作台 B12](../../dev/workbench.html)。
+需求：声纹 CONFLICT 先预填人物，再交 Refine 审核。日期：2026-11-14。分支 `fix/voiceprint-conflict-prefill`，[PR #167](https://github.com/owariband/Seekino/pull/167)。依赖 [#165](https://github.com/owariband/Seekino/pull/165) 的精简声纹输入，基线 `4f5238eb`；堆叠 PR 先指向该分支，合并顺序为 #165 → #167，最终集成 dev。当前状态统一见[工作台 B12](../../dev/workbench.html)。
 
 EP04 v2 的 294.500–296.500s 台词在 Understanding 中标为若葉睦，声纹 top1 是千早愛音 0.7573，gap 0.05397、band=CONFLICT。实际 Refine 输入仍为睦，最终未纠正。[真实记录](../../report/agent/video_parse_v2/refine-voiceprint-prefill-context-20261114/live-run.json)证实：旧 Canvas 只在 ACCEPT 时替换姓名，且前三候选没有原身份睦的分数。
 

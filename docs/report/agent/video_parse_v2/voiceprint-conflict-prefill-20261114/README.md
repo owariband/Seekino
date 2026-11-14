@@ -1,6 +1,6 @@
 # CONFLICT 预填与原身份评分回放
 
-2026-11-14；分支 `fix/voiceprint-conflict-prefill`，依赖 [PR #165](https://github.com/owariband/Seekino/pull/165)。设计见[TRD](../../../../design/03-product-reassessment/voiceprint-conflict-prefill-trd.md)，当前状态见[工作台 B12](../../../../dev/workbench.html)。
+2026-11-14；分支 `fix/voiceprint-conflict-prefill`，[PR #167](https://github.com/owariband/Seekino/pull/167)，依赖 [PR #165](https://github.com/owariband/Seekino/pull/165)。设计见[TRD](../../../../design/03-product-reassessment/voiceprint-conflict-prefill-trd.md)，当前状态见[工作台 B12](../../../../dev/workbench.html)。
 
 旧 Canvas 只预填 ACCEPT，CONFLICT 保留 Understanding 名字；B0 又只导出前三，因此原身份落在前三之外时没有对照分数。修复后两类分档均可先填 top1，原身份有真实评分则一并保留；Refine 仍有审核、更正和置 null 权限。
 
