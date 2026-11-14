@@ -57,6 +57,12 @@ class DecisionModel:
             return options["result_type"].model_validate(self.result)
 
 
+CURRENT_VIDEO = {
+    "series": "Course", "seriesDisplayName": "课程", "episode": 3,
+    "title": "第三集", "positionSeconds": 125000,
+}
+
+
 @pytest.mark.parametrize("action,query", [("respond", None), ("retrieve", "原句不是你说的那样"), ("mixed", "雨中等人")])
 def test_combined_decision_preserves_original_without_calling_legacy_models(action, query):
     legacy, model = Models(), DecisionModel(action, query)
@@ -157,6 +163,72 @@ def test_rewrite_injects_slot_options_into_injected_model():
     assert callable(options["check_control"])
     assert [c.operation for c in usage] == ["query_hook_route", "query_hook_rewrite"]
     assert all(call.context["stage"] == "query_hook" for call in usage)
+
+
+@pytest.mark.parametrize(("action", "template"), [
+    ("respond", "简单回应"), ("retrieve", "简单检索"), ("mixed", "回应与检索混合"),
+])
+def test_playback_routes_once_with_current_video_and_preserves_input(action, template):
+    models, rewrite = Models(action), RewriteModel()
+    inputs = _inputs()
+    inputs["user_message"] = "真是高高在上呢，哪里出现过？"
+    inputs["current_video"] = deepcopy(CURRENT_VIDEO)
+    inputs["extra_context"] = {"playback": {"positionSeconds": 125000}}
+    original = deepcopy(inputs)
+    output = QueryHook(QueryHookConfig(enabled=True), models, rewrite_model=rewrite)(
+        inputs, ExecutionControl(None),
+    )
+    assert inputs == original
+    assert output.startswith(inputs["user_message"] + "\n\n")
+    assert [call[0] for call in models.calls] == ["route"]
+    assert models.calls[0][1] == {
+        "query": inputs["user_message"], "recent_messages": [],
+        "current_video": CURRENT_VIDEO,
+    }
+    assert not rewrite.calls
+    assert template in output and "候选检索用语：" not in output
+
+
+def test_playback_route_failure_falls_back_and_disabled_hook_skips():
+    models, inputs = Models(), _inputs()
+    inputs["current_video"] = deepcopy(CURRENT_VIDEO)
+    inputs["extra_context"] = {"playback": {"positionSeconds": 125000}}
+    original = deepcopy(inputs)
+    models.route_error = QueryHookModelError("unavailable")
+    assert QueryHook(QueryHookConfig(enabled=True), models)(
+        inputs, ExecutionControl(None),
+    ) == inputs["user_message"]
+    assert inputs == original and len(models.calls) == 1
+    models.route_error = None
+    assert QueryHook(QueryHookConfig(), models)(
+        inputs, ExecutionControl(None),
+    ) == inputs["user_message"]
+    assert inputs == original and len(models.calls) == 1
+
+
+def test_ordinary_text_payload_keeps_query_and_recent_messages_only():
+    models, inputs = Models("respond"), _inputs()
+    inputs["history"] = [{"role": "user", "content": "之前的话", "status": "COMPLETED"}]
+    QueryHook(QueryHookConfig(enabled=True), models)(inputs, ExecutionControl(None))
+    assert models.calls[0][1] == {
+        "query": inputs["user_message"],
+        "recent_messages": [{"role": "user", "content": "之前的话"}],
+    }
+
+
+def test_combined_decision_prompt_includes_current_video_only_when_present():
+    inputs, with_video = _inputs(), DecisionModel()
+    inputs["current_video"] = deepcopy(CURRENT_VIDEO)
+    QueryHook(QueryHookConfig(enabled=True), Models(), decision_model=with_video)(
+        inputs, ExecutionControl(None),
+    )
+    prompt = with_video.calls[0][0][0].text
+    assert "当前视频上下文：" in prompt and '"positionSeconds":125000' in prompt
+    without_video = DecisionModel()
+    QueryHook(QueryHookConfig(enabled=True), Models(), decision_model=without_video)(
+        _inputs(), ExecutionControl(None),
+    )
+    assert "当前视频上下文：" not in without_video.calls[0][0][0].text
 
 
 @pytest.mark.parametrize("action", ["respond", "retrieve", "mixed"])
@@ -310,7 +382,6 @@ def test_recent_history_is_bounded_plain_text_without_attachments():
 @pytest.mark.parametrize("extra", [
     {"attachments": [{"mediaUri": "image"}]},
     {"image_urls": ["data:image/png;base64,test"]},
-    {"extra_context": {"playback": {"positionSeconds": 2}}},
     {"user_message": "长" * 2001},
 ])
 def test_text_hook_does_not_override_visual_or_oversized_requests(extra):
