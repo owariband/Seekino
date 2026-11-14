@@ -6,6 +6,8 @@
 
 ## 本阶段的提出背景
 
+2026-11-15，Chat 子 Agent 原先另取全局 agent 模型，选定 Supervisor 后仍可能沿用旧 64k 静态窗口。本次让 Query 与 Supervisor 共用当前选择的模型来源、主备、effort、输出／超时／字符预算和 Gateway 动态容量解析，角色工具与原生上下文边界保留。设计与证据见[配置继承 TRD](chat-model-config-inheritance-trd.md)、[验证报告](../../report/gateway/agent_model/chat-model-config-inheritance-20261115/README.md)；PR #171 仍为 Draft，未发布或部署，状态见工作台 `CHAT-MODEL-INHERIT-01`。
+
 2026-11-14，实时观看请求原先带 playback 就跳过 JEV，导致 JEV-only 在观看页没有实际分类。本次移除该短路，把已构造的当前视频身份与播放位置作为文字上下文交给 JEV；三条真实路由都返回 `retrieve`，但完整回放 T01 因 Query 耗尽工具预算失败，T02／T03 虽完成却存在卡片与取帧的时间对齐缺口。路由接线按[实时意图路由 TRD](chat-realtime-intent-routing-trd.md)采用，原 Chat 延迟与质量没有闭环，证据见[完整回放报告](../../report/agent/chat/history-latency-replay-20261114/README.md)，当前状态由工作台 `CHAT-JEV-REALTIME-01`、`CHAT-QUERY-BUDGET-01` 和 `CHAT-COMPACT-01` 分别维护。
 
 2026-11-13，JEV-only复测确认没有独立改写调用，随即将该路径设为默认，并补齐query、质量和用量记录。2026-11-14 已完成 dev/main 发布与 Cloud/CPU 实例上线核查：dev PR #155 为 `9a18c6fb`，main PR #157 为 `8a86883f`；Cloud API 实际运行在 CPU 主机 `seekino-server` 的 `seekino-local-api-1`，是一个实例。生产收据与兼容边界见[上线报告](../../report/agent/chat/query-intent-jev-only-20261113/production-rollout-20261114.md)，当前状态由工作台`CHAT-JEV-DEFAULT-01`维护。

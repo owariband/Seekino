@@ -1,0 +1,114 @@
+{
+  "recorded_at": "2026-11-15T00:19:41+08:00",
+  "branch": "fix/chat-model-config-inheritance",
+  "pr": 171,
+  "implementation_commit": "30680fe4232dae1b9062ec05bdd0b053bd8df11a",
+  "scope": "Chat child model configuration inheritance, not loop stopping, early commentary or playback precision",
+  "test_scopes": [
+    {
+      "name": "Gateway factory/model/context",
+      "files": [
+        "tests/gateway/test_agent_factory.py",
+        "tests/gateway/test_model_factory.py",
+        "tests/gateway/test_context_window.py"
+      ],
+      "passed": 202,
+      "failed": 0,
+      "seconds": 2.73,
+      "warning_count": 0,
+      "command": "PYTHONPATH=\"$PWD\" /Users/hypnos/workspace/agent/Seekino/.venv/bin/python -m pytest tests/gateway/test_agent_factory.py tests/gateway/test_model_factory.py tests/gateway/test_context_window.py -q --tb=short -m \"not live_agent\""
+    },
+    {
+      "name": "Server assembly/personal protocols",
+      "files": [
+        "tests/server/test_bootstrap.py",
+        "tests/server/test_personal_models.py",
+        "tests/gateway/test_user_model_turns.py"
+      ],
+      "passed": 136,
+      "failed": 0,
+      "seconds": 32.76,
+      "warning_count": 1,
+      "warning": "Existing Starlette anyio.abc.BlockingPortal deprecation",
+      "command": "PYTHONPATH=\"$PWD\" /Users/hypnos/workspace/agent/Seekino/.venv/bin/python -m pytest tests/server/test_bootstrap.py tests/server/test_personal_models.py tests/gateway/test_user_model_turns.py -q --tb=short -m \"not live_agent\""
+    }
+  ],
+  "unique_parent_test_passes": 338,
+  "real_chat_generation_calls": 0,
+  "worker_red_before_evidence": {
+    "gateway_new_regressions_failed": 7,
+    "gateway_static_controls_passed": 2,
+    "bootstrap_failure": "configured-query-model != configured-chat-model",
+    "source": "Scoped Flash worker red/green run, final assertions reviewed by parent"
+  },
+  "current_cloud_config_preflight": {
+    "verification": "same-current-binding-factory-with-patched-Gateway",
+    "generation_calls": 0,
+    "metadata_requests": 1,
+    "model": "deepseek-flash",
+    "source": "deepseek_api",
+    "reasoning_effort": "high",
+    "max_output_tokens": 8192,
+    "query_policy": {
+      "context_window_tokens": 1048576,
+      "output_reserve_tokens": 8192,
+      "safety_margin_tokens": 4096,
+      "auto_compact_tokens": 891289,
+      "compact_target_tokens": 24000
+    },
+    "supervisor_policy": {
+      "context_window_tokens": 1048576,
+      "output_reserve_tokens": 8192,
+      "safety_margin_tokens": 4096,
+      "auto_compact_tokens": 891289,
+      "compact_target_tokens": 24000
+    },
+    "max_input_chars": 200000,
+    "model_config_sha256": "547729bafeb922a0e1f0c25916996513f40b1f507a0e4373ce51943ce48067d2",
+    "runtime_sha256": "98c16c9e11e844b04f5da524594029dabc2cba41a7dbcd83aa0c37b7c8217990",
+    "patch_sha256": "e9431b4de1ca77f631b3597763c86d35912120be4c4ff11605e2040db0a54de4",
+    "api_process_restarted": false,
+    "production_module_file_modified": false,
+    "container_unchanged": true,
+    "health": "healthy"
+  },
+  "production_files": {
+    "gateway/agent_model/factory.py": "e9431b4de1ca77f631b3597763c86d35912120be4c4ff11605e2040db0a54de4",
+    "gateway/personal_models.py": "46271d5d6197e99a18283b09a637e4f94b08362d138b953ee48cb76e5598c1a9",
+    "server/bootstrap.py": "199875029a5c7c2882078d7aa22a432430f99e08b64227505fb76b59599eb94d"
+  },
+  "verification_boundary": [
+    "Mocked providers for local tests; actual Cloud-config preflight discovers capacity only.",
+    "Preflight uses same selected binding/factory and patched Gateway in a separate process; it does not run the complete live Server assembly.",
+    "No production deployment or changed T01-T03 replay; no new FTT/TT/token/accuracy claims.",
+    "The explicit 200000-character application guard remains active and can trigger earlier than the token threshold.",
+    "Personal ChatAPI uses the existing four protocol transports; no capacity discovery, effort or fallback feature was added.",
+    "Native contexts remain owned by native runtimes; Parser and stored model-task snapshots are unaffected."
+  ],
+  "release_candidate": {
+    "pr": 172,
+    "branch": "chore/release-chat-model-config-inheritance",
+    "commit": "87c26f75",
+    "base_main": "12a43e7b",
+    "selected_file_count": 7,
+    "local_release_tree": {
+      "tracked_paths": 810,
+      "assets": 10,
+      "passed": true
+    },
+    "tests": {
+      "passed": 338,
+      "failed": 0,
+      "seconds": 18.93,
+      "warning_count": 1,
+      "same_scope_as_dev_not_additional_unique_cases": true
+    },
+    "main_gitignore_unchanged": true,
+    "deployed": false,
+    "github_release_files": {
+      "conclusion": "SUCCESS",
+      "run": 43615595020,
+      "job": 132509820930
+    }
+  }
+}

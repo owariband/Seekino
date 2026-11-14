@@ -27,6 +27,7 @@
 
 | 记录 | 原问题编号 |
 |---|---|
+| [2026-11-15：Chat 子 Agent 另取全局模型，选定 Supervisor 后仍按旧窗口提前压缩](#devlog-chat-model-config-inheritance-20261115) | CHAT-MODEL-INHERIT-01；CHAT-COMPACT-01；PR #171 |
 | [2026-11-14：实时播放请求绕过 JEV，接入后完整回放仍因工具预算与时间锚定失败](#devlog-chat-history-replay-20261114) | CHAT-JEV-REALTIME-01；CHAT-QUERY-BUDGET-01；PR #162、PR #163 |
 | [2026-11-14：生产镜像未含 Event 查询内存修复，完整课程范围又因任务排序内存溢出](#devlog-event-query-cloud-memory-hotfix-20261114) | RAG-QUERY-MEM-01；PR #154、PR #159 |
 | [2026-11-13：Event 查询在 ES 召回前加载全部 Chunk 正文，检索内存随素材库增长](#devlog-event-query-bounded-content-20261113) | RAG-QUERY-MEM-01；PR #154 |
@@ -6472,3 +6473,40 @@ T01 实际派出两个并行 Query，45 次生成是两者合计。同一个 Chu
 三条合计 provider 调用由 29 次增至 115 次，total token 由 807664 增至 1991676，Supervisor summary 由 5 次降为 0。T02、T03 的耗时下降；token 则是 T02 略增、T03 下降，T01 的失败与大量 Query／embedding 调用把总量推高。这个样本每条只跑一次，旧请求的 prompt、compact、缓存和后续内存修复也都与现在不同，不能把差值全部记在 JEV 头上，也不能据此报 p95/p99 或一般准确率。
 
 因此只按“实时路由接线”采用并验收：三条真实请求确实进入 JEV，分支和原文保持符合预期。原 Chat 的延迟与质量没有闭环，T01 的 Query 预算是新暴露的失败，T02／T03 的播放位置锚定和精确取帧仍未验证。后续候选是调查 Query 的有界、去重与停止条件，并为 Supervisor 预留恢复预算或提供部分失败反馈；这些没有在本轮实现。完整协议、逐条 token／调用和部署收据见[回放报告](../report/agent/chat/history-latency-replay-20261114/README.md)，路由与上线边界见[实时 TRD](../design/03-product-reassessment/chat-realtime-intent-routing-trd.md)。工作台以 `CHAT-JEV-REALTIME-01` 记录本次路由范围完成，`CHAT-QUERY-BUDGET-01` 保持待办，`CHAT-COMPACT-01` 继续验证。
+
+<a id="devlog-chat-model-config-inheritance-20261115"></a>
+## 2026-11-15：Chat 子 Agent 另取全局模型，选定 Supervisor 后仍按旧窗口提前压缩
+
+### 问题与现状
+
+观看页选定模型后，Supervisor 使用当前会话的 binding，Query 子 Agent 却仍从全局 `agent` 配置取模型。两者名字恰好相同时也不代表配置相同：来源、主备、思考档位、输出预算和容量策略都可能不同。更直接的缺口在容量接线，DeepAgents 构建会解析模型元数据，structured Query 构建没有走同一入口，仍合并旧静态窗口。Cloud 的 Supervisor 实际为 1048576／891289／24000，Query 为 64000／48000／24000，另受 200000 字符上限约束。
+
+2026-11-14 的完整回放里，T01 的两个 Query 子任务共出现 9 次本地上下文替换，整轮失败持续 196.567 秒。这里能确认的是配置分叉和旧窗口仍在，不能把这 9 次压缩全部归因为 T01 失败；共享工具预算耗尽、分页重读和循环停止是同时存在的问题。原始证据见[完整回放报告](../report/agent/chat/history-latency-replay-20261114/README.md)，设计与边界见[配置继承 TRD](../design/03-product-reassessment/chat-model-config-inheritance-trd.md)。
+
+### 方案候选
+
+本次复用既有模型 binding、factory 和容量缓存，从当前 Supervisor 的选择装配父子角色：Server 一次性装配父子两个角色的 binding／factory 或个人 target、输出／超时／字符预算和 `ContextWindowPolicy`；有独立 Supervisor 时不再创建 Chat 用不到的全局 agent factory。
+
+Gateway 只保留一个解析入口。`_controls` 对 DeepAgents、structured 与 loop 共用动态容量解析，继续使用既有元数据缓存、主备取小和失败回退，没有新增容量、比例或策略类。旧 `SEEKINO_AGENT_QUERY_MODEL` 与 `query_reasoning_effort` 仍能解析，避免旧配置报错，但 Chat 不再用它们选择子 Agent；未启用比例，或容量既不能发现也没有声明时，沿用原共享静态策略；发现失败但有声明容量时仍按声明推导。native harness 自行管理上下文，不套 API 窗口。显式输出、超时、字符保护和原生上下文所有权都保留。
+
+### 方案验证
+
+实现提交为 `30680fe4`，[PR #171](https://github.com/owariband/Seekino/pull/171)；正式发布候选为 [main PR #172](https://github.com/owariband/Seekino/pull/172)，尚未合并或部署。受控 worker 先得到 7 项 Gateway 新回归失败和 2 项静态控制通过，Bootstrap 捕获到配置的 Query 模型与 Chat 模型不一致；修改后两个不重叠的范围共 338 项唯一通过：Gateway 202 项用 2.73 秒，Server／个人协议 136 项用 32.76 秒，只有 1 条既有 Starlette 弃用警告。
+
+测试覆盖 structured 与 DeepAgents 的动态容量一致、模型切换、主备取小、元数据失败回退、未启用比例保留旧策略；Bootstrap 覆盖独立 Supervisor、仅全局 agent、Codex native、Ark alternate YAML、fallback 和父子输出／超时／字符／容量；个人模型用 mock 跑通 `openai_chat`、`openai_responses`、`anthropic_messages`、`gemini` 四种协议的结构化工具循环，并确认客户端关闭。没有真实 Chat 模型调用。
+
+当前 Cloud 配置预检读取实际生产 YAML，只发一次真实模型元数据 GET。PATCHED Gateway 在同一个容器内的独立临时进程导入，未改生产模块文件、未重启服务、未替换在线 Server。结果是父子均为 1048576／891289／24000、deepseek-flash／high／8192，元数据请求 1 次、生成调用 0 次，模型与运行哈希、容器和启动状态未变，服务健康。它验证配置与 factory，不验证完整在线 Server 装配，也没有修复后的原 Chat 回放。命令、哈希和范围见[验证报告](../report/gateway/agent_model/chat-model-config-inheritance-20261115/README.md)。
+
+### 指标对比
+
+这次先看模型配置是否真的从同一个当前选择传给父子，再看旧窗口是否还会提前触发压缩。选择这些指标是因为“模型名相同”不足以证明来源、主备、effort 和容量一致；而延迟、token 和回答质量只有在同一输入回放后才有比较意义，本轮没有这些数据。
+
+| 观察项 | 修改前 | 修改后 | 证据与边界 |
+| --- | --- | --- | --- |
+| 模型来源 | Query 用全局 agent，Supervisor 可独立选模 | 父子共用当前 Supervisor binding／factory 或个人 target | Bootstrap 与个人协议断言，338 项测试 |
+| 上下文策略 | Query 64000／48000／24000，Supervisor 1048576／891289／24000 | 当前 Cloud 预检父子均为 1048576／891289／24000 | 实际 YAML＋1 次元数据 GET；未跑完整 Server |
+| 思考档位 | Query 读独立 `query_reasoning_effort` | 跟随 binding 的 effort；个人目标为 `none` | 旧字段仍解析但不决定 Chat 子 Agent |
+| 显式保护 | 两次装配，保护值来源不同 | 父子共用输出／超时／字符取小，200000 字符上限保留 | 字符上限可早于 891289 token 触发压缩 |
+| TT／FTT／token／准确率 | T01 失败 196.567 秒，9 次 Query 压缩 | 未测 | 没有修复后回放，不宣称 9 次变 0 或任何收益 |
+
+因此本轮只采用“配置继承实现＋回归＋当前 Cloud 配置预检”这一层结论。main PR #172 尚未合并，正式环境的完整装配、修复后原始回放、延迟与回答质量仍待验证；Query 的循环、分页进度、部分失败报告和共享预算继续由 `CHAT-QUERY-BUDGET-01` 跟踪，`CHAT-COMPACT-01` 保持 verifying。

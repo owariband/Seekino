@@ -82,3 +82,9 @@ sequenceDiagram
 2026-11-14 完整回放后的只读排查发现接线遗漏：上述动态解析只进入 Supervisor 的 `build_deep_agent`；Query 使用 `build_structured`，没有调用动态容量解析，agent 绑定的 `auto_compact_ratio` 仍为空。云端实际合并策略为 64000／48000／24000，另受 200000 字符上限约束。T01 两个并行 Query 的压缩元数据形成两条链，共 9 次，分别与该回放的 Query 调用起点对应。因此此前“Supervisor summary 为 0”仅说明 Supervisor 没有摘要模型调用，不能代表 Query 没有本地上下文替换。本次未修复该遗漏或做修改后因果回放。
 
 同一回放还确认某个 Chunk 被读 22 次、9 次从第一页重新读，Query checkpoint 不保存分页位置；压缩是否直接导致这些重读与游标错误仍待验证。设计范围需继续覆盖 structured Query 的容量、字符保护和阅读进度恢复，不能只把 Supervisor 上线当作全 Agent 接入验收。证据与边界见[完整回放报告第 9 节](../../report/agent/chat/history-latency-replay-20261114/README.md#9-后续只读排查历史-id首字等待与-query-的旧压缩路径)、[记录 PR #166](https://github.com/owariband/Seekino/pull/166)。
+
+2026-11-15 配置继承修复补充：上述 structured Query 未接动态容量的遗漏已有实现，提交为 `30680fe4`，[PR #171](https://github.com/owariband/Seekino/pull/171) 仍为 Draft，未合入 dev、未发布 main、未部署。Server 现在按当前 Supervisor 选择一次性装配父子 binding／factory 或个人 target、输出／超时／字符预算和 `ContextWindowPolicy`；Gateway `_controls` 让 DeepAgents、structured 与 loop 共用同一动态容量解析，继续使用既有元数据缓存、主备取小和失败回退。因此前文 Query 的 64000／48000／24000 只在未启用比例、能力不可用或 native 上下文成立时作为兼容回退；启用动态策略并取得容量时，父子使用同一有效窗口。
+
+支持该结论的检查是 Gateway 202 项和 Server／个人协议 136 项、共 338 项唯一通过，另有当前 Cloud 配置预检：父子均为 1048576／891289／24000、Flash／high／8192，元数据请求 1 次、生成调用 0 次，模型／运行哈希与容器未变，服务没有重启。预检使用 PATCHED Gateway 在独立临时进程运行，只验证配置与 factory，不是完整在线 Server 装配。没有修复后的原 Chat 回放，因此不能更新前面的 9 次 Query 压缩结论，也不能宣称 TT／FTT／token／准确率改善；200000 字符上限仍可能先于 891289 token 触发压缩。
+
+本卡保持 verifying：完整 Chat 交付、近满窗质量、并发与长期延迟仍未验收，`CHAT-COMPACT-01` 不因这次配置修复转为 DONE。配置继承的证据与边界见[验证报告](../../report/gateway/agent_model/chat-model-config-inheritance-20261115/README.md)和[配置继承 TRD](chat-model-config-inheritance-trd.md)。
