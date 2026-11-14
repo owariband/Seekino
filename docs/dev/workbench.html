@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-14T12:28:21+08:00",
+ "updatedAt": "2026-11-14T13:04:10+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 66,
+ "revision": 67,
  "categories": [
   {
    "id": "parse",
@@ -5702,7 +5702,7 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "priority": "P1",
    "description": "Cloud三条慢请求的摘要占58%–63%。模型能力1M与实际64k/48k策略不匹配；以真实历史的固定模型边界验证85%动态触发。",
    "next": "Cloud已部署并加载85%动态策略；仍需完整Chat／视频卡回源、近满窗、并发与长期延迟验收，不能宣称完整问题已解决。",
-   "verification": "320项回归通过，3项既有失败在干净dev复现。9次真实生成全部完成，Flash/high/8192及三对入口哈希一致；模型边界25.283/33.496/25.702秒降至2.752/6.891/5.297秒，摘要75.414秒降至0。正常模型耗时及未缓存输入增加；完整业务与近满窗质量未验收。2026-11-14 Cloud实际上线后日志为1048576/891289/24000，keep 24000为最近消息尾部目标；并发与长期延迟仍未验收。2026-11-14 三条历史回放中，旧摘要为2/1/2次、45.191/30.194/51.932秒，新三条为0；但T01因Query工具预算失败、T02/T03存在播放时间对齐缺口，不能作为完整Chat或整体延迟验收。",
+   "verification": "320项回归通过，3项既有失败在干净dev复现。9次真实生成全部完成，Flash/high/8192及三对入口哈希一致；模型边界25.283/33.496/25.702秒降至2.752/6.891/5.297秒，摘要75.414秒降至0。正常模型耗时及未缓存输入增加；完整业务与近满窗质量未验收。2026-11-14 Cloud实际上线后日志为1048576/891289/24000，keep 24000为最近消息尾部目标；并发与长期延迟仍未验收。2026-11-14 三条历史回放中，旧摘要为2/1/2次、45.191/30.194/51.932秒，新三条为0；但T01因Query工具预算失败、T02/T03存在播放时间对齐缺口，不能作为完整Chat或整体延迟验收。后续只读排查发现Query structured路径仍为64000/48000/24000，另受200000字符上限约束，未接入Supervisor的动态85%；T01两条Query压缩链共9次。未修复或进行修改后因果回放。",
    "updatedAt": "2026-11-14",
    "tags": ["Chat", "性能", "上下文", "边界实测", "待完整业务验收"],
    "related": [
@@ -5892,7 +5892,7 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "priority": "P1",
    "description": "完整历史回放中 T01 的 query_video 占170.069秒（约86.5%整轮）；Query 反复检索和读取证据，耗尽共享100次工具预算，返回 VIDEO_LOOP_LIMIT_EXCEEDED，Supervisor 直接读取同预算也失败，终态 AGENT_MODEL_ERROR，无可见回答。已诊断，未修复。",
    "next": "调查 Query 的有界、去重与停止条件，明确循环终止；评估为 Supervisor 预留恢复预算或返回部分失败。不得静默调大100次限制、降低 high 或改写当前工具逻辑。",
-   "verification": "证据：43次 Query search_video_events、10次 retrieve、49次读取完成/尝试记录；101次 provider 调用中52次 embedding、45次 Query，均完成，不是 provider 超时。Cloud bootstrap 强制 limits_enabled=true，max_loop_turns=3 不是该 Query 循环停止条件。尚未实施代码或回归。",
+   "verification": "证据：43次 Query search_video_events、10次 retrieve、49次读取完成/尝试记录；101次 provider 调用中52次 embedding、45次 Query，均完成，不是 provider 超时。Cloud bootstrap 强制 limits_enabled=true，max_loop_turns=3 不是该 Query 循环停止条件。尚未实施代码或回归。后续确认T01为两个并行Query合计45次生成；同一Chunk读取22次、9次无cursor重读首页，另有5次分页游标错误。Query仍为旧64k/48k压缩、实际9次本地替换；失败child不交部分证据报告。分页进度恢复与压缩因果仍待验证，未改代码。",
    "updatedAt": "2026-11-14",
    "tags": [
     "Chat",
