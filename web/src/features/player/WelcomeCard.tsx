@@ -43,7 +43,7 @@ export function WelcomeCard({ placement }: { placement: "hero" | "belowHero" | "
         </Link>
         <Link className={styles.secondary} to="/docs">{t("怎么用")}<ArrowRight size={15} aria-hidden="true" /></Link>
       </div>
-      <p className={styles.community}>{t("欢迎交流👏：1127823767 (QQ)")}</p>
+      <p className={styles.community}>{t("欢迎交流👏 QQ：1127823767")}</p>
     </div>
     <button className={styles.close} type="button" onClick={dismiss} aria-label={t("关闭欢迎提示")} title={t("关闭欢迎提示")}>
       <X size={18} aria-hidden="true" />
