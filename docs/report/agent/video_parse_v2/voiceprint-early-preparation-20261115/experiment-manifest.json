@@ -1,0 +1,9 @@
+{
+  "baseline_commit": "228541f8653305be7b595858f90c3d1f85baf2d9",
+  "source_task_id": "df165ebc-540a-4a9d-bf84-b7469501564b",
+  "production_code_changed": false,
+  "new_model_parse_run": false,
+  "real_end_to_end_acceleration_measured": false,
+  "cpu_prod_access": false,
+  "methods": "Existing Engine B0 and cluster naming; all full-reference scores reproduced exactly; interval-only optimistic release calculation."
+}

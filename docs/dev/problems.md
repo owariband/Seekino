@@ -1051,6 +1051,14 @@ Cloud 同时存在 JEV 参数和 `models.query_hook=deepseek-flash/high/256`，�
 
 优先级：高。类型：解析语义质量、音频分段、证据供给与可观测性。状态：**截至 2026-10-22 仍未全面闭环；v25 两句固定目标本轮均正确**。历史 v5 曾纠正爽世单例，不代表后续版本稳定识别正确；v11～v18 暴露参考错名、跨人合并及 Refine 决策三类问题。最新归因与未完成项见下，旧轮次记录保留。记录日期：2026-10-16；更新日期：2026-10-22。
 
+#### 2026-11-15 后续：全片门禁延后声纹，提前参考池会改变候选
+
+本轮是独立性能实验，不改变B12的整体语义验收结论。B0的调度、来源冻结与完成提交均要求全部Understanding终态，不能只替换旧75%门槛。v4第16块比第24块早183.254秒，完整声纹准备39.462秒；有可重叠计算的空间，真实任务收益尚未测量。
+
+冻结整集24份首次Understanding、309行和308个向量，全参考逐行精确复现。改用最早就绪16块参考后，全片44条top1、77条分档变化，ACCEPT45→76；两个固定目标top1保留，但没有新Refine终态，也没有全片准确率真值。ASR固定ID分组的现有保守命名仅8/308查询得到具名候选，两目标弃权；当前ASR缓存没有字词speakerId，只有50/308表达与ASR cue起止完全一致，不能把长混声cue向量直接复用为所有细分表达。
+
+保留“先算音频表示、后绑人名”的方向；2/3可作收集启动条件，晚到参考补齐，实际提前Refine还需窗口证据与参考版本合同。22窗口乐观放行估算提前39.489～183.281秒，不是整集提速。Server、旧任务和运行配置未改，CPU/prod未访问。见[TRD](../design/03-product-reassessment/voiceprint-early-preparation-trd.md)、[整集冻结对照](../report/agent/video_parse_v2/voiceprint-early-preparation-20261115/README.md)与[工作台PARSE-VOICE-EARLY-01](workbench.html)。
+
 #### 2026-11-15：画外音提示＋DS Flash low，固定两句姓名2/2
 
 只在Refine增加画外音、先声后像和反应镜头提示，区分视觉动作与旧描述的说话人推断。用户确认medium实际映射high后选择low；新任务v4 `df165ebc-540a-4a9d-bf84-b7469501564b` 已COMPLETE，1fps，24/24 Under、22/22 Refine、24/24当前索引，24分27.473秒。434项组合回归；45次实际Refine均low且含新段，无原始参考池。309条首次对白的预填检查通过，其中67条CONFLICT先填top1。两句最终分别为爽世、爱音，姓名2/2，描述一致；首次理解都已正确、两个目标没有触发自动预填，因此不能把提升归于预填纠错或证明单一提示因果。371运行源码、旧v3的24份内容及旧任务状态不变，CPU/prod未访问。辅助摘要仍有失败记录；其它人物、混人纯度及时间边界未认证，B12不因此全面关闭。见[TRD #170](../design/03-product-reassessment/refine-offscreen-voice-trd.md)和[完整报告](../report/agent/video_parse_v2/refine-offscreen-voice-20261115/README.md)。

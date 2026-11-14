@@ -14,6 +14,12 @@ ASR 可能把多个人的发言合进同一条 cue，Refine 也可能根据单�
 
 ## 实验与运行记录
 
+## 2026-11-15：声纹提前计算与2/3参考全量映射对照
+
+当前B0路径在全部Understanding终态后冻结完整来源并评分，旧75%准备条件不适用于该路径。用v4首次理解与缓存向量对全部309行复现基线，再以最早提交的16/24块作参考映射全部表达：216编码／200具名样本，对照全池308／277；44条top1、77条分档改变，ACCEPT45→76不能作准确率提升，两句已知目标top1保留但未重跑Agent。
+
+16→24块实际间隔183.254秒，全声纹准备39.462秒；22窗口的乐观放行估算提前39.489～183.281秒，未实测整集提速。ASR六个非空ID有缺失与混人证据，按ID硬分组、现有独立cue投票命名仅8/308查询得到具名候选，两目标弃权。该诊断不否定匿名声学聚类。保留音频表示提前计算、人物姓名后绑定方向；晚到参考补齐、窗口证据就绪及评分版本尚需接入。完整方法、限制和脚本见[本次TRD](../03-product-reassessment/voiceprint-early-preparation-trd.md)与[报告](../../report/agent/video_parse_v2/voiceprint-early-preparation-20261115/README.md)，状态见[工作台PARSE-VOICE-EARLY-01](../../dev/workbench.html)。本轮未改Server或旧任务，CPU/prod未访问。
+
 ## 2026-11-15：Refine 提醒先声后像，DS Flash low 固定两句通过
 
 在Refine增加画外音、未见其人先闻其声及反应镜头说明，区分保留视觉动作与修正说话人推断。用户确认medium被官方映射high后选择low；本轮Understanding／Refine均low，45次实际请求确认绑定与新段送达。整集v4 `df165ebc-540a-4a9d-bf84-b7469501564b` COMPLETE，24 Under／22 Refine／24当前索引，24分27.473秒；434项组合回归，371源码与旧v3内容指纹不变，CPU/prod未访问。

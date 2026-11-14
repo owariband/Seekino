@@ -1,0 +1,250 @@
+{
+  "understanding_ready_by_sequence_ms": {
+    "22": 1794672523267,
+    "14": 1794672393744,
+    "15": 1794672453249,
+    "12": 1794672335053,
+    "8": 1794672205984,
+    "9": 1794672215511,
+    "2": 1794672211795,
+    "23": 1794672516827,
+    "21": 1794672473921,
+    "6": 1794672207579,
+    "20": 1794672568776,
+    "10": 1794672385522,
+    "3": 1794672195021,
+    "1": 1794672222301,
+    "7": 1794672228851,
+    "17": 1794672368492,
+    "18": 1794672426258,
+    "11": 1794672352126,
+    "4": 1794672189775,
+    "16": 1794672370810,
+    "13": 1794672371633,
+    "19": 1794672386374,
+    "5": 1794672263313,
+    "0": 1794672280450
+  },
+  "full_score_ready_proxy_at_ms": 1794672608265,
+  "two_thirds_reference_ready_proxy_at_ms": 1794672424984,
+  "reference_preparation_proxy_cost_ms": 39462,
+  "previous_75_percent_gate_at_ms": 1794672393744,
+  "two_thirds_to_previous_75_percent_ms": 8222,
+  "minimum_optimistic_release_advance_ms": 39489,
+  "maximum_optimistic_release_advance_ms": 183281,
+  "latest_completing_actual_window": {
+    "start_sequence_no": 11,
+    "chunk_count": 3,
+    "member_understanding_ready_at_ms": 1794672371633,
+    "actual_last_attempt_start_at_ms": 1794673465902,
+    "actual_completed_at_ms": 1794673538855,
+    "optimistic_partial_pool_release_at_ms": 1794672424984,
+    "optimistic_release_advance_ms": 183281
+  },
+  "windows": [
+    {
+      "start_sequence_no": 0,
+      "chunk_count": 3,
+      "member_understanding_ready_at_ms": 1794672280450,
+      "actual_last_attempt_start_at_ms": 1794672609476,
+      "actual_completed_at_ms": 1794672669464,
+      "optimistic_partial_pool_release_at_ms": 1794672424984,
+      "optimistic_release_advance_ms": 183281
+    },
+    {
+      "start_sequence_no": 1,
+      "chunk_count": 3,
+      "member_understanding_ready_at_ms": 1794672222301,
+      "actual_last_attempt_start_at_ms": 1794672610446,
+      "actual_completed_at_ms": 1794672738064,
+      "optimistic_partial_pool_release_at_ms": 1794672424984,
+      "optimistic_release_advance_ms": 183281
+    },
+    {
+      "start_sequence_no": 2,
+      "chunk_count": 3,
+      "member_understanding_ready_at_ms": 1794672211795,
+      "actual_last_attempt_start_at_ms": 1794672697289,
+      "actual_completed_at_ms": 1794672813196,
+      "optimistic_partial_pool_release_at_ms": 1794672424984,
+      "optimistic_release_advance_ms": 183281
+    },
+    {
+      "start_sequence_no": 3,
+      "chunk_count": 3,
+      "member_understanding_ready_at_ms": 1794672263313,
+      "actual_last_attempt_start_at_ms": 1794672609515,
+      "actual_completed_at_ms": 1794672697237,
+      "optimistic_partial_pool_release_at_ms": 1794672424984,
+      "optimistic_release_advance_ms": 183281
+    },
+    {
+      "start_sequence_no": 4,
+      "chunk_count": 3,
+      "member_understanding_ready_at_ms": 1794672263313,
+      "actual_last_attempt_start_at_ms": 1794672610535,
+      "actual_completed_at_ms": 1794672645082,
+      "optimistic_partial_pool_release_at_ms": 1794672424984,
+      "optimistic_release_advance_ms": 183281
+    },
+    {
+      "start_sequence_no": 5,
+      "chunk_count": 3,
+      "member_understanding_ready_at_ms": 1794672263313,
+      "actual_last_attempt_start_at_ms": 1794672669522,
+      "actual_completed_at_ms": 1794672749648,
+      "optimistic_partial_pool_release_at_ms": 1794672424984,
+      "optimistic_release_advance_ms": 183281
+    },
+    {
+      "start_sequence_no": 6,
+      "chunk_count": 3,
+      "member_understanding_ready_at_ms": 1794672228851,
+      "actual_last_attempt_start_at_ms": 1794672609555,
+      "actual_completed_at_ms": 1794672886620,
+      "optimistic_partial_pool_release_at_ms": 1794672424984,
+      "optimistic_release_advance_ms": 183281
+    },
+    {
+      "start_sequence_no": 7,
+      "chunk_count": 3,
+      "member_understanding_ready_at_ms": 1794672228851,
+      "actual_last_attempt_start_at_ms": 1794672749775,
+      "actual_completed_at_ms": 1794672833920,
+      "optimistic_partial_pool_release_at_ms": 1794672424984,
+      "optimistic_release_advance_ms": 183281
+    },
+    {
+      "start_sequence_no": 8,
+      "chunk_count": 3,
+      "member_understanding_ready_at_ms": 1794672385522,
+      "actual_last_attempt_start_at_ms": 1794672687928,
+      "actual_completed_at_ms": 1794672760476,
+      "optimistic_partial_pool_release_at_ms": 1794672424984,
+      "optimistic_release_advance_ms": 183281
+    },
+    {
+      "start_sequence_no": 9,
+      "chunk_count": 3,
+      "member_understanding_ready_at_ms": 1794672385522,
+      "actual_last_attempt_start_at_ms": 1794672609859,
+      "actual_completed_at_ms": 1794672687870,
+      "optimistic_partial_pool_release_at_ms": 1794672424984,
+      "optimistic_release_advance_ms": 183281
+    },
+    {
+      "start_sequence_no": 10,
+      "chunk_count": 3,
+      "member_understanding_ready_at_ms": 1794672385522,
+      "actual_last_attempt_start_at_ms": 1794672738120,
+      "actual_completed_at_ms": 1794672817114,
+      "optimistic_partial_pool_release_at_ms": 1794672424984,
+      "optimistic_release_advance_ms": 183281
+    },
+    {
+      "start_sequence_no": 11,
+      "chunk_count": 3,
+      "member_understanding_ready_at_ms": 1794672371633,
+      "actual_last_attempt_start_at_ms": 1794673465902,
+      "actual_completed_at_ms": 1794673538855,
+      "optimistic_partial_pool_release_at_ms": 1794672424984,
+      "optimistic_release_advance_ms": 183281
+    },
+    {
+      "start_sequence_no": 12,
+      "chunk_count": 3,
+      "member_understanding_ready_at_ms": 1794672393744,
+      "actual_last_attempt_start_at_ms": 1794672610011,
+      "actual_completed_at_ms": 1794672923490,
+      "optimistic_partial_pool_release_at_ms": 1794672424984,
+      "optimistic_release_advance_ms": 183281
+    },
+    {
+      "start_sequence_no": 13,
+      "chunk_count": 3,
+      "member_understanding_ready_at_ms": 1794672453249,
+      "actual_last_attempt_start_at_ms": 1794672758209,
+      "actual_completed_at_ms": 1794672873953,
+      "optimistic_partial_pool_release_at_ms": 1794672453249,
+      "optimistic_release_advance_ms": 155016
+    },
+    {
+      "start_sequence_no": 14,
+      "chunk_count": 3,
+      "member_understanding_ready_at_ms": 1794672453249,
+      "actual_last_attempt_start_at_ms": 1794672625645,
+      "actual_completed_at_ms": 1794672758120,
+      "optimistic_partial_pool_release_at_ms": 1794672453249,
+      "optimistic_release_advance_ms": 155016
+    },
+    {
+      "start_sequence_no": 15,
+      "chunk_count": 3,
+      "member_understanding_ready_at_ms": 1794672453249,
+      "actual_last_attempt_start_at_ms": 1794672760520,
+      "actual_completed_at_ms": 1794672861794,
+      "optimistic_partial_pool_release_at_ms": 1794672453249,
+      "optimistic_release_advance_ms": 155016
+    },
+    {
+      "start_sequence_no": 16,
+      "chunk_count": 3,
+      "member_understanding_ready_at_ms": 1794672426258,
+      "actual_last_attempt_start_at_ms": 1794673322076,
+      "actual_completed_at_ms": 1794673438634,
+      "optimistic_partial_pool_release_at_ms": 1794672426258,
+      "optimistic_release_advance_ms": 182007
+    },
+    {
+      "start_sequence_no": 17,
+      "chunk_count": 3,
+      "member_understanding_ready_at_ms": 1794672426258,
+      "actual_last_attempt_start_at_ms": 1794673461925,
+      "actual_completed_at_ms": 1794673537602,
+      "optimistic_partial_pool_release_at_ms": 1794672426258,
+      "optimistic_release_advance_ms": 182007
+    },
+    {
+      "start_sequence_no": 18,
+      "chunk_count": 3,
+      "member_understanding_ready_at_ms": 1794672568776,
+      "actual_last_attempt_start_at_ms": 1794672610146,
+      "actual_completed_at_ms": 1794672785079,
+      "optimistic_partial_pool_release_at_ms": 1794672568776,
+      "optimistic_release_advance_ms": 39489
+    },
+    {
+      "start_sequence_no": 19,
+      "chunk_count": 3,
+      "member_understanding_ready_at_ms": 1794672568776,
+      "actual_last_attempt_start_at_ms": 1794672785150,
+      "actual_completed_at_ms": 1794672841146,
+      "optimistic_partial_pool_release_at_ms": 1794672568776,
+      "optimistic_release_advance_ms": 39489
+    },
+    {
+      "start_sequence_no": 20,
+      "chunk_count": 3,
+      "member_understanding_ready_at_ms": 1794672568776,
+      "actual_last_attempt_start_at_ms": 1794673385185,
+      "actual_completed_at_ms": 1794673429124,
+      "optimistic_partial_pool_release_at_ms": 1794672568776,
+      "optimistic_release_advance_ms": 39489
+    },
+    {
+      "start_sequence_no": 21,
+      "chunk_count": 3,
+      "member_understanding_ready_at_ms": 1794672523267,
+      "actual_last_attempt_start_at_ms": 1794672610350,
+      "actual_completed_at_ms": 1794672713248,
+      "optimistic_partial_pool_release_at_ms": 1794672523267,
+      "optimistic_release_advance_ms": 84998
+    }
+  ],
+  "limits": [
+    "Counterfactual release times only; NOT a simulated or measured end-to-end speedup.",
+    "Assumes early pool costs the same 39.462 seconds as the old full preparation.",
+    "Assumes later query embeddings are instantly available and ignores source-flag changes, reference coverage, resource contention, retries and changed model results.",
+    "Actual start_time is the final attempt and can omit earlier retries."
+  ]
+}
