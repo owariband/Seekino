@@ -1,0 +1,459 @@
+{
+  "date": "2026-11-14",
+  "task_id": "7504e1bb-2958-4b1d-9d77-407b829e93c9",
+  "status": {
+    "recorded_utc": "2026-11-14T05:24:03.419076+00:00",
+    "task_id": "7504e1bb-2958-4b1d-9d77-407b829e93c9",
+    "status": "COMPLETE",
+    "version": 2,
+    "chunk_count": 24,
+    "understanding_committed": 24,
+    "first_understanding_captured": 24,
+    "indexed_current": 24,
+    "chunk_statuses": {
+      "COMPLETE": 24
+    },
+    "refine_statuses": {
+      "COMPLETE": 22
+    },
+    "asr_cues": 166,
+    "voiceprint_ready": true,
+    "voiceprint_line_count": 314,
+    "voiceprint_sample_count": 313,
+    "usage": null,
+    "refine_inputs_captured": 41,
+    "refine_returned": 23,
+    "reference_payload_present": false,
+    "last_error_code": null
+  },
+  "runtime": {
+    "recorded_utc": "2026-11-14T04:55:08.722821+00:00",
+    "runtime_base": "a6a3396f27a5acbedb4fae6bbfa8bff208e74ee3",
+    "applied_code_commits": [
+      "c777ef72961d5ace29a1b191f9ba09970a76b5cc",
+      "45017773"
+    ],
+    "production_file_sha256": {
+      "agent/video_parse_v2/prompts.py": "80f7774726995fe259ef9fc5fb666c0cd2ef93e386a1a6e1dd16307dc67ccbac",
+      "server/service/video_parse_media.py": "b94644d621954b2580cf892036f13bb4595085b7e9ed142e0715bcd8974a5045"
+    },
+    "regression": {
+      "passed": 222,
+      "seconds": 3.65
+    },
+    "source_video_sha256": "50e981e49a3d74e8c0aca7571ffae8265b88f6388f1d34849876b61ad8bf5814",
+    "visual_fps": 1.0,
+    "voiceprint_mode": "prefill",
+    "asr": "GPU CUDA FP16 batch16 threads8, existing whole-video result eligible for standard cache reuse",
+    "old_task_preserved": "368fec7e-b1f3-42b3-9ed6-fd0766be471b",
+    "database": "seekino_ep04_voiceprint_20261113_test",
+    "docker_project": "seekino-ep04-voiceprint-1fps",
+    "production_boundary": "Local test API and local Docker DB/ES; GPU model endpoints only; no CPU/prod access."
+  },
+  "terminal_metrics": {
+    "checked_utc": "2026-11-14T06:15:57.156856+00:00",
+    "task": {
+      "id": "7504e1bb-2958-4b1d-9d77-407b829e93c9",
+      "status": "COMPLETE",
+      "version": 2,
+      "create_time": 1794632679250,
+      "start_time": "2026-11-14 05:04:40.435000",
+      "finish_time": "2026-11-14 05:24:02.384000",
+      "processing_duration_ms": 0,
+      "last_error": null
+    },
+    "submitted_to_complete_seconds": 1163.1340000629425,
+    "database_time_note": "Raw MySQL DateTime values represent UTC and lack tzinfo; create_time is Unix milliseconds.",
+    "old_task": {
+      "id": "368fec7e-b1f3-42b3-9ed6-fd0766be471b",
+      "status": "PARSING_FAILED",
+      "version": 1
+    },
+    "model_call_counts": [
+      {
+        "operation": "IntervalRefinementResult",
+        "status": "completed",
+        "n": 23
+      },
+      {
+        "operation": "IntervalRefinementResult",
+        "status": "failed",
+        "n": 18
+      },
+      {
+        "operation": "VideoSummaryCompletion",
+        "status": "failed",
+        "n": 3
+      },
+      {
+        "operation": "speaker_embedding",
+        "status": "completed",
+        "n": 313
+      },
+      {
+        "operation": "text_embedding",
+        "status": "completed",
+        "n": 1227
+      },
+      {
+        "operation": "video_parse_v2_chunk",
+        "status": "completed",
+        "n": 24
+      }
+    ],
+    "recorded_token_totals": {
+      "input_tokens": 1693978,
+      "output_tokens": 1298254,
+      "reasoning_tokens": 1013857,
+      "cached_input_tokens": 1140864
+    },
+    "records_with_token_counts": 1275,
+    "token_usage_sources": {
+      "provider_usage": 1275
+    },
+    "token_scope_note": "Only reported token fields; cancelled/failed calls without returned usage may still have provider charges. No price estimate. Aggregate includes local GPU text embeddings; it is not a billable-token total.",
+    "es_counts": [
+      {
+        "index": "seekino_ep04_voiceprint_chunks_20261113_test",
+        "task_field": "parse_task_id",
+        "count": 24
+      },
+      {
+        "index": "seekino_ep04_voiceprint_events_20261113_test",
+        "task_field": "parse_task_id",
+        "count": 673
+      }
+    ],
+    "runtime_source_unchanged": true,
+    "summary_failure_diagnostics": [
+      {
+        "status": "failed",
+        "metadata_keys": [
+          "src",
+          "status",
+          "context",
+          "ended_at",
+          "provider",
+          "operation",
+          "model_name",
+          "request_id",
+          "granularity",
+          "usage_scope",
+          "usage_source"
+        ],
+        "context_keys": [
+          "stage",
+          "category",
+          "video_id",
+          "series_id",
+          "session_id",
+          "retry_count",
+          "sequence_no",
+          "lease_version",
+          "execution_kind",
+          "execution_task_id"
+        ]
+      },
+      {
+        "status": "failed",
+        "metadata_keys": [
+          "src",
+          "status",
+          "context",
+          "ended_at",
+          "provider",
+          "operation",
+          "model_name",
+          "request_id",
+          "granularity",
+          "usage_scope",
+          "usage_source"
+        ],
+        "context_keys": [
+          "stage",
+          "category",
+          "video_id",
+          "series_id",
+          "session_id",
+          "retry_count",
+          "sequence_no",
+          "lease_version",
+          "execution_kind",
+          "execution_task_id"
+        ]
+      },
+      {
+        "status": "failed",
+        "metadata_keys": [
+          "src",
+          "status",
+          "context",
+          "ended_at",
+          "provider",
+          "operation",
+          "model_name",
+          "request_id",
+          "granularity",
+          "usage_scope",
+          "usage_source"
+        ],
+        "context_keys": [
+          "stage",
+          "category",
+          "video_id",
+          "series_id",
+          "session_id",
+          "retry_count",
+          "sequence_no",
+          "lease_version",
+          "execution_kind",
+          "execution_task_id"
+        ]
+      }
+    ]
+  },
+  "same_real_window_payload_comparison": {
+    "comparison_scope": "same real first-generation member snapshot, same B0 results; baseline includes the same Refine merge policy but still serializes full reference metadata",
+    "baseline": "45017773",
+    "call_id": "e1423c45-27d5-420a-b194-7bed7bb799e0",
+    "member_sequences": [
+      0,
+      1,
+      2
+    ],
+    "baseline_prompt_chars": 1152947,
+    "fixed_prompt_chars": 52546,
+    "observed_actual_prompt_chars": 52546,
+    "fixed_prompt_exactly_matches_observed": true,
+    "unit": "Python Unicode characters, not wrapped request bytes or tokens",
+    "reduction_percent": 95.4425
+  },
+  "asr_reuse": {
+    "transcript_identical_to_yesterday": true,
+    "input_fingerprint_identical": true,
+    "result_sha256": "02e0d35d94491a960109c58c287fe92ed5e54584d63d486fe22d41bbae8593a0",
+    "asr_detail_keys": [
+      "input",
+      "result_sha256",
+      "schema_version",
+      "completed_at_ms",
+      "input_fingerprint",
+      "reused_from_task_id",
+      "committed_lease_version"
+    ],
+    "cue_count": 166
+  },
+  "targets": {
+    "opening_soyo": {
+      "range_ms": [
+        47500,
+        48324
+      ],
+      "expected": "長崎そよ",
+      "first_understanding": {
+        "start_seconds": 47500,
+        "end_seconds": 48324,
+        "speaker": "長崎そよ",
+        "speaker_source": "understanding",
+        "text_variants": [
+          {
+            "role": "ORIGINAL",
+            "text": "祥ちゃんも悪くない",
+            "language": "ja"
+          },
+          {
+            "role": "TRANSLATION",
+            "text": "也不是小祥的错",
+            "language": "zh-Hans"
+          }
+        ]
+      },
+      "b0": {
+        "start_ms": 47500,
+        "end_ms": 48324,
+        "understanding_speaker": "長崎そよ",
+        "label": "長崎そよ",
+        "band": "NO_VOICE",
+        "conflict": false,
+        "gap": 0.058414044558464995,
+        "reason": "compared",
+        "candidates": [
+          {
+            "speaker": "長崎そよ",
+            "similarity": 0.6015909561266243,
+            "reference_count": 69,
+            "independent_cue_count": 52
+          },
+          {
+            "speaker": "若葉睦",
+            "similarity": 0.5431769115681593,
+            "reference_count": 4,
+            "independent_cue_count": 4
+          },
+          {
+            "speaker": "高松燈",
+            "similarity": 0.4996625676106257,
+            "reference_count": 26,
+            "independent_cue_count": 24
+          }
+        ]
+      },
+      "final": {
+        "start_seconds": 47500,
+        "end_seconds": 48324,
+        "speaker": "長崎そよ",
+        "speaker_source": "understanding",
+        "text_variants": [
+          {
+            "role": "ORIGINAL",
+            "text": "祥ちゃんも悪くない",
+            "language": "ja"
+          },
+          {
+            "role": "TRANSLATION",
+            "text": "也不是小祥的错",
+            "language": "zh-Hans"
+          }
+        ]
+      },
+      "correct": true,
+      "automatic_prefill_applied": false
+    },
+    "anon_introduction": {
+      "range_ms": [
+        294500,
+        296500
+      ],
+      "expected": "千早愛音",
+      "first_understanding": {
+        "start_seconds": 294500,
+        "end_seconds": 296500,
+        "speaker": "若葉睦",
+        "speaker_source": "understanding",
+        "text_variants": [
+          {
+            "role": "ORIGINAL",
+            "text": "長崎そよちゃんと…",
+            "language": "ja"
+          }
+        ]
+      },
+      "b0": {
+        "start_ms": 294500,
+        "end_ms": 296500,
+        "understanding_speaker": "若葉睦",
+        "label": "若葉睦",
+        "band": "CONFLICT",
+        "conflict": true,
+        "gap": 0.053973425593543345,
+        "reason": "compared",
+        "candidates": [
+          {
+            "speaker": "千早愛音",
+            "similarity": 0.7572645312149674,
+            "reference_count": 64,
+            "independent_cue_count": 37
+          },
+          {
+            "speaker": "椎名立希",
+            "similarity": 0.703291105621424,
+            "reference_count": 42,
+            "independent_cue_count": 37
+          },
+          {
+            "speaker": "長崎そよ",
+            "similarity": 0.6876285586760125,
+            "reference_count": 70,
+            "independent_cue_count": 53
+          }
+        ]
+      },
+      "final": {
+        "start_seconds": 294500,
+        "end_seconds": 296500,
+        "speaker": "若葉睦",
+        "speaker_source": "understanding",
+        "text_variants": [
+          {
+            "role": "ORIGINAL",
+            "text": "長崎そよちゃんと…",
+            "language": "ja"
+          }
+        ]
+      },
+      "correct": false,
+      "automatic_prefill_applied": false
+    }
+  },
+  "understanding_boundary_audit": {
+    "diagnostic_candidate_rows": 11,
+    "confirmed_violation_lower_bound": 1,
+    "all_candidates_conclusively_audited": false,
+    "rule": "Understanding must not combine separate ASR cues, including fragments of the same sentence; consolidation belongs to Refine. The worker assumed a same-sentence exception, which was not adopted in primary review.",
+    "verified_example": {
+      "chunk_task_id": "3acf1a55-1597-41e0-ac79-932aae7739f4",
+      "event": {
+        "start_seconds": 200088,
+        "end_seconds": 205711,
+        "speaker": "長崎そよ",
+        "text_variants": [
+          {
+            "role": "ORIGINAL",
+            "text": "祥ちゃんなんて行方不明で、どこにいるのかも分からないし。",
+            "language": "ja"
+          },
+          {
+            "role": "TRANSLATION",
+            "text": "祥子她下落不明，连在哪里都不知道。",
+            "language": "zh-Hans"
+          }
+        ]
+      },
+      "fully_contained_asr_cues": [
+        {
+          "start_seconds": 200088,
+          "end_seconds": 204711,
+          "text": "なサキちゃんなんて行方不明で どこにいるの",
+          "speaker_id": "SPEAKER_03"
+        },
+        {
+          "start_seconds": 204711,
+          "end_seconds": 204991,
+          "text": "か",
+          "speaker_id": null
+        },
+        {
+          "start_seconds": 204991,
+          "end_seconds": 205691,
+          "text": "もわからない",
+          "speaker_id": "SPEAKER_04"
+        },
+        {
+          "start_seconds": 205691,
+          "end_seconds": 205711,
+          "text": "し",
+          "speaker_id": null
+        }
+      ]
+    }
+  },
+  "scope_notes": [
+    "24/24 Understanding, 22/22 Refine and 24/24 current-version indexing completed; two known identity cases are 1/2 correct, not whole-video accuracy.",
+    "Opening identity was already correct in Understanding; NO_VOICE did not automatically prefill it. The second target had the correct voice top1 but CONFLICT did not prefill it and Refine retained the wrong identity.",
+    "VideoSummaryCompletion has 3 failed usage records; this auxiliary summary issue is not resolved here.",
+    "processing_duration_ms is 0 and is not used; create_time/finish_time give 1163.134 seconds. Token aggregates include local embeddings and are not billable-cost totals.",
+    "Full raw first-Understanding, B0 and actual model-call records remain in the persistent local private run directory; no reference pool was sent to Refine.",
+    "Local Docker/API and GPU services remain running; no CPU/prod access or deployment."
+  ],
+  "actual_refine_call_metrics": {
+    "captured": 41,
+    "returned": 23,
+    "errors": {
+      "RefineInputChanged": 17,
+      "DeepSeekModelError": 1
+    },
+    "min_prompt_chars": 32481,
+    "max_prompt_chars": 86296,
+    "all_reference_payload_absent": true
+  }
+}

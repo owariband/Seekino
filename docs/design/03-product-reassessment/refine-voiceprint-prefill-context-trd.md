@@ -43,6 +43,8 @@
 
 字符对照通过真实构造器及同一快照测量，复跑方法与原始数据见[报告](../../report/agent/video_parse_v2/refine-voiceprint-prefill-context-20261114/README.md)。flag、prefill、off 的身份行为不变；ACCEPT／CONFLICT／NO_VOICE／REVIEW 的有效摘要、跨成员隔离、不匹配区间不注入及原始证据不变均有回归覆盖。
 
+同日补充真实整集验收：新任务 v2 完成 24/24 Understanding、22/22 Refine、24/24 索引，19 分 23.134 秒；41 次实际 Refine 输入均无参考资料，未再发生上下文超限。同一真实首窗由旧投影 1,152,947 降至实际 52,546 字符（逐字匹配，95.4425%）。这确认输入投影修复已在标准入口接入。两个固定人物目标为 1/2 正确，另确认至少一处 Understanding 跨 cue 重组，语义问题仍未闭环；附带摘要有 3 次失败记录。完整条件、用量与边界见[真实报告](../../report/agent/video_parse_v2/refine-voiceprint-prefill-context-20261114/README.md#整集真实验证2026-11-14)。
+
 # 5. 试点验证与方案取舍
 
 使用隔离 Harness 测试和真实输入构造器替代单独片段试点；不为本次修复部署或启动服务。Prompt 缩减与逐句预填合同可在本机确定，真实人物判断仍需 EP04 整集 1fps 验收，不能据此宣称整集已成功恢复或身份全部正确。
@@ -51,6 +53,6 @@
 
 # 6. 结果验收与闭环
 
-已实现输入投影并通过 167 项相关测试，模型只接收已绑定的逐句预填摘要，完整参考资料仍在宿主。合成对照验证参考资料增长不再增加 Prompt，采用该修复。真实模型效果、EP04 恢复和部署未执行，不随离线测试完成。
+已实现输入投影并通过 167 项相关测试，模型只接收已绑定的逐句预填摘要，完整参考资料仍在宿主。合成对照验证参考资料增长不再增加 Prompt，采用该修复。本机 EP04 已通过标准 reparse 整集执行，输入投影与运行恢复通过；人物语义两个固定目标仅 1/2 正确，Understanding 严格分段仍有反例。CPU/prod 未部署。
 
-交付见 [PR #165](https://github.com/owariband/Seekino/pull/165)；下一步为独立验证环境的整集 1fps 复验，核对真实请求预算及人物归属。当前状态见[工作台](../../dev/workbench.html)，历史问题见 [B12](../../dev/problems.md#b12asr-匿名说话人分组不准refine-看帧后仍未纠正目标归属)。
+交付见 [PR #165](https://github.com/owariband/Seekino/pull/165)；下一步处理 CONFLICT 候选未被 Refine 纠正、Understanding 跨 cue 重组的语义问题，参考本次实际输入／输出，不扩充模型参考资料。当前状态见[工作台](../../dev/workbench.html)，历史问题见 [B12](../../dev/problems.md#b12asr-匿名说话人分组不准refine-看帧后仍未纠正目标归属)。

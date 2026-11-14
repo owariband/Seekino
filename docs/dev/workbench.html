@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-14T12:24:17+08:00",
+ "updatedAt": "2026-11-14T14:25:32+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 67,
+ "revision": 68,
  "categories": [
   {
    "id": "parse",
@@ -2074,11 +2074,11 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "title": "ASR 匿名说话人分组不准，Refine 看帧后仍未纠正目标归属",
    "category": "parse",
    "type": "requirement",
-   "status": "verifying",
+   "status": "progressing",
    "priority": "P1",
-   "description": "宿主已完成逐句声纹预填，Refine 输入却重复携带全片参考资料。本次投影只保留已绑定的逐句摘要，完整参考池留宿主；人物质量仍需整集验收。",
-   "next": "在独立本机＋GPU 验证环境用 EP04 整集 1fps 核对真实 Refine 请求预算、逐句预填与最终身份，明确记录复用成果和代码版本。",
-   "verification": "2026-11-14：原实现对应 10 个新投影合同检查失败；修复后相关 167 项通过。合成 prefill 输入 352933→2814 字符，flag/prefill/off 的参考资料增长增量均归零，宿主证据不变。尚无本轮整集实模或部署结果；历史 v25 两句正确不代表当前全片身份验收。",
+   "description": "本机 EP04 整集已跑通，逐句预填摘要消除上下文超限；两个固定人物目标仅 1/2 正确，Understanding 仍有跨 cue 重组反例。",
+   "next": "依据真实输入/输出处理 CONFLICT 候选未纠正爱音、Understanding 跨 cue 重组；另保留附带摘要失败待查，不把主链 COMPLETE 当人物准确率通过。",
+   "verification": "2026-11-14 新任务 v2：24/24 Under、22/22 Refine、24/24 索引；B0 314 行/313 编码。41 次实际输入无参考资料；同窗 1152947→52546 字符（95.4425%）。开头爽世正确但初次 Under 已正确；爱音对照声纹 top1 正确、CONFLICT 未预填且 Refine 仍错标睦。至少确认 1 个 Under 合并 4 cue 反例。CPU/prod 未部署。",
    "updatedAt": "2026-11-14",
    "tags": [
     "输入上下文",
@@ -2119,6 +2119,11 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "label": "逐句预填输入修复 PR #165",
      "url": "https://github.com/owariband/Seekino/pull/165",
      "kind": "pr"
+    },
+    {
+     "label": "整集真实结果与边界",
+     "url": "https://github.com/owariband/Seekino/blob/fix/refine-voiceprint-prefill-context/docs/report/agent/video_parse_v2/refine-voiceprint-prefill-context-20261114/live-run.json",
+     "kind": "source"
     }
    ],
    "source": {

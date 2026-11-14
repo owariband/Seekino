@@ -211,7 +211,9 @@
 
 以 `16d32ff4` 为基线，独立分支先提交[TRD](../design/03-product-reassessment/refine-voiceprint-prefill-context-trd.md)，交付见 [PR #165](https://github.com/owariband/Seekino/pull/165)。修改既有 Prompt／Refine 合同检查并增加参考资料增长及跨成员回归，旧实现对应 10 项失败；修改投影后 Context Canvas、Refine direct、framework、Understanding JSON 四组 **167 passed，0.86s**。覆盖 ACCEPT／CONFLICT／NO_VOICE／REVIEW 摘要、flag／prefill／off 行为、无匹配区间不注入、成员隔离及原始证据不变。
 
-使用真实 Prompt 构造器对固定评分的合成样本比较，执行方法和原始数据见[报告](../report/agent/video_parse_v2/refine-voiceprint-prefill-context-20261114/README.md)。该样本只扩大参考元数据、来源明细及 ID 文本，没有使用 EP04、模型接口或服务；字符数不等于 token 或实际请求预算。真实整集与部署仍待验证。
+使用真实 Prompt 构造器对固定评分的合成样本比较，执行方法和原始数据见[报告](../report/agent/video_parse_v2/refine-voiceprint-prefill-context-20261114/README.md)。该样本只扩大参考元数据、来源明细及 ID 文本，没有使用 EP04、模型接口或服务；字符数不等于 token 或实际请求预算。后续本机整集已完成，见下；CPU/prod 未部署。
+
+同日通过正式 reparse 补完整 EP04：v2 `7504e1bb-2958-4b1d-9d77-407b829e93c9` 完成 24/24 Understanding、22/22 Refine、24/24 索引，耗时 19 分 23.134 秒。复用相同 166 条 ASR，所有首次理解均留存；B0 314 行、313 次完成编码。41 次真实 Refine 输入均无参考资料且未再超限；同一真实首窗旧投影 1,152,947→实际 52,546 字符，95.4425%，新构造与实际捕获逐字相同。首句在 Understanding 已为爽世，最终正确；爱音对照句虽声纹 top1 为爱音，CONFLICT 未预填且 Refine 最终仍为睦。另确认 Under 跨 4 cue 重组反例，附带摘要 3 次失败尚未修。见[真实报告](../report/agent/video_parse_v2/refine-voiceprint-prefill-context-20261114/README.md#整集真实验证2026-11-14)。
 
 ### 指标对比
 
@@ -224,7 +226,7 @@
 | 对应的新投影合同检查 | 10 项失败 | 通过；相关回归共 167 项通过 | 包含标准 Refine 预填到提交路径 |
 | 实际模型 token、耗时及人物准确率 | 本轮未测 | 本轮未测 | 不从合成样本推导 |
 
-采用这项输入投影修复，已消除参考资料重复造成的上下文增长，同时保留逐句工具结果。模型不再读取完整参考来源，内部追溯仍依靠宿主原始证据。是否成功恢复 EP04 及人物质量需整集另验；当前状态见[工作台 B12](workbench.html)。
+采用这项输入投影修复，已消除参考资料重复造成的上下文增长，同时保留逐句工具结果。模型不再读取完整参考来源，内部追溯仍依靠宿主原始证据。标准整集链路已恢复，两个固定人物目标仅 1/2 正确，分段约束亦有反例；当前状态见[工作台 B12](workbench.html)。
 
 <a id="devlog-event-query-cloud-memory-hotfix-20261114"></a>
 ## 2026-11-14：生产镜像未含 Event 查询内存修复，完整课程范围又因任务排序内存溢出
