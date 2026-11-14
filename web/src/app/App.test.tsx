@@ -454,7 +454,7 @@ describe("application shell", () => {
     expect(within(docsNav).getByRole("link", { name: "快速开始" })).toHaveAttribute("aria-current", "page");
     await userEvent.click(within(docsNav).getByRole("link", { name: "未来计划" }));
     expect(await screen.findByRole("heading", { level: 1, name: "说出一个名字，列出 TA 出场的每一秒" })).toBeInTheDocument();
-    expect(screen.getByText("[xxx]")).toBeInTheDocument();
+    expect(screen.getByText("1127823767")).toBeInTheDocument();
   });
 
   it("keeps normal settings in release and hides internal configuration", async () => {
