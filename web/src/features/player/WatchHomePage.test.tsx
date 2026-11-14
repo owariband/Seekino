@@ -105,6 +105,7 @@ describe("WatchHomePage", () => {
     expect(within(card).getByRole("heading", { name: "41 小时的课，你要的只是其中一段" })).toBeInTheDocument();
     expect(within(card).getByRole("link", { name: "试一句" })).toHaveAttribute("href", "/search");
     expect(within(card).getByRole("link", { name: /怎么用/ })).toHaveAttribute("href", "/docs");
+    expect(within(card).getByText("交流群👏：1127823767")).toBeInTheDocument();
     fireEvent.click(within(card).getByRole("button", { name: "关闭欢迎提示" }));
     expect(welcome()).toBeNull();
     cleanup();

@@ -19,9 +19,6 @@ const installShotcraft = "npx skills add https://github.com/Vincentwei1021/video
 const claudeCloud = `claude mcp add --transport http seekino_cloud "$SEEKINO_CLOUD/mcp" --header 'Authorization: Bearer \${SEEKINO_MCP_TOKEN}'`;
 const codexCloud = 'codex mcp add seekino_cloud --url "$SEEKINO_CLOUD/mcp" --bearer-token-env-var SEEKINO_MCP_TOKEN';
 
-// Community links arrive later; [xxx] marks every spot still waiting for one.
-const COMMUNITY_PLACEHOLDER = "[xxx]";
-
 export const DOC_PAGES = ["start", "versions", "self-host", "agents", "roadmap"] as const;
 export type DocPageId = (typeof DOC_PAGES)[number];
 
@@ -75,7 +72,7 @@ const zh: DocsContent = {
           { title: "点开时间，直接看", body: "每条结果都带着原片和精确到秒的时间范围。点一下，视频从那一秒开始播放，不用再前后拖。" },
           { title: "看不懂，就接着问", body: "播放时打开右侧的助手，问“刚才这段在讲什么”。它知道你看到了哪里，回答里的每个片段都能点开核对。" },
         ] },
-        { kind: "shot", label: "Cloud 上的真实截图 · 2026-11-10", asked: "问", query: "self-attention 是在哪一集哪一分钟讲的", src: "/docs/recall-self-attention.png", alt: "Seekino 的回答：一张 EP 07 · 71:00–71:40 的片段卡片，下面列出第 7 集里讲 self-attention 的六个时间点", note: "8 集、14.6 小时的课，回答落在第 7 集的具体时间点，附带可以点开的原片片段。在 Cloud 上问同一句，就能自己核对。" },
+        { kind: "shot", label: "Cloud 上的真实截图 · 2026-11-14", asked: "问", query: "self-attention 是在哪一集哪一分钟讲的", src: "/docs/recall-self-attention.png", alt: "Seekino 回答的节选：约 60–72 分钟一节，两张 EP 07 的片段卡片（65:01–65:12、71:00–71:40），缩略图显示原片画面", note: "这是同一回答里的一段：片段卡带原片首帧，点开就从那一秒播放。8 集、14.6 小时的课，回答落在第 7 集的具体时间点；在 Cloud 上问同一句，就能自己核对。" },
         { kind: "examples", label: "也可以这样问", items: [
           { text: "反向传播的链式法则是在哪一集讲的", note: "课程" },
           { text: "Karpathy 说 tokenizer 是很多问题根源的那一段", note: "课程" },
@@ -172,7 +169,7 @@ const zh: DocsContent = {
         { kind: "p", text: "这些都还没有排期。你最想先要哪一个？来交流群告诉我们，你的意见可能直接影响我们先做哪一个。" },
         { kind: "h", text: "加入交流" },
         { kind: "channels", items: [
-          { label: "交流群", value: COMMUNITY_PLACEHOLDER },
+          { label: "交流群", value: "1127823767" },
           { label: "问题与建议", value: "GitHub Issues", href: `${GITHUB_URL}/issues` },
         ] },
         { kind: "star", text: "如果 Seekino 帮你省下了一次拖进度条，在 GitHub 上点个 Star 吧。" },
@@ -202,7 +199,7 @@ const en: DocsContent = {
           { title: "Click the time and watch", body: "Every result comes with its source video and a time range down to the second. One click and playback starts right there, with no more scrubbing." },
           { title: "Lost? Just ask", body: "While watching, open the assistant beside the player and ask \"what was that part about?\". It knows where you are, and every clip in its answer links back to the source." },
         ] },
-        { kind: "shot", label: "Real screenshot from Cloud · 2026-11-10", asked: "Asked", query: "self-attention 是在哪一集哪一分钟讲的 (which episode and minute covers self-attention?)", src: "/docs/recall-self-attention.png", alt: "Seekino's answer: a clip card for EP 07 · 71:00–71:40, followed by six time points in episode 7 where self-attention is explained", note: "Across 8 episodes and 14.6 hours, the answer lands on exact time points in episode 7, with source clips you can open. You can ask the same question on Cloud right now." },
+        { kind: "shot", label: "Real screenshot from Cloud · 2026-11-14", asked: "Asked", query: "self-attention 是在哪一集哪一分钟讲的 (which episode and minute covers self-attention?)", src: "/docs/recall-self-attention.png", alt: "Excerpt of Seekino's answer: the 60–72 minute section with two EP 07 clip cards (65:01–65:12 and 71:00–71:40), each showing a frame from the source video", note: "This is one section of the same answer: every clip card shows a frame from the source video and opens at that second. Across 8 episodes and 14.6 hours, the answer lands on exact time points in episode 7; ask the same question on Cloud to check it yourself." },
         { kind: "examples", label: "Or ask things like", items: [
           { text: "which episode covers the chain rule in backprop", note: "Lectures" },
           { text: "the part where Karpathy says the tokenizer causes a lot of problems", note: "Lectures" },
@@ -301,7 +298,7 @@ const en: DocsContent = {
         { kind: "p", text: "None of these have dates yet. Which one do you want first? Tell us in the community group; one message from you can decide what we build next." },
         { kind: "h", text: "Join the community" },
         { kind: "channels", items: [
-          { label: "Community group", value: COMMUNITY_PLACEHOLDER },
+          { label: "QQ community group", value: "1127823767" },
           { label: "Bugs and ideas", value: "GitHub Issues", href: `${GITHUB_URL}/issues` },
         ] },
         { kind: "star", text: "If Seekino saved you one drag of the progress bar, give it a Star on GitHub." },
