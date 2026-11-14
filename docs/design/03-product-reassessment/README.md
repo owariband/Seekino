@@ -6,6 +6,8 @@
 
 ## 本阶段的提出背景
 
+2026-11-14，实时观看请求原先带 playback 就跳过 JEV，导致 JEV-only 在观看页没有实际分类。本次移除该短路，把已构造的当前视频身份与播放位置作为文字上下文交给 JEV；三条真实路由都返回 `retrieve`，但完整回放 T01 因 Query 耗尽工具预算失败，T02／T03 虽完成却存在卡片与取帧的时间对齐缺口。路由接线按[实时意图路由 TRD](chat-realtime-intent-routing-trd.md)采用，原 Chat 延迟与质量没有闭环，证据见[完整回放报告](../../report/agent/chat/history-latency-replay-20261114/README.md)，当前状态由工作台 `CHAT-JEV-REALTIME-01`、`CHAT-QUERY-BUDGET-01` 和 `CHAT-COMPACT-01` 分别维护。
+
 2026-11-13，JEV-only复测确认没有独立改写调用，随即将该路径设为默认，并补齐query、质量和用量记录。2026-11-14 已完成 dev/main 发布与 Cloud/CPU 实例上线核查：dev PR #155 为 `9a18c6fb`，main PR #157 为 `8a86883f`；Cloud API 实际运行在 CPU 主机 `seekino-server` 的 `seekino-local-api-1`，是一个实例。生产收据与兼容边界见[上线报告](../../report/agent/chat/query-intent-jev-only-20261113/production-rollout-20261114.md)，当前状态由工作台`CHAT-JEV-DEFAULT-01`维护。
 
 2026-11-13，三路径实验的旧 B 含独立改写器，不能代表只用 JEV 的预期。关闭独立改写后已全量重测三组，见[同一 TRD 第 7 节](query-intent-routing-comparison-trd.md#7-关闭独立改写器的同条件复测)／[PR #151](https://github.com/owariband/Seekino/pull/151)；本轮未改 Cloud，当前状态仍由工作台 `CHAT-INTENT-01` 维护。

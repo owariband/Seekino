@@ -1,6 +1,6 @@
 # 1. 问题与现状
 
-2026-11-14；分支 `fix/jev-realtime-routing`；[PR #162](https://github.com/owariband/Seekino/pull/162)；目标 `dev`，正式运行文件另向 `main` 发布。需求是在实时观看时也执行 JEV 意图分类，再继续回放历史慢请求。关联 [JEV-only 上线设计](jev-only-hook-rollout-trd.md)、[模型容量与压缩设计](chat-model-context-compaction-trd.md)。
+2026-11-14；分支 `fix/jev-realtime-routing`；dev [PR #162](https://github.com/owariband/Seekino/pull/162)，合并 `16d32ff4`；main [PR #163](https://github.com/owariband/Seekino/pull/163)，合并 `7b990dd87303f576e91f87078a0f9414f0005bad`。需求是在实时观看时也执行 JEV 意图分类，再继续回放历史慢请求。关联 [JEV-only 上线设计](jev-only-hook-rollout-trd.md)、[模型容量与压缩设计](chat-model-context-compaction-trd.md)。
 
 QueryHook 将带 `extra_context.playback` 的输入整体判为 unsupported，直接返回原文。因此观看页请求即使启用了 JEV-only，也没有实际分类。最初三条慢请求都带播放位置，这条分支使它们无法验收新的路由。原文中的反馈、已有文字解释和新画面核验仍需区分，不能因为打开播放器就一律要求新检索。
 
@@ -10,14 +10,14 @@ QueryHook 将带 `extra_context.playback` 的输入整体判为 unsupported，�
 
 假设：仅移除 playback 的短路并提供已有 current_video，能让实时输入获得与其他文字输入相同的一次分类；具体返回 respond/retrieve/mixed 仍按当前意图判断。画面身份和时间是指代线索，不是已核实的视频证据。
 
-| 指标／护栏 | 现状 | 验收计划 |
+| 指标／护栏 | 现状 | 验收计划与实际 |
 | --- | --- | --- |
-| 实时请求路由 | playback 直接跳过 | 调用一次真实 JEV，并记录其分支、耗时和用量 |
-| 原文及上下文 | 直接交给 Supervisor | 原文字节、playback 和 current_video 不被就地修改；现有工具处理不变 |
-| 分类上下文 | 只有 query 与近期角色正文 | 有 current_video 时传递；普通文字调用保持原输入形状 |
-| 意图与交付 | 尚未对实时路径验证 | 反馈可 respond，画面／指定时刻核验可 retrieve，独立混合任务可 mixed；结果与实际视频证据分开核对 |
-| 模型及配置 | JEV-only，Flash/high/8192，动态85% | 不启用独立改写，不调整模型、effort、容量和工具合同 |
-| 原始数据 | 原三条历史可读取 | 新会话回放，原会话与 checkpoint 不写入；私有正文、图片与 checkpoint 不提交 Git |
+| 实时请求路由 | playback 直接跳过 | 调用一次真实 JEV，并记录其分支、耗时和用量；实际三条均进入 JEV，各 1 次 `retrieve` |
+| 原文及上下文 | 直接交给 Supervisor | 原文字节、playback 和 current_video 不被就地修改；现有工具处理不变；发布文件与输入不可变检查通过 |
+| 分类上下文 | 只有 query 与近期角色正文 | 有 current_video 时传递；普通文字调用保持原输入形状；实际按已构造身份与整数毫秒播放位置传递，不改原始帧／URL |
+| 意图与交付 | 尚未对实时路径验证 | 反馈可 respond，画面／指定时刻核验可 retrieve，独立混合任务可 mixed；结果与实际视频证据分开核对；本轮三条均为 retrieve，交付仍见第 4、6 节失败与时间缺口 |
+| 模型及配置 | JEV-only，Flash/high/8192，动态85% | 不启用独立改写，不调整模型、effort、容量和工具合同；实际独立改写 0 次，配置未变 |
+| 原始数据 | 原三条历史可读取 | 新会话回放，原会话与 checkpoint 不写入；私有正文、图片与 checkpoint 不提交 Git；最终审计确认原消息与 checkpoint 未变 |
 
 # 3. 改造方案与建模
 
@@ -29,14 +29,26 @@ QueryHook 将带 `extra_context.playback` 的输入整体判为 unsupported，�
 
 先以单测覆盖 playback 实际进入路由、current_video 传递、输入不可变、三个分支和关闭／失败行为，再跑相关 QueryHook 回归。真实 JEV 先核对代表请求的分支，随后执行原 T01–T03 的完整 HTTP/SSE 回放。
 
-回放固定原 query、历史正文、素材范围、播放位置和请求前原生 checkpoint，使用新身份和新会话。旧整轮基线为75.659／47.880／88.877秒，旧同口径 FTT 缺失时留空；本轮记录服务端 TT、公网 FTT／TT、路由／模型／工具／compact、用量、终态与结果。旧 prompt 未完整留存，当前索引、缓存、compact 和后续内存修复有变化，只报告部署组合的描述性前后结果，不宣称单独 JEV 的因果收益。结果待测。
+回放固定原 query、历史正文、素材范围、播放位置和请求前原生 checkpoint，使用新身份和新会话。旧整轮基线为75.659／47.880／88.877秒，旧同口径 FTT 缺失时留空；本轮记录服务端 TT、公网 FTT／TT、路由／模型／工具／compact、用量、终态与结果。旧 prompt 未完整留存，当前索引、缓存、compact 和后续内存修复有变化，只报告部署组合的描述性前后结果，不宣称单独 JEV 的因果收益。
+
+实际回放不是 12.012 秒的 27 turn 基准。三条各新建游客身份和会话，复制原请求前 6／10／12 条历史消息、26／49／60 条原生消息和 0／1／1 个文件，发送前 messages／files／summary 哈希一致，最终原会话消息与 checkpoint 未改。新三条为 2 条完成、1 条失败：T01 服务端 196.567 秒、`AGENT_MODEL_ERROR`、无可见回答；T02 17.176 秒；T03 19.562 秒。新公网 FTT 分别为无／14.817273／17.577218 秒，客户端 TT 为 197.331248／19.011393／21.282713 秒；旧 FTT／TT 没有同口径记录。T01 的新耗时是失败持续时间，不是成功首答时间。
+
+T01 的 `query_video` 占 170.069 秒，约占整轮 86.5%。Query 反复检索和读取证据，耗尽共享的 100 次工具预算并返回 `VIDEO_LOOP_LIMIT_EXCEEDED`；Supervisor 随后直接读取也因同一预算失败。所有 provider 调用都完成，这是应用层循环与预算问题，不是 provider 超时。101 次 provider 调用中 52 次是 embedding、45 次是 Query 子 Agent，不能称为 101 次模型推理回合。Cloud bootstrap 强制打开 `limits_enabled`，YAML 的 false 不能关闭实际预算；`max_loop_turns=3` 不是这次 Query 循环的停止条件。日志有 43 次 Query 检索、10 次 retrieve、49 次读取的完成／尝试记录，嵌套或并行调用不能直接相加成实际耗时，也没有据此编造确定的重复 query 次数。
+
+T02、T03 各 7 次 provider 调用并完成，但交付仍有时间问题。T02 目标 1058310ms（17:38.310），卡片 1030500–1041166ms（17:10.5–17:21.166），成功取帧 1034737／1036212／1037687／1039162ms，看的是更早场景。T03 卡片 1054800–1063500ms 覆盖 1056000ms（17:36），取帧却是 1055000／1057000／1059000／1061000ms（17:35／17:37／17:39／17:41），没有恰好 17:36 的帧，回答声称提取 17:36 缺乏请求证据支持。两条都先遇到 `UNKNOWN_ITEM`，随后重新取证并完成；失败尝试保留。这里只确认执行完成与时间对齐／表述问题，没有独立视觉盲评，也不能据此判定整条回答是幻觉或给出整体准确率。
+
+三条 JEV 均为 1 次 `completed` 的 `retrieve`，耗时 1.5391／1.5107／1.8469 秒，独立改写 0 次。旧三条 Supervisor summary 为 2／1／2 次、45.191／30.194／51.932 秒，新三条为 0。事件与用量对比为 29→115 次 provider 调用、807664→1991676 total token；T01 的 Query 与 embedding 把总量推高，不能只挑 T02／T03 的耗时下降写成整体加速。逐条脱敏调用与完整协议见[回放报告](../../report/agent/chat/history-latency-replay-20261114/README.md)。
 
 # 5. 试点验证与方案取舍
 
-先部署当前 API 的最小覆盖镜像并确认健康、既有模型配置和其他容器不变，再用新建会话验证实时请求实际经过 JEV。首条回放通过输入与状态哈希核对后，串行完成其余两条；每条最多观察300秒，仅取消本次自建执行，不终止其他会话。原始历史与生成正文只写入私有验收目录。
+2026-11-14 已完成最小覆盖镜像部署。API 从 03:44:08Z 开始、03:44:25Z 完成，即本地 11:44，操作耗时 16.943 秒，不是测得的用户停机。镜像 `seekino-api:jev-realtime-7b990dd8` 从既有 `seekino-api:hotfix-event-memory-2bebd9af` 派生，只覆盖 2 个运行时文件，保留原有内存、排序、embedding 补丁和依赖；其他 5 个容器在部署期间未变，没有模型配置变更或数据迁移。最终健康 200、Parse Consumer 为 running，模型配置 SHA 仍为 `547729bafeb922a0e1f0c25916996513f40b1f507a0e4373ce51943ce48067d2`。三条回放串行完成，原会话和 checkpoint 未被修改，原始正文与图片只留在被 Git 忽略的私有目录。
 
-若分类或交付有误，保留失败并检查 JEV 决策、指代上下文和工具执行，不用更快或 COMPLETED 代替正确。若配置解析或 API 健康失败，回退本次镜像覆盖，不撤销既有内存修复或动态85%配置。试点结论待补。
+若分类或交付有误，保留失败并检查 JEV 决策、指代上下文和工具执行，不用更快或 COMPLETED 代替正确。若配置解析或 API 健康失败，回退本次镜像覆盖，不撤销既有内存修复或动态85%配置。试点确认实时请求确实经过 JEV；T01 失败与 T02／T03 时间缺口按原样保留。
 
 # 6. 结果验收与闭环
 
-已移除 playback 短路，按需传递已构造的 current_video，并补充分类规则；原输入与时间值不变，独立改写默认仍关闭。主 Agent 复核三个文件并运行 QueryHook、Gateway transport、Supervisor 三文件回归，250 项通过；编译与 diff 检查通过。正式发布、真实 JEV 路由与完整历史回放待执行，结果与实际生效版本随后补回本设计及 devlog；不关闭全部 Chat 性能或近满窗质量问题。
+已移除 playback 短路，按需传递已构造的 current_video，并补充分类规则；原输入、playback 和时间值不变，独立改写默认仍关闭，普通文字请求保持原输入形状。dev 以 `16d32ff4` 合入，main 以 `7b990dd87303f576e91f87078a0f9414f0005bad` 发布；main 本次只改两个运行时文件和一条直接回归测试，本地发布树 808 个路径／8 个资产及 GitHub `release-files` 通过。主 Agent 在 dev 和 main 各跑同一组 250 项测试，均通过；两组范围重叠，不能相加成 500 项唯一测试。没有无关业务修改。
+
+按本设计的路由范围，实时接线通过：三条真实请求均进入 JEV，各 1 次 `completed` 的 `retrieve`，独立改写 0 次，原 query 与播放位置保持。整条 Chat 没有通过：T01 因 Query 耗尽共享 100 次工具预算、Supervisor 恢复也失败而无可见回答，终态 `AGENT_MODEL_ERROR`；T02 卡片和取帧未覆盖原播放位置；T03 的卡片覆盖 17:36，但实际取帧为 17:35／17:37／17:39／17:41，回答声称提取 17:36 缺乏请求证据。后两条完成只代表执行终态，没有独立视觉盲评，也没有整体准确率。
+
+因此采用实时 JEV 接线并完成本卡范围，不关闭原 Chat 的延迟与质量问题。后续候选是调查 Query 的有界、去重与停止条件，为 Supervisor 保留恢复预算或提供部分失败反馈，以及单独验证播放时间锚定和精确取帧；这些尚未实现。不得通过静默调大工具限制、降低 high 或改写当前工具逻辑代替修复。完整证据见[回放报告](../../report/agent/chat/history-latency-replay-20261114/README.md)，工作台以 `CHAT-JEV-REALTIME-01` 记录路由完成、`CHAT-QUERY-BUDGET-01` 记录待办、`CHAT-COMPACT-01` 继续验证。
