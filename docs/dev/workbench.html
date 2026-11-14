@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-14T21:25:36+08:00",
+ "updatedAt": "2026-11-15T00:36:32+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 70,
+ "revision": 71,
  "categories": [
   {
    "id": "parse",
@@ -2076,19 +2076,19 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "type": "requirement",
    "status": "progressing",
    "priority": "P1",
-   "description": "CONFLICT 预填已在整集 v3 生效，主链全部完成；两句固定姓名仍1/2，爽世正确预填后被 Refine 改成灯。",
-   "next": "处理 Refine 覆盖正确身份及预填姓名与旧描述冲突；继续区分目标句身份和整段音频纯度，辅助摘要失败独立跟进。",
-   "verification": "2026-11-14 EP04 v3 cc181952：DS Flash high、1fps，24/24 Under、22/22 Refine、24/24 索引，23分59.848秒。434项组合回归；337条首次版本对白的实际输入全覆盖，69条CONFLICT均先填top1，47条补原身份评分，49次输入无参考池。爽世句先填正确的長崎そよ0.744782，返回／最终却为高松燈；爱音首次理解与最终均正确，不能计为预填纠错。首轮输出50k失败后标准重试同一任务复用19块。371源码不变、旧v2内容不变；ASR166条一致。附带摘要3次失败未修，CPU/prod未访问。",
-   "updatedAt": "2026-11-14",
+   "description": "EP04 v4 DS Flash low整集完成，两个固定姓名2/2且描述一致；其它人物、混人纯度和边界尚未认证。",
+   "next": "扩大有真值的固定样本及重复验证，复核混人台词与边界；保留low已验证样例，辅助摘要失败另查，不将两句通过当全片准确。",
+   "verification": "2026-11-15 v4 df165ebc：1fps，Understanding/Refine/fallback均low，24/24 Under、22/22 Refine、24/24索引，24分27.473秒。434项组合回归；45次实际请求均有画外音新段且绑定low，无参考池，309条首次对白全覆盖、67条CONFLICT预填通过。爽世48.0–49.8s和爱音292.5–295.499s最终姓名正确，描述一致；首次理解均已正确，两个目标不触发自动预填，不作单因素因果结论。371源码与旧v3内容不变，旧任务保留，CPU/prod未访问；辅助摘要尚有失败记录。",
+   "updatedAt": "2026-11-15",
    "tags": [
-    "声纹预填",
-    "正确身份被覆盖",
-    "人物效果未通过"
+    "画外音",
+    "low两句通过",
+    "全片真值待扩"
    ],
    "related": [
     "MOD-PARSE"
    ],
-   "branch": "fix/voiceprint-conflict-prefill",
+   "branch": "fix/refine-offscreen-voice",
    "links": [
     {
      "label": "问题记录",
@@ -2143,6 +2143,21 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
     {
      "label": "v3实际预填与终态反例",
      "url": "https://github.com/owariband/Seekino/blob/fix/voiceprint-conflict-prefill/docs/report/agent/video_parse_v2/voiceprint-conflict-prefill-20261114/live-run.json",
+     "kind": "source"
+    },
+    {
+     "label": "画外音提示TRD",
+     "url": "https://github.com/owariband/Seekino/blob/fix/refine-offscreen-voice/docs/design/03-product-reassessment/refine-offscreen-voice-trd.md",
+     "kind": "trd"
+    },
+    {
+     "label": "画外音提示PR #170",
+     "url": "https://github.com/owariband/Seekino/pull/170",
+     "kind": "pr"
+    },
+    {
+     "label": "DS Flash low整集2/2与验收边界",
+     "url": "https://github.com/owariband/Seekino/blob/fix/refine-offscreen-voice/docs/report/agent/video_parse_v2/refine-offscreen-voice-20261115/README.md",
      "kind": "source"
     }
    ],

@@ -74,6 +74,7 @@ TRD 必须以 `# 1. 问题与现状` 开头，清晰呈现问题识别、因素�
 | 本地 ASR、字幕证据与失败恢复 | [local-whisperx-asr-trd.md](03-product-reassessment/local-whisperx-asr-trd.md) | WhisperX/整片复用的原实现；10-30 续版跟进视频级持久成果、Metal 正式接线与跨失败恢复，实测和待实施分开。 |
 | Parse XML v2 历史方案 | [parse-output-xml.md](03-product-reassessment/parse-output-xml.md) | 2026-10-26 协议原稿；新候选与验证口径见解析性能主 TRD，保留历史设计来源。 |
 | 声纹与台词归属 | [voiceprint-trd.md](02-agent-harness/voiceprint-trd.md) | 专项 TRD：声纹准备、比较、原子台词及说话人归属；保留历次实验的适用边界。 |
+| Refine 画外音与先声后像 | [refine-offscreen-voice-trd.md](03-product-reassessment/refine-offscreen-voice-trd.md) | 11-15 提醒反应镜头及旧描述中的身份推断；DS Flash low 整集主链完成，固定两句姓名2/2，未知目标之外未认证。 |
 | CONFLICT 声纹候选预填 | [voiceprint-conflict-prefill-trd.md](03-product-reassessment/voiceprint-conflict-prefill-trd.md) | 11-14 先填 top1 并保留原身份评分；434 项组合回归，整集 v3 主链完成、69 条 CONFLICT 实际预填，但两个固定姓名仍 1/2。 |
 | Refine 逐句声纹预填输入 | [refine-voiceprint-prefill-context-trd.md](03-product-reassessment/refine-voiceprint-prefill-context-trd.md) | 11-14 复用宿主已绑定的逐句摘要；全片参考池及引用明细不进入模型输入，预填、评分及原始留存不变。 |
 | 整集摘要 | [video-summarize-trd.md](02-agent-harness/video-summarize-trd.md) | 专项 TRD：优先正式标题、无标题时生成内容短标题，事实简介、封面与真实集数的证据约束、职责及发布流程；系列默认封面与观看进度展示。 |
