@@ -315,8 +315,8 @@ object without tools. The host validates the complete result and imports persons
 and all events in one atomic `ParseContextCanvas.write` batch before the existing
 lease-fenced commit. Full ASR word alignment remains in immutable evidence; the
 initial prompt includes cue text, times and anonymous speaker IDs.
-Understanding keeps separate ASR cues and distinct utterances as separate DIALOGUE
-events with their own audio intervals. Adjacency or an apparent shared speaker,
+The Understanding Prompt instructs the model to keep separate ASR cues and distinct
+utterances as separate DIALOGUE events with their own audio intervals. Adjacency or an apparent shared speaker,
 topic or scene does not permit consolidation at this stage. Evidence-supported
 corrections and splitting of mixed-speaker cues remain available, and complete
 cues still retain their whole-video time authority across Chunk boundaries.
