@@ -87,6 +87,8 @@ PYTHONPATH="$PWD" /Users/hypnos/workspace/agent/Seekino/.venv/bin/python -m pyte
 
 # 6. 结果验收与闭环
 
+实际集成凭据补充见 [PR #173](https://github.com/owariband/Seekino/pull/173)。
+
 本轮回到原问题，完成的是配置继承和接线，不是 Chat 延迟或质量的最终验收：
 
 - **已实现：** Server 从当前 Supervisor 选择一次性装配父子模型、来源、主备、effort、输出／超时／字符预算和容量策略；个人目标与 API builder 走同一条路径；Gateway 使用单一动态解析入口。

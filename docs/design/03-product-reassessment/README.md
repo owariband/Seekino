@@ -6,7 +6,7 @@
 
 ## 本阶段的提出背景
 
-2026-11-15，Chat 子 Agent 原先另取全局 agent 模型，选定 Supervisor 后仍可能沿用旧 64k 静态窗口。本次让 Query 与 Supervisor 共用当前选择的模型来源、主备、effort、输出／超时／字符预算和 Gateway 动态容量解析，角色工具与原生上下文边界保留。设计与证据见[配置继承 TRD](chat-model-config-inheritance-trd.md)、[验证报告](../../report/gateway/agent_model/chat-model-config-inheritance-20261115/README.md)；PR #171 仍为 Draft，未发布或部署，状态见工作台 `CHAT-MODEL-INHERIT-01`。
+2026-11-15，Chat 子 Agent 原先另取全局 agent 模型，选定 Supervisor 后仍可能沿用旧 64k 静态窗口。本次让 Query 与 Supervisor 共用当前选择的模型来源、主备、effort、输出／超时／字符预算和 Gateway 动态容量解析，角色工具与原生上下文边界保留。设计与证据见[配置继承 TRD](chat-model-config-inheritance-trd.md)、[验证报告](../../report/gateway/agent_model/chat-model-config-inheritance-20261115/README.md)；dev PR #171 已合入；正式候选 main PR #172 待合并和部署，状态见工作台 `CHAT-MODEL-INHERIT-01`。
 
 2026-11-14，实时观看请求原先带 playback 就跳过 JEV，导致 JEV-only 在观看页没有实际分类。本次移除该短路，把已构造的当前视频身份与播放位置作为文字上下文交给 JEV；三条真实路由都返回 `retrieve`，但完整回放 T01 因 Query 耗尽工具预算失败，T02／T03 虽完成却存在卡片与取帧的时间对齐缺口。路由接线按[实时意图路由 TRD](chat-realtime-intent-routing-trd.md)采用，原 Chat 延迟与质量没有闭环，证据见[完整回放报告](../../report/agent/chat/history-latency-replay-20261114/README.md)，当前状态由工作台 `CHAT-JEV-REALTIME-01`、`CHAT-QUERY-BUDGET-01` 和 `CHAT-COMPACT-01` 分别维护。
 

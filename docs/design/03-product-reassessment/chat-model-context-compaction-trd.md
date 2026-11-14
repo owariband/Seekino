@@ -83,7 +83,7 @@ sequenceDiagram
 
 同一回放还确认某个 Chunk 被读 22 次、9 次从第一页重新读，Query checkpoint 不保存分页位置；压缩是否直接导致这些重读与游标错误仍待验证。设计范围需继续覆盖 structured Query 的容量、字符保护和阅读进度恢复，不能只把 Supervisor 上线当作全 Agent 接入验收。证据与边界见[完整回放报告第 9 节](../../report/agent/chat/history-latency-replay-20261114/README.md#9-后续只读排查历史-id首字等待与-query-的旧压缩路径)、[记录 PR #166](https://github.com/owariband/Seekino/pull/166)。
 
-2026-11-15 配置继承修复补充：上述 structured Query 未接动态容量的遗漏已有实现，提交为 `30680fe4`，[PR #171](https://github.com/owariband/Seekino/pull/171) 仍为 Draft，未合入 dev、未发布 main、未部署。Server 现在按当前 Supervisor 选择一次性装配父子 binding／factory 或个人 target、输出／超时／字符预算和 `ContextWindowPolicy`；Gateway `_controls` 让 DeepAgents、structured 与 loop 共用同一动态容量解析，继续使用既有元数据缓存、主备取小和失败回退。因此前文 Query 的 64000／48000／24000 只在未启用比例、能力不可用或 native 上下文成立时作为兼容回退；启用动态策略并取得容量时，父子使用同一有效窗口。
+2026-11-15 配置继承修复补充：上述 structured Query 未接动态容量的遗漏已有实现，提交为 `30680fe4`，[dev PR #171](https://github.com/owariband/Seekino/pull/171) 已合入，正式候选 [main PR #172](https://github.com/owariband/Seekino/pull/172) 待合并和部署。Server 现在按当前 Supervisor 选择一次性装配父子 binding／factory 或个人 target、输出／超时／字符预算和 `ContextWindowPolicy`；Gateway `_controls` 让 DeepAgents、structured 与 loop 共用同一动态容量解析，继续使用既有元数据缓存、主备取小和失败回退。未启用比例，或容量既不能发现也没有声明时，沿用原共享静态策略；发现失败但有声明容量时仍按声明推导。native harness 自行管理上下文，不套 API 窗口。启用动态策略并取得容量时，父子使用同一有效窗口。
 
 支持该结论的检查是 Gateway 202 项和 Server／个人协议 136 项、共 338 项唯一通过，另有当前 Cloud 配置预检：父子均为 1048576／891289／24000、Flash／high／8192，元数据请求 1 次、生成调用 0 次，模型／运行哈希与容器未变，服务没有重启。预检使用 PATCHED Gateway 在独立临时进程运行，只验证配置与 factory，不是完整在线 Server 装配。没有修复后的原 Chat 回放，因此不能更新前面的 9 次 Query 压缩结论，也不能宣称 TT／FTT／token／准确率改善；200000 字符上限仍可能先于 891289 token 触发压缩。
 
