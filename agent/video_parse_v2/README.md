@@ -317,6 +317,12 @@ lease-fenced commit. Full ASR word alignment remains in immutable evidence; the
 initial prompt includes cue text, times and anonymous speaker IDs.
 Refine receives complete member contents and retained observations once and returns
 `IntervalRefinementResult` (`members`, each with `sequence_no`, `persons`, `timeline`).
+Its voiceprint input contains only the existing per-dialogue prefill summaries bound
+by Canvas to that member's event position and audio interval: original speaker,
+ranked candidate scores/counts, band and conflict information. Full reference samples,
+source details and reference ID lists stay in host evidence. The Prompt projection
+does not recompute scores or change prefill rules; see the
+[input boundary and measurements](../../docs/design/03-product-reassessment/refine-voiceprint-prefill-context-trd.md).
 It has no model-facing tools or separate completion receipt. The business result
 gate validates the domain Schema, exact member set and time authority, then derives
 only actual changes. A Refine-only response transport retains the full JSON value

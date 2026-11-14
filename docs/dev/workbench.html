@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-14T01:00:59+08:00",
+ "updatedAt": "2026-11-14T14:25:32+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 65,
+ "revision": 68,
  "categories": [
   {
    "id": "parse",
@@ -2074,19 +2074,21 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "title": "ASR 匿名说话人分组不准，Refine 看帧后仍未纠正目标归属",
    "category": "parse",
    "type": "requirement",
-   "status": "done",
-   "priority": "unset",
-   "description": "排序日期：2026-10-19。",
-   "next": "核对原始记录及当前实现，确定本轮是否继续推进。",
-   "verification": "按历史 TODO 导入；当前优先级、执行人和后续验收仍需核对。 优先级：高。类型：解析语义质量、音频分段、证据供给与可观测性。状态：截至 2026-10-22 仍未全面闭环；v25 两句固定目标本轮均正确。历史 v5 曾纠正爽世单例，不代表后续版本稳定识别正确；v11～v18 暴露参考错名、跨人合并及 Refine 决策三类问题。最新归因与未完成项见下，旧轮次记录保留。记录日期：2026-10-16；更新日期：2026-10-22。",
-   "updatedAt": "2026-10-19",
+   "status": "progressing",
+   "priority": "P1",
+   "description": "本机 EP04 整集已跑通，逐句预填摘要消除上下文超限；两个固定人物目标仅 1/2 正确，Understanding 仍有跨 cue 重组反例。",
+   "next": "依据真实输入/输出处理 CONFLICT 候选未纠正爱音、Understanding 跨 cue 重组；另保留附带摘要失败待查，不把主链 COMPLETE 当人物准确率通过。",
+   "verification": "2026-11-14 新任务 v2：24/24 Under、22/22 Refine、24/24 索引；B0 314 行/313 编码。41 次实际输入无参考资料；同窗 1152947→52546 字符（95.4425%）。开头爽世正确但初次 Under 已正确；爱音对照声纹 top1 正确、CONFLICT 未预填且 Refine 仍错标睦。至少确认 1 个 Under 合并 4 cue 反例。CPU/prod 未部署。",
+   "updatedAt": "2026-11-14",
    "tags": [
-    "待核对"
+    "输入上下文",
+    "声纹预填",
+    "整集效果待验"
    ],
    "related": [
     "MOD-PARSE"
    ],
-   "branch": "",
+   "branch": "fix/refine-voiceprint-prefill-context",
    "links": [
     {
      "label": "问题记录",
@@ -2097,6 +2099,31 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "label": "TRD",
      "url": "https://github.com/owariband/Seekino/blob/56e7977721e51a61b20894c9d38fa775d9300c70/docs/design/02-agent-harness/voiceprint-trd.md",
      "kind": "trd"
+    },
+    {
+     "label": "逐句预填输入 TRD",
+     "url": "https://github.com/owariband/Seekino/blob/fix/refine-voiceprint-prefill-context/docs/design/03-product-reassessment/refine-voiceprint-prefill-context-trd.md",
+     "kind": "trd"
+    },
+    {
+     "label": "输入体积对照与复跑",
+     "url": "https://github.com/owariband/Seekino/blob/fix/refine-voiceprint-prefill-context/docs/report/agent/video_parse_v2/refine-voiceprint-prefill-context-20261114/README.md",
+     "kind": "source"
+    },
+    {
+     "label": "Understanding 分段职责 PR #164",
+     "url": "https://github.com/owariband/Seekino/pull/164",
+     "kind": "pr"
+    },
+    {
+     "label": "逐句预填输入修复 PR #165",
+     "url": "https://github.com/owariband/Seekino/pull/165",
+     "kind": "pr"
+    },
+    {
+     "label": "整集真实结果与边界",
+     "url": "https://github.com/owariband/Seekino/blob/fix/refine-voiceprint-prefill-context/docs/report/agent/video_parse_v2/refine-voiceprint-prefill-context-20261114/live-run.json",
+     "kind": "source"
     }
    ],
    "source": {

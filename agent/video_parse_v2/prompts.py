@@ -231,7 +231,21 @@ def build_refine_prompt(*, snapshot, canvas: ParseContextCanvas) -> str:
     members = []
     duration = snapshot["inputs"].parse_config.chunk_duration * 1000
     for ref, sequence in sorted(snapshot["member_sequence_nos"].items(), key=lambda item: item[1]):
-        evidence = deepcopy(snapshot.get("member_evidence", {}).get(ref, {}))
+        original_evidence = snapshot.get("member_evidence", {}).get(ref, {})
+        evidence = deepcopy({key: value for key, value in original_evidence.items() if key != "voiceprint"})
+        prepared = original_evidence.get("voiceprint") or {}
+        if prepared.get("mode") in {"flag", "prefill"}:
+            evidence["voiceprint"] = {
+                "mode": prepared["mode"], "method_version": prepared.get("method_version"),
+                "lines": [{
+                    "position": value["source"]["position"],
+                    **{key: deepcopy(value["voice_evidence"][key]) for key in (
+                        "start_ms", "end_ms", "understanding_speaker", "duration_ms",
+                        "band", "conflict", "reason", "gap", "candidates",
+                    ) if key in value["voice_evidence"]},
+                } for _, value in canvas.items("events")
+                    if value["member_ref"] == ref and value.get("voice_evidence", {}).get("valid")],
+            }
         if evidence.get("camera_hints"):
             evidence["camera_hints"] = _camera_hint_summaries(evidence["camera_hints"])
         for cue in (evidence.get("asr") or {}).get("transcript", []):
@@ -257,7 +271,7 @@ def build_refine_prompt(*, snapshot, canvas: ParseContextCanvas) -> str:
         "All timestamps are absolute integer source-video milliseconds, including legacy *_seconds fields. Do not multiply or divide by 1000 or apply an offset again. Preserve existing time bounds unless supplied evidence supports a correction.",
         *_refine_content_instructions(snapshot["inputs"].parse_config),
         time_rule,
-        "Prepared voiceprint evidence, when present, applies only to its recorded audio interval. A supplied prefilled speaker is a draft, not certainty; explicitly retain or correct it using the evidence. Do not reuse a score for changed audio bounds.",
+        "Use the host's per-dialogue voiceprint prefill and score summaries when present. Each summary applies only to its recorded audio interval. A supplied prefilled speaker is a draft, not certainty; explicitly retain or correct it using the evidence. Do not reuse a score for changed audio bounds.",
         "Edit the supplied JSON directly. Return every input sequence_no exactly once, each with complete persons and timeline. Omitted events are removed, so preserve every unrelated event. Return only the members array wrapped in IntervalRefinementResult.",
         "Input: " + json.dumps({"background": snapshot.get("background", {}), "members": members},
                               ensure_ascii=False, allow_nan=False, sort_keys=True),

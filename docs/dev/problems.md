@@ -1051,6 +1051,16 @@ Cloud 同时存在 JEV 参数和 `models.query_hook=deepseek-flash/high/256`，�
 
 优先级：高。类型：解析语义质量、音频分段、证据供给与可观测性。状态：**截至 2026-10-22 仍未全面闭环；v25 两句固定目标本轮均正确**。历史 v5 曾纠正爽世单例，不代表后续版本稳定识别正确；v11～v18 暴露参考错名、跨人合并及 Refine 决策三类问题。最新归因与未完成项见下，旧轮次记录保留。记录日期：2026-10-16；更新日期：2026-10-22。
 
+#### 2026-11-14：Refine 输入重复携带参考资料，改用已有逐句预填摘要
+
+同日真实整集补验：新任务 v2 已 COMPLETE，24/24 Understanding、22/22 Refine、24/24 索引，41 次输入未再携带参考资料或触发上下文超限。开头爽世句最终正确且初次理解已经正确；爱音对照句的声纹 top1 正确、band=CONFLICT，未自动预填且 Refine 仍保留若葉睦。另确认至少一处 Understanding 合入 4 条 ASR cue；严格禁止合并的 Prompt 尚未完全执行。见[真实留证](../report/agent/video_parse_v2/refine-voiceprint-prefill-context-20261114/live-run.json)。以下保留先前离线阶段记录。
+
+宿主 B0 已使用全片参考池完成比较并预填身份，Canvas 也已有绑定到具体事件的精简评分；完整 JSON Prompt 却复制了原始 `voiceprint` 的样本目录、候选引用 ID 与来源明细。这些资料大量互为参考，模型重复接收它们没有必要，导致此前 EP04 Refine 在生成前遇到上下文预算失败。
+
+本次只修改 Agent 输入投影，复用 Canvas 已绑定、仍有效的逐句摘要，保留身份、区间、候选分数、参考数量和冲突状态。参考池与完整关系继续在宿主保存；没有新增共享参考目录、声纹计算或模型工具，也没有改变预填规则。相关 167 项测试通过，修改前 10 个对应合同检查失败。合成 prefill 输入从 352,933 降至 2,814 字符，参考明细增长不再使 Prompt 变长；原始宿主快照不变。
+
+本轮未运行真实 EP04 或部署服务，不能把合成字符对照当作整集预算、token 或人物准确率验收。后续通过整集 1fps 核对实际请求及最终身份。见[本次 TRD](../design/03-product-reassessment/refine-voiceprint-prefill-context-trd.md)、[原始测量](../report/agent/video_parse_v2/refine-voiceprint-prefill-context-20261114/measurement.json)与[工作台 B12](workbench.html)。Understanding 不合并独立段另见 [PR #164](https://github.com/owariband/Seekino/pull/164)。
+
 #### 2026-10-31：整片 speaker 分组与身份映射候选（TODO，先评估现有体系）
 
 用户提出的方向：在完整视频范围内先将 speaker1／2／3 分组，再保留各 speaker 已识别为何人，为后续 Agent 提供统一线索，减小跨 Chunk 身份归因和纠错的难度。**先核验现有体系效果是否足够，只有不足时才决定是否引入；本轮不改模型或解析流程。**

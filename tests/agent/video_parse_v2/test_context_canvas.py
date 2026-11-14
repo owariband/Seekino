@@ -288,7 +288,10 @@ def test_normal_refine_reads_prepared_draft_and_commits_default_once(mode, expec
         data = json.loads(prompt.split("Input: ", 1)[1])
         member = data["members"][0]
         assert member["content"]["timeline"][0]["speaker"] == expected
-        assert member["evidence"]["voiceprint"] == snapshot["member_evidence"]["member"]["voiceprint"]
+        voice = member["evidence"]["voiceprint"]
+        assert voice["mode"] == mode and voice["method_version"] == "B0-v1"
+        assert voice["lines"][0]["understanding_speaker"] == "爱音"
+        assert voice["lines"][0]["candidates"][0] == {"speaker": "爽世", "similarity": .8}
         assert "speaker_source" not in member["content"]["timeline"][0]
         return {"members": [{"sequence_no": member["sequence_no"], **member["content"]}]}
 
@@ -306,15 +309,67 @@ def test_normal_refine_reads_prepared_draft_and_commits_default_once(mode, expec
 
 
 
-def test_refine_prompt_exposes_original_voice_evidence_without_canvas_navigation():
+@pytest.mark.parametrize("band", ["ACCEPT", "CONFLICT", "NO_VOICE", "REVIEW"])
+def test_refine_prompt_sends_bound_voice_summary_without_reference_pool(band):
     from agent.video_parse_v2.prompts import build_refine_prompt
-    snapshot = _voice_snapshot("flag", "CONFLICT")
+    snapshot = _voice_snapshot("flag", band)
+    prepared = snapshot["member_evidence"]["member"]["voiceprint"]
+    prepared["samples"] = {"source-1": {"id": "source-1", "chunk_task_id": "other-chunk"}}
+    prepared["lines"][0]["candidates"][0].update(reference_count=1, independent_cue_count=1)
+    stale = deepcopy(prepared["lines"][0])
+    stale.update(id="old-line", start_ms=4000, end_ms=6000)
+    prepared["lines"].append(stale)
+    original = deepcopy(snapshot)
     canvas = ParseContextCanvas.from_refine(snapshot)
     prompt = build_refine_prompt(snapshot=snapshot, canvas=canvas)
     data = json.loads(prompt.split("Input: ", 1)[1])
-    assert data["members"][0]["evidence"]["voiceprint"]["conflicts"] == ["line-1"]
-    assert data["members"][0]["evidence"]["voiceprint"]["lines"][0]["candidates"][0]["similarity"] == .8
+    voice = data["members"][0]["evidence"]["voiceprint"]
+    assert "samples" not in voice and len(voice["lines"]) == 1
+    line = voice["lines"][0]
+    assert (line["position"], line["start_ms"], line["end_ms"]) == (0, 1000, 3000)
+    assert line["understanding_speaker"] == "爱音" and line["band"] == band
+    assert line["conflict"] == (band == "CONFLICT") and line["gap"] == .2
+    assert line["candidates"] == [{"speaker": "爽世", "similarity": .8,
+                                   "reference_count": 1, "independent_cue_count": 1},
+                                  {"speaker": "立希", "similarity": .6}]
+    assert snapshot == original
     assert "event_ref" not in prompt and "get_context_canvas" not in prompt
+
+
+@pytest.mark.parametrize("mode", ["flag", "prefill", "off"])
+def test_refine_prompt_is_independent_of_reference_metadata_size(mode):
+    from agent.video_parse_v2.prompts import build_refine_prompt
+
+    snapshot = _voice_snapshot(mode)
+    original = build_refine_prompt(snapshot=snapshot, canvas=ParseContextCanvas.from_refine(snapshot))
+    prepared = snapshot["member_evidence"]["member"]["voiceprint"]
+    prepared["samples"] = {"source-1": {"trace": "reference metadata " * 10_000}}
+    prepared["lines"][0]["candidates"][0]["reference_ids"] = ["reference-id-" + "x" * 10_000]
+    prepared["lines"][0]["candidates"][0]["src"] = [{"trace": "source details " * 10_000}]
+    expanded = build_refine_prompt(snapshot=snapshot, canvas=ParseContextCanvas.from_refine(snapshot))
+    assert expanded == original
+
+
+def test_refine_voice_summaries_stay_with_their_own_member():
+    from agent.video_parse_v2.prompts import build_refine_prompt
+
+    snapshot = _voice_snapshot()
+    for key in ("member_versions", "member_contents", "member_evidence"):
+        snapshot[key]["second"] = deepcopy(snapshot[key]["member"])
+    snapshot["member_sequence_nos"]["second"] = 1
+    snapshot["member_bounds"]["second"] = (20_000, 40_000)
+    snapshot["member_scopes"]["second"] = [1]
+    snapshot["member_contents"]["second"]["timeline"][0].update(start_seconds=21_000, end_seconds=23_000)
+    line = snapshot["member_evidence"]["second"]["voiceprint"]["lines"][0]
+    line.update(id="line-2", start_ms=21_000, end_ms=23_000)
+    line["candidates"][0]["speaker"] = "睦"
+    prompt = build_refine_prompt(snapshot=snapshot, canvas=ParseContextCanvas.from_refine(snapshot))
+    members = json.loads(prompt.split("Input: ", 1)[1])["members"]
+    for member, start, speaker in zip(members, (1000, 21_000), ("爽世", "睦"), strict=True):
+        assert member["content"]["timeline"][0]["speaker"] == speaker
+        lines = member["evidence"]["voiceprint"]["lines"]
+        assert len(lines) == 1 and lines[0]["start_ms"] == start
+        assert lines[0]["candidates"][0] == {"speaker": speaker, "similarity": .8}
 
 
 

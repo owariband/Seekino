@@ -14,6 +14,12 @@ ASR 可能把多个人的发言合进同一条 cue，Refine 也可能根据单�
 
 ## 实验与运行记录
 
+## 2026-11-14：Refine 复用逐句预填摘要，参考池留在宿主
+
+本分支修复完整 JSON 输入将 `member_evidence.voiceprint` 原样序列化的问题。全片音频大量互为参考，宿主已完成 B0 比较和逐句预填，模型无需再次读取样本目录、来源详情或逐候选引用 ID。现直接投影 Canvas 已按成员、事件位置及区间绑定的有效摘要，保留原始身份、候选分数、参考数量与冲突状态；完整资料继续在宿主留存，预填条件与评分算法不变。
+
+相关隔离回归 167 passed。固定评分的合成单成员输入中，prefill 模式参考明细扩展后的完整 Prompt 从 352,933 降至 2,814 字符；参考资料增长带来的字符增量从 350,006 归零。这不是 EP04 实测或 token 数；未部署或运行新一轮整集。见[设计](../03-product-reassessment/refine-voiceprint-prefill-context-trd.md)及[可复跑证据](../../report/agent/video_parse_v2/refine-voiceprint-prefill-context-20261114/README.md)。Understanding 不合并独立段的职责调整由 [PR #164](https://github.com/owariband/Seekino/pull/164) 独立交付，下方历史实验仍按当时版本阅读。 同日后续整集 v2 已 COMPLETE（24/24 Under、22/22 Refine、24/24 索引），41 次真实输入不再携带参考资料；两个固定人物目标仅 1/2 正确，严格分段另有跨 4 cue 反例。完整结果见[真实留证](../../report/agent/video_parse_v2/refine-voiceprint-prefill-context-20261114/live-run.json)，不能将投影接线通过扩大为人物语义通过。
+
 ## 2026-10-22 后续：预填时长条件 >500ms（已实现，未部署）
 
 用户要求放宽#12的900ms立希短句所遇到的时长阻拦。本轮只把B0 ACCEPT最短时长改为501ms，NO_VOICE时长引用同一常量：整数毫秒下保留现有包含下界的比较语义，实现严格>500ms，500ms仍拒绝预填。时长通过不等于身份必然正确，独立参考数、歌曲／重叠条件继续检查。400ms编码下限、label_doubtful的1秒条件、encoder、矩阵检测和gap规则不变；历史artifact按原冻结参数重放。
