@@ -39,4 +39,4 @@ QueryHook 将带 `extra_context.playback` 的输入整体判为 unsupported，�
 
 # 6. 结果验收与闭环
 
-当前已确认 playback 短路是实时请求绕过 JEV 的直接原因；实现、回归、正式发布、线上路由和完整回放仍待执行。验收后补入相应证据，并在 devlog 记录收益、路由开销、内容问题和可比性边界；不关闭全部 Chat 性能或近满窗质量问题。
+已移除 playback 短路，按需传递已构造的 current_video，并补充分类规则；原输入与时间值不变，独立改写默认仍关闭。主 Agent 复核三个文件并运行 QueryHook、Gateway transport、Supervisor 三文件回归，250 项通过；编译与 diff 检查通过。正式发布、真实 JEV 路由与完整历史回放待执行，结果与实际生效版本随后补回本设计及 devlog；不关闭全部 Chat 性能或近满窗质量问题。
