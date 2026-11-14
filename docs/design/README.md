@@ -121,6 +121,7 @@ Event / Sub-Chunk 的实施入口是 [sub-chunk-trd.md](02-agent-harness/sub-chu
 | Chat 正文流式与真实 FTT | [chat-streaming-trd.md](03-product-reassessment/chat-streaming-trd.md) | 承接课程 PRD：正文增量交付、调用来源、浏览器采证及非流式/缓冲反例；关联 #18 / #25。 |
 | 聊天页前端性能 | [chat-frontend-performance-trd.md](03-product-reassessment/chat-frontend-performance-trd.md) | 连接状态与传输收尾、历史 Markdown 渲染隔离、滚动及 Kino 的同条件对照；对应 #126，当前执行状态见工作台 CHAT-PERF-01。 |
 | 实时播放的 JEV 路由 | [chat-realtime-intent-routing-trd.md](03-product-reassessment/chat-realtime-intent-routing-trd.md) | 带 playback 的请求不再跳过 JEV；三条真实路由均 retrieve，但完整回放 1 条失败、2 条完成且时间锚定有缺口，不能据此关闭整体 Chat 延迟与质量。 |
+| Chat 子 Agent 模型配置继承 | [chat-model-config-inheritance-trd.md](03-product-reassessment/chat-model-config-inheritance-trd.md) | 子 Agent 跟随当前 Supervisor 的模型来源、主备、effort、输出／超时／字符预算与动态容量；338 项测试和当前 Cloud 预检通过，关联 #171，尚未部署，延迟与质量待修复后回放。 |
 | Chat 模型重试提示 | [设计](03-product-reassessment/chat-model-retry-status-trd.md) | 首次响应超时后的重试次数与恢复反馈。 |
 | Chat 工具与证据交付 | [agent-chat-delivery-contract.md](01-mvp/agent-chat-delivery-contract.md) | 交付合同与演进记录：Query / Evaluator、业务工具、证据核准及答案交付；Event 工具结合 Sub-Chunk TRD 阅读。 |
 | 网页搜索供应商 | [deepseek-web-search-trd.md](03-product-reassessment/deepseek-web-search-trd.md) | 主 TRD：可选免 key DDGS / DeepSeek API、查询边界、错误处理与真实入口验证。 |

@@ -13,6 +13,7 @@ from pydantic import PrivateAttr
 
 from .agent_model.context import ContextWindowPolicy
 from .agent_model.deepagents import DeepAgentsSupervisorModel, DeepAgentSessionStore
+from .openai.structured import OpenAIStructuredToolAgentModel
 from .personal_endpoint import PersonalModelTarget, personal_http_client
 
 
@@ -39,6 +40,11 @@ class _PersonalChatModel(BaseChatModel):
 
     def close(self) -> None:
         self._http.close()
+
+    def bind_tools(self, tools, *, tool_choice=None, **kwargs):
+        # The structured Agent loop binds its tools through LangChain before
+        # invoking this transport. Keep protocol conversion inside _generate.
+        return self.bind(tools=list(tools), tool_choice=tool_choice, **kwargs)
 
     _receipt: dict = PrivateAttr(default_factory=dict)
 
@@ -78,6 +84,8 @@ class _PersonalChatModel(BaseChatModel):
         key = target.api_key.get_secret_value()
         tools = kwargs.get("tools") or []
         choice = kwargs.get("tool_choice") if tools else None
+        if choice == "any":
+            choice = "required"
         timeout = kwargs.get("timeout")
         try:
             if target.protocol == "gemini":
@@ -159,6 +167,11 @@ class _PersonalSupervisor(DeepAgentsSupervisorModel):
         self._chat_model.close()
 
 
+class _PersonalStructured(OpenAIStructuredToolAgentModel):
+    def close(self) -> None:
+        self._chat_model.close()
+
+
 def build_personal_supervisor(target: PersonalModelTarget, *, session_store: DeepAgentSessionStore,
                               request_timeout_seconds: float, max_output_tokens: int, max_input_chars: int,
                               context_window_policy: ContextWindowPolicy, total_timeout_enabled: bool,
@@ -170,6 +183,25 @@ def build_personal_supervisor(target: PersonalModelTarget, *, session_store: Dee
             request_timeout_seconds=request_timeout_seconds, max_input_chars=max_input_chars,
             context_window_policy=context_window_policy, total_timeout_enabled=total_timeout_enabled,
             supports_vision_input=target.supports_vision, chat_model=_PersonalChatModel(target, http, max_output_tokens),
+        )
+    except BaseException:
+        http.close()
+        raise
+
+
+def build_personal_structured(target: PersonalModelTarget, *, request_timeout_seconds: float,
+                              max_output_tokens: int, max_input_chars: int,
+                              context_window_policy: ContextWindowPolicy,
+                              allow_local: bool) -> OpenAIStructuredToolAgentModel:
+    http = personal_http_client(target, allow_local=allow_local, timeout=request_timeout_seconds)
+    try:
+        return _PersonalStructured(
+            model=target.model_id, provider_name=target.protocol,
+            request_timeout_seconds=request_timeout_seconds,
+            max_output_tokens=max_output_tokens, max_input_chars=max_input_chars,
+            context_window_policy=context_window_policy,
+            supports_vision_input=target.supports_vision,
+            chat_model=_PersonalChatModel(target, http, max_output_tokens),
         )
     except BaseException:
         http.close()

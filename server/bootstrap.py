@@ -212,21 +212,22 @@ def _build_application_services(
     construction_cleanup.callback(supervisor_sessions.close)
     gateway_client = GatewayClient(gateway_config, supervisor_sessions=supervisor_sessions, allow_local_endpoints=settings.auth.mode == "local")
     construction_cleanup.callback(gateway_client.close)
-    agent_binding = gateway_config.resolve_model_binding("agent")
-    if fallback_agent_model is not None and agent_binding.fallback is not None:
-        agent_binding = agent_binding.model_copy(update={
-            "fallback": agent_binding.fallback.model_copy(update={"model": fallback_agent_model}),
-        })
-    agent_model_factory = gateway_client.create_agent_factory(agent_binding)
     independent_supervisor = "supervisor" in gateway_config.normalized_models
-    supervisor_binding = (
-        gateway_config.resolve_model_binding("supervisor")
-        if independent_supervisor else agent_binding
-    )
-    supervisor_model_factory = (
-        gateway_client.create_agent_factory(supervisor_binding)
-        if independent_supervisor else agent_model_factory
-    )
+    if independent_supervisor:
+        # The selected Supervisor binding owns both roles; do not allocate a
+        # separate global agent factory that no Chat runtime can consume.
+        agent_model_factory = None
+        supervisor_binding = gateway_config.resolve_model_binding("supervisor")
+        supervisor_model_factory = gateway_client.create_agent_factory(supervisor_binding)
+    else:
+        agent_binding = gateway_config.resolve_model_binding("agent")
+        if fallback_agent_model is not None and agent_binding.fallback is not None:
+            agent_binding = agent_binding.model_copy(update={
+                "fallback": agent_binding.fallback.model_copy(update={"model": fallback_agent_model}),
+            })
+        agent_model_factory = gateway_client.create_agent_factory(agent_binding)
+        supervisor_binding = agent_binding
+        supervisor_model_factory = agent_model_factory
     query_hook_model = (
         gateway_client.create_generative_model("query_hook")
         if gateway_config.query_hook.enabled and "query_hook" in gateway_config.normalized_models
@@ -367,40 +368,10 @@ def _build_application_services(
         heartbeat_interval=settings.mq.heartbeat_interval,
     )
     construction_cleanup.callback(realtime_service.close)
-    query_model_name = settings.agent_query_model or agent_model_config.model
     chat_model_name = settings.agent_chat_model or agent_model_config.model
-    def build_agent_runtime(agent_config: AgentServiceConfig) -> AgentRuntime:
-        _validate_cloud_agent_timeout(settings, agent_config)
-        if settings.auth.mode == "cloud":
-            agent_config = replace(agent_config, limits_enabled=True)
-        request_timeout = min(
-            timeout for timeout in (
-                settings.agent_request_timeout_seconds,
-                agent_config.execution_timeout_seconds,
-                agent_model_config.request_timeout_seconds,
-            ) if timeout is not None
-        )
-        max_output_tokens = min(
-            agent_config.max_output_tokens,
-            agent_model_config.max_output_tokens,
-        )
-        context_window_policy = ContextWindowPolicy(
-            context_window_tokens=agent_config.context_window_tokens,
-            output_reserve_tokens=max_output_tokens,
-            safety_margin_tokens=agent_config.context_safety_margin_tokens,
-            auto_compact_tokens=agent_config.auto_compact_tokens,
-            compact_target_tokens=agent_config.compact_target_tokens,
-        )
+    def build_agent_runtime(agent_config: AgentServiceConfig, query_model) -> AgentRuntime:
         return AgentRuntime(
-            agent_model_factory.build_structured(
-                model=query_model_name,
-                request_timeout_seconds=request_timeout,
-                max_output_tokens=max_output_tokens,
-                max_input_chars=agent_config.max_prompt_chars,
-                context_window_policy=context_window_policy,
-                reasoning_effort=agent_config.query_reasoning_effort,
-                mcp=False,
-            ),
+            query_model,
             retrieval.search,
             event_retrieve=event_retrieval.search if event_retrieval is not None else None,
             video_outline=library.get_video_outline,
@@ -422,50 +393,10 @@ def _build_application_services(
             retrieval_channel="lexical",
         )
     def build_supervisor_runtime(
-        video_runtime: AgentRuntime, agent_config: AgentServiceConfig,
-        binding: ModelBinding, model_factory: AgentModelFactory, target: PersonalModelTarget | None,
-        harness: str,
+        video_runtime: AgentRuntime, agent_config: AgentServiceConfig, supervisor_model,
     ) -> SupervisorRuntime:
-        _validate_cloud_agent_timeout(settings, agent_config)
-        if settings.auth.mode == "cloud":
-            agent_config = replace(agent_config, limits_enabled=True)
-        request_timeout = min(
-            timeout for timeout in (
-                settings.agent_request_timeout_seconds,
-                agent_config.execution_timeout_seconds if agent_config.total_timeout_enabled else None,
-                binding.request_timeout_seconds,
-            ) if timeout is not None
-        )
-        max_output_tokens = min(
-            agent_config.max_output_tokens,
-            binding.max_output_tokens,
-        )
-        context_window_policy = ContextWindowPolicy(
-            context_window_tokens=agent_config.context_window_tokens,
-            output_reserve_tokens=max_output_tokens,
-            safety_margin_tokens=agent_config.context_safety_margin_tokens,
-            auto_compact_tokens=agent_config.auto_compact_tokens,
-            compact_target_tokens=agent_config.compact_target_tokens,
-        )
-        model_limits = dict(
-            request_timeout_seconds=request_timeout, max_output_tokens=max_output_tokens,
-            max_input_chars=agent_config.max_prompt_chars, context_window_policy=context_window_policy,
-            total_timeout_enabled=agent_config.total_timeout_enabled,
-        )
-        if target:
-            from gateway.personal_models import build_personal_supervisor
-
-            supervisor = build_personal_supervisor(
-                target, session_store=supervisor_sessions, allow_local=settings.auth.mode == "local", **model_limits,
-            )
-        else:
-            supervisor = model_factory.build_supervisor(
-                harness=harness, mcp=harness == "codex",
-                model=binding.model, **model_limits,
-                reasoning_effort=binding.reasoning_effort if binding.reasoning_effort is not None else agent_config.supervisor_reasoning_effort,
-            )
         return SupervisorRuntime(
-            video_runtime, supervisor,
+            video_runtime, supervisor_model,
             WebSearcher(gateway_config.web_search),
             realtime_runtime=RealtimeUnderstandingRuntime(
                 host=realtime_service,
@@ -496,11 +427,94 @@ def _build_application_services(
         model_factory: AgentModelFactory = supervisor_model_factory, target: PersonalModelTarget | None = None,
         harness: str = gateway_config.supervisor_harness,
     ) -> SupervisorRuntime:
-        query_runtime = build_agent_runtime(agent_config)
+        _validate_cloud_agent_timeout(settings, agent_config)
+        if settings.auth.mode == "cloud":
+            agent_config = replace(agent_config, limits_enabled=True)
+        # Assemble the selected Supervisor's model controls once. Both roles
+        # consume the same binding, output budget, character guard and deadline.
+        request_timeout = min(
+            timeout for timeout in (
+                settings.agent_request_timeout_seconds,
+                agent_config.execution_timeout_seconds if agent_config.total_timeout_enabled else None,
+                binding.request_timeout_seconds,
+            ) if timeout is not None
+        )
+        max_output_tokens = min(agent_config.max_output_tokens, binding.max_output_tokens)
+        max_prompt_chars = (
+            min(agent_config.max_prompt_chars, binding.max_input_chars)
+            if binding.max_input_chars is not None else agent_config.max_prompt_chars
+        )
+        agent_config = replace(agent_config, max_prompt_chars=max_prompt_chars)
+        context_window_policy = ContextWindowPolicy(
+            context_window_tokens=agent_config.context_window_tokens,
+            output_reserve_tokens=max_output_tokens,
+            safety_margin_tokens=agent_config.context_safety_margin_tokens,
+            auto_compact_tokens=agent_config.auto_compact_tokens,
+            compact_target_tokens=agent_config.compact_target_tokens,
+        )
+        model_name = target.model_id if target is not None else binding.model
+        # A personal ChatAPI target has no reasoning-effort feature; it reuses
+        # the target model/protocol/vision rather than a global model.
+        if target is not None:
+            reasoning_effort = "none"
+        elif binding.reasoning_effort is not None:
+            reasoning_effort = binding.reasoning_effort
+        else:
+            reasoning_effort = agent_config.supervisor_reasoning_effort
+
+        def close_model(model) -> None:
+            close = getattr(model, "close", None)
+            if callable(close):
+                close()
+
+        if target is not None:
+            from gateway.personal_models import build_personal_structured, build_personal_supervisor
+
+            query_model = build_personal_structured(
+                target, request_timeout_seconds=request_timeout,
+                max_output_tokens=max_output_tokens, max_input_chars=max_prompt_chars,
+                context_window_policy=context_window_policy,
+                allow_local=settings.auth.mode == "local",
+            )
+        else:
+            query_model = model_factory.build_structured(
+                model=model_name, request_timeout_seconds=request_timeout,
+                max_output_tokens=max_output_tokens, max_input_chars=max_prompt_chars,
+                context_window_policy=context_window_policy,
+                reasoning_effort=reasoning_effort, mcp=False,
+            )
         try:
-            return build_supervisor_runtime(query_runtime, agent_config, binding, model_factory, target, harness)
-        except Exception:
-            query_runtime.close()
+            if target is not None:
+                supervisor_model = build_personal_supervisor(
+                    target, session_store=supervisor_sessions,
+                    allow_local=settings.auth.mode == "local",
+                    request_timeout_seconds=request_timeout,
+                    max_output_tokens=max_output_tokens, max_input_chars=max_prompt_chars,
+                    context_window_policy=context_window_policy,
+                    total_timeout_enabled=agent_config.total_timeout_enabled,
+                )
+            else:
+                supervisor_model = model_factory.build_supervisor(
+                    harness=harness, mcp=harness == "codex", model=model_name,
+                    request_timeout_seconds=request_timeout,
+                    max_output_tokens=max_output_tokens, max_input_chars=max_prompt_chars,
+                    context_window_policy=context_window_policy,
+                    total_timeout_enabled=agent_config.total_timeout_enabled,
+                    reasoning_effort=reasoning_effort,
+                )
+        except BaseException:
+            close_model(query_model)
+            raise
+        query_runtime = None
+        try:
+            query_runtime = build_agent_runtime(agent_config, query_model)
+            return build_supervisor_runtime(query_runtime, agent_config, supervisor_model)
+        except BaseException:
+            if query_runtime is not None:
+                query_runtime.close()
+            else:
+                close_model(query_model)
+            close_model(supervisor_model)
             raise
 
     model_settings = ModelSettings(settings.model_config_path, allow_local=settings.auth.mode == "local",
