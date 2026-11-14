@@ -20,7 +20,10 @@ from gateway.config import (
     EmbeddingModelBinding, ModelBinding,
     OpenAIAudioSourceConfig, OpenAIModelSourceConfig, load_config,
 )
+from gateway import personal_models
+from gateway.personal_endpoint import PersonalModelTarget
 from gateway.rerank import RerankScore
+from pydantic import SecretStr
 
 from server import bootstrap, main as main_module
 from server.caller import CallerResources
@@ -389,7 +392,7 @@ def test_process_assembly_receives_runtime_configuration(
             "source": "codex_local" if supervisor_backend == "codex" else "deepseek_api",
             "model": "independent-supervisor-model",
             "supports_vision_input": supervisor_backend == "codex",
-            "reasoning_effort": "low",
+            "reasoning_effort": "max",
             "request_timeout_seconds": supervisor_timeout,
             "max_output_tokens": 1024,
             "max_input_chars": 80_000,
@@ -464,7 +467,7 @@ def test_process_assembly_receives_runtime_configuration(
     real_build_supervisor = bootstrap.AgentModelFactory.build_supervisor
 
     def build_structured(factory, **kwargs):
-        structured_builds.append(kwargs)
+        structured_builds.append({**kwargs, "binding": factory._binding})
         return real_build_structured(factory, **kwargs)
 
     def build_loop(factory, **kwargs):
@@ -520,26 +523,38 @@ def test_process_assembly_receives_runtime_configuration(
         assert runtime._frame_max_height == 480
         assert runtime._maximum_frame_inspections == 5
         assert runtime._retrieval_channel == "lexical"
-        assert runtime._query_model.model_name == expected_models[0]
-        assert runtime._query_model.request_timeout_seconds == expected_agent_timeout
-        assert runtime._query_model.provider_name == "deepseek"
-        assert runtime._query_model.reasoning_effort == "low"
-        # Only Query needs a separate structured agent binding.
+        supervisor_model = services.agent._runtime._model
+        expected_supervisor_timeout = expected_agent_timeout if supervisor_backend == "legacy" else expected_independent_timeout
+        expected_query_model = (
+            expected_models[1] if supervisor_backend == "legacy" else "independent-supervisor-model"
+        )
+        expected_reasoning = "high" if supervisor_backend == "legacy" else "max"
+        expected_max_output = 2048 if supervisor_backend == "legacy" else 1024
+        expected_max_input = 120_000 if supervisor_backend == "legacy" else 80_000
+        # Query inherits the selected Supervisor model and controls, not the
+        # separate global agent query model/reasoning settings.
+        assert runtime._query_model.model_name == expected_query_model
+        assert runtime._query_model.model_name == supervisor_model.model_name
+        assert runtime._query_model.request_timeout_seconds == expected_supervisor_timeout
+        assert runtime._query_model.provider_name == supervisor_model.provider_name
+        assert runtime._query_model.provider_name == ("codex" if supervisor_backend == "codex" else "deepseek")
+        assert runtime._query_model.reasoning_effort == expected_reasoning
+        # Only Query needs a structured agent binding.
         assert [options["mcp"] for options in structured_builds] == [False]
+        assert structured_builds[0]["binding"] is supervisor_builds[0]["binding"]
+        if supervisor_backend == "legacy":
+            assert services.agent_model_factory is not None
+        else:
+            assert services.agent_model_factory is None
         # JEV-only does not build a standalone rewriting loop model.
         assert loop_builds == []
-        supervisor_model = services.agent._runtime._model
         assert callable(supervisor_model.run_agent)
         assert callable(supervisor_model.confirm_turn)
         assert callable(supervisor_model.discard_turn)
-        assert supervisor_model.model_name == (
-            expected_models[1] if supervisor_backend == "legacy" else "independent-supervisor-model"
-        )
-        assert supervisor_model.provider_name == ("codex" if supervisor_backend == "codex" else "deepseek")
+        assert supervisor_model.model_name == expected_query_model
         assert supervisor_builds[0]["harness"] == ("deepagents" if supervisor_backend == "legacy" else supervisor_backend)
         assert supervisor_builds[0]["mcp"] is (supervisor_backend == "codex")
-        assert supervisor_builds[0]["reasoning_effort"] == ("high" if supervisor_backend == "legacy" else "low")
-        expected_supervisor_timeout = expected_agent_timeout if supervisor_backend == "legacy" else expected_independent_timeout
+        assert supervisor_builds[0]["reasoning_effort"] == expected_reasoning
         assert supervisor_builds[0]["request_timeout_seconds"] == expected_supervisor_timeout
         assert supervisor_builds[0]["total_timeout_enabled"] is total_timeout_enabled
         assert services.agent._runtime._total_timeout_enabled is total_timeout_enabled
@@ -548,23 +563,29 @@ def test_process_assembly_receives_runtime_configuration(
             if supervisor_backend == "codex" else supervisor_model._request_timeout_seconds
         )
         assert actual_supervisor_timeout == expected_supervisor_timeout
-        assert supervisor_builds[0]["max_output_tokens"] == (2048 if supervisor_backend == "legacy" else 1024)
-        assert supervisor_builds[0]["max_input_chars"] == 120_000
+        assert supervisor_builds[0]["max_output_tokens"] == expected_max_output
+        assert supervisor_builds[0]["max_input_chars"] == expected_max_input
+        assert runtime._query_model.max_output_tokens == expected_max_output
+        if supervisor_backend == "codex":
+            # Native harness owns its context window and character guard.
+            assert runtime._query_model.max_input_chars is None
+            assert runtime._query_model.context_window_policy is None
+        else:
+            assert runtime._query_model.max_input_chars == expected_max_input
+            assert runtime._query_model.context_window_policy == supervisor_model._context_window_policy
         if supervisor_backend != "legacy":
             assert supervisor_builds[0]["binding"].max_input_chars == 80_000
             assert supervisor_builds[0]["binding"].context_window_tokens == 32_000
             assert supervisor_builds[0]["binding"].fallback is None
-        assert runtime._query_model.fallback_provider_name == "ark"
-        assert runtime._query_model.fallback_model_name == "configured-fallback-model"
-        assert runtime._query_model.max_output_tokens == 2048
-        assert runtime._query_model.max_input_chars == 120_000
-        assert runtime._query_model.context_window_policy.maximum_input_tokens == 57_856
-        assert runtime._query_model.context_window_policy.auto_compact_tokens == 48_000
+            assert getattr(runtime._query_model, "fallback_model_name", None) is None
+        else:
+            assert runtime._query_model.fallback_provider_name == "ark"
+            assert runtime._query_model.fallback_model_name == "configured-fallback-model"
         assert runtime._max_model_calls == 4
         assert runtime._max_tool_calls == 2
         assert runtime._limits_enabled is True
         assert runtime._total_timeout_enabled is total_timeout_enabled
-        assert runtime._max_prompt_chars == 120_000
+        assert runtime._max_prompt_chars == expected_max_input
         assert runtime._max_tool_result_bytes == 16_384
         assert runtime._max_read_chars_per_call == 16_384
         assert runtime._max_catalog_items == 20
@@ -594,13 +615,14 @@ def test_process_assembly_receives_runtime_configuration(
             assert replacement._total_timeout_enabled is updated.total_timeout_enabled
             assert replacement._max_tool_result_bytes == 8_192
             assert replacement._max_read_chars_per_call == 4_096
-            assert replacement._query_model.reasoning_effort == "max"
+            assert replacement._query_model.reasoning_effort == ("none" if supervisor_backend == "legacy" else "max")
+            assert replacement._query_model.model_name == expected_query_model
             assert [options["mcp"] for options in structured_builds] == [False] * 2
             assert loop_builds == []
             assert callable(replacement_supervisor._model.run_agent)
             if supervisor_backend != "codex":
                 assert replacement_supervisor._model.session_store is supervisor_model.session_store
-            assert supervisor_builds[1]["reasoning_effort"] == ("none" if supervisor_backend == "legacy" else "low")
+            assert supervisor_builds[1]["reasoning_effort"] == ("none" if supervisor_backend == "legacy" else "max")
             assert supervisor_builds[1]["mcp"] is (supervisor_backend == "codex")
             replacement_request_timeout = min(
                 timeout for timeout in (
@@ -610,6 +632,10 @@ def test_process_assembly_receives_runtime_configuration(
                 ) if timeout is not None
             )
             assert supervisor_builds[1]["request_timeout_seconds"] == replacement_request_timeout
+            assert replacement._query_model.request_timeout_seconds == replacement_request_timeout
+            assert replacement._query_model.max_output_tokens == expected_max_output
+            if supervisor_backend != "codex":
+                assert replacement._query_model.context_window_policy == replacement_supervisor._model._context_window_policy
             assert supervisor_builds[1]["total_timeout_enabled"] is updated.total_timeout_enabled
             assert replacement_supervisor._total_timeout_enabled is updated.total_timeout_enabled
             assert services.agent.active_maximum_concurrent_kicks == 2
@@ -624,9 +650,36 @@ def test_process_assembly_receives_runtime_configuration(
                 assert alternative.model_name == "alternate-supervisor-model"
                 assert alternative._model.provider_name == "ark"
                 assert alternative._model.session_store is supervisor_model.session_store
-                assert alternative._video_runtime._query_model.model_name == expected_models[0]
+                assert alternative._video_runtime._query_model.model_name == "alternate-supervisor-model"
+                assert alternative._video_runtime._query_model.provider_name == "ark"
+                # The Ark structured adapter does not expose reasoning_effort;
+                # the selected binding still supplies the same build controls.
+                assert alternative._video_runtime._query_model.max_output_tokens == 512
+                assert structured_builds[-1]["binding"] is supervisor_builds[-1]["binding"]
+                assert structured_builds[-1]["reasoning_effort"] == "low"
                 assert supervisor_builds[-1]["max_output_tokens"] == 512
                 assert supervisor_builds[-1]["reasoning_effort"] == "low"
+        personal_target = PersonalModelTarget(
+            "openai_chat", "https://personal.example/v1", "personal-query-model",
+            SecretStr("personal-key"), False,
+        )
+        personal_builds = []
+        real_personal_structured = personal_models.build_personal_structured
+
+        def build_personal_structured(target, **kwargs):
+            personal_builds.append((target, kwargs))
+            return real_personal_structured(target, **kwargs)
+
+        monkeypatch.setattr(personal_models, "build_personal_structured", build_personal_structured)
+        personal_runtime = services.agent._personal_runtime_factory(personal_target, updated)
+        try:
+            assert personal_builds[0][0] is personal_target
+            assert personal_builds[0][1]["max_input_chars"] == expected_max_input
+            assert personal_runtime._video_runtime._query_model.model_name == "personal-query-model"
+            assert personal_runtime._video_runtime._query_model.provider_name == "openai_chat"
+            assert personal_runtime._model.model_name == "personal-query-model"
+        finally:
+            personal_runtime.close()
         app = create_app(services, settings=settings)
         assert app.state.sse_config == settings.sse
     finally:

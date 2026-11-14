@@ -6,10 +6,15 @@
 
 `model_sources` 描述连接方式，`agent_model.source` 选择其中一个来源。`adapter`
 决定协议实现，`provider` 只用于 provenance、用量和价格归属，OpenAI 兼容协议的
-`profile` 处理不同 API 方言。版本 2 的 `models.agent` 与 `models.supervisor` 可分别绑定来源；
-旧配置没有独立 Supervisor 绑定时沿用 Agent 来源。
-`SEEKINO_AGENT_QUERY_MODEL`、`SEEKINO_AGENT_EVALUATOR_MODEL` 和
-`SEEKINO_AGENT_CHAT_MODEL` 仍可覆盖各角色的模型名。
+`profile` 处理不同 API 方言。Chat 的 Query 子任务复用当前选中的 Supervisor 模型配置，
+包括来源、模型、主备、思考档位与调用控制；切换会话模型时也随之切换。
+旧配置没有独立 `models.supervisor` 时，以 `models.agent` 及已有 Chat 环境覆盖作为整个
+Chat 的默认配置。旧独立 Query／Evaluator 模型覆盖仍可被兼容入口读取，
+`SEEKINO_AGENT_QUERY_MODEL` 不再单独控制 Chat 子任务的模型。
+
+API Agent 的 Deep Agents、structured 和工具循环复用同一模型容量解析入口及缓存。
+在 Supervisor 绑定启用 `auto_compact_ratio` 后，Chat 父子使用相同动态窗口和主备安全预算；
+字符数、超时、输出和工具次数保护继续生效。原生 runtime 仍自行管理上下文。
 
 内部 Supervisor 支持 `supervisor_harness=deepagents` 和 `codex`，按配置选择。
 Deep Agents 路径通过 `AgentModelFactory.build_deep_agent()` 使用 SDK；SDK 负责模型／工具
