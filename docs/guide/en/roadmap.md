@@ -12,7 +12,7 @@ None of these have dates yet. Which one do you want first? Tell us in the commun
 
 ## Join the community
 
-- **Community group** · `[xxx]`
+- **QQ group** · `1127823767`
 - **Bugs and ideas** · [GitHub Issues](https://github.com/owariband/Seekino/issues)
 
 [owariband/Seekino](https://github.com/owariband/Seekino) — If Seekino saved you one drag of the progress bar, give it a Star on GitHub.

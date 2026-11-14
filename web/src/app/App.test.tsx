@@ -462,7 +462,7 @@ describe("application shell", () => {
     expect(screen.getByRole("img", { name: /EP 07/ })).toHaveAttribute("src", "/docs/guide/media/recall-self-attention.png");
     await userEvent.click(within(docsNav).getByRole("link", { name: "未来计划" }));
     expect(await screen.findByRole("heading", { level: 1, name: "说出一个名字，列出 TA 出场的每一秒" })).toBeInTheDocument();
-    expect(screen.getByText("[xxx]")).toBeInTheDocument();
+    expect(screen.getByText("1127823767")).toBeInTheDocument();
   });
 
   it("opens the English guide from a deep link and follows relative Markdown links", async () => {

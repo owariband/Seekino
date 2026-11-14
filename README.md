@@ -22,10 +22,10 @@
 
 公开课 *Neural Networks: Zero to Hero* 共 8 集、14.6 小时。Seekino 可以跨集回答这类问题；而在观看页，你还能直接定位到某一秒。
 
-**在视频里找一句话。** 按 `⌘F` / `Ctrl+F`（或点播放器右下角的放大镜），输入记得的台词或画面文字。结果带着本集位置出现，点一下，播放器就停在那一秒。
+**在视频里找一句话。** 按 `⌘F` / `Ctrl+F`（或点播放器右下角的放大镜），输入记得的台词或画面文字。结果带着本集位置出现，点一下，播放器就停在那一秒。比如在《BanG Dream! It's MyGO!!!!!》第 4 集搜「春日影」，点 20:39 的结果，就跳到乐谱那一幕。
 
 <p align="center">
-  <img src="assets/readme/demo-find.gif" width="860" alt="观看页按 ⌘F 输入 most important，结果定位到第 7 集 62:00" />
+  <img src="assets/readme/demo-find.gif" width="860" alt="观看页按 ⌘F 搜索「春日影」，结果定位到《BanG Dream! It's MyGO!!!!!》第 4 集 20:39 的乐谱" />
 </p>
 
 **看到一半有问题，就地问。** 打开播放器旁的 Kino，问「刚才这段在讲什么？」它知道你看到哪里，回答里附一张能回看的片段卡。
@@ -117,4 +117,4 @@ codex mcp add seekino_local --url http://127.0.0.1:9621/mcp
 - [motion-showreel](https://github.com/ConardLi/garden-skills/tree/2b9a89340b70f632d31c0f1c69fce94a7912423e/skills/motion-showreel) 提供代码动画与分层合成脚本，使用 [MIT](server/skills/motion-showreel/LICENSE)。
 - 界面字体 Inter 使用 [SIL Open Font License 1.1](web/public/assets/fonts/Inter-LICENSE.txt)。
 
-遇到问题或有改进建议，可以到 [GitHub Issues](https://github.com/owariband/Seekino/issues) 反馈。
+遇到问题或有改进建议，可以到 [GitHub Issues](https://github.com/owariband/Seekino/issues) 反馈，或加入 QQ 交流群 **1127823767**。

@@ -12,7 +12,7 @@
 
 ## 加入交流
 
-- **交流群** · `[xxx]`
+- **QQ 交流群** · `1127823767`
 - **问题与建议** · [GitHub Issues](https://github.com/owariband/Seekino/issues)
 
 [owariband/Seekino](https://github.com/owariband/Seekino) — 如果 Seekino 帮你省下了一次拖进度条，在 GitHub 上点个 Star 吧。

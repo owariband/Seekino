@@ -22,10 +22,10 @@
 
 *Neural Networks: Zero to Hero* runs for 14.6 hours across 8 episodes. Seekino can answer that across the series; inside the player, you can also jump straight to a line.
 
-**Find a line inside the video.** Press `⌘F` / `Ctrl+F` (or click the magnifier in the player) and type a line you remember. Results carry their position in this episode; click one and playback lands on that second.
+**Find a line inside the video.** Press `⌘F` / `Ctrl+F` (or click the magnifier in the player) and type a line you remember. Results carry their position in this episode; click one and playback lands on that second. For example, search “春日影” in *BanG Dream! It's MyGO!!!!!* episode 4 and click the 20:39 result to land on the sheet music.
 
 <p align="center">
-  <img src="assets/readme/demo-find.gif" width="860" alt="Find in the watch page: press ⌘F, type most important, and land on episode 7 at 62:00" />
+  <img src="assets/readme/demo-find.gif" width="860" alt="Find in the watch page: press ⌘F, search 春日影, and land on the sheet music at 20:39 in MyGO episode 4" />
 </p>
 
 **Ask while you watch.** Open Kino beside the player and ask “What was that part about?” It knows your current position, and the answer includes a clip card you can replay.
@@ -117,4 +117,4 @@ This repository does not currently specify a license for Seekino as a whole. The
 - [motion-showreel](https://github.com/ConardLi/garden-skills/tree/2b9a89340b70f632d31c0f1c69fce94a7912423e/skills/motion-showreel) supplies scripts for animating graphics and compositing layers under the [MIT License](server/skills/motion-showreel/LICENSE).
 - The Inter typeface uses the [SIL Open Font License 1.1](web/public/assets/fonts/Inter-LICENSE.txt).
 
-Have a question or a suggestion? Open a [GitHub issue](https://github.com/owariband/Seekino/issues).
+Have a question or a suggestion? Open a [GitHub issue](https://github.com/owariband/Seekino/issues), or join the QQ group **1127823767**.
