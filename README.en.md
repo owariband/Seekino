@@ -20,16 +20,26 @@
 
 > Which episode explains self-attention, and at what minute?
 
-*Neural Networks: Zero to Hero* runs for 14.6 hours across 8 episodes. In this [Seekino Cloud](https://seekino.hypn0s.cloud) example, one clip in the answer points to **episode 7, 71:00–71:40**. Play it to hear Karpathy explain the single attention head he has just implemented.
+*Neural Networks: Zero to Hero* runs for 14.6 hours across 8 episodes. Seekino can answer that across the series; inside the player, you can also jump straight to a line.
 
-![Cloud screenshot from 2026-11-10: a playable clip from episode 7 and timestamps for the discussion of self-attention](docs/guide/media/recall-self-attention.png)
+**Find a line inside the video.** Press `⌘F` / `Ctrl+F` (or click the magnifier in the player) and type a line you remember. Results carry their position in this episode; click one and playback lands on that second.
 
-Open the course on Cloud and try the same question. Play the clip to hear the explanation, then ask “Why did he write the code that way?” The assistant can use your current playback position. The public courses and animation samples are available to guests.
+<p align="center">
+  <img src="assets/readme/demo-find.gif" width="860" alt="Find in the watch page: press ⌘F, type most important, and land on episode 7 at 62:00" />
+</p>
+
+**Ask while you watch.** Open Kino beside the player and ask “What was that part about?” It knows your current position, and the answer includes a clip card you can replay.
+
+<p align="center">
+  <img src="assets/readme/demo-ask.gif" width="860" alt="Ask Kino beside the player and get a clip card for episode 7, 61:00–61:56" />
+</p>
+
+You can also ask the opening question on Cloud and let Seekino find it across episodes; the answer carries playable clip cards. The public courses and animation samples are available to guests.
 
 ## Features
 
 - **Find a scene from what you remember.** Try “someone waiting at a door in the rain,” even if you don't know the episode. If you have a still image, send it to the assistant. Each clip includes the source video and time range so you can watch what happens before and after.
-- **Choose which part of a course to watch.** Browse the series overview and episode outline, then pick a passage. You can ask questions beside the player without copying a timestamp or taking a screenshot.
+- **Choose which part of a course to watch.** Browse the series overview and episode outline, then pick a passage. Press `⌘F` in the player to find a line, or ask Kino beside it, without copying a timestamp or taking a screenshot.
 - **Build a library of your own footage.** Group uploads by series and track their progress. You can retry a failed job or search an indexed video as often as you like. The usage page shows recorded tokens and API cost estimates where available.
 - **Give your editing assistant the original clip.** Connect Claude Code or Codex through MCP to find footage, check the source and fetch the selected passage. With edit access to a series, you can also save motion effects code, source references and feedback there for the next edit.
 
