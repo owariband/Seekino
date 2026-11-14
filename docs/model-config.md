@@ -197,11 +197,13 @@ models:
     max_input_chars: 400000
 ```
 
-保留现有 `models.agent` 即可继续为视频 Query、Evaluator 和 Chat 使用原来的 API 模型。`models.supervisor` 的来源、模型、推理和预算独立保存，不接受 `SEEKINO_AGENT_CHAT_MODEL` 或 `SEEKINO_AGENT_FALLBACK_MODEL` 覆盖。显式 `reasoning_effort` 优先，否则使用 `agent_runtime.supervisor_reasoning_effort`。模型绑定的超时、输出和上下文预算与已有 Agent 运行限制共同生效；例如本轮截止时间仍受 `agent_runtime.execution_timeout_seconds` 和 `supervisor_timeout_seconds` 约束。Codex 的 `max_output_tokens` 用于预算预留，不保证协议硬截断。
+Chat 的 Query 子任务复用当前 Supervisor 的模型配置，包括来源、模型名、主备、思考档位及模型调用控制；会话切换 YAML 模型或个人端点时，子任务也随本轮选择切换。Query 保留自己的 prompt、工具和结构化报告，不再从 `models.agent`、`SEEKINO_AGENT_QUERY_MODEL` 或 `agent_runtime.query_reasoning_effort` 单独取 Chat 子任务的模型配置。没有独立 `models.supervisor` 的旧配置仍以 `models.agent` 及已有 Chat 环境覆盖作为整个 Chat 的兼容默认；旧字段的读取与其他显式调用方不因此删除。
+
+独立 `models.supervisor` 不接受 `SEEKINO_AGENT_CHAT_MODEL` 或 `SEEKINO_AGENT_FALLBACK_MODEL` 覆盖。显式 `reasoning_effort` 优先，否则父子均使用 `agent_runtime.supervisor_reasoning_effort`。模型绑定的超时、输出和上下文预算与本轮应用限制共同生效；例如总执行和各阶段仍受 `execution_timeout_seconds`、`supervisor_timeout_seconds`、`stage_timeout_seconds` 约束，工具次数和结果大小仍由 Agent runtime 管理。Codex 的 `max_output_tokens` 用于预算预留，不保证协议硬截断。
 
 使用 Deep Agents 时将 `supervisor_harness` 改为 `deepagents`，并将 `models.supervisor` 设为 OpenAI 兼容或 Ark API 模型，例如沿用 `models.agent` 中的 DeepSeek 与 Ark 回退绑定。该路径由 Deep Agents 管理模型和工具循环；Codex 路径由原生 Codex runtime 执行同一 Supervisor 业务工具。Codex harness 要求 `codex_app_server` 来源，不接受 `fallback`；Deep Agents 只接受 API 来源及单层 Ark API 回退，配置错配明确报错，不自动切换 harness。
 
-### Deep Agents 按模型窗口触发压缩
+### Chat 与工具 Agent 按模型窗口触发压缩
 
 可以在实际承担 Supervisor 的 API 模型绑定中显式启用比例策略：
 
@@ -212,11 +214,13 @@ models:
     auto_compact_ratio: 0.85
 ```
 
-该字段默认不设置，保留现有绝对 token 策略。设置后，Gateway 在构建 Deep Agents Supervisor 时通过同一连接的模型列表读取选中模型的 `context_window`，按 factory、来源和模型缓存；切换到不同模型时重新解析，新建 factory 或重载配置后刷新。不在每次模型推理前查询。当前自动发现接入 OpenAI 兼容来源；Ark 或未提供该字段的来源使用模型绑定中声明的 `context_window_tokens`，并在解析日志中区分 `metadata` 与 `binding`。请求失败／缺少能力字段会告警；没有可用声明时保留原共享策略，不猜测容量。
+该字段默认不设置，保留现有绝对 token 策略。设置后，Gateway 的统一 Agent 控制入口通过同一连接的模型列表读取选中模型的 `context_window`；Deep Agents、structured Agent 和工具循环复用这条解析路径。Chat 父子共用当前模型的 binding/factory，因此同一来源／模型的能力发现复用缓存。切换模型时重新解析，新建 factory 或重载配置后刷新，不在每次模型推理前查询。当前自动发现接入 OpenAI 兼容来源；Ark 或未提供该字段的来源使用模型绑定中声明的 `context_window_tokens`，并在解析日志中区分 `metadata` 与 `binding`。请求失败／缺少能力字段会告警；没有可用声明时保留原共享策略，不猜测容量。
 
 触发值为 `min(floor(context_size × auto_compact_ratio), context_size - requested_output_tokens - safety_margin_tokens - 1)`。此模式中的原 binding/runtime 窗口用于缺少模型能力时的回退，不再作为固定的 64k 窗口覆盖已发现的模型容量。配置了 API fallback 时按主备各自的能力／声明取较小容量。主模型与回退的实际输出预算、安全余量、字符控制继续保留；供应商的最大输出能力不会替换本轮请求的输出上限。
 
-最近消息保留预算沿用原共享策略，并确保小于新触发值；它不包含摘要、system prompt 和工具定义，不能直接作为完整压缩后输入。此策略仍为同步摘要，不包含后台 compact。当前消费者是内部 Deep Agents Supervisor，普通 Query/Parse 工具循环、原生 Codex/Claude 及个人 BYOK Supervisor 的预算行为保持原路径。
+最近消息保留预算沿用原共享策略，并确保小于新触发值；它不包含摘要、system prompt 和工具定义，不能直接作为完整压缩后输入。Deep Agents 的摘要与 structured Query 的本地窗口替换仍由各自运行时执行，本策略不包含后台 compact。应用字符保护 `max_prompt_chars` 与模型 `max_input_chars` 仍取较小值，可能先于 token 阈值触发；动态容量不会静默取消这项保护，也不另设 Query 专属限制。
+
+原生 Codex／Claude 继续由原生 runtime 管上下文，不套 API 窗口。个人 ChatAPI 端点的父子共用所选端点和既有调用控制，structured 子任务使用同一协议适配，不回到全局 API 模型；该端点路径没有新增模型容量自动发现或 fallback 能力。Parse 的生成调用与冻结任务快照沿用原合同。
 
 ### Deep Agents checkpoint 持久化
 
@@ -616,7 +620,7 @@ Ollama 不需要 API Key，使用原生 `/api/embed`。文档直接编码，查�
 
 `GatewayConfig.resolve_model_binding(ref)` 和 `resolve_embedding_binding(ref)` 返回完整绑定，保留所有显式超时、输出、推理、上下文和回退参数。传入已冻结绑定时不会重新应用环境覆盖。`model_dump()` 的 `normalized_models` 保存归一结果，可直接加载回原配置。
 
-现有环境覆盖集中在 Gateway resolver：转写 `SEEKINO_TRANSCRIPT_MODEL`，视觉 `SEEKINO_VIDEO_MODEL`，Agent 优先 `SEEKINO_AGENT_CHAT_MODEL` 再 `SEEKINO_DEEPSEEK_CHAT_MODEL`，Query/Evaluator 使用对应 `SEEKINO_AGENT_QUERY_MODEL` / `SEEKINO_AGENT_EVALUATOR_MODEL`，Agent 回退使用 `SEEKINO_AGENT_FALLBACK_MODEL`，重排使用 `SEEKINO_RERANK_MODEL`。向量默认引用使用 `SEEKINO_VIDEO_EMBEDDING_MODEL` / `SEEKINO_VIDEO_EMBEDDING_FPS`，视觉回退开关使用 `SEEKINO_FALLBACK_ENABLED`。空白模型覆盖忽略；覆盖模型名不会切换来源和协议，任意自定义引用不继承 Agent 默认模型覆盖。
+现有环境覆盖集中在 Gateway resolver：转写 `SEEKINO_TRANSCRIPT_MODEL`，视觉 `SEEKINO_VIDEO_MODEL`，Agent 优先 `SEEKINO_AGENT_CHAT_MODEL` 再 `SEEKINO_DEEPSEEK_CHAT_MODEL`，旧独立 Query/Evaluator 引用保留对应 `SEEKINO_AGENT_QUERY_MODEL` / `SEEKINO_AGENT_EVALUATOR_MODEL` 解析，Agent 回退使用 `SEEKINO_AGENT_FALLBACK_MODEL`，重排使用 `SEEKINO_RERANK_MODEL`。Chat 子任务跟随本轮 Supervisor，不读取单独的 Query 模型覆盖。向量默认引用使用 `SEEKINO_VIDEO_EMBEDDING_MODEL` / `SEEKINO_VIDEO_EMBEDDING_FPS`，视觉回退开关使用 `SEEKINO_FALLBACK_ENABLED`。空白模型覆盖忽略；覆盖模型名不会切换来源和协议，任意自定义引用不继承 Agent 默认模型覆盖。
 
 预算归一遵循以下规则：显式绑定字段优先；缺省超时为旧 Parse 的 600 秒；支持输出预算的生成协议缺省取 `agent_runtime.max_output_tokens`，再取旧 Agent 的输出预算。文本上下文、余量、输入字符数和压缩阈值继承 `agent_runtime`；若旧配置没有对应字段，使用兼容值 128000 / 2048 / 400000。声明视觉输入的绑定缺省使用 128000 token、2048 余量和 400000 字符，避免旧视觉 65536 输出预算受到文本 64000 窗口限制。
 

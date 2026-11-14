@@ -41,6 +41,11 @@ Schema 错误和重试提示、写入的 batch/revision 回执不会被笼统改
 连接、预算和回退从配置解析，供应商实例创建与关闭均在 Gateway 内完成。Engine
 和 Server 保留抽帧、转写提示词、时间戳归一、检索候选身份与任务状态等业务职责。
 
+同一 Chat 的 Supervisor 与 Query 子任务复用当前所选 binding/factory。Deep Agents、
+structured Agent 与工具循环通过同一控制入口解析模型容量、比例压缩和主备安全窗口，
+复用模型能力缓存；角色 prompt、工具和执行次数限制仍分别由 Agent runtime 管理。
+应用字符保护继续生效，原生 runtime 继续自行管理上下文，详见[模型配置](../docs/model-config.md#chat-与工具-agent-按模型窗口触发压缩)。
+
 HTTP 生成模型在创建时读取 `ModelBinding.stream`，默认 `true`，显式 `false` 使用完整响应；
 主模型与 fallback 分别保留自己的配置，不按 Kimi profile 或业务入口决定开关。
 Chat、Deep Agents、结构化工具、视觉 JSON 和 Ark 视频转写复用 `streaming/` 的协议接收。
