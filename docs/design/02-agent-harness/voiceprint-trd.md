@@ -14,6 +14,12 @@ ASR 可能把多个人的发言合进同一条 cue，Refine 也可能根据单�
 
 ## 实验与运行记录
 
+## 2026-11-14 后续：CONFLICT 先预填 top1，保留原身份评分供 Refine 审核
+
+EP04 v2 的爱音对照句声纹 top1 正确，实际输入仍为若葉睦。核对发现 B0 初始实现 `356677a9` 就只允许 ACCEPT 自动预填；原身份不在前三时也丢失了对应评分。现将 prefill 下的 ACCEPT／CONFLICT 都作为待审草稿写 top1，继续保护显式 refine_edit。NO_VOICE、无候选、flag／off 不替换身份；Refine 可纠正或置 null。
+
+Engine 在前三之外附上原身份已有评分的候选，Server 只允许第四项是原身份；不更改排序计算、分差、分档或 encoder。模型收到的仍是逐句精简摘要。379 项隔离回归通过；冻结 EP04 的 313 个真实向量重算，前三与 gap 全部不变，63 行补回原身份评分。294500–296500ms 的新草稿为千早愛音 0.757265，原若葉睦 0.512934，仍保留 CONFLICT。没有新模型调用或新整集终态，旧 v2 结果未改写。见[本次六步设计](../03-product-reassessment/voiceprint-conflict-prefill-trd.md)与[回放证据](../../report/agent/video_parse_v2/voiceprint-conflict-prefill-20261114/README.md)；当前状态见[工作台 B12](../../dev/workbench.html)。下方记录按各自冻结版本理解。
+
 ## 2026-11-14：Refine 复用逐句预填摘要，参考池留在宿主
 
 本分支修复完整 JSON 输入将 `member_evidence.voiceprint` 原样序列化的问题。全片音频大量互为参考，宿主已完成 B0 比较和逐句预填，模型无需再次读取样本目录、来源详情或逐候选引用 ID。现直接投影 Canvas 已按成员、事件位置及区间绑定的有效摘要，保留原始身份、候选分数、参考数量与冲突状态；完整资料继续在宿主留存，预填条件与评分算法不变。

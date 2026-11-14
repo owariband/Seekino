@@ -174,6 +174,8 @@ def score_voiceprint_line(
         references.append(sample)
     scored = score_baseline(query, references, trim_fraction=trim_fraction)
     candidates = scored["candidates"][:3]
+    candidates.extend(candidate for candidate in scored["candidates"][3:]
+                      if candidate["speaker"] == query.get("label"))
     return {
         **result, "candidates": candidates, "gap": scored["gap"],
         "candidate_count": len(scored["candidates"]),
@@ -205,9 +207,8 @@ def classify_voiceprint_result(
 ) -> dict[str, Any]:
     """Classify voice evidence without applying any speaker change.
 
-    ACCEPT disagreements remain eligible defaults and also set conflict=True.
-    A high-gap disagreement that fails an ACCEPT condition remains a conflict
-    for Refine review; it is never eligible for automatic prefill.
+    Disagreements retain conflict=True for Refine review. The host separately
+    applies ACCEPT and CONFLICT candidates as reviewable draft defaults.
     """
     if (not isfinite(accept_gap) or not isfinite(conflict_gap)
             or not 0 <= conflict_gap <= accept_gap <= 2):

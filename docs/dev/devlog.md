@@ -27,6 +27,7 @@
 
 | 记录 | 原问题编号 |
 |---|---|
+| [2026-11-14：仅 ACCEPT 预填让冲突候选沿用旧身份，原身份评分又被截断](#devlog-voiceprint-conflict-prefill-20261114) | B12 |
 | [2026-11-14：Refine 将声纹参考池作为模型输入，逐句预填后仍挤占上下文](#devlog-refine-voiceprint-prefill-context-20261114) | B12；PR #165 |
 | [2026-11-14：生产镜像未含 Event 查询内存修复，完整课程范围又因任务排序内存溢出](#devlog-event-query-cloud-memory-hotfix-20261114) | RAG-QUERY-MEM-01；PR #154、PR #159 |
 | [2026-11-13：Event 查询在 ES 召回前加载全部 Chunk 正文，检索内存随素材库增长](#devlog-event-query-bounded-content-20261113) | RAG-QUERY-MEM-01；PR #154 |
@@ -195,6 +196,36 @@
 | [日期未明确（2026-10-23归档）：当前播放窗口的按需理解与复用](#devlog-history-60) | 独立实验/设计 |
 
 </details>
+
+<a id="devlog-voiceprint-conflict-prefill-20261114"></a>
+## 2026-11-14：仅 ACCEPT 预填让冲突候选沿用旧身份，原身份评分又被截断
+
+### 问题与现状
+
+EP04 v2 已跑通整集，但 294500–296500ms 的台词在 Understanding 和最终结果中均错标若葉睦，声音 top1 却是千早愛音 0.757265。旧 Canvas 从 B0 初始提交起只对 ACCEPT 置换姓名；gap 0.053973 的 CONFLICT 只在评分摘要里出现。我们又发现前三截断删除了原身份的对照分数。因此先看声纹 top1 草稿、再审原名与候选的流程并未实际落实。
+
+### 方案候选
+
+选择把 ACCEPT／CONFLICT 都作为可审核预填，保留原名、冲突与前三之外已有的原身份评分。这样修改的是草稿起点，Refine 仍可更正或置 null，既有 refine_edit 不会被后窗重置。没有通过放宽 gap 或重新调 encoder 来改变证据，也不靠注入真值固定结果。NO_VOICE、无候选和 flag／off 沿用原行为；完整参考资料继续留在宿主。
+
+### 方案验证
+
+独立分支先提交[TRD](../design/03-product-reassessment/voiceprint-conflict-prefill-trd.md)，依赖 #165 精简输入。先改直接断言，在旧实现选定的 12 项中复现 3 项失败；修复后相关隔离测试 379 passed。冻结 v2 全片 313 个向量重算，逐条断言前三、gap 与分档不变，再用真实 Canvas／Prompt 构造器重建原 Refine 窗口。目标 speaker 变为爱音，睦的 0.512934 随摘要保留，原始文件不变、原始参考资料未进入模型。DeepSeek Flash 只复核最小评分摘要，最终结论仍由本机源码与断言支撑。见[完整回放](../report/agent/video_parse_v2/voiceprint-conflict-prefill-20261114/README.md)。
+
+### 指标对比
+
+本次关注整集候选是否漂移，以及目标台词进入 Refine 前的真实草稿与对照评分；不把输入改善换算成人物准确率或耗时收益。
+
+| 指标 | 修改前 | 修改后 |
+| --- | --- | --- |
+| 已编码全片候选 | 313 行原前三／gap | 313/313 完全相同 |
+| 原身份在前三外且有分数 | 被截掉 | 63 行补回 |
+| 爱音对照句草稿身份 | 若葉睦 | 千早愛音 |
+| 爱音／睦分数 | 0.757265／未提供 | 0.757265／0.512934 |
+| 新模型耗时、token、费用 | 未执行新调用 | 未执行新调用 |
+| 新整集最终归因 | 未执行 | 未执行 |
+
+采用这项修复解决候选未先写入草稿、原身份缺少对照的输入问题，代价是最多多一个候选摘要。旧 v2 错误保留，新 Agent 最终选择、Understanding 跨 cue 重组和附带摘要失败仍待验；本轮未重启服务或部署，CPU/prod 未访问。状态见[工作台 B12](workbench.html)。
 
 <a id="devlog-refine-voiceprint-prefill-context-20261114"></a>
 ## 2026-11-14：Refine 将声纹参考池作为模型输入，逐句预填后仍挤占上下文

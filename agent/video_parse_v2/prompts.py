@@ -271,7 +271,7 @@ def build_refine_prompt(*, snapshot, canvas: ParseContextCanvas) -> str:
         "All timestamps are absolute integer source-video milliseconds, including legacy *_seconds fields. Do not multiply or divide by 1000 or apply an offset again. Preserve existing time bounds unless supplied evidence supports a correction.",
         *_refine_content_instructions(snapshot["inputs"].parse_config),
         time_rule,
-        "Use the host's per-dialogue voiceprint prefill and score summaries when present. Each summary applies only to its recorded audio interval. A supplied prefilled speaker is a draft, not certainty; explicitly retain or correct it using the evidence. Do not reuse a score for changed audio bounds.",
+        "Use the host's per-dialogue voiceprint prefill and score summaries when present. Each summary applies only to its recorded audio interval. Both ACCEPT and CONFLICT may prefill the top candidate. The original Understanding speaker and its score, when available, remain in the summary for comparison. A supplied prefilled speaker is a draft, not certainty; explicitly retain or correct it using the evidence. A conflict flag alone does not require restoring the Understanding speaker. Do not reuse a score for changed audio bounds.",
         "Edit the supplied JSON directly. Return every input sequence_no exactly once, each with complete persons and timeline. Omitted events are removed, so preserve every unrelated event. Return only the members array wrapped in IntervalRefinementResult.",
         "Input: " + json.dumps({"background": snapshot.get("background", {}), "members": members},
                               ensure_ascii=False, allow_nan=False, sort_keys=True),

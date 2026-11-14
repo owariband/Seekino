@@ -76,6 +76,7 @@ hypnos 于 **2026-04-27 入职实习**，到这次面试复盘时已接近半年
 | [model-streaming-trd.md](model-streaming-trd.md) | 2026-10-31，默认 stream 被 profile / 入口写死，temperature 缺少创建时配置 | 通用模型配置、默认 stream=true / temperature=0、Kimi 固定温度、独立 fallback、共享协议接收与 Parse 快照 | 承接 Kimi 接入修复；隔离 HTTP 验证与真实部署、供应商效果分开验收 |
 | [local-whisperx-asr-trd.md](local-whisperx-asr-trd.md) | 2026-10-29 本地 ASR；10-30 故障续版与 10-31 存储／GPU 测试 | 视频级 ASR／Summary 持久成果、Task／成果归类及 Turbo＋Metal 本地测试接线 | 存储与恢复隔离验证通过；Turbo＋Metal 正式 Gateway 短样本与完整 116 分 20 秒 ASR 均通过，业务库迁移、独立对齐及完整课程闭环待验 |
 | [refine-voiceprint-prefill-context-trd.md](refine-voiceprint-prefill-context-trd.md) | 2026-11-14，宿主已完成逐句预填但模型仍收到完整参考资料 | 仅投影已绑定的逐句评分摘要，参考池留宿主 | 167 项测试通过；合成输入参考资料增长带来的 Prompt 增量归零，整集实模与部署另验 |
+| [voiceprint-conflict-prefill-trd.md](voiceprint-conflict-prefill-trd.md) | 2026-11-14，CONFLICT 保留旧姓名且原身份评分被前三截断 | top1 先写草稿，前三＋原身份评分交 Refine 审核 | 379 项回归；冻结 EP04 重算及输入重建通过，新 Agent 终态待验 |
 | [cloud-public-mcp-trd.md](cloud-public-mcp-trd.md) | 2026-11-11，本机剪辑 Agent 取云端公开素材 | 同一 MCP SDK 挂载到 Cloud，按发布范围检索，下载有时限和区间限制的 MP4 | 游客身份、工具发现与真实取片分别验证 |
 | [mcp-access-trd.md](mcp-access-trd.md) | 2026-10-28，外部 Agent 素材库与演示需求 | 将首要交付收敛为 localhost MCP，Cloud 保留 Chat 与后续轻量 HTML 作品 | 区分协议与隔离测试、真实 Codex 连接、真实素材到作品；不把历史 Sandbox 探针当作已交付能力 |
 | [剪辑双召回主设计](editing-skill-style-reference-trd.md) | 2026-11-05 开题，同一 PR 交付设计和代码 | 编辑从剧本找表演与剪辑手法，凭证据取回原片 | [需求、实现与验收 #50](https://github.com/owariband/Seekino/pull/50) |

@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-14T14:25:32+08:00",
+ "updatedAt": "2026-11-14T19:39:37+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 68,
+ "revision": 69,
  "categories": [
   {
    "id": "parse",
@@ -2076,9 +2076,9 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "type": "requirement",
    "status": "progressing",
    "priority": "P1",
-   "description": "本机 EP04 整集已跑通，逐句预填摘要消除上下文超限；两个固定人物目标仅 1/2 正确，Understanding 仍有跨 cue 重组反例。",
-   "next": "依据真实输入/输出处理 CONFLICT 候选未纠正爱音、Understanding 跨 cue 重组；另保留附带摘要失败待查，不把主链 COMPLETE 当人物准确率通过。",
-   "verification": "2026-11-14 新任务 v2：24/24 Under、22/22 Refine、24/24 索引；B0 314 行/313 编码。41 次实际输入无参考资料；同窗 1152947→52546 字符（95.4425%）。开头爽世正确但初次 Under 已正确；爱音对照声纹 top1 正确、CONFLICT 未预填且 Refine 仍错标睦。至少确认 1 个 Under 合并 4 cue 反例。CPU/prod 未部署。",
+   "description": "本机 EP04 v2 整集完成但人物仅 1/2 正确；CONFLICT 先填 top1 并保留原身份评分已实现、冻结输入回放通过，新 Agent 终态待验。",
+   "next": "将独立修复按 #165 → CONFLICT 预填顺序集成后，整集 1fps 验证 Agent 最终归因；Understanding 跨 cue 重组与辅助摘要失败分别跟进。",
+   "verification": "2026-11-14 新任务 v2：24/24 Under、22/22 Refine、24/24 索引；B0 314 行/313 编码。41 次实际输入无参考资料；同窗 1152947→52546 字符（95.4425%）。开头爽世正确但初次 Under 已正确；爱音对照声纹 top1 正确、CONFLICT 未预填且 Refine 仍错标睦。至少确认 1 个 Under 合并 4 cue 反例。CPU/prod 未部署。 后续独立修复：379 项回归通过；313 个冻结向量重算前三/gap/分档不变，63 行补回原身份评分。真实窗口重建中目标 speaker=千早愛音 0.757265，原若葉睦 0.512934，CONFLICT 保留。无新模型调用，未加载新服务；旧 v2 未改写。",
    "updatedAt": "2026-11-14",
    "tags": [
     "输入上下文",
@@ -2088,7 +2088,7 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "related": [
     "MOD-PARSE"
    ],
-   "branch": "fix/refine-voiceprint-prefill-context",
+   "branch": "fix/voiceprint-conflict-prefill",
    "links": [
     {
      "label": "问题记录",
@@ -2123,6 +2123,16 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
     {
      "label": "整集真实结果与边界",
      "url": "https://github.com/owariband/Seekino/blob/fix/refine-voiceprint-prefill-context/docs/report/agent/video_parse_v2/refine-voiceprint-prefill-context-20261114/live-run.json",
+     "kind": "source"
+    },
+    {
+     "label": "CONFLICT 预填 TRD",
+     "url": "https://github.com/owariband/Seekino/blob/fix/voiceprint-conflict-prefill/docs/design/03-product-reassessment/voiceprint-conflict-prefill-trd.md",
+     "kind": "trd"
+    },
+    {
+     "label": "原身份评分与冻结输入回放",
+     "url": "https://github.com/owariband/Seekino/blob/fix/voiceprint-conflict-prefill/docs/report/agent/video_parse_v2/voiceprint-conflict-prefill-20261114/README.md",
      "kind": "source"
     }
    ],

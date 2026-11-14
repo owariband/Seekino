@@ -1051,6 +1051,12 @@ Cloud 同时存在 JEV 参数和 `models.query_hook=deepseek-flash/high/256`，�
 
 优先级：高。类型：解析语义质量、音频分段、证据供给与可观测性。状态：**截至 2026-10-22 仍未全面闭环；v25 两句固定目标本轮均正确**。历史 v5 曾纠正爽世单例，不代表后续版本稳定识别正确；v11～v18 暴露参考错名、跨人合并及 Refine 决策三类问题。最新归因与未完成项见下，旧轮次记录保留。记录日期：2026-10-16；更新日期：2026-10-22。
 
+#### 2026-11-14 后续：仅 ACCEPT 预填让 CONFLICT 沿用旧身份，且缺少原身份评分
+
+B0 从初始提交 `356677a9` 就将预填限定为 ACCEPT。EP04 v2 的 294500–296500ms 台词在 Understanding 与最终结果中均为若葉睦；声纹 top1 千早愛音 0.757265、gap 0.053973，CONFLICT 仅作旁证，没有先置换姓名。候选被截为前三，原睦的真实 0.512934 也未交模型。这是输入草稿与审核职责未落实，不能解释成声纹未计算或模型已审核正确预填。
+
+独立修复让 prefill 的 ACCEPT／CONFLICT 先写 top1，并提供前三＋原身份已有评分；保护 refine_edit，保留冲突标记及 Agent 更正／置 null 权限。379 项隔离测试通过。使用保存的 313 个 EP04 向量重算，前三和 gap 全部不变，63 行补原评分；真实 Prompt 构造器确认目标新草稿为爱音、仍携带睦与双方分数，没有原始参考资料。本次未重跑 Agent、新代码未部署，旧 v2 错误仍保留。见[TRD](../design/03-product-reassessment/voiceprint-conflict-prefill-trd.md)、[回放](../report/agent/video_parse_v2/voiceprint-conflict-prefill-20261114/README.md)；状态统一见[工作台](workbench.html)。
+
 #### 2026-11-14：Refine 输入重复携带参考资料，改用已有逐句预填摘要
 
 同日真实整集补验：新任务 v2 已 COMPLETE，24/24 Understanding、22/22 Refine、24/24 索引，41 次输入未再携带参考资料或触发上下文超限。开头爽世句最终正确且初次理解已经正确；爱音对照句的声纹 top1 正确、band=CONFLICT，未自动预填且 Refine 仍保留若葉睦。另确认至少一处 Understanding 合入 4 条 ASR cue；严格禁止合并的 Prompt 尚未完全执行。见[真实留证](../report/agent/video_parse_v2/refine-voiceprint-prefill-context-20261114/live-run.json)。以下保留先前离线阶段记录。

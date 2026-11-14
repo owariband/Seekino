@@ -323,6 +323,13 @@ ranked candidate scores/counts, band and conflict information. Full reference sa
 source details and reference ID lists stay in host evidence. The Prompt projection
 does not recompute scores or change prefill rules; see the
 [input boundary and measurements](../../docs/design/03-product-reassessment/refine-voiceprint-prefill-context-trd.md).
+In `prefill` mode, both ACCEPT and CONFLICT use the top candidate as a reviewable
+draft speaker, unless a prior `refine_edit` already owns the identity. The summary
+keeps the original Understanding name and top three scores, plus the original
+name's scored candidate when it falls outside the top three. NO_VOICE and empty
+candidates do not prefill; flag mode only supplies evidence. Refine can retain,
+correct or clear the draft identity; see the
+[conflict prefill contract](../../docs/design/03-product-reassessment/voiceprint-conflict-prefill-trd.md).
 It has no model-facing tools or separate completion receipt. The business result
 gate validates the domain Schema, exact member set and time authority, then derives
 only actual changes. A Refine-only response transport retains the full JSON value

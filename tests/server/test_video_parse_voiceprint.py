@@ -913,6 +913,30 @@ def test_scoring_publishes_all_results_atomically_and_loads_only_with_current_le
         repo.load_voiceprint_scoring(replace(refine, lease_version=refine.lease_version + 1), now=NOW)
 
 
+@pytest.mark.parametrize("fourth", ["A", "E"])
+def test_scoring_fourth_candidate_can_only_preserve_the_original_speaker(repository, fourth):
+    factory, queue, repo, task_id, parent, _prepared = _prepare(repository, chunk_count=1)
+    _enable_scoring(factory, task_id, mode="prefill")
+    _commit(queue, repo, ["A", "B", "C", "D", "A", "E"], 0)
+    snapshot = repo.begin_voiceprint_preparation(parent, now=NOW)
+    preparation = _scoring_preparation(snapshot)
+    references = {sample["label"]: sample["id"] for sample in preparation["samples"]}
+    preparation["lines"][0].update({
+        "band": "CONFLICT", "gap": 0.1,
+        "candidates": [{"speaker": speaker, "similarity": similarity,
+                        "reference_ids": [references[speaker]], "reference_count": 1}
+                       for speaker, similarity in zip(["B", "C", "D", fourth], [0.9, 0.8, 0.7, 0.6])],
+    })
+    if fourth == "A":
+        result = _finish_scoring(repo, parent, preparation=preparation, now=NOW)
+        assert result["line_count"] == 6
+        assert repo.load_voiceprint_scoring(parent, now=NOW) == result
+    else:
+        with pytest.raises(VideoParseConflictError, match="original speaker"):
+            _finish_scoring(repo, parent, preparation=preparation, now=NOW)
+        assert repo.load_voiceprint_scoring(parent, now=NOW) is None
+
+
 def test_artifact_manifest_round_trips_without_inline_arrays_and_preserves_historical_shapes():
     manifest = {"ready": True, "method_version": "B0-trimmed-centroid-v1",
                 "model": {"name": "campplus", "encoder_revision": "sha256:frozen-task"},

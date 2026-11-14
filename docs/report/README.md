@@ -33,6 +33,7 @@
 
 ## Agent / video_parse_v2
 
+- [CONFLICT 先预填 top1 再审核（2026-11-14）](agent/video_parse_v2/voiceprint-conflict-prefill-20261114/README.md)：379 项回归；冻结整集 313 向量重算与实际输入重建，保留原身份评分；新 Agent 终态未执行。
 - [Refine 只接收逐句声纹预填摘要（2026-11-14）](agent/video_parse_v2/refine-voiceprint-prefill-context-20261114/README.md)：复用已有绑定结果，移除模型输入中的完整参考资料；167 项回归及合成输入字符对照，真实整集另验。
 - [剪辑参考模型观察的过度校验修复（2026-11-12）](agent/video_parse_v2/reference-model-judgment-20261112/README.md)：12 条真实失败响应对照、来源边界与独立上传到 MCP 验证；真实批次运行另行记录。
 
