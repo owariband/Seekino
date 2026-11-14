@@ -14,7 +14,7 @@ Understanding 根据 ASR、画面与背景生成 DIALOGUE；B0 随后使用这�
 
 | 指标 | 口径、基线 | 目标 | 验证方法与证据 |
 | --- | --- | --- | --- |
-| 阶段职责 | 原 Prompt 未明确禁止跨独立 cue 合并 | Understanding 明确禁止；Refine 明确承担有依据的合并 | 对照 Prompt diff 及实际构造的输入 |
+| 阶段职责 | 原 Prompt 未明确禁止跨独立 cue 合并 | Understanding 明确禁止；Refine 明确承担有依据的合并 | 对照 Prompt diff 及实际构造的输入，已核对 |
 | 既有时间与证据合同 | 完整 cue 可跨 Chunk；原始 ASR 保留词级对齐 | 保持原行为，相关测试通过 | Understanding / Refine 既有测试 |
 | 真实模型分段 | 本次未获得同输入重跑基线 | 独立语音段在 Understanding 后仍独立；混人 cue 可有据拆分 | 后续 EP04 整集首轮 Understanding 与原始 ASR 对照，待测 |
 | 人物归属及成本 | 本次未测 | 不用测试通过代替人物准确率；记录实际 token、耗时 | 后续整集验证，待测 |
@@ -37,10 +37,18 @@ Understanding 根据 ASR、画面与背景生成 DIALOGUE；B0 随后使用这�
 
 | 比较项 | 修改前 | 修改后 | 判断与证据 |
 | --- | --- | --- | --- |
-| Understanding 跨独立 cue 合并职责 | 未明确禁止 | 待实施 | 待检查 diff |
-| Refine 有据合并职责 | 仅泛化说明去重、修复连续性 | 待实施 | 待检查 diff |
-| Understanding／Refine 回归 | 待运行 | 待运行 | 后续补执行命令与结果 |
+| Understanding 跨独立 cue 合并职责 | 未明确禁止 | 已在 Prompt 明确禁止 | 实际构造的 Prompt 与 diff 核对 |
+| Refine 有据合并职责 | 仅泛化说明去重、修复连续性 | 已明确合并条件及应保留的话轮 | 实际构造的 Prompt 与 diff 核对 |
+| Understanding／Refine 回归 | 本轮未单独运行基线 | 90 passed，0.97s | 既有隔离测试，未新增提示原句断言 |
 | EP04 真实分段、身份与成本 | 未重跑 | 未重跑 | 不由静态检查推导 |
+
+在独立工作树中复用本机 Python 3.12 环境运行：
+
+```bash
+/Users/hypnos/workspace/agent/Seekino/.venv/bin/python -m pytest tests/agent/video_parse_v2/test_understanding_json.py tests/agent/video_parse_v2/test_refine_direct.py tests/agent/video_parse_v2/test_framework.py -q -m 'not live_agent'
+```
+
+生产代码仅新增两段 Prompt 字符串。测试覆盖原始 ASR 证据、完整 JSON 提交、跨 Chunk 完整台词、Refine 音频范围变化后的来源处理及恢复合同；没有使用真实模型，不能证明语义遵从或人物身份效果。DeepSeek dsh 因缺少凭据未执行，OpenCode 重试被自动审批拒绝向外部模型发送私有源码；本次实现和测试由主 Agent 在本机完成。
 
 # 5. 试点验证与方案取舍
 
@@ -50,6 +58,6 @@ Understanding 根据 ASR、画面与背景生成 DIALOGUE；B0 随后使用这�
 
 # 6. 结果验收与闭环
 
-初稿尚未实施、运行测试或部署。验收分两层：先确认 Prompt 职责已接入且现有合同回归通过，再以整集真实输出判断独立段是否被保留、人物归属是否改善。前者完成不能代替后者。
+Prompt 职责已接入，相关既有测试 90 项通过。验收分两层：现有合同回归完成，再以整集真实输出判断独立段是否被保留、人物归属是否改善。前者不能代替后者。采用该阶段职责调整；尚未部署服务，也不会自动改写历史任务成果。
 
-待补：实际修改、执行命令、测试结果、PR 链接；真实整集效果、耗时与 token 继续标记未验证。当前状态只在[工作台](../../dev/workbench.html)维护，相关历史问题保留在 [B12](../../dev/problems.md#b12asr-匿名说话人分组不准refine-看帧后仍未纠正目标归属)。
+待补 PR 链接；真实整集效果、耗时与 token 继续标记未验证。后续先处理独立的 Refine 载荷问题，再通过整集 1fps 对照验证分段与身份；当前状态只在[工作台](../../dev/workbench.html)维护，相关历史问题保留在 [B12](../../dev/problems.md#b12asr-匿名说话人分组不准refine-看帧后仍未纠正目标归属)。
