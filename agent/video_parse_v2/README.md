@@ -330,6 +330,12 @@ name's scored candidate when it falls outside the top three. NO_VOICE and empty
 candidates do not prefill; flag mode only supplies evidence. Refine can retain,
 correct or clear the draft identity; see the
 [conflict prefill contract](../../docs/design/03-product-reassessment/voiceprint-conflict-prefill-trd.md).
+Refine also accounts for off-screen speech, voices heard before a speaker appears,
+and reaction shots. It separates supported visual actions from inferred speech
+attribution in descriptions; visibility, mouth movement or an old speaker claim
+alone cannot justify overriding an ACCEPT voiceprint draft. This remains evidence
+review with uncertainty, as described in the
+[off-screen voice guidance](../../docs/design/03-product-reassessment/refine-offscreen-voice-trd.md).
 It has no model-facing tools or separate completion receipt. The business result
 gate validates the domain Schema, exact member set and time authority, then derives
 only actual changes. A Refine-only response transport retains the full JSON value

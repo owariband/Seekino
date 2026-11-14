@@ -14,6 +14,12 @@ ASR 可能把多个人的发言合进同一条 cue，Refine 也可能根据单�
 
 ## 实验与运行记录
 
+## 2026-11-15：Refine 提醒先声后像，DS Flash low 固定两句通过
+
+在Refine增加画外音、未见其人先闻其声及反应镜头说明，区分保留视觉动作与修正说话人推断。用户确认medium被官方映射high后选择low；本轮Understanding／Refine均low，45次实际请求确认绑定与新段送达。整集v4 `df165ebc-540a-4a9d-bf84-b7469501564b` COMPLETE，24 Under／22 Refine／24当前索引，24分27.473秒；434项组合回归，371源码与旧v3内容指纹不变，CPU/prod未访问。
+
+两个固定目标最终分别为長崎そよ、千早愛音，2/2姓名及描述一致性通过，未再改成旧错名；两句首次Understanding已正确，B0为null／NO_VOICE，不触发自动预填，不能计作预填纠错或证明提示单因素因果。309条首次对白全覆盖，67条CONFLICT预填合同通过；未知目标之外的身份、混人纯度与边界未认证。详见[设计](../03-product-reassessment/refine-offscreen-voice-trd.md)、[整集留证](../../report/agent/video_parse_v2/refine-offscreen-voice-20261115/README.md)和[工作台B12](../../dev/workbench.html)。
+
 ## 2026-11-14 后续：CONFLICT 先预填 top1，保留原身份评分供 Refine 审核
 
 EP04 v2 的爱音对照句声纹 top1 正确，实际输入仍为若葉睦。核对发现 B0 初始实现 `356677a9` 就只允许 ACCEPT 自动预填；原身份不在前三时也丢失了对应评分。现将 prefill 下的 ACCEPT／CONFLICT 都作为待审草稿写 top1，继续保护显式 refine_edit。NO_VOICE、无候选、flag／off 不替换身份；Refine 可纠正或置 null。

@@ -27,6 +27,7 @@
 
 | 记录 | 原问题编号 |
 |---|---|
+| [2026-11-15：画外音未被明确说明，旧说话人描述与声纹默认相冲突](#devlog-refine-offscreen-voice-20261115) | B12；PR #170 |
 | [2026-11-14：仅 ACCEPT 预填让冲突候选沿用旧身份，原身份评分又被截断](#devlog-voiceprint-conflict-prefill-20261114) | B12；PR #167 |
 | [2026-11-14：Refine 将声纹参考池作为模型输入，逐句预填后仍挤占上下文](#devlog-refine-voiceprint-prefill-context-20261114) | B12；PR #165 |
 | [2026-11-14：生产镜像未含 Event 查询内存修复，完整课程范围又因任务排序内存溢出](#devlog-event-query-cloud-memory-hotfix-20261114) | RAG-QUERY-MEM-01；PR #154、PR #159 |
@@ -196,6 +197,35 @@
 | [日期未明确（2026-10-23归档）：当前播放窗口的按需理解与复用](#devlog-history-60) | 独立实验/设计 |
 
 </details>
+
+<a id="devlog-refine-offscreen-voice-20261115"></a>
+## 2026-11-15：画外音未被明确说明，旧说话人描述与声纹默认相冲突
+
+### 问题与现状
+
+v3开头爽世句已经正确预填，Refine却改回高松灯。实际输入中speaker与“灯替祥子说话”的旧描述互相矛盾；Prompt只泛称保留视觉事实，没有明确画外音、先声后像与反应镜头。我们怀疑模型把描述中的身份推断当作视觉事实，但没有保存的明确改名理由，不把该假设写成唯一原因。
+
+### 方案候选
+
+采用一段Refine提示补充：可见、张口和旧描述的发言归属不能单独推翻ACCEPT；保留受支持的视觉动作，同时复核说话人推断，证据不足保留null。保持原有评分与改名权限，通过已有parse config选档，不新增硬锁、字段或阈值。用户最初请求medium，核实官方映射high后明确选择low，Understanding／Refine均按low运行。
+
+### 方案验证
+
+独立分支首提交[TRD](../design/03-product-reassessment/refine-offscreen-voice-trd.md)，交付见[PR #170](https://github.com/owariband/Seekino/pull/170)。379项直接回归和434项执行副本组合回归通过。完整EP04 v4主链24 Under／22 Refine／24索引完成；45次实际输入均low且含新提示，无参考池，309条首次对白全覆盖，67条CONFLICT均按规则预填。24份首次理解均在任何Refine提交前保存，371源码与旧v3内容指纹不变；CPU/prod未访问。DS Flash worker核对两句及描述，主Agent复核关键请求、返回和终态。见[报告与原始指标](../report/agent/video_parse_v2/refine-offscreen-voice-20261115/README.md)。
+
+### 指标对比
+
+本轮关注low能否完成两句已知目标、Refine能否保留正确姓名，以及实际请求是否使用新段和low。单次整集的档位、提示、理解、边界、参考池、缓存和重试均不同，不能据此断言单因素收益或稳定性能。
+
+| 指标 | v3 high | v4 low＋新提示 |
+| --- | --- | --- |
+| 固定目标姓名 | 爽世错／爱音对，1/2 | 爽世对／爱音对，2/2，均初次理解已正确 |
+| 主链／ES | 24／22／24；689 Event | 相同主链；631 Event |
+| 从创建到完成 | 23分59.848秒，含手动恢复 | 24分27.473秒，无手动恢复，有自动重试及尾部等待，增加27.625秒 |
+| 已报告生成output／其中reasoning | 1,266,475／972,602 tokens | 961,838／684,623 tokens；reasoning不重复计入output |
+| 已报告cached input | 1,275,008 tokens | 236,800 tokens；不据token变化估算账单 |
+
+固定两句本轮姓名及描述一致性通过：爽世描述明确画外发声，爱音姓名保持正确。两个目标的B0为null／NO_VOICE，没有自动预填，不能计为预填纠错或证明同一矛盾输入已稳定修复。采用提示补充并保留low已验证样例，下一步扩大有真值的样本和重复验证；全片其它人物、混人纯度、边界和辅助摘要仍未验收。只有两个目标的2/2结论，不将B12全面关闭。
 
 <a id="devlog-voiceprint-conflict-prefill-20261114"></a>
 ## 2026-11-14：仅 ACCEPT 预填让冲突候选沿用旧身份，原身份评分又被截断

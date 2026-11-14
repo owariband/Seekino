@@ -33,6 +33,7 @@
 
 ## Agent / video_parse_v2
 
+- [画外音提示与 DS Flash low 整集验证（2026-11-15）](agent/video_parse_v2/refine-offscreen-voice-20261115/README.md)：完整EP04 v4主链完成，45次实际请求核实low和新提示送达，固定两句姓名2/2，434项组合回归；初次理解已正确，不能归为单一提示纠错。
 - [CONFLICT 先预填 top1 再审核（2026-11-14）](agent/video_parse_v2/voiceprint-conflict-prefill-20261114/README.md)：434 项组合回归；冻结回放后补完整 EP04 v3，69 条 CONFLICT 实际预填、主链完成，两个固定姓名仍1/2；保留正确预填被改错的实际反例。
 - [Refine 只接收逐句声纹预填摘要（2026-11-14）](agent/video_parse_v2/refine-voiceprint-prefill-context-20261114/README.md)：复用已有绑定结果，移除模型输入中的完整参考资料；167 项回归及合成输入字符对照，真实整集另验。
 - [剪辑参考模型观察的过度校验修复（2026-11-12）](agent/video_parse_v2/reference-model-judgment-20261112/README.md)：12 条真实失败响应对照、来源边界与独立上传到 MCP 验证；真实批次运行另行记录。
