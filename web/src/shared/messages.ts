@@ -91,7 +91,7 @@ export const englishMessages: Readonly<Record<string, string>> = {
   "欢迎来到 Seekino": "Welcome to Seekino",
   "41 小时的课，你要的只是其中一段": "41 hours of lectures. You only need one part.",
   "我是 Kino。说出你想找的那一段，我直接带你到原片里的那一秒。": "I'm Kino. Tell me what you're looking for, and I'll take you to that second in the original video.",
-  "交流群👏：1127823767": "Community group 👏: 1127823767",
+  "欢迎交流👏：1127823767 (QQ)": "Say hello in our QQ group 👏: 1127823767",
   "试一句": "Try a search",
   "怎么用": "How it works",
   "关闭欢迎提示": "Dismiss welcome",
