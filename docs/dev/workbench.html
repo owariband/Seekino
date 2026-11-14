@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-15T00:28:00+08:00",
+ "updatedAt": "2026-11-15T00:37:48+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 68,
+ "revision": 69,
  "categories": [
   {
    "id": "parse",
@@ -5702,7 +5702,7 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "priority": "P1",
    "description": "Query 使用全局 agent binding 与 structured 静态窗口，Supervisor 的独立选模和动态容量没有传给子 Agent；修复让两者复用当前 Supervisor 的模型来源、主备、effort、输出／超时／字符预算和容量策略，同时保留 Query prompt、工具、结构化结果与共享预算。",
    "next": "正式发布候选 main PR #172 待合并与部署；随后核对完整 Server 装配与同一历史输入的 TT／FTT／token／质量。本卡保持 verifying，不以配置预检代替业务验收。",
-   "verification": "实现提交 30680fe4；Gateway 202 项（2.73 秒）与 Server／个人协议 136 项（32.76 秒）共 338 项唯一通过，1 条既有 Starlette 警告。修改前 7 项 Gateway 新回归失败、2 项静态控制通过，Bootstrap 捕获 configured-query-model 与 configured-chat-model 不一致。个人四种协议结构化工具循环均为 mock 并关闭客户端；API／native／legacy／alternate YAML 与父子配置覆盖来源、effort、fallback 和控制值。当前 Cloud 配置预检为 1048576／891289／24000、Flash／high／8192、metadata_requests=1、generation_calls=0，模型／运行哈希与容器未变、健康，未重启服务；只验证配置与 factory，未覆盖完整在线 Server 装配。没有修复后原 Chat 回放，TT／FTT／token／准确率未测；200000 字符上限仍可先于 891289 触发压缩。main 发布选取7个文件，同范围338项回归通过（不另计唯一用例），发布树810路径/10资产通过，沿用main忽略规则；候选未部署。",
+   "verification": "实现提交 30680fe4；Gateway 202 项（2.73 秒）与 Server／个人协议 136 项（32.76 秒）共 338 项唯一通过，1 条既有 Starlette 警告。修改前 7 项 Gateway 新回归失败、2 项静态控制通过，Bootstrap 捕获 configured-query-model 与 configured-chat-model 不一致。个人四种协议结构化工具循环均为 mock 并关闭客户端；API／native／legacy／alternate YAML 与父子配置覆盖来源、effort、fallback 和控制值。当前 Cloud 配置预检为 1048576／891289／24000、Flash／high／8192、metadata_requests=1、generation_calls=0，模型／运行哈希与容器未变、健康，未重启服务；只验证配置与 factory，未覆盖完整在线 Server 装配。没有修复后原 Chat 回放，TT／FTT／token／准确率未测；200000 字符上限仍可先于 891289 触发压缩。main 发布选取7个文件，同范围338项回归通过（不另计唯一用例），发布树810路径/10资产通过，沿用main忽略规则；候选未部署。dev PR #171 已以 dc9c86fa 合入；main PR #172 已 Ready，release-files 通过，6个源码/回归文件与集成后的dev逐字一致。",
    "updatedAt": "2026-11-15",
    "tags": [
     "Chat",
@@ -5717,6 +5717,11 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    ],
    "branch": "fix/chat-model-config-inheritance",
    "links": [
+    {
+     "label": "main 发布 PR #172",
+     "kind": "pr",
+     "url": "https://github.com/owariband/Seekino/pull/172"
+    },
     {
      "label": "dev PR #171",
      "kind": "pr",

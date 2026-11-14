@@ -109,6 +109,13 @@
       "conclusion": "SUCCESS",
       "run": 43615595020,
       "job": 132509820930
-    }
+    },
+    "ready_for_review": true,
+    "runtime_and_test_blobs_match_integrated_dev": true
+  },
+  "dev_integration": {
+    "pr": 171,
+    "merge_commit": "dc9c86fa81952b3ad43d3041d28f151d6d807c82",
+    "state": "MERGED"
   }
 }
