@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-15T00:36:32+08:00",
+ "updatedAt": "2026-11-15T01:29:39+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 71,
+ "revision": 72,
  "categories": [
   {
    "id": "parse",
@@ -5939,6 +5939,55 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "kind": "source"
     }
    ]
+  },
+  {
+   "id": "PARSE-VOICE-EARLY-01",
+   "title": "全片声纹门禁延后Refine，比较提前计算与匿名表示",
+   "category": "parse",
+   "type": "requirement",
+   "status": "verifying",
+   "priority": "P2",
+   "description": "完成整集冻结对照：最早16/24块可提前提供216个向量，但参考池变化影响候选；提前计算与实际窗口放行尚未接入。",
+   "next": "以精确音频区间和encoder合同缓存表示，允许晚到参考补齐；实际提前Refine须补窗口证据就绪、参考版本和过期提交合同，再做整集提速与身份验证。",
+   "verification": "2026-11-15，EP04 v4首次理解及缓存向量：全309行评分精确复现；16块池216编码/200具名，对照全池308/277，44条top1和77条分档改变，ACCEPT45→76不能作准确率提升。两固定目标top1保留，无新Agent终态。ASR ID硬分组按现有独立cue投票仅8/308查询具名，两目标弃权。16→24块183.254秒、全准备39.462秒，22窗口乐观放行提前39.489～183.281秒，未实测整集提速。3个脚本复跑，Server、旧任务及运行配置未改，CPU/prod未访问。",
+   "updatedAt": "2026-11-15",
+   "tags": [
+    "实验完成",
+    "提前编码",
+    "接入与提速待验"
+   ],
+   "related": [
+    "MOD-PARSE",
+    "B12"
+   ],
+   "branch": "perf/voiceprint-early-preparation",
+   "links": [
+    {
+     "label": "提前准备TRD",
+     "url": "https://github.com/owariband/Seekino/blob/perf/voiceprint-early-preparation/docs/design/03-product-reassessment/voiceprint-early-preparation-trd.md",
+     "kind": "trd"
+    },
+    {
+     "label": "整集冻结对照与复现",
+     "url": "https://github.com/owariband/Seekino/blob/perf/voiceprint-early-preparation/docs/report/agent/video_parse_v2/voiceprint-early-preparation-20261115/README.md",
+     "kind": "source"
+    },
+    {
+     "label": "依赖画外音low基线PR #170",
+     "url": "https://github.com/owariband/Seekino/pull/170",
+     "kind": "pr"
+    },
+    {
+     "label": "提前准备实验PR #174",
+     "url": "https://github.com/owariband/Seekino/pull/174",
+     "kind": "pr"
+    }
+   ],
+   "source": {
+    "ref": "cb822ba07e6ae4cc0a152b3cb3e1a44c4b3e3796",
+    "path": "docs/design/03-product-reassessment/voiceprint-early-preparation-trd.md",
+    "line": 1
+   }
   }
  ]
 }</script>

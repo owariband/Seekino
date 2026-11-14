@@ -78,6 +78,7 @@ hypnos 于 **2026-04-27 入职实习**，到这次面试复盘时已接近半年
 | [refine-voiceprint-prefill-context-trd.md](refine-voiceprint-prefill-context-trd.md) | 2026-11-14，宿主已完成逐句预填但模型仍收到完整参考资料 | 仅投影已绑定的逐句评分摘要，参考池留宿主 | 167 项测试通过；合成输入参考资料增长带来的 Prompt 增量归零，整集实模与部署另验 |
 | [voiceprint-conflict-prefill-trd.md](voiceprint-conflict-prefill-trd.md) | 2026-11-14，CONFLICT 保留旧姓名且原身份评分被前三截断 | top1 先写草稿，前三＋原身份评分交 Refine 审核 | 434 项组合回归；整集 v3 COMPLETE、69 条 CONFLICT 均预填，固定姓名仍1/2，正确预填被 Refine 改错 |
 | [refine-offscreen-voice-trd.md](refine-offscreen-voice-trd.md) | 11-14建立、11-15整集验证，画面叙述与正确身份默认冲突 | 明确画外音、先声后像及描述中的说话人推断 | 434项组合回归；v4 DS Flash low整集完成，两句姓名2/2，均初次已正确，不作单因素或全片准确率结论 |
+| [voiceprint-early-preparation-trd.md](voiceprint-early-preparation-trd.md) | 2026-11-15，全片Understanding门禁延后声纹与Refine | 比较2/3参考全量映射、ASR ID分组与提前匿名计算 | 309行基线精确复现；16块池改变44条top1与77条分档，ID硬分组仅8/308具名；端到端提速未验证 |
 | [cloud-public-mcp-trd.md](cloud-public-mcp-trd.md) | 2026-11-11，本机剪辑 Agent 取云端公开素材 | 同一 MCP SDK 挂载到 Cloud，按发布范围检索，下载有时限和区间限制的 MP4 | 游客身份、工具发现与真实取片分别验证 |
 | [mcp-access-trd.md](mcp-access-trd.md) | 2026-10-28，外部 Agent 素材库与演示需求 | 将首要交付收敛为 localhost MCP，Cloud 保留 Chat 与后续轻量 HTML 作品 | 区分协议与隔离测试、真实 Codex 连接、真实素材到作品；不把历史 Sandbox 探针当作已交付能力 |
 | [剪辑双召回主设计](editing-skill-style-reference-trd.md) | 2026-11-05 开题，同一 PR 交付设计和代码 | 编辑从剧本找表演与剪辑手法，凭证据取回原片 | [需求、实现与验收 #50](https://github.com/owariband/Seekino/pull/50) |

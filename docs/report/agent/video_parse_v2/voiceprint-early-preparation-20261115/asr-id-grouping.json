@@ -1,0 +1,357 @@
+{
+  "source_task_id": "df165ebc-540a-4a9d-bf84-b7469501564b",
+  "method": "Fixed ASR dominant-overlap ID groups; existing score_clusters names by independent cue votes after target exclusion.",
+  "parameters": {
+    "minimum_independent_cues": 3,
+    "minimum_initial_label_vote_purity": 0.6
+  },
+  "group_member_counts": {
+    "SPEAKER_00": 77,
+    "SPEAKER_01": 22,
+    "SPEAKER_02": 13,
+    "SPEAKER_03": 51,
+    "SPEAKER_04": 109,
+    "SPEAKER_05": 23
+  },
+  "unassigned_samples": 13,
+  "evaluation_seconds": 0.925901333001093,
+  "results": {
+    "full_understanding_names": {
+      "queries": 308,
+      "queries_with_named_candidate": 8,
+      "top1_name_counts": {
+        "長崎そよ": 3,
+        "高松燈": 5
+      },
+      "targets": {
+        "opening_soyo": {
+          "top1": null,
+          "gap": null,
+          "named_groups": [
+            {
+              "cluster_id": "SPEAKER_00",
+              "speaker": null,
+              "cue_count": 35,
+              "label_support": {
+                "ういちゃん": 1,
+                "千早愛音": 2,
+                "椎名立希": 4,
+                "若葉睦": 1,
+                "要楽奈": 1,
+                "長崎そよ": 3,
+                "高松燈": 1
+              },
+              "support_count": 4,
+              "purity": 0.11428571428571428
+            },
+            {
+              "cluster_id": "SPEAKER_01",
+              "speaker": null,
+              "cue_count": 19,
+              "label_support": {
+                "千早愛音": 1,
+                "椎名立希": 1,
+                "要楽奈": 1,
+                "高松燈": 8
+              },
+              "support_count": 8,
+              "purity": 0.42105263157894735
+            },
+            {
+              "cluster_id": "SPEAKER_02",
+              "speaker": null,
+              "cue_count": 11,
+              "label_support": {
+                "長崎そよ": 1,
+                "高松燈": 6
+              },
+              "support_count": 6,
+              "purity": 0.5454545454545454
+            },
+            {
+              "cluster_id": "SPEAKER_03",
+              "speaker": null,
+              "cue_count": 33,
+              "label_support": {
+                "千早愛音": 4,
+                "長崎そよ": 18,
+                "高松燈": 1
+              },
+              "support_count": 18,
+              "purity": 0.5454545454545454
+            },
+            {
+              "cluster_id": "SPEAKER_04",
+              "speaker": null,
+              "cue_count": 39,
+              "label_support": {
+                "千早愛音": 13,
+                "椎名立希": 1,
+                "要楽奈": 1,
+                "長崎そよ": 3
+              },
+              "support_count": 13,
+              "purity": 0.3333333333333333
+            },
+            {
+              "cluster_id": "SPEAKER_05",
+              "speaker": null,
+              "cue_count": 6,
+              "label_support": {},
+              "support_count": 0,
+              "purity": 0.0
+            }
+          ],
+          "candidates": []
+        },
+        "anon_introduction": {
+          "top1": null,
+          "gap": null,
+          "named_groups": [
+            {
+              "cluster_id": "SPEAKER_00",
+              "speaker": null,
+              "cue_count": 35,
+              "label_support": {
+                "ういちゃん": 1,
+                "千早愛音": 2,
+                "椎名立希": 4,
+                "若葉睦": 1,
+                "要楽奈": 1,
+                "長崎そよ": 3,
+                "高松燈": 1
+              },
+              "support_count": 4,
+              "purity": 0.11428571428571428
+            },
+            {
+              "cluster_id": "SPEAKER_01",
+              "speaker": null,
+              "cue_count": 21,
+              "label_support": {
+                "千早愛音": 1,
+                "椎名立希": 1,
+                "要楽奈": 1,
+                "高松燈": 9
+              },
+              "support_count": 9,
+              "purity": 0.42857142857142855
+            },
+            {
+              "cluster_id": "SPEAKER_02",
+              "speaker": null,
+              "cue_count": 11,
+              "label_support": {
+                "長崎そよ": 1,
+                "高松燈": 6
+              },
+              "support_count": 6,
+              "purity": 0.5454545454545454
+            },
+            {
+              "cluster_id": "SPEAKER_03",
+              "speaker": null,
+              "cue_count": 35,
+              "label_support": {
+                "千早愛音": 4,
+                "長崎そよ": 19,
+                "高松燈": 1
+              },
+              "support_count": 19,
+              "purity": 0.5428571428571428
+            },
+            {
+              "cluster_id": "SPEAKER_04",
+              "speaker": null,
+              "cue_count": 39,
+              "label_support": {
+                "千早愛音": 12,
+                "椎名立希": 1,
+                "要楽奈": 1,
+                "長崎そよ": 3
+              },
+              "support_count": 12,
+              "purity": 0.3076923076923077
+            },
+            {
+              "cluster_id": "SPEAKER_05",
+              "speaker": null,
+              "cue_count": 6,
+              "label_support": {},
+              "support_count": 0,
+              "purity": 0.0
+            }
+          ],
+          "candidates": []
+        }
+      }
+    },
+    "two_thirds_understanding_names": {
+      "queries": 308,
+      "queries_with_named_candidate": 8,
+      "top1_name_counts": {
+        "長崎そよ": 3,
+        "高松燈": 5
+      },
+      "targets": {
+        "opening_soyo": {
+          "top1": null,
+          "gap": null,
+          "named_groups": [
+            {
+              "cluster_id": "SPEAKER_00",
+              "speaker": null,
+              "cue_count": 35,
+              "label_support": {
+                "千早愛音": 2,
+                "椎名立希": 4,
+                "要楽奈": 1,
+                "長崎そよ": 2
+              },
+              "support_count": 4,
+              "purity": 0.11428571428571428
+            },
+            {
+              "cluster_id": "SPEAKER_01",
+              "speaker": null,
+              "cue_count": 19,
+              "label_support": {
+                "椎名立希": 1,
+                "高松燈": 7
+              },
+              "support_count": 7,
+              "purity": 0.3684210526315789
+            },
+            {
+              "cluster_id": "SPEAKER_02",
+              "speaker": null,
+              "cue_count": 11,
+              "label_support": {
+                "長崎そよ": 1,
+                "高松燈": 6
+              },
+              "support_count": 6,
+              "purity": 0.5454545454545454
+            },
+            {
+              "cluster_id": "SPEAKER_03",
+              "speaker": null,
+              "cue_count": 33,
+              "label_support": {
+                "千早愛音": 3,
+                "長崎そよ": 18,
+                "高松燈": 1
+              },
+              "support_count": 18,
+              "purity": 0.5454545454545454
+            },
+            {
+              "cluster_id": "SPEAKER_04",
+              "speaker": null,
+              "cue_count": 39,
+              "label_support": {
+                "千早愛音": 12,
+                "椎名立希": 1,
+                "要楽奈": 1,
+                "長崎そよ": 3
+              },
+              "support_count": 12,
+              "purity": 0.3076923076923077
+            },
+            {
+              "cluster_id": "SPEAKER_05",
+              "speaker": null,
+              "cue_count": 6,
+              "label_support": {},
+              "support_count": 0,
+              "purity": 0.0
+            }
+          ],
+          "candidates": []
+        },
+        "anon_introduction": {
+          "top1": null,
+          "gap": null,
+          "named_groups": [
+            {
+              "cluster_id": "SPEAKER_00",
+              "speaker": null,
+              "cue_count": 35,
+              "label_support": {
+                "千早愛音": 2,
+                "椎名立希": 4,
+                "要楽奈": 1,
+                "長崎そよ": 2
+              },
+              "support_count": 4,
+              "purity": 0.11428571428571428
+            },
+            {
+              "cluster_id": "SPEAKER_01",
+              "speaker": null,
+              "cue_count": 21,
+              "label_support": {
+                "椎名立希": 1,
+                "高松燈": 8
+              },
+              "support_count": 8,
+              "purity": 0.38095238095238093
+            },
+            {
+              "cluster_id": "SPEAKER_02",
+              "speaker": null,
+              "cue_count": 11,
+              "label_support": {
+                "長崎そよ": 1,
+                "高松燈": 6
+              },
+              "support_count": 6,
+              "purity": 0.5454545454545454
+            },
+            {
+              "cluster_id": "SPEAKER_03",
+              "speaker": null,
+              "cue_count": 35,
+              "label_support": {
+                "千早愛音": 3,
+                "長崎そよ": 19,
+                "高松燈": 1
+              },
+              "support_count": 19,
+              "purity": 0.5428571428571428
+            },
+            {
+              "cluster_id": "SPEAKER_04",
+              "speaker": null,
+              "cue_count": 39,
+              "label_support": {
+                "千早愛音": 11,
+                "椎名立希": 1,
+                "要楽奈": 1,
+                "長崎そよ": 3
+              },
+              "support_count": 11,
+              "purity": 0.28205128205128205
+            },
+            {
+              "cluster_id": "SPEAKER_05",
+              "speaker": null,
+              "cue_count": 6,
+              "label_support": {},
+              "support_count": 0,
+              "purity": 0.0
+            }
+          ],
+          "candidates": []
+        }
+      }
+    }
+  },
+  "limits": [
+    "Uses cached Understanding-interval vectors, not raw ASR-cue vectors: not an ASR-stage implementation.",
+    "Only reference names available at the indicated Understanding horizon are used; unknown future names remain null.",
+    "Naming purity is relative to initial model labels, not acoustic identity truth.",
+    "The short unembedded 309th line is not scored. No new generative call or DB write.",
+    "This tests one hard-ID grouping method and does not reject acoustic clustering independent of WhisperX IDs."
+  ]
+}

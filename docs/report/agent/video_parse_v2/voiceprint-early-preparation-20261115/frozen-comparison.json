@@ -1,0 +1,295 @@
+{
+  "source_task_id": "df165ebc-540a-4a9d-bf84-b7469501564b",
+  "source_artifact_sha256": "c3ca8d50c4e4f27ca4701cfc7557704d3ca9fd57e8431c9ef3e1fa9f409eb642",
+  "queries": 309,
+  "full_reference_samples": 308,
+  "early_reference_chunks": 16,
+  "early_reference_samples": 216,
+  "full_named_reference_samples": 277,
+  "early_named_reference_samples": 200,
+  "early_ready_at_ms": 1794672385522,
+  "all_ready_at_ms": 1794672568776,
+  "gate_difference_ms": 183254,
+  "measured_original_preparation_ms": 39462,
+  "full_rescore_seconds": 1.518008541999734,
+  "two_thirds_rescore_seconds": 1.0990417909997632,
+  "full_reproduction": {
+    "lines_matched": 309,
+    "candidates_gap_band_reason_exact": true
+  },
+  "full_reference_names": [
+    "ういちゃん",
+    "マナちゃん",
+    "千早愛音",
+    "椎名立希",
+    "海鈴",
+    "若葉睦",
+    "要楽奈",
+    "長崎そよ",
+    "高松燈"
+  ],
+  "early_reference_names": [
+    "千早愛音",
+    "椎名立希",
+    "若葉睦",
+    "要楽奈",
+    "長崎そよ",
+    "高松燈"
+  ],
+  "missing_reference_names": [
+    "ういちゃん",
+    "マナちゃん",
+    "海鈴"
+  ],
+  "top1_changed_count": 44,
+  "band_changed_count": 77,
+  "full_bands": {
+    "null": 115,
+    "NO_VOICE": 82,
+    "ACCEPT": 45,
+    "CONFLICT": 67
+  },
+  "two_thirds_bands": {
+    "null": 93,
+    "NO_VOICE": 69,
+    "ACCEPT": 76,
+    "CONFLICT": 71
+  },
+  "targets": {
+    "opening_soyo": {
+      "start_ms": 48000,
+      "end_ms": 49800,
+      "expected_speaker": "長崎そよ",
+      "full": {
+        "top1": "長崎そよ",
+        "gap": 0.09237974738550214,
+        "band": null,
+        "candidate_count": 9,
+        "candidates": [
+          {
+            "speaker": "長崎そよ",
+            "similarity": 0.7261037882999246,
+            "reference_count": 58,
+            "independent_cue_count": 47
+          },
+          {
+            "speaker": "千早愛音",
+            "similarity": 0.6337240409144225,
+            "reference_count": 72,
+            "independent_cue_count": 46
+          },
+          {
+            "speaker": "ういちゃん",
+            "similarity": 0.533024423575966,
+            "reference_count": 2,
+            "independent_cue_count": 2
+          }
+        ]
+      },
+      "two_thirds": {
+        "top1": "長崎そよ",
+        "gap": 0.10220216968526874,
+        "band": null,
+        "candidate_count": 6,
+        "candidates": [
+          {
+            "speaker": "長崎そよ",
+            "similarity": 0.7268013817109944,
+            "reference_count": 37,
+            "independent_cue_count": 36
+          },
+          {
+            "speaker": "千早愛音",
+            "similarity": 0.6245992120257257,
+            "reference_count": 56,
+            "independent_cue_count": 38
+          },
+          {
+            "speaker": "椎名立希",
+            "similarity": 0.4740281251778688,
+            "reference_count": 30,
+            "independent_cue_count": 24
+          }
+        ]
+      }
+    },
+    "anon_introduction": {
+      "start_ms": 292500,
+      "end_ms": 295499,
+      "expected_speaker": "千早愛音",
+      "full": {
+        "top1": "千早愛音",
+        "gap": 0.03705611121626218,
+        "band": "NO_VOICE",
+        "candidate_count": 9,
+        "candidates": [
+          {
+            "speaker": "千早愛音",
+            "similarity": 0.8157308215506486,
+            "reference_count": 75,
+            "independent_cue_count": 44
+          },
+          {
+            "speaker": "長崎そよ",
+            "similarity": 0.7786747103343864,
+            "reference_count": 61,
+            "independent_cue_count": 49
+          },
+          {
+            "speaker": "椎名立希",
+            "similarity": 0.6820107418102723,
+            "reference_count": 36,
+            "independent_cue_count": 28
+          }
+        ]
+      },
+      "two_thirds": {
+        "top1": "千早愛音",
+        "gap": 0.0772712942252407,
+        "band": null,
+        "candidate_count": 6,
+        "candidates": [
+          {
+            "speaker": "千早愛音",
+            "similarity": 0.8146018024142045,
+            "reference_count": 59,
+            "independent_cue_count": 36
+          },
+          {
+            "speaker": "長崎そよ",
+            "similarity": 0.7373305081889638,
+            "reference_count": 40,
+            "independent_cue_count": 38
+          },
+          {
+            "speaker": "椎名立希",
+            "similarity": 0.6745176070515637,
+            "reference_count": 30,
+            "independent_cue_count": 24
+          }
+        ]
+      }
+    }
+  },
+  "asr": {
+    "cue_count": 166,
+    "word_count": 3467,
+    "word_keys": [
+      "end_ms",
+      "score",
+      "start_ms",
+      "text"
+    ],
+    "speaker_id_counts": {
+      "SPEAKER_04": 42,
+      "None": 36,
+      "SPEAKER_01": 19,
+      "SPEAKER_03": 27,
+      "SPEAKER_02": 10,
+      "SPEAKER_00": 26,
+      "SPEAKER_05": 6
+    },
+    "embedded_dialogues_matching_exact_asr_bounds": 50,
+    "embedded_dialogues_with_multiple_overlapping_speaker_ids": 22,
+    "samples_without_matched_asr_cues": 9,
+    "id_memberships_and_initial_label_proxy": {
+      "SPEAKER_04": {
+        "sample_memberships": 120,
+        "understanding_labels": {
+          "千早愛音": 70,
+          "高松燈": 3,
+          "長崎そよ": 18,
+          "椎名立希": 17,
+          "null": 11,
+          "要楽奈": 1
+        }
+      },
+      "SPEAKER_01": {
+        "sample_memberships": 24,
+        "understanding_labels": {
+          "高松燈": 12,
+          "千早愛音": 3,
+          "椎名立希": 1,
+          "長崎そよ": 1,
+          "要楽奈": 1,
+          "null": 6
+        }
+      },
+      "SPEAKER_03": {
+        "sample_memberships": 53,
+        "understanding_labels": {
+          "長崎そよ": 35,
+          "千早愛音": 10,
+          "若葉睦": 2,
+          "椎名立希": 3,
+          "高松燈": 2,
+          "要楽奈": 1
+        }
+      },
+      "SPEAKER_02": {
+        "sample_memberships": 14,
+        "understanding_labels": {
+          "高松燈": 9,
+          "長崎そよ": 3,
+          "null": 2
+        }
+      },
+      "SPEAKER_00": {
+        "sample_memberships": 82,
+        "understanding_labels": {
+          "千早愛音": 13,
+          "長崎そよ": 25,
+          "若葉睦": 2,
+          "椎名立希": 24,
+          "高松燈": 8,
+          "要楽奈": 1,
+          "海鈴": 6,
+          "null": 2,
+          "ういちゃん": 1
+        }
+      },
+      "SPEAKER_05": {
+        "sample_memberships": 24,
+        "understanding_labels": {
+          "null": 10,
+          "千早愛音": 3,
+          "マナちゃん": 7,
+          "ういちゃん": 1,
+          "長崎そよ": 2,
+          "若葉睦": 1
+        }
+      }
+    },
+    "target_cues": {
+      "48000": [
+        {
+          "start_seconds": 48324,
+          "end_seconds": 59553,
+          "speaker_id": "SPEAKER_03",
+          "text": "い誰も悪くないんだよ久しぶり"
+        },
+        {
+          "start_seconds": 33251,
+          "end_seconds": 48324,
+          "speaker_id": "SPEAKER_04",
+          "text": "ック… 解散したの?別に トモリちゃんのせいじゃないと思うけどてか 急に辞めた子の方が悪くない?理由も言わなかったんでしょ?ちょっと勝手じゃない?それでトモリちゃんたち傷つけてサキちゃんも悪くな"
+        }
+      ],
+      "292500": [
+        {
+          "start_seconds": 289475,
+          "end_seconds": 295499,
+          "speaker_id": "SPEAKER_04",
+          "text": "と…そうです"
+        }
+      ]
+    }
+  },
+  "limits": [
+    "Reference-only counterfactual holds full-episode interval/song/overlap flags fixed.",
+    "Initial Understanding labels are proxies, not whole-episode identity truth.",
+    "Cached-vector scoring is not early-stage encoding time or end-to-end acceleration.",
+    "ASR cue vectors cannot be assumed equivalent to different Understanding intervals.",
+    "No new generative model call or business-state write."
+  ]
+}
