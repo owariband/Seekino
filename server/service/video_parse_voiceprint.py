@@ -547,7 +547,7 @@ def finish_voiceprint_scoring(
         if (line.get("duration_ms") != source["end_ms"] - source["start_ms"]
             or line.get("band") not in {None, "ACCEPT", "CONFLICT", "NO_VOICE"}
             or not isinstance(line.get("reason"), str) or not line["reason"]
-            or not isinstance(candidates, list) or len(candidates) > 3):
+            or not isinstance(candidates, list) or len(candidates) > 4):
             raise VideoParseConflictError("voiceprint scored line is incomplete")
         names = []
         for candidate in candidates:
@@ -565,6 +565,8 @@ def finish_voiceprint_scoring(
                 or "reference_count" in candidate and candidate["reference_count"] != len(reference_ids)):
                 raise VideoParseConflictError("voiceprint candidates must reference the shared sample pool")
             names.append(candidate["speaker"])
+        if len(candidates) == 4 and candidates[3]["speaker"] != source["speaker"]:
+            raise VideoParseConflictError("fourth voiceprint candidate must be the original speaker")
         if len(set(names)) != len(names) or candidates != sorted(
             candidates, key=lambda candidate: (-candidate["similarity"], candidate["speaker"]),
         ):

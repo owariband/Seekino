@@ -262,6 +262,25 @@ def test_production_score_preserves_all_exclusions_and_single_candidate_gap() ->
     assert result["excluded_reference_counts"] == {"incompatible_encoder": 1}
 
 
+@pytest.mark.parametrize("label,expected", [
+    ("D", ["A", "B", "C", "D"]), ("A", ["A", "B", "C"]),
+    (None, ["A", "B", "C"]), ("missing", ["A", "B", "C"]),
+])
+def test_production_score_retains_original_label_outside_top_three(label, expected):
+    query = production_sample(100, label=label)
+    references = [production_sample(i, label=name, angle=angle)
+                  for i, (name, angle) in enumerate(zip("ABCD", (0, 30, 60, 90)), 1)]
+    before = deepcopy([query, *references])
+    result = production_score(query, [query, *references])
+    assert [candidate["speaker"] for candidate in result["candidates"]] == expected
+    assert result["candidate_count"] == 4
+    assert result["gap"] == pytest.approx(1 - cos(radians(30)))
+    if label == "D":
+        assert result["candidates"][-1]["similarity"] == pytest.approx(0, abs=1e-15)
+        assert result["candidates"][-1]["reference_ids"] == [references[-1]["id"]]
+    assert [query, *references] == before
+
+
 def test_under_400ms_target_retains_explicit_unscored_result_without_embedding() -> None:
     query = production_sample(100, end_ms=300_399)
     del query["vector"]

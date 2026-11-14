@@ -97,16 +97,16 @@ def test_flag_preserves_speaker_and_original_snapshot_for_every_band(band):
 
 
 @pytest.mark.parametrize("band,expected", [
-    ("ACCEPT", "爽世"), ("CONFLICT", "爱音"), ("NO_VOICE", "爱音"), ("REVIEW", "爱音"),
+    ("ACCEPT", "爽世"), ("CONFLICT", "爽世"), ("NO_VOICE", "爱音"), ("REVIEW", "爱音"),
 ])
-def test_prefill_only_accept_exports_default_without_polluting_initial(band, expected):
+def test_prefill_exports_reviewable_default_without_polluting_initial(band, expected):
     snapshot = _voice_snapshot(band=band)
     original = deepcopy(snapshot)
     canvas = ParseContextCanvas.from_refine(snapshot)
     event = canvas.interval_result().updates[0].timeline[0]
     assert event.speaker == expected
-    assert event.speaker_source == ("voice_default" if band == "ACCEPT" else "understanding")
-    if band == "ACCEPT":
+    assert event.speaker_source == ("voice_default" if band in {"ACCEPT", "CONFLICT"} else "understanding")
+    if band in {"ACCEPT", "CONFLICT"}:
         assert "爽世" in event.participants and "爽世" in canvas.result("member").persons
     assert snapshot == original
     assert canvas._initial["member"].model_dump(mode="json") == original["member_contents"]["member"]
@@ -132,8 +132,9 @@ def test_no_voice_preserves_unknown_speaker_with_empty_or_single_candidate(candi
 
 
 @pytest.mark.parametrize("speaker", ["爽世", "立希", "睦", None])
-def test_explicit_speaker_edits_including_null_and_outside_candidates_survive(speaker):
-    canvas = ParseContextCanvas.from_refine(_voice_snapshot())
+@pytest.mark.parametrize("band", ["ACCEPT", "CONFLICT"])
+def test_explicit_speaker_edits_including_null_and_outside_candidates_survive(speaker, band):
+    canvas = ParseContextCanvas.from_refine(_voice_snapshot(band=band))
     reference, value = canvas.items("events")[0]
     original_evidence = canvas.get("evidence", "member")
     ranking = deepcopy(value["voice_evidence"])
@@ -150,8 +151,9 @@ def test_explicit_speaker_edits_including_null_and_outside_candidates_survive(sp
     assert canvas.get("evidence", "member") == original_evidence
 
 
-def test_prior_refine_edit_is_not_overwritten_by_default_in_another_window():
-    snapshot = _voice_snapshot(source="refine_edit")
+@pytest.mark.parametrize("band", ["ACCEPT", "CONFLICT"])
+def test_prior_refine_edit_is_not_overwritten_by_default_in_another_window(band):
+    snapshot = _voice_snapshot(source="refine_edit", band=band)
     canvas = ParseContextCanvas.from_refine(snapshot)
     assert canvas.result("member").timeline[0].speaker == "爱音"
     assert canvas.interval_result().updates == []
@@ -280,8 +282,9 @@ def test_off_mode_ignores_model_supplied_source_on_complete_event_write():
 
 
 @pytest.mark.parametrize("mode,expected", [("flag", "爱音"), ("prefill", "爽世")])
-def test_normal_refine_reads_prepared_draft_and_commits_default_once(mode, expected):
-    snapshot = _voice_snapshot(mode)
+@pytest.mark.parametrize("band", ["ACCEPT", "CONFLICT"])
+def test_normal_refine_reads_prepared_draft_and_commits_default_once(mode, expected, band):
+    snapshot = _voice_snapshot(mode, band)
     original = deepcopy(snapshot)
 
     async def provider(_snapshot, *, prompt, remaining_seconds):

@@ -261,7 +261,8 @@ class ParseContextCanvas(ContextCanvas):
                     "evidence_ref": member_ref, "evidence_section": "voiceprint",
                     "method_version": prepared.get("method_version"),
                 }
-                if (self._voiceprint_modes[member_ref] == "prefill" and line.get("band") == "ACCEPT"
+                if (self._voiceprint_modes[member_ref] == "prefill"
+                        and line.get("band") in {"ACCEPT", "CONFLICT"}
                         and candidates and event["speaker_source"] != "refine_edit"):
                     event["speaker"] = candidates[0]["speaker"]
                     event["speaker_source"] = "voice_default"

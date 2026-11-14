@@ -1,0 +1,1074 @@
+{
+  "task_id": "cc181952-3212-43cf-815c-ef9c0b9d07ba",
+  "version": 3,
+  "status": "COMPLETE",
+  "runtime": {
+    "recorded_utc": "2026-11-14T12:30:49.845008+00:00",
+    "baseline_commit": "a84ff818092d26ceb4528ee461668dac24c8cdfc",
+    "included_conflict_fix": "3bff7430679a6aeb0316085fc9c0bbf9d1d9baaf",
+    "preserved_prior_runtime_patches": [
+      "4501777318a49438fdfe7be79d18678e4be38670",
+      "c777ef72961d5ace29a1b191f9ba09970a76b5cc"
+    ],
+    "source_files_frozen": 371,
+    "source_manifest_sha256": "ef34e0e86ef7da21466fbe329abfce202a51c3d566ebb19003bbe84873cf1046",
+    "tests": {
+      "passed": 434,
+      "duration_seconds": 8.32
+    },
+    "visual_fps": 1.0,
+    "understanding_model": "deepseek-flash",
+    "understanding_reasoning_effort": "high",
+    "refine_model": "deepseek-flash",
+    "refine_reasoning_effort": "high",
+    "voiceprint_mode": "prefill",
+    "asr_cache_policy": "reuse existing valid whole-video WhisperX result; no forced ASR rerun",
+    "runtime_worktree": "/Users/hypnos/workspace/agent/Seekino/outputs/worktrees/ep04-conflict-prefill-run-20261114",
+    "environment": "test",
+    "cpu_prod_access": false
+  },
+  "terminal_metrics": {
+    "checked_utc": "2026-11-14T13:20:06.124791+00:00",
+    "task": {
+      "id": "cc181952-3212-43cf-815c-ef9c0b9d07ba",
+      "status": "COMPLETE",
+      "version": 3,
+      "create_time": 1794659535856,
+      "start_time": "2026-11-14 12:32:17.883000",
+      "finish_time": "2026-11-14 12:56:15.704000",
+      "processing_duration_ms": 0,
+      "last_error": null
+    },
+    "submitted_to_terminal_seconds": 1439.848000049591,
+    "database_time_note": "Raw MySQL DateTime values represent UTC and lack tzinfo; create_time is Unix milliseconds.",
+    "model_call_counts": [
+      {
+        "operation": "IntervalRefinementResult",
+        "status": "completed",
+        "n": 23
+      },
+      {
+        "operation": "IntervalRefinementResult",
+        "status": "failed",
+        "n": 26
+      },
+      {
+        "operation": "VideoSummaryCompletion",
+        "status": "failed",
+        "n": 3
+      },
+      {
+        "operation": "speaker_embedding",
+        "status": "completed",
+        "n": 336
+      },
+      {
+        "operation": "text_embedding",
+        "status": "completed",
+        "n": 1310
+      },
+      {
+        "operation": "video_parse_v2_chunk",
+        "status": "completed",
+        "n": 24
+      },
+      {
+        "operation": "video_parse_v2_chunk",
+        "status": "failed",
+        "n": 6
+      },
+      {
+        "operation": "video_parse_v2_chunk_repair",
+        "status": "completed",
+        "n": 1
+      }
+    ],
+    "model_counts": [
+      {
+        "operation": "IntervalRefinementResult",
+        "model_name": "deepseek-flash",
+        "provider": "deepseek",
+        "n": 49
+      },
+      {
+        "operation": "VideoSummaryCompletion",
+        "model_name": "k3.1-pro",
+        "provider": "kimi",
+        "n": 3
+      },
+      {
+        "operation": "speaker_embedding",
+        "model_name": "iic/speech_campplus_sv_zh-cn_16k-common",
+        "provider": "local",
+        "n": 336
+      },
+      {
+        "operation": "text_embedding",
+        "model_name": "seekino-qwen3-embedding-0.6b",
+        "provider": "llama_cpp",
+        "n": 1310
+      },
+      {
+        "operation": "video_parse_v2_chunk",
+        "model_name": "deepseek-flash",
+        "provider": "deepseek",
+        "n": 30
+      },
+      {
+        "operation": "video_parse_v2_chunk_repair",
+        "model_name": "deepseek-flash",
+        "provider": "deepseek",
+        "n": 1
+      }
+    ],
+    "recorded_token_totals": {
+      "input_tokens": 1740904,
+      "output_tokens": 1266475,
+      "reasoning_tokens": 972602,
+      "cached_input_tokens": 1275008
+    },
+    "recorded_parse_refine_tokens": {
+      "input_tokens": 1669990,
+      "output_tokens": 1266475,
+      "reasoning_tokens": 972602,
+      "cached_input_tokens": 1275008
+    },
+    "records_with_token_counts": 1359,
+    "token_usage_sources": {
+      "provider_usage": 1359
+    },
+    "token_scope_note": "Only reported fields; failed/cancelled calls may have unreported charges. Aggregate includes local embedding usage; parse/refine is separately scoped. No cost estimate.",
+    "es_counts": [
+      {
+        "index": "seekino_ep04_voiceprint_chunks_20261113_test",
+        "task_field": "parse_task_id",
+        "count": 24
+      },
+      {
+        "index": "seekino_ep04_voiceprint_events_20261113_test",
+        "task_field": "parse_task_id",
+        "count": 689
+      }
+    ],
+    "runtime_source_unchanged": true,
+    "source_file_count": 371,
+    "old_tasks": [
+      {
+        "id": "368fec7e-b1f3-42b3-9ed6-fd0766be471b",
+        "status": "PARSING_FAILED",
+        "version": 1
+      },
+      {
+        "id": "7504e1bb-2958-4b1d-9d77-407b829e93c9",
+        "status": "COMPLETE",
+        "version": 2
+      }
+    ],
+    "old_v2_content_unchanged": true
+  },
+  "progress": {
+    "recorded_utc": "2026-11-14T12:56:16.512547+00:00",
+    "task_id": "cc181952-3212-43cf-815c-ef9c0b9d07ba",
+    "status": "COMPLETE",
+    "version": 3,
+    "chunk_count": 24,
+    "understanding_committed": 24,
+    "first_understanding_captured": 24,
+    "indexed_current": 24,
+    "chunk_statuses": {
+      "COMPLETE": 24
+    },
+    "refine_statuses": {
+      "COMPLETE": 22
+    },
+    "asr_cues": 166,
+    "voiceprint_ready": true,
+    "voiceprint_line_count": 337,
+    "voiceprint_sample_count": 336,
+    "usage": null,
+    "refine_inputs_captured": 49,
+    "refine_returned": 23,
+    "reference_payload_present": false,
+    "last_error_code": null
+  },
+  "input_checks": {
+    "task_id": "cc181952-3212-43cf-815c-ef9c0b9d07ba",
+    "actual_refine_calls_checked": 49,
+    "initial_version_dialogues_checked": 337,
+    "initial_version_bands": {
+      "null": 126,
+      "CONFLICT": 69,
+      "NO_VOICE": 116,
+      "ACCEPT": 26
+    },
+    "prefilled_unique_dialogues": 95,
+    "conflict_prefilled_unique_dialogues": 69,
+    "changed_from_understanding_unique_dialogues": 75,
+    "original_label_extra_scores_observed": 47,
+    "prefill_violations": [],
+    "raw_reference_payload_absent": true,
+    "scope": "Actual captured requests; initial member version 1 only for identity assertions. Later explicit Refine edits remain authoritative. No assertion of speaker truth."
+  },
+  "asr_cache_comparison": {
+    "7504e1bb-2958-4b1d-9d77-407b829e93c9": {
+      "present": true,
+      "cue_count": 166,
+      "canonical_sha256": "02e0d35d94491a960109c58c287fe92ed5e54584d63d486fe22d41bbae8593a0"
+    },
+    "cc181952-3212-43cf-815c-ef9c0b9d07ba": {
+      "present": true,
+      "cue_count": 166,
+      "canonical_sha256": "02e0d35d94491a960109c58c287fe92ed5e54584d63d486fe22d41bbae8593a0"
+    }
+  },
+  "recovery_history": {
+    "initial_failure": {
+      "understanding_committed": 19,
+      "root_failed_requests": 1,
+      "root_code": "max_output_tokens",
+      "max_output_tokens": 50000,
+      "root_response_id": "cd19c9df-f516-493e-af37-b9f94af61248",
+      "partial_visible_output_characters": 7231,
+      "cancelled_sibling_chunks": 4,
+      "voiceprint_started": false,
+      "refine_started": false
+    },
+    "recovery_plan": "standard retry-parse on the same v3, retain 19 successful chunks, unchanged parse config",
+    "retry_1": {
+      "requested_utc": "2026-11-14T12:43:54.640294+00:00",
+      "task_id": "cc181952-3212-43cf-815c-ef9c0b9d07ba",
+      "version": 3,
+      "status": "PARSING",
+      "max_output_tokens": 50000
+    }
+  },
+  "refine_error_types": {
+    "RefineInputChanged": 21,
+    "ModelFailureError": 5
+  },
+  "first_understanding_capture": {
+    "count": 24,
+    "all_version_one": true,
+    "all_before_any_refine_commit": true
+  },
+  "targets": {
+    "opening_soyo": {
+      "result": "FAIL",
+      "expected_speaker": "長崎そよ",
+      "first_understanding": {
+        "start_seconds": 47500,
+        "end_seconds": 49000,
+        "speaker": "高松燈",
+        "speaker_source": "understanding",
+        "text_variants": [
+          {
+            "role": "ORIGINAL",
+            "text": "祥ちゃんも悪くない",
+            "language": "ja"
+          },
+          {
+            "role": "TRANSLATION",
+            "text": "也不是小祥的错",
+            "language": "zh-Hans"
+          }
+        ]
+      },
+      "voice": {
+        "start_ms": 47500,
+        "end_ms": 49000,
+        "understanding_speaker": "高松燈",
+        "label": "高松燈",
+        "band": "ACCEPT",
+        "conflict": true,
+        "gap": 0.17133314355169094,
+        "reason": "compared",
+        "candidates": [
+          {
+            "speaker": "長崎そよ",
+            "similarity": 0.7447823856583438,
+            "reference_count": 58,
+            "independent_cue_count": 50
+          },
+          {
+            "speaker": "若葉睦",
+            "similarity": 0.5734492421066528,
+            "reference_count": 2,
+            "independent_cue_count": 2
+          },
+          {
+            "speaker": "千早愛音",
+            "similarity": 0.5703024235451175,
+            "reference_count": 77,
+            "independent_cue_count": 37
+          },
+          {
+            "speaker": "高松燈",
+            "similarity": 0.5064799864215668,
+            "reference_count": 36,
+            "independent_cue_count": 32
+          }
+        ]
+      },
+      "actual_refine_call": {
+        "call_id": "ee0e43f2-932d-4ded-8dad-6bb5e2b70114",
+        "recorded_utc": "2026-11-14T12:47:49.590059+00:00",
+        "prompt_characters": 59803,
+        "contains_samples": false,
+        "contains_reference_ids": false,
+        "status": "returned",
+        "error_type": null,
+        "target_inputs": [
+          {
+            "sequence_no": 0,
+            "events": {
+              "opening_soyo": [
+                {
+                  "start_seconds": 45500,
+                  "end_seconds": 47000,
+                  "speaker": "千早愛音",
+                  "speaker_source": null,
+                  "text_variants": [
+                    {
+                      "language": "ja",
+                      "role": "ORIGINAL",
+                      "text": "それで燈ちゃんたち傷つけて…"
+                    },
+                    {
+                      "language": "zh-Hans",
+                      "role": "TRANSLATION",
+                      "text": "因此让你们伤了心…"
+                    }
+                  ]
+                },
+                {
+                  "start_seconds": 47500,
+                  "end_seconds": 49000,
+                  "speaker": "長崎そよ",
+                  "speaker_source": null,
+                  "text_variants": [
+                    {
+                      "language": "ja",
+                      "role": "ORIGINAL",
+                      "text": "祥ちゃんも悪くない"
+                    },
+                    {
+                      "language": "zh-Hans",
+                      "role": "TRANSLATION",
+                      "text": "也不是小祥的错"
+                    }
+                  ]
+                }
+              ],
+              "anon_introduction": []
+            },
+            "voice_summaries": [
+              {
+                "band": "CONFLICT",
+                "candidates": [
+                  {
+                    "independent_cue_count": 37,
+                    "reference_count": 77,
+                    "similarity": 0.7130115921002192,
+                    "speaker": "千早愛音"
+                  },
+                  {
+                    "independent_cue_count": 51,
+                    "reference_count": 60,
+                    "similarity": 0.6115974006612316,
+                    "speaker": "長崎そよ"
+                  },
+                  {
+                    "independent_cue_count": 1,
+                    "reference_count": 1,
+                    "similarity": 0.5760424992298508,
+                    "speaker": "红发女生"
+                  },
+                  {
+                    "independent_cue_count": 35,
+                    "reference_count": 42,
+                    "similarity": 0.5285804564145624,
+                    "speaker": "椎名立希"
+                  }
+                ],
+                "conflict": true,
+                "duration_ms": 1500,
+                "end_ms": 47000,
+                "gap": 0.10141419143898767,
+                "position": 21,
+                "reason": "compared",
+                "start_ms": 45500,
+                "understanding_speaker": "椎名立希"
+              },
+              {
+                "band": "ACCEPT",
+                "candidates": [
+                  {
+                    "independent_cue_count": 50,
+                    "reference_count": 58,
+                    "similarity": 0.7447823856583438,
+                    "speaker": "長崎そよ"
+                  },
+                  {
+                    "independent_cue_count": 2,
+                    "reference_count": 2,
+                    "similarity": 0.5734492421066528,
+                    "speaker": "若葉睦"
+                  },
+                  {
+                    "independent_cue_count": 37,
+                    "reference_count": 77,
+                    "similarity": 0.5703024235451175,
+                    "speaker": "千早愛音"
+                  },
+                  {
+                    "independent_cue_count": 32,
+                    "reference_count": 36,
+                    "similarity": 0.5064799864215668,
+                    "speaker": "高松燈"
+                  }
+                ],
+                "conflict": true,
+                "duration_ms": 1500,
+                "end_ms": 49000,
+                "gap": 0.17133314355169094,
+                "position": 22,
+                "reason": "compared",
+                "start_ms": 47500,
+                "understanding_speaker": "高松燈"
+              }
+            ]
+          }
+        ],
+        "target_outputs": {
+          "opening_soyo": [
+            {
+              "start_seconds": 45500,
+              "end_seconds": 47000,
+              "speaker": "椎名立希",
+              "speaker_source": null,
+              "text_variants": [
+                {
+                  "language": "ja",
+                  "role": "ORIGINAL",
+                  "text": "それで燈ちゃんたち傷つけて…"
+                },
+                {
+                  "language": "zh-Hans",
+                  "role": "TRANSLATION",
+                  "text": "因此让你们伤了心…"
+                }
+              ]
+            },
+            {
+              "start_seconds": 47500,
+              "end_seconds": 49000,
+              "speaker": "高松燈",
+              "speaker_source": null,
+              "text_variants": [
+                {
+                  "language": "ja",
+                  "role": "ORIGINAL",
+                  "text": "祥ちゃんも悪くない"
+                },
+                {
+                  "language": "zh-Hans",
+                  "role": "TRANSLATION",
+                  "text": "也不是小祥的错"
+                }
+              ]
+            }
+          ],
+          "anon_introduction": []
+        }
+      },
+      "final": {
+        "start_seconds": 47500,
+        "end_seconds": 49000,
+        "speaker": "高松燈",
+        "speaker_source": "refine_edit",
+        "text_variants": [
+          {
+            "role": "ORIGINAL",
+            "text": "祥ちゃんも悪くない",
+            "language": "ja"
+          },
+          {
+            "role": "TRANSLATION",
+            "text": "也不是小祥的错",
+            "language": "zh-Hans"
+          }
+        ]
+      },
+      "input_description_conflict_observed": true,
+      "description_conflict_causality": "Unproven; actual input speaker was Soyo while unchanged description attributed the speech to Tomori."
+    },
+    "anon_introduction": {
+      "result": "PASS_TARGET_NAME_ONLY",
+      "expected_speaker": "千早愛音",
+      "first_understanding": [
+        {
+          "start_seconds": 288500,
+          "end_seconds": 295499,
+          "speaker": "千早愛音",
+          "speaker_source": "understanding",
+          "text_variants": [
+            {
+              "role": "ORIGINAL",
+              "text": "うん…長崎…長崎そよちゃんと…",
+              "language": "ja"
+            }
+          ]
+        }
+      ],
+      "voice": {
+        "start_ms": 288500,
+        "end_ms": 295499,
+        "understanding_speaker": "千早愛音",
+        "label": "千早愛音",
+        "band": "NO_VOICE",
+        "conflict": false,
+        "gap": 0.0016891821610349744,
+        "reason": "compared",
+        "candidates": [
+          {
+            "speaker": "千早愛音",
+            "similarity": 0.8380446981828826,
+            "reference_count": 76,
+            "independent_cue_count": 35
+          },
+          {
+            "speaker": "長崎そよ",
+            "similarity": 0.8363555160218477,
+            "reference_count": 60,
+            "independent_cue_count": 50
+          },
+          {
+            "speaker": "要楽奈",
+            "similarity": 0.681649254447132,
+            "reference_count": 8,
+            "independent_cue_count": 8
+          }
+        ]
+      },
+      "final": {
+        "start_seconds": 288500,
+        "end_seconds": 295499,
+        "speaker": "千早愛音",
+        "speaker_source": "understanding",
+        "text_variants": [
+          {
+            "role": "ORIGINAL",
+            "text": "うん…長崎…長崎そよちゃん…と…そうです",
+            "language": "ja"
+          }
+        ]
+      },
+      "initial_identity_already_correct": true,
+      "duration_ms": 6999,
+      "whole_interval_single_speaker_validated": false
+    }
+  },
+  "target_name_score": {
+    "correct": 1,
+    "total": 2,
+    "full_episode_accuracy": "NOT_EVALUATED"
+  },
+  "relevant_refine_calls": [
+    {
+      "call_id": "b2f4e6dc-d5aa-4b24-8e22-f8ccafa4a593",
+      "recorded_utc": "2026-11-14T12:47:50.800289+00:00",
+      "prompt_characters": 30830,
+      "contains_samples": false,
+      "contains_reference_ids": false,
+      "status": "error",
+      "error_type": "RefineInputChanged",
+      "target_inputs": [
+        {
+          "sequence_no": 4,
+          "events": {
+            "opening_soyo": [],
+            "anon_introduction": [
+              {
+                "start_seconds": 288500,
+                "end_seconds": 295499,
+                "speaker": "千早愛音",
+                "speaker_source": null,
+                "text_variants": [
+                  {
+                    "language": "ja",
+                    "role": "ORIGINAL",
+                    "text": "うん…長崎…長崎そよちゃんと…"
+                  }
+                ]
+              }
+            ]
+          },
+          "voice_summaries": [
+            {
+              "band": "NO_VOICE",
+              "candidates": [
+                {
+                  "independent_cue_count": 35,
+                  "reference_count": 76,
+                  "similarity": 0.8380446981828826,
+                  "speaker": "千早愛音"
+                },
+                {
+                  "independent_cue_count": 50,
+                  "reference_count": 60,
+                  "similarity": 0.8363555160218477,
+                  "speaker": "長崎そよ"
+                },
+                {
+                  "independent_cue_count": 8,
+                  "reference_count": 8,
+                  "similarity": 0.681649254447132,
+                  "speaker": "要楽奈"
+                }
+              ],
+              "conflict": false,
+              "duration_ms": 6999,
+              "end_ms": 295499,
+              "gap": 0.0016891821610349744,
+              "position": 17,
+              "reason": "compared",
+              "start_ms": 288500,
+              "understanding_speaker": "千早愛音"
+            }
+          ]
+        }
+      ],
+      "target_outputs": {
+        "opening_soyo": [],
+        "anon_introduction": []
+      }
+    },
+    {
+      "call_id": "0a5cb951-d162-4a56-bad3-17039475a09c",
+      "recorded_utc": "2026-11-14T12:48:24.694120+00:00",
+      "prompt_characters": 31236,
+      "contains_samples": false,
+      "contains_reference_ids": false,
+      "status": "returned",
+      "error_type": null,
+      "target_inputs": [
+        {
+          "sequence_no": 4,
+          "events": {
+            "opening_soyo": [],
+            "anon_introduction": [
+              {
+                "start_seconds": 288500,
+                "end_seconds": 295499,
+                "speaker": "千早愛音",
+                "speaker_source": null,
+                "text_variants": [
+                  {
+                    "language": "ja",
+                    "role": "ORIGINAL",
+                    "text": "うん…長崎…長崎そよちゃんと…"
+                  }
+                ]
+              }
+            ]
+          },
+          "voice_summaries": [
+            {
+              "band": "NO_VOICE",
+              "candidates": [
+                {
+                  "independent_cue_count": 35,
+                  "reference_count": 76,
+                  "similarity": 0.8380446981828826,
+                  "speaker": "千早愛音"
+                },
+                {
+                  "independent_cue_count": 50,
+                  "reference_count": 60,
+                  "similarity": 0.8363555160218477,
+                  "speaker": "長崎そよ"
+                },
+                {
+                  "independent_cue_count": 8,
+                  "reference_count": 8,
+                  "similarity": 0.681649254447132,
+                  "speaker": "要楽奈"
+                }
+              ],
+              "conflict": false,
+              "duration_ms": 6999,
+              "end_ms": 295499,
+              "gap": 0.0016891821610349744,
+              "position": 17,
+              "reason": "compared",
+              "start_ms": 288500,
+              "understanding_speaker": "千早愛音"
+            }
+          ]
+        }
+      ],
+      "target_outputs": {
+        "opening_soyo": [],
+        "anon_introduction": [
+          {
+            "start_seconds": 288500,
+            "end_seconds": 295499,
+            "speaker": "千早愛音",
+            "speaker_source": null,
+            "text_variants": [
+              {
+                "language": "ja",
+                "role": "ORIGINAL",
+                "text": "うん…長崎…長崎そよちゃん…と…そうです"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "call_id": "9d90dea8-a6aa-474b-9a44-6fe62cb11188",
+      "recorded_utc": "2026-11-14T12:49:27.909286+00:00",
+      "prompt_characters": 40782,
+      "contains_samples": false,
+      "contains_reference_ids": false,
+      "status": "returned",
+      "error_type": null,
+      "target_inputs": [
+        {
+          "sequence_no": 4,
+          "events": {
+            "opening_soyo": [],
+            "anon_introduction": [
+              {
+                "start_seconds": 288500,
+                "end_seconds": 295499,
+                "speaker": "千早愛音",
+                "speaker_source": null,
+                "text_variants": [
+                  {
+                    "language": "ja",
+                    "role": "ORIGINAL",
+                    "text": "うん…長崎…長崎そよちゃん…と…そうです"
+                  }
+                ]
+              }
+            ]
+          },
+          "voice_summaries": [
+            {
+              "band": "NO_VOICE",
+              "candidates": [
+                {
+                  "independent_cue_count": 35,
+                  "reference_count": 76,
+                  "similarity": 0.8380446981828826,
+                  "speaker": "千早愛音"
+                },
+                {
+                  "independent_cue_count": 50,
+                  "reference_count": 60,
+                  "similarity": 0.8363555160218477,
+                  "speaker": "長崎そよ"
+                },
+                {
+                  "independent_cue_count": 8,
+                  "reference_count": 8,
+                  "similarity": 0.681649254447132,
+                  "speaker": "要楽奈"
+                }
+              ],
+              "conflict": false,
+              "duration_ms": 6999,
+              "end_ms": 295499,
+              "gap": 0.0016891821610349744,
+              "position": 17,
+              "reason": "compared",
+              "start_ms": 288500,
+              "understanding_speaker": "千早愛音"
+            }
+          ]
+        }
+      ],
+      "target_outputs": {
+        "opening_soyo": [],
+        "anon_introduction": [
+          {
+            "start_seconds": 288500,
+            "end_seconds": 295499,
+            "speaker": "千早愛音",
+            "speaker_source": null,
+            "text_variants": [
+              {
+                "language": "ja",
+                "role": "ORIGINAL",
+                "text": "うん…長崎…長崎そよちゃん…と…そうです"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "call_id": "ee0e43f2-932d-4ded-8dad-6bb5e2b70114",
+      "recorded_utc": "2026-11-14T12:47:49.590059+00:00",
+      "prompt_characters": 59803,
+      "contains_samples": false,
+      "contains_reference_ids": false,
+      "status": "returned",
+      "error_type": null,
+      "target_inputs": [
+        {
+          "sequence_no": 0,
+          "events": {
+            "opening_soyo": [
+              {
+                "start_seconds": 45500,
+                "end_seconds": 47000,
+                "speaker": "千早愛音",
+                "speaker_source": null,
+                "text_variants": [
+                  {
+                    "language": "ja",
+                    "role": "ORIGINAL",
+                    "text": "それで燈ちゃんたち傷つけて…"
+                  },
+                  {
+                    "language": "zh-Hans",
+                    "role": "TRANSLATION",
+                    "text": "因此让你们伤了心…"
+                  }
+                ]
+              },
+              {
+                "start_seconds": 47500,
+                "end_seconds": 49000,
+                "speaker": "長崎そよ",
+                "speaker_source": null,
+                "text_variants": [
+                  {
+                    "language": "ja",
+                    "role": "ORIGINAL",
+                    "text": "祥ちゃんも悪くない"
+                  },
+                  {
+                    "language": "zh-Hans",
+                    "role": "TRANSLATION",
+                    "text": "也不是小祥的错"
+                  }
+                ]
+              }
+            ],
+            "anon_introduction": []
+          },
+          "voice_summaries": [
+            {
+              "band": "CONFLICT",
+              "candidates": [
+                {
+                  "independent_cue_count": 37,
+                  "reference_count": 77,
+                  "similarity": 0.7130115921002192,
+                  "speaker": "千早愛音"
+                },
+                {
+                  "independent_cue_count": 51,
+                  "reference_count": 60,
+                  "similarity": 0.6115974006612316,
+                  "speaker": "長崎そよ"
+                },
+                {
+                  "independent_cue_count": 1,
+                  "reference_count": 1,
+                  "similarity": 0.5760424992298508,
+                  "speaker": "红发女生"
+                },
+                {
+                  "independent_cue_count": 35,
+                  "reference_count": 42,
+                  "similarity": 0.5285804564145624,
+                  "speaker": "椎名立希"
+                }
+              ],
+              "conflict": true,
+              "duration_ms": 1500,
+              "end_ms": 47000,
+              "gap": 0.10141419143898767,
+              "position": 21,
+              "reason": "compared",
+              "start_ms": 45500,
+              "understanding_speaker": "椎名立希"
+            },
+            {
+              "band": "ACCEPT",
+              "candidates": [
+                {
+                  "independent_cue_count": 50,
+                  "reference_count": 58,
+                  "similarity": 0.7447823856583438,
+                  "speaker": "長崎そよ"
+                },
+                {
+                  "independent_cue_count": 2,
+                  "reference_count": 2,
+                  "similarity": 0.5734492421066528,
+                  "speaker": "若葉睦"
+                },
+                {
+                  "independent_cue_count": 37,
+                  "reference_count": 77,
+                  "similarity": 0.5703024235451175,
+                  "speaker": "千早愛音"
+                },
+                {
+                  "independent_cue_count": 32,
+                  "reference_count": 36,
+                  "similarity": 0.5064799864215668,
+                  "speaker": "高松燈"
+                }
+              ],
+              "conflict": true,
+              "duration_ms": 1500,
+              "end_ms": 49000,
+              "gap": 0.17133314355169094,
+              "position": 22,
+              "reason": "compared",
+              "start_ms": 47500,
+              "understanding_speaker": "高松燈"
+            }
+          ]
+        }
+      ],
+      "target_outputs": {
+        "opening_soyo": [
+          {
+            "start_seconds": 45500,
+            "end_seconds": 47000,
+            "speaker": "椎名立希",
+            "speaker_source": null,
+            "text_variants": [
+              {
+                "language": "ja",
+                "role": "ORIGINAL",
+                "text": "それで燈ちゃんたち傷つけて…"
+              },
+              {
+                "language": "zh-Hans",
+                "role": "TRANSLATION",
+                "text": "因此让你们伤了心…"
+              }
+            ]
+          },
+          {
+            "start_seconds": 47500,
+            "end_seconds": 49000,
+            "speaker": "高松燈",
+            "speaker_source": null,
+            "text_variants": [
+              {
+                "language": "ja",
+                "role": "ORIGINAL",
+                "text": "祥ちゃんも悪くない"
+              },
+              {
+                "language": "zh-Hans",
+                "role": "TRANSLATION",
+                "text": "也不是小祥的错"
+              }
+            ]
+          }
+        ],
+        "anon_introduction": []
+      }
+    },
+    {
+      "call_id": "438842bc-e6d2-4cca-ac13-8636c33cdb09",
+      "recorded_utc": "2026-11-14T12:47:49.688310+00:00",
+      "prompt_characters": 30881,
+      "contains_samples": false,
+      "contains_reference_ids": false,
+      "status": "returned",
+      "error_type": null,
+      "target_inputs": [
+        {
+          "sequence_no": 4,
+          "events": {
+            "opening_soyo": [],
+            "anon_introduction": [
+              {
+                "start_seconds": 288500,
+                "end_seconds": 295499,
+                "speaker": "千早愛音",
+                "speaker_source": null,
+                "text_variants": [
+                  {
+                    "language": "ja",
+                    "role": "ORIGINAL",
+                    "text": "うん…長崎…長崎そよちゃんと…"
+                  }
+                ]
+              }
+            ]
+          },
+          "voice_summaries": [
+            {
+              "band": "NO_VOICE",
+              "candidates": [
+                {
+                  "independent_cue_count": 35,
+                  "reference_count": 76,
+                  "similarity": 0.8380446981828826,
+                  "speaker": "千早愛音"
+                },
+                {
+                  "independent_cue_count": 50,
+                  "reference_count": 60,
+                  "similarity": 0.8363555160218477,
+                  "speaker": "長崎そよ"
+                },
+                {
+                  "independent_cue_count": 8,
+                  "reference_count": 8,
+                  "similarity": 0.681649254447132,
+                  "speaker": "要楽奈"
+                }
+              ],
+              "conflict": false,
+              "duration_ms": 6999,
+              "end_ms": 295499,
+              "gap": 0.0016891821610349744,
+              "position": 17,
+              "reason": "compared",
+              "start_ms": 288500,
+              "understanding_speaker": "千早愛音"
+            }
+          ]
+        }
+      ],
+      "target_outputs": {
+        "opening_soyo": [],
+        "anon_introduction": [
+          {
+            "start_seconds": 288500,
+            "end_seconds": 295499,
+            "speaker": "千早愛音",
+            "speaker_source": null,
+            "text_variants": [
+              {
+                "language": "ja",
+                "role": "ORIGINAL",
+                "text": "うん…長崎…長崎そよちゃんと…"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "auxiliary_summary": {
+    "completed": false,
+    "failed_model_calls": 3,
+    "scope": "Existing independent auxiliary summary failures; main parsing/indexing COMPLETE; not fixed in this test."
+  },
+  "cpu_prod_access": false
+}

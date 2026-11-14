@@ -1,0 +1,66 @@
+{
+  "verification": "frozen EP04 whole-artifact scoring and actual Refine input reconstruction; no model call",
+  "source_task_id": "7504e1bb-2958-4b1d-9d77-407b829e93c9",
+  "source_artifact_sha256": "b505a988c5084c534d266497511a78b818e5ba16ec6ec930881cbe45071c3cb8",
+  "captured_call_id": "11c957c8-e112-4739-ac34-082ff3db83ad",
+  "whole_episode": {
+    "lines": 314,
+    "samples": 313,
+    "rescored": 313,
+    "unchanged_top_three_and_gap": 313,
+    "original_label_scores_added": 63,
+    "bands_unchanged": {
+      "NO_VOICE": 92,
+      "CONFLICT": 79,
+      "ACCEPT": 40,
+      "null": 103
+    }
+  },
+  "target": {
+    "start_ms": 294500,
+    "end_ms": 296500,
+    "before_speaker": "若葉睦",
+    "after_draft_speaker": "千早愛音",
+    "voice_summary": {
+      "band": "CONFLICT",
+      "candidates": [
+        {
+          "independent_cue_count": 37,
+          "reference_count": 64,
+          "similarity": 0.7572645312149674,
+          "speaker": "千早愛音"
+        },
+        {
+          "independent_cue_count": 37,
+          "reference_count": 42,
+          "similarity": 0.703291105621424,
+          "speaker": "椎名立希"
+        },
+        {
+          "independent_cue_count": 53,
+          "reference_count": 70,
+          "similarity": 0.6876285586760125,
+          "speaker": "長崎そよ"
+        },
+        {
+          "independent_cue_count": 2,
+          "reference_count": 3,
+          "similarity": 0.512933709666306,
+          "speaker": "若葉睦"
+        }
+      ],
+      "conflict": true,
+      "duration_ms": 2000,
+      "end_ms": 296500,
+      "gap": 0.053973425593543345,
+      "position": 21,
+      "reason": "compared",
+      "start_ms": 294500,
+      "understanding_speaker": "若葉睦"
+    },
+    "accept_gap": 0.15
+  },
+  "raw_reference_payload_absent": true,
+  "source_artifact_unchanged": true,
+  "new_agent_final_identity": "NOT_RUN"
+}
