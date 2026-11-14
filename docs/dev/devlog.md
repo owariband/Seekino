@@ -27,7 +27,7 @@
 
 | 记录 | 原问题编号 |
 |---|---|
-| [2026-11-14：Understanding 合并职责不明确，声纹采样区间可能混入独立发言](#devlog-understanding-dialogue-boundaries-20261114) | B12 |
+| [2026-11-14：Understanding 合并职责不明确，声纹采样区间可能混入独立发言](#devlog-understanding-dialogue-boundaries-20261114) | B12；PR #164 |
 | [2026-11-14：生产镜像未含 Event 查询内存修复，完整课程范围又因任务排序内存溢出](#devlog-event-query-cloud-memory-hotfix-20261114) | RAG-QUERY-MEM-01；PR #154、PR #159 |
 | [2026-11-13：Event 查询在 ES 召回前加载全部 Chunk 正文，检索内存随素材库增长](#devlog-event-query-bounded-content-20261113) | RAG-QUERY-MEM-01；PR #154 |
 | [2026-11-13：可选改写器混入基线，JEV 的净耗时被算错](#devlog-chat-intent-jev-only-20261113) | CHAT-INTENT-01；C19；PR #151 |
@@ -209,7 +209,7 @@ B0 使用 Understanding 生成的 DIALOGUE 区间提取原片声音。若独立 
 
 ### 方案验证
 
-独立分支以 `8f8dd5be` 为基线，先提交[TRD 初稿](../design/03-product-reassessment/understanding-dialogue-boundaries-trd.md)，生产代码仅在 `agent/video_parse_v2/prompts.py` 增加两段阶段指令。DeepSeek 的 dsh 入口因缺少凭据未执行；OpenCode 重试被自动审批拒绝发送私有源码，因此本次修改及验证由主 Agent 在本机完成。
+独立分支以 `8f8dd5be` 为基线，先提交[TRD 初稿](../design/03-product-reassessment/understanding-dialogue-boundaries-trd.md)，生产代码仅在 `agent/video_parse_v2/prompts.py` 增加两段阶段指令，交付见 [PR #164](https://github.com/owariband/Seekino/pull/164)。DeepSeek 的 dsh 入口因缺少凭据未执行；OpenCode 重试被自动审批拒绝发送私有源码，因此本次修改及验证由主 Agent 在本机完成。
 
 运行 `/Users/hypnos/workspace/agent/Seekino/.venv/bin/python -m pytest tests/agent/video_parse_v2/test_understanding_json.py tests/agent/video_parse_v2/test_refine_direct.py tests/agent/video_parse_v2/test_framework.py -q -m 'not live_agent'`，结果 **90 passed in 0.97s**。这些既有测试覆盖原始证据、完整 JSON 提交、跨 Chunk 时间授权、Refine 音频范围变化的来源处理和恢复合同，不证明真实模型必然遵从新指令。未新增仅检查提示原句的测试，未运行实模或部署服务。此前 Refine 证据载荷超限另行跟进。
 

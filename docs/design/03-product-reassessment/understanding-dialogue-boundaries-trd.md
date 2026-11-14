@@ -1,6 +1,6 @@
 # 1. 问题与现状
 
-需求：Understanding 保留独立语音段，将跨段合并判断交给 Refine。日期：2026-11-14。工作分支：`fix/understanding-dialogue-boundaries`；PR：创建后回填，目标分支 `dev`。当前执行状态统一见[工作台 B12](../../dev/workbench.html)。
+需求：Understanding 保留独立语音段，将跨段合并判断交给 Refine。日期：2026-11-14。工作分支：`fix/understanding-dialogue-boundaries`；PR：[#164](https://github.com/owariband/Seekino/pull/164)，目标分支 `dev`。当前执行状态统一见[工作台 B12](../../dev/workbench.html)。
 
 Understanding 根据 ASR、画面与背景生成 DIALOGUE；B0 随后使用这些 DIALOGUE 的音频区间准备声纹。若 Understanding 将原本独立的语音段合成一个大区间，声纹提取可能混入不同发言，后续逐句纠错也失去原来的分段依据。
 
@@ -60,4 +60,4 @@ Understanding 根据 ASR、画面与背景生成 DIALOGUE；B0 随后使用这�
 
 Prompt 职责已接入，相关既有测试 90 项通过。验收分两层：现有合同回归完成，再以整集真实输出判断独立段是否被保留、人物归属是否改善。前者不能代替后者。采用该阶段职责调整；尚未部署服务，也不会自动改写历史任务成果。
 
-待补 PR 链接；真实整集效果、耗时与 token 继续标记未验证。后续先处理独立的 Refine 载荷问题，再通过整集 1fps 对照验证分段与身份；当前状态只在[工作台](../../dev/workbench.html)维护，相关历史问题保留在 [B12](../../dev/problems.md#b12asr-匿名说话人分组不准refine-看帧后仍未纠正目标归属)。
+真实整集效果、耗时与 token 继续标记未验证。后续先处理独立的 Refine 载荷问题，再通过整集 1fps 对照验证分段与身份；当前状态只在[工作台](../../dev/workbench.html)维护，相关历史问题保留在 [B12](../../dev/problems.md#b12asr-匿名说话人分组不准refine-看帧后仍未纠正目标归属)。
