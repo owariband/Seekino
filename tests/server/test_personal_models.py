@@ -1,12 +1,19 @@
 import json
 from uuid import uuid4
 
+import httpx
 import pytest
 import yaml
+from langchain_core.tools import tool
+from pydantic import BaseModel, SecretStr
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+from gateway.agent_model.context import ContextWindowPolicy
 from gateway.config import load_config, resolve_source_api_key
+from gateway.personal_endpoint import PersonalModelTarget
+from gateway import personal_models
+
 from server.config.yaml_document import GlobalAgentSettingsConflictError
 from server.model.dto.personal_model import PersonalModelConnectionSave
 from server.model.personal_models import PersonalModelPreferences
@@ -118,3 +125,121 @@ def test_legacy_yaml_honors_chat_override_before_and_after_an_edit(tmp_path):
                base_url="https://api.example.test", model_ids=["another/model"], revision=0))
     assert load_config(path).config_version == 2
     assert ModelSettings(path, allow_local=True, environ=env).catalog().find("default").binding.model == "deployment/override"
+
+
+class PersonalStructuredResult(BaseModel):
+    answer: str
+
+
+@tool
+def lookup_video(query: str) -> str:
+    """Find a video by text."""
+    return "fixture result"
+
+
+@pytest.mark.parametrize(("protocol", "suffix", "auth"), [
+    ("openai_chat", "/chat/completions", "authorization"),
+    ("openai_responses", "/responses", "authorization"),
+    ("anthropic_messages", "/messages", "x-api-key"),
+    ("gemini", ":generateContent", "x-goog-api-key"),
+])
+def test_personal_structured_executes_selected_target_tools_without_global_model(
+    monkeypatch, protocol, suffix, auth,
+):
+    requests = []
+    model_id = "team/selected-chat" if protocol != "gemini" else "selected-gemini"
+    tool_result_markers = {
+        "openai_chat": '"tool_call_id"',
+        "openai_responses": '"function_call_output"',
+        "anthropic_messages": '"tool_result"',
+        "gemini": '"functionResponse"',
+    }
+
+    def reply(*, name, arguments, call_id):
+        if protocol == "openai_chat":
+            call = {"id": call_id, "type": "function",
+                    "function": {"name": name, "arguments": json.dumps(arguments)}}
+            return {"choices": [{"message": {
+                "role": "assistant", "content": None, "tool_calls": [call],
+            }}]}
+        if protocol == "openai_responses":
+            item = {"type": "function_call", "id": f"fc_{call_id}", "call_id": call_id,
+                    "name": name, "arguments": json.dumps(arguments)}
+            return {"id": f"resp_{call_id}", "object": "response", "output": [item],
+                    "status": "completed", "model": model_id}
+        if protocol == "anthropic_messages":
+            block = {"type": "tool_use", "id": call_id, "name": name, "input": arguments}
+            return {"content": [block]}
+        return {"candidates": [{"content": {"role": "model", "parts": [
+            {"functionCall": {"name": name, "args": arguments}},
+        ]}, "finishReason": "STOP"}]}
+
+    def provider(request):
+        payload = json.loads(request.content)
+        requests.append(payload)
+        assert request.url.path.endswith(suffix)
+        assert request.url.host == "selected.example"
+        assert request.headers[auth].removeprefix("Bearer ") == "personal-key"
+        if protocol == "gemini":
+            assert model_id in str(request.url)
+        else:
+            assert payload["model"] == model_id
+        assert "lookup_video" in json.dumps(payload["tools"])
+        if len(requests) == 1:
+            return httpx.Response(200, json=reply(
+                name="lookup_video", arguments={"query": "q"}, call_id="call_1",
+            ))
+        assert "fixture result" in json.dumps(payload)
+        assert tool_result_markers[protocol] in json.dumps(payload)
+        return httpx.Response(200, json=reply(
+            name="PersonalStructuredResult", arguments={"answer": "done"}, call_id="call_2",
+        ))
+
+    client = httpx.Client(transport=httpx.MockTransport(provider))
+    monkeypatch.setattr(personal_models, "personal_http_client", lambda *_args, **_kwargs: client)
+    target = PersonalModelTarget(protocol, "https://selected.example/v1", model_id,
+                                 SecretStr("personal-key"), True)
+    policy = ContextWindowPolicy(32_000, 2_048, 2_048, 22_000, 12_000)
+    model = personal_models.build_personal_structured(
+        target, request_timeout_seconds=30, max_output_tokens=2_048,
+        max_input_chars=80_000, context_window_policy=policy, allow_local=True,
+    )
+    assert model.model_name == model_id
+    assert model.provider_name == protocol
+    assert model.supports_vision_input is True
+    assert model.max_output_tokens == 2_048
+    assert model.max_input_chars == 80_000
+    assert model.context_window_policy == policy
+    result = model.run_structured(
+        "Find the video.", tools=[lookup_video], result_type=PersonalStructuredResult,
+        max_model_calls=3,
+    )
+    assert result == PersonalStructuredResult(answer="done")
+    assert len(requests) == 2
+    model.close()
+    assert client.is_closed
+
+
+def test_personal_structured_closes_private_client_when_construction_fails(monkeypatch):
+    closed = []
+
+    class _Client:
+        def close(self):
+            closed.append(True)
+
+    monkeypatch.setattr(personal_models, "personal_http_client", lambda *_args, **_kwargs: _Client())
+
+    def fail(*_args, **_kwargs):
+        raise RuntimeError("structured setup failed")
+
+    monkeypatch.setattr(personal_models, "_PersonalStructured", fail)
+    target = PersonalModelTarget("openai_chat", "https://selected.example/v1", "team/selected",
+                                 SecretStr("personal-key"), False)
+    with pytest.raises(RuntimeError, match="structured setup failed"):
+        personal_models.build_personal_structured(
+            target, request_timeout_seconds=30, max_output_tokens=2_048,
+            max_input_chars=80_000,
+            context_window_policy=ContextWindowPolicy(32_000, 2_048, 2_048, 22_000, 12_000),
+            allow_local=True,
+        )
+    assert closed == [True]
