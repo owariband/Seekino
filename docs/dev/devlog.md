@@ -27,6 +27,7 @@
 
 | 记录 | 原问题编号 |
 |---|---|
+| [2026-11-14：Refine 将声纹参考池作为模型输入，逐句预填后仍挤占上下文](#devlog-refine-voiceprint-prefill-context-20261114) | B12 |
 | [2026-11-14：生产镜像未含 Event 查询内存修复，完整课程范围又因任务排序内存溢出](#devlog-event-query-cloud-memory-hotfix-20261114) | RAG-QUERY-MEM-01；PR #154、PR #159 |
 | [2026-11-13：Event 查询在 ES 召回前加载全部 Chunk 正文，检索内存随素材库增长](#devlog-event-query-bounded-content-20261113) | RAG-QUERY-MEM-01；PR #154 |
 | [2026-11-13：可选改写器混入基线，JEV 的净耗时被算错](#devlog-chat-intent-jev-only-20261113) | CHAT-INTENT-01；C19；PR #151 |
@@ -194,6 +195,36 @@
 | [日期未明确（2026-10-23归档）：当前播放窗口的按需理解与复用](#devlog-history-60) | 独立实验/设计 |
 
 </details>
+
+<a id="devlog-refine-voiceprint-prefill-context-20261114"></a>
+## 2026-11-14：Refine 将声纹参考池作为模型输入，逐句预填后仍挤占上下文
+
+### 问题与现状
+
+全片台词大量互为声纹参考。宿主已完成逐句比较，Canvas 也已按事件位置和音频区间绑定候选、分数与冲突状态，能预填满足条件的身份。但 Refine 完整 JSON 输入又序列化了原始参考样本、来源明细及候选引用 ID，在不同成员与窗口中重复携带它们，挤占模型上下文。此前 EP04 在真正生成前就因输入预算失败；程序能计算声纹与模型能收到合适的逐句结果，是两个不同环节。
+
+### 方案候选
+
+直接复用宿主已有的逐句预填摘要。全片参考池和引用关系仍用于计算与内部追溯，模型只接收对应成员／事件／区间的有效评分、原身份和冲突状态。共享参考目录仍会把模型不需要重读的资料放进上下文，因此本次选择在 Agent 输入投影中移除这些明细。评分、预填条件、原始快照、Schema 与提交事务保持既有行为。
+
+### 方案验证
+
+以 `16d32ff4` 为基线，独立分支先提交[TRD](../design/03-product-reassessment/refine-voiceprint-prefill-context-trd.md)。修改既有 Prompt／Refine 合同检查并增加参考资料增长及跨成员回归，旧实现对应 10 项失败；修改投影后 Context Canvas、Refine direct、framework、Understanding JSON 四组 **167 passed，0.86s**。覆盖 ACCEPT／CONFLICT／NO_VOICE／REVIEW 摘要、flag／prefill／off 行为、无匹配区间不注入、成员隔离及原始证据不变。
+
+使用真实 Prompt 构造器对固定评分的合成样本比较，执行方法和原始数据见[报告](../report/agent/video_parse_v2/refine-voiceprint-prefill-context-20261114/README.md)。该样本只扩大参考元数据、来源明细及 ID 文本，没有使用 EP04、模型接口或服务；字符数不等于 token 或实际请求预算。真实整集与部署仍待验证。
+
+### 指标对比
+
+这里要控制的是参考资料对上下文的放大，故比较相同逐句评分下的完整 Prompt 字符数，而非编码速度或候选命中率。三个模式都使用同一组参考扩展；原始宿主资料及预填身份均保持。
+
+| 指标 | 修改前 | 修改后 | 解释 |
+| --- | --- | --- | --- |
+| 合成 prefill 扩展输入 | 352,933 字符 | 2,814 字符 | 缩减 99.2027%，不代表 EP04 比例 |
+| 参考资料扩展带来的增量 | flag／prefill／off 均为 350,006 字符 | 三种模式均为 0 字符 | 同评分下 Prompt 不再受参考资料体积影响 |
+| 对应的新投影合同检查 | 10 项失败 | 通过；相关回归共 167 项通过 | 包含标准 Refine 预填到提交路径 |
+| 实际模型 token、耗时及人物准确率 | 本轮未测 | 本轮未测 | 不从合成样本推导 |
+
+采用这项输入投影修复，已消除参考资料重复造成的上下文增长，同时保留逐句工具结果。模型不再读取完整参考来源，内部追溯仍依靠宿主原始证据。是否成功恢复 EP04 及人物质量需整集另验；当前状态见[工作台 B12](workbench.html)。
 
 <a id="devlog-event-query-cloud-memory-hotfix-20261114"></a>
 ## 2026-11-14：生产镜像未含 Event 查询内存修复，完整课程范围又因任务排序内存溢出

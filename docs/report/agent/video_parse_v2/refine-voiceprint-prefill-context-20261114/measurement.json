@@ -1,0 +1,97 @@
+{
+  "baseline": "16d32ff4",
+  "implementation_sha256": "018af951134e45bff2b85be9562fc19d5d567d8f2f0dc70d2d6396612b29922f",
+  "scope": "Synthetic one-member fixture, fixed scores; expanded sample/source metadata and reference IDs. No EP04 data or model requests.",
+  "unit": "Python Unicode characters of complete build_refine_prompt output, not provider tokens or wrapped request size",
+  "rows": [
+    {
+      "mode": "flag",
+      "before_small_chars": 2912,
+      "before_expanded_chars": 352918,
+      "before_reference_growth_chars": 350006,
+      "after_small_chars": 2799,
+      "after_expanded_chars": 2799,
+      "after_reference_growth_chars": 0,
+      "prefilled_speaker": "爱音",
+      "voice_summary": {
+        "lines": [
+          {
+            "band": "ACCEPT",
+            "candidates": [
+              {
+                "similarity": 0.8,
+                "speaker": "爽世"
+              },
+              {
+                "similarity": 0.6,
+                "speaker": "立希"
+              }
+            ],
+            "conflict": false,
+            "duration_ms": 2000,
+            "end_ms": 3000,
+            "gap": 0.2,
+            "position": 0,
+            "start_ms": 1000,
+            "understanding_speaker": "爱音"
+          }
+        ],
+        "method_version": "B0-v1",
+        "mode": "flag"
+      },
+      "reduction_percent": 99.2069,
+      "original_host_evidence_unchanged": true
+    },
+    {
+      "mode": "prefill",
+      "before_small_chars": 2927,
+      "before_expanded_chars": 352933,
+      "before_reference_growth_chars": 350006,
+      "after_small_chars": 2814,
+      "after_expanded_chars": 2814,
+      "after_reference_growth_chars": 0,
+      "prefilled_speaker": "爽世",
+      "voice_summary": {
+        "lines": [
+          {
+            "band": "ACCEPT",
+            "candidates": [
+              {
+                "similarity": 0.8,
+                "speaker": "爽世"
+              },
+              {
+                "similarity": 0.6,
+                "speaker": "立希"
+              }
+            ],
+            "conflict": false,
+            "duration_ms": 2000,
+            "end_ms": 3000,
+            "gap": 0.2,
+            "position": 0,
+            "start_ms": 1000,
+            "understanding_speaker": "爱音"
+          }
+        ],
+        "method_version": "B0-v1",
+        "mode": "prefill"
+      },
+      "reduction_percent": 99.2027,
+      "original_host_evidence_unchanged": true
+    },
+    {
+      "mode": "off",
+      "before_small_chars": 2911,
+      "before_expanded_chars": 352917,
+      "before_reference_growth_chars": 350006,
+      "after_small_chars": 2485,
+      "after_expanded_chars": 2485,
+      "after_reference_growth_chars": 0,
+      "prefilled_speaker": "爱音",
+      "voice_summary": null,
+      "reduction_percent": 99.2959,
+      "original_host_evidence_unchanged": true
+    }
+  ]
+}
