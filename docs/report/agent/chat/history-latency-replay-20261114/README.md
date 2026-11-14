@@ -1,6 +1,6 @@
 # 2026-11-14 实时 JEV 接入与三条历史 Chat 完整回放
 
-日期：2026-11-14（本地 UTC+8；指标时间戳保留 UTC）。分支 `perf/chat-history-latency-replay`。设计与上线边界见[实时意图路由 TRD](../../../../design/03-product-reassessment/chat-realtime-intent-routing-trd.md)，默认 JEV 的发布背景见[JEV-only 上线 TRD](../../../../design/03-product-reassessment/jev-only-hook-rollout-trd.md)。
+日期：2026-11-14（本地 UTC+8；指标时间戳保留 UTC）。分支 `perf/chat-history-latency-replay`，[记录 PR #166](https://github.com/owariband/Seekino/pull/166)。设计与上线边界见[实时意图路由 TRD](../../../../design/03-product-reassessment/chat-realtime-intent-routing-trd.md)，默认 JEV 的发布背景见[JEV-only 上线 TRD](../../../../design/03-product-reassessment/jev-only-hook-rollout-trd.md)。
 
 本报告记录两件事：实时播放请求不再绕过 JEV 的接线修复，以及原 T01–T03 三条历史请求的完整 HTTP/SSE 回放。修复和部署已完成；回放只有每条一次，且第一条失败、后两条虽完成却有时间对齐问题，不能据此宣布整体 Chat 延迟或回答质量已经改善。
 
@@ -48,6 +48,8 @@ SQL 历史 ID 是新生成的，原 prompt 也没有完整留存，因此这不�
 逐行 144 条脱敏调用记录见 [usage.jsonl](usage.jsonl)，各用例、角色的 input／output／total／cache／reasoning 与缺失调用见 [metrics.json](metrics.json)。
 
 ## 5. T01 为什么失败
+
+“工具预算”指每条用户请求允许的受控工具调用次数上限，由 Supervisor 和其 Query 子 Agent 共用。检索、读取证据等受控操作执行前会消耗次数；每条请求重新计数，超过上限就抛异常。三条原请求本身都带 `max_tool_calls_per_turn=100`，本次回放沿用原值，另有独立的 `max_model_calls_per_turn=100`。一个模型回复可以发起多个工具调用，embedding 也会单独记 provider 用量，因此工具次数、模型调用数和 provider 请求数不能混为同一个计数。
 
 T01 的 `query_video` 工具占用 170.069 秒，约占 196.567 秒整轮时间的 86.5%。Query 反复检索和读取证据，最终耗尽共享的 100 次工具预算，返回 `VIDEO_LOOP_LIMIT_EXCEEDED`；Supervisor 随后直接读取证据，也因同一预算失败，整轮以 `AGENT_MODEL_ERROR` 结束。所有 provider 调用都完成了，这是应用层工具预算与循环停止问题，不是 provider 超时。
 
