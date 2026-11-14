@@ -1,6 +1,6 @@
 # 1. 问题与现状
 
-需求：Refine 只接收已有逐句声纹预填摘要，全片参考资料保留在宿主。日期：2026-11-14。分支：`fix/refine-voiceprint-prefill-context`；PR 创建后回填，目标 `dev`。当前状态统一见[工作台 B12](../../dev/workbench.html)。
+需求：Refine 只接收已有逐句声纹预填摘要，全片参考资料保留在宿主。日期：2026-11-14。分支：`fix/refine-voiceprint-prefill-context`；PR：[#165](https://github.com/owariband/Seekino/pull/165)，目标 `dev`。当前状态统一见[工作台 B12](../../dev/workbench.html)。
 
 全片 DIALOGUE 既是待判定对象，也大量用作其他台词的声纹参考。宿主 B0 已完成比较并预填可接受的身份；Refine 再接收整个参考池及逐候选引用清单，对完成当前台词审核没有必要，还会反复复制这些数据、挤占上下文。
 
@@ -53,4 +53,4 @@
 
 已实现输入投影并通过 167 项相关测试，模型只接收已绑定的逐句预填摘要，完整参考资料仍在宿主。合成对照验证参考资料增长不再增加 Prompt，采用该修复。真实模型效果、EP04 恢复和部署未执行，不随离线测试完成。
 
-PR 创建后回填；下一步为独立验证环境的整集 1fps 复验，核对真实请求预算及人物归属。当前状态见[工作台](../../dev/workbench.html)，历史问题见 [B12](../../dev/problems.md#b12asr-匿名说话人分组不准refine-看帧后仍未纠正目标归属)。
+交付见 [PR #165](https://github.com/owariband/Seekino/pull/165)；下一步为独立验证环境的整集 1fps 复验，核对真实请求预算及人物归属。当前状态见[工作台](../../dev/workbench.html)，历史问题见 [B12](../../dev/problems.md#b12asr-匿名说话人分组不准refine-看帧后仍未纠正目标归属)。

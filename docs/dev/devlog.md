@@ -27,7 +27,7 @@
 
 | 记录 | 原问题编号 |
 |---|---|
-| [2026-11-14：Refine 将声纹参考池作为模型输入，逐句预填后仍挤占上下文](#devlog-refine-voiceprint-prefill-context-20261114) | B12 |
+| [2026-11-14：Refine 将声纹参考池作为模型输入，逐句预填后仍挤占上下文](#devlog-refine-voiceprint-prefill-context-20261114) | B12；PR #165 |
 | [2026-11-14：生产镜像未含 Event 查询内存修复，完整课程范围又因任务排序内存溢出](#devlog-event-query-cloud-memory-hotfix-20261114) | RAG-QUERY-MEM-01；PR #154、PR #159 |
 | [2026-11-13：Event 查询在 ES 召回前加载全部 Chunk 正文，检索内存随素材库增长](#devlog-event-query-bounded-content-20261113) | RAG-QUERY-MEM-01；PR #154 |
 | [2026-11-13：可选改写器混入基线，JEV 的净耗时被算错](#devlog-chat-intent-jev-only-20261113) | CHAT-INTENT-01；C19；PR #151 |
@@ -209,7 +209,7 @@
 
 ### 方案验证
 
-以 `16d32ff4` 为基线，独立分支先提交[TRD](../design/03-product-reassessment/refine-voiceprint-prefill-context-trd.md)。修改既有 Prompt／Refine 合同检查并增加参考资料增长及跨成员回归，旧实现对应 10 项失败；修改投影后 Context Canvas、Refine direct、framework、Understanding JSON 四组 **167 passed，0.86s**。覆盖 ACCEPT／CONFLICT／NO_VOICE／REVIEW 摘要、flag／prefill／off 行为、无匹配区间不注入、成员隔离及原始证据不变。
+以 `16d32ff4` 为基线，独立分支先提交[TRD](../design/03-product-reassessment/refine-voiceprint-prefill-context-trd.md)，交付见 [PR #165](https://github.com/owariband/Seekino/pull/165)。修改既有 Prompt／Refine 合同检查并增加参考资料增长及跨成员回归，旧实现对应 10 项失败；修改投影后 Context Canvas、Refine direct、framework、Understanding JSON 四组 **167 passed，0.86s**。覆盖 ACCEPT／CONFLICT／NO_VOICE／REVIEW 摘要、flag／prefill／off 行为、无匹配区间不注入、成员隔离及原始证据不变。
 
 使用真实 Prompt 构造器对固定评分的合成样本比较，执行方法和原始数据见[报告](../report/agent/video_parse_v2/refine-voiceprint-prefill-context-20261114/README.md)。该样本只扩大参考元数据、来源明细及 ID 文本，没有使用 EP04、模型接口或服务；字符数不等于 token 或实际请求预算。真实整集与部署仍待验证。
 
