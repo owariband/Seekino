@@ -22,10 +22,10 @@
 
 *Neural Networks: Zero to Hero* runs for 14.6 hours across 8 episodes. Seekino can answer that across the series; inside the player, you can also jump straight to a line.
 
-**Find a line inside the video.** Press `⌘F` / `Ctrl+F` (or click the magnifier in the player) and type a line you remember. Results carry their position in this episode; click one and playback lands on that second. For example, search “春日影” in *BanG Dream! It's MyGO!!!!!* episode 4 and click the 20:39 result to land on the sheet music.
+**Find a line inside the video.** Press `⌘F` / `Ctrl+F` (or click the magnifier in the player) and type a line you remember. Results carry their position in this episode; click one to land on that second, or select a result and press `→` to jump to the next hit. For example, search “春日影” in *BanG Dream! It's MyGO!!!!!* episode 4 and click the 20:39 result to land on the sheet music.
 
 <p align="center">
-  <img src="assets/readme/demo-find.gif" width="860" alt="Find in the watch page: press ⌘F, search 春日影, and land on the sheet music at 20:39 in MyGO episode 4" />
+  <img src="assets/readme/demo-find.gif" width="860" alt="Find 春日影 in the watch page and press → to land on the sheet music at 20:39 in MyGO episode 4" />
 </p>
 
 **Ask while you watch.** Open Kino beside the player and ask “What was that part about?” It knows your current position, and the answer includes a clip card you can replay.
