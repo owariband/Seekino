@@ -43,6 +43,10 @@ QueryHook／Gateway／Bootstrap／Parse路由相关回归最终285项通过，1�
 
 # 5. 试点验证与方案取舍
 
+2026-11-14 历史慢请求回放计划（分支 `perf/chat-history-latency-replay`）：在当前 Cloud 配置下重跑最初 T01–T03 的完整 turn，保留原 query、历史角色与正文、素材范围、播放位置和请求前的原生 checkpoint；旧基线分别为 75.659／47.880／88.877 秒。先只读取得各请求开始前的状态，再为新建的测试身份和会话复制历史与该状态，核对哈希后串行执行，一条试点通过后继续其余两条。原会话与 checkpoint 不更新，不迁移素材、不切换生产配置或重启服务。私有聊天、图片、工具正文与 checkpoint 只保存在私有工作目录，Git 仅记录脱敏指标、哈希和场景说明。
+
+三条原请求均带 playback，当前 QueryHook 对该输入跳过 JEV，因此主比较衡量现有整条链路，不将变化归因于 JEV。记录服务端整轮 TT、客户端 FTT／TT、JEV／模型／工具／compact 次数及耗时、input/output/cache/reasoning、终态和片段交付。旧请求缺少同口径 FTT 时留空；当前模型 prompt、素材索引版本、缓存和后续 Event 内存修复与旧时点的差异另列。完整业务结果与原片时间范围分别核对，不以更快或 COMPLETED 代替内容正确。每条最多观察 300 秒，仅取消本次自建执行；本轮先各回放一次，不报 p95/p99，也不恢复旧生产配置来凑因果对照。结果待测。
+
 部署先确认实际服务拓扑、挂载、镜像与活动请求，备份后切换，必要时只重启拥有该配置的 API。用新建、无私密内容的反馈与检索请求覆盖真实 JEV 和 Supervisor，记录路由、独立改写次数、终态和用量；线上探针与27turn对照分开统计，不能拿少量探针宣布线上性能排名。
 
 2026-11-14 的实际切换按上述边界完成。Cloud API 只更新 `seekino-local-api-1`，其他 5 个容器 ID 和启动时间未变；API stop/recreate 到 ready 为 17.891 秒，这是操作耗时，不是精确用户停机。切换前有 2 条早于本次启动的 PROCESSING，本次新增为 0，活动／到期 Parse、运行中 Chunk、Refine 区间均为 0，未来 PENDING 2037 无租约；这些记录未改动。公网 HTTPS 健康 200，Parse Consumer running；新建游客身份，经认证的会话创建与 SSE 请求到 `answer.completed`，JEV 与 Supervisor 各 1 次、独立改写 0 次。检索 hook 只验证到 `retrieve`，没有执行完整生产检索或后续 Supervisor。详见[生产上线报告](../../report/agent/chat/query-intent-jev-only-20261113/production-rollout-20261114.md)。
