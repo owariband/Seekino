@@ -1,6 +1,6 @@
 # 1. 问题与现状
 
-2026-11-14；分支 `fix/jev-realtime-routing`；目标 `dev`，正式运行文件另向 `main` 发布。需求是在实时观看时也执行 JEV 意图分类，再继续回放历史慢请求。关联 [JEV-only 上线设计](jev-only-hook-rollout-trd.md)、[模型容量与压缩设计](chat-model-context-compaction-trd.md)，PR 创建后回填。
+2026-11-14；分支 `fix/jev-realtime-routing`；[PR #162](https://github.com/owariband/Seekino/pull/162)；目标 `dev`，正式运行文件另向 `main` 发布。需求是在实时观看时也执行 JEV 意图分类，再继续回放历史慢请求。关联 [JEV-only 上线设计](jev-only-hook-rollout-trd.md)、[模型容量与压缩设计](chat-model-context-compaction-trd.md)。
 
 QueryHook 将带 `extra_context.playback` 的输入整体判为 unsupported，直接返回原文。因此观看页请求即使启用了 JEV-only，也没有实际分类。最初三条慢请求都带播放位置，这条分支使它们无法验收新的路由。原文中的反馈、已有文字解释和新画面核验仍需区分，不能因为打开播放器就一律要求新检索。
 
