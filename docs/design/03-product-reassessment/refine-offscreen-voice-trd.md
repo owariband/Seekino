@@ -18,7 +18,7 @@
 | 标准主链 | 24 Under／22 Refine／24 索引 | 完整通过，保留失败／重试证据 |
 | 代价与护栏 | 23分59.848秒，含恢复 | 记录耗时、已报告用量与错误；不以单次差异推导稳定性能 |
 
-用户请求 DS Flash medium；[官方 Responses 定义](https://api-docs.deepseek.com/api/create-response/)将 medium 兼容映射到 high。已询问采用字面 medium 或实际更低的 low，配置按答复记录，不把兼容映射宣称为独立档位。
+用户最初请求 DS Flash medium；[官方 Responses 定义](https://api-docs.deepseek.com/api/create-response/)将 medium 兼容映射到 high。核实后已明确选择 **low**，要求低档也能正确识别。本轮 Understanding／Refine 均为 DS Flash low，以最终两句姓名正确为验收，不把预填生效或主链完成当作效果通过。模型档位从 high 到 low 与提示同时变化，不能据此做单因素因果结论。
 
 # 3. 改造方案与建模
 
