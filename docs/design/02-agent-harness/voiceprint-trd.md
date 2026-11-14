@@ -14,6 +14,14 @@ ASR 可能把多个人的发言合进同一条 cue，Refine 也可能根据单�
 
 ## 实验与运行记录
 
+## 2026-11-14：Understanding 保留独立语音段，合并判断交给 Refine
+
+Understanding Prompt 现明确禁止将独立 ASR cue／发言合成更大的 DIALOGUE，即使相邻或看起来属于同一人物、话题、场景。Refine 再根据证据考虑同一人的连续发言是否合并，保留不同说话人和身份未决的话轮边界；改变音频范围后不得沿用原逐句声纹分数。
+
+原有混人 cue 有据拆分、噪声清理、措辞／时间修正和跨 Chunk 完整 cue 保留规则继续适用。本次替代历史轮次中允许 Understanding 跨 cue 合并的阶段安排；下方实验记录保留当时设计与失败事实。声纹准备时序、CAM++、评分规则和宿主提交不变。
+
+本次仅修改 Agent 两段 Prompt；Understanding／Refine／framework 既有测试 90 passed。模型实际遵从、EP04 整集人物效果与部署均未验证；Prompt 约束不能视作宿主硬校验。此前 Refine 证据载荷超限仍是独立问题。设计与验证口径见[本次 TRD](../03-product-reassessment/understanding-dialogue-boundaries-trd.md)，当前执行状态见[工作台 B12](../../dev/workbench.html)。
+
 ## 2026-10-22 后续：预填时长条件 >500ms（已实现，未部署）
 
 用户要求放宽#12的900ms立希短句所遇到的时长阻拦。本轮只把B0 ACCEPT最短时长改为501ms，NO_VOICE时长引用同一常量：整数毫秒下保留现有包含下界的比较语义，实现严格>500ms，500ms仍拒绝预填。时长通过不等于身份必然正确，独立参考数、歌曲／重叠条件继续检查。400ms编码下限、label_doubtful的1秒条件、encoder、矩阵检测和gap规则不变；历史artifact按原冻结参数重放。

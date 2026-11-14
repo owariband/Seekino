@@ -27,6 +27,7 @@
 
 | 记录 | 原问题编号 |
 |---|---|
+| [2026-11-14：Understanding 合并职责不明确，声纹采样区间可能混入独立发言](#devlog-understanding-dialogue-boundaries-20261114) | B12；PR #164 |
 | [2026-11-14：生产镜像未含 Event 查询内存修复，完整课程范围又因任务排序内存溢出](#devlog-event-query-cloud-memory-hotfix-20261114) | RAG-QUERY-MEM-01；PR #154、PR #159 |
 | [2026-11-13：Event 查询在 ES 召回前加载全部 Chunk 正文，检索内存随素材库增长](#devlog-event-query-bounded-content-20261113) | RAG-QUERY-MEM-01；PR #154 |
 | [2026-11-13：可选改写器混入基线，JEV 的净耗时被算错](#devlog-chat-intent-jev-only-20261113) | CHAT-INTENT-01；C19；PR #151 |
@@ -194,6 +195,36 @@
 | [日期未明确（2026-10-23归档）：当前播放窗口的按需理解与复用](#devlog-history-60) | 独立实验/设计 |
 
 </details>
+
+<a id="devlog-understanding-dialogue-boundaries-20261114"></a>
+## 2026-11-14：Understanding 合并职责不明确，声纹采样区间可能混入独立发言
+
+### 问题与现状
+
+B0 使用 Understanding 生成的 DIALOGUE 区间提取原片声音。若独立 ASR cue 被提前合为更大事件，后续逐段身份判断可能面对混合音频。核对实际 Prompt 后确认：它已经允许有据拆分混人 cue，并保留跨 Chunk 完整 cue，但没有明确禁止合并独立段。这是职责缺口；本次没有新做整集测量，不能据此断言 EP04 所有错误均由合并造成。
+
+### 方案候选
+
+在 Agent 层明确职责：Understanding 保留独立 cue／发言及各自区间；Refine 根据证据考虑同一人的连续发言是否合并，保留不同说话人和未决话轮边界。维持已有声纹范围约束，改变音频范围后不能移用原分数。保留噪声清理、有据修正与混人 cue 拆分，不新增机械匹配 ASR 时间或文本的宿主门禁。
+
+### 方案验证
+
+独立分支以 `8f8dd5be` 为基线，先提交[TRD 初稿](../design/03-product-reassessment/understanding-dialogue-boundaries-trd.md)，生产代码仅在 `agent/video_parse_v2/prompts.py` 增加两段阶段指令，交付见 [PR #164](https://github.com/owariband/Seekino/pull/164)。DeepSeek 的 dsh 入口因缺少凭据未执行；OpenCode 重试被自动审批拒绝发送私有源码，因此本次修改及验证由主 Agent 在本机完成。
+
+运行 `/Users/hypnos/workspace/agent/Seekino/.venv/bin/python -m pytest tests/agent/video_parse_v2/test_understanding_json.py tests/agent/video_parse_v2/test_refine_direct.py tests/agent/video_parse_v2/test_framework.py -q -m 'not live_agent'`，结果 **90 passed in 0.97s**。这些既有测试覆盖原始证据、完整 JSON 提交、跨 Chunk 时间授权、Refine 音频范围变化的来源处理和恢复合同，不证明真实模型必然遵从新指令。未新增仅检查提示原句的测试，未运行实模或部署服务。此前 Refine 证据载荷超限另行跟进。
+
+### 指标对比
+
+这次影响的是声纹准备之前的事件区间，因此先核对职责与现有数据合同；最终收益需由整集首轮分段及人物归属衡量。耗时和 token 没有实测，不能从 Prompt 修改推导节省。
+
+| 指标 | 修改前 | 修改后 | 验证边界 |
+| --- | --- | --- | --- |
+| Understanding 独立段合并职责 | 未明确禁止 | 明确禁止并交给 Refine | 源码与 Prompt 检查 |
+| Refine 合并条件 | 泛化去重、连续性修复 | 有据支持同人连续发言，保留其他话轮 | 源码与 Prompt 检查 |
+| 相关合同回归 | 本轮未单独运行基线 | 90 passed，0.97s | 隔离 Harness，非实模 |
+| EP04 分段、人物归属、token 和耗时 | 本轮未测 | 本轮未测 | 后续整集 1fps 验证 |
+
+采用这项阶段职责调整，代价是 Prompt 增长与可能保留更多初始事件；实际数量、token 和效果仍待整集比较。实现及合同测试完成，不将 B12 整体标为解决。当前执行状态见[工作台](workbench.html)。
 
 <a id="devlog-event-query-cloud-memory-hotfix-20261114"></a>
 ## 2026-11-14：生产镜像未含 Event 查询内存修复，完整课程范围又因任务排序内存溢出

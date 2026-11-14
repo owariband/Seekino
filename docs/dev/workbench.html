@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-14T01:00:59+08:00",
+ "updatedAt": "2026-11-14T11:49:49+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 65,
+ "revision": 67,
  "categories": [
   {
    "id": "parse",
@@ -2074,19 +2074,20 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "title": "ASR 匿名说话人分组不准，Refine 看帧后仍未纠正目标归属",
    "category": "parse",
    "type": "requirement",
-   "status": "done",
-   "priority": "unset",
-   "description": "排序日期：2026-10-19。",
-   "next": "核对原始记录及当前实现，确定本轮是否继续推进。",
-   "verification": "按历史 TODO 导入；当前优先级、执行人和后续验收仍需核对。 优先级：高。类型：解析语义质量、音频分段、证据供给与可观测性。状态：截至 2026-10-22 仍未全面闭环；v25 两句固定目标本轮均正确。历史 v5 曾纠正爽世单例，不代表后续版本稳定识别正确；v11～v18 暴露参考错名、跨人合并及 Refine 决策三类问题。最新归因与未完成项见下，旧轮次记录保留。记录日期：2026-10-16；更新日期：2026-10-22。",
-   "updatedAt": "2026-10-19",
+   "status": "verifying",
+   "priority": "P1",
+   "description": "Understanding 的独立语音段会进入 B0 声纹采样；本次明确禁止提前合并，交由 Refine 有据判断。人物归属整体仍待验收。",
+   "next": "先处理此前独立发现的 Refine 证据载荷超限，再用 EP04 整集 1fps 核对首轮独立段、声纹区间和最终归属。",
+   "verification": "2026-11-14：仅修改 Understanding/Refine 两段 Prompt，相关隔离合同测试 90 passed。保留混人 cue 有据拆分及跨 Chunk 完整 cue；未增加宿主语义硬门禁，未做新一轮实模或部署。历史 v25 的两句正确不代表本次分支或全片身份验收通过。",
+   "updatedAt": "2026-11-14",
    "tags": [
-    "待核对"
+    "人物归属",
+    "整集效果待验"
    ],
    "related": [
     "MOD-PARSE"
    ],
-   "branch": "",
+   "branch": "fix/understanding-dialogue-boundaries",
    "links": [
     {
      "label": "问题记录",
@@ -2097,6 +2098,21 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "label": "TRD",
      "url": "https://github.com/owariband/Seekino/blob/56e7977721e51a61b20894c9d38fa775d9300c70/docs/design/02-agent-harness/voiceprint-trd.md",
      "kind": "trd"
+    },
+    {
+     "label": "Understanding 分段职责 TRD",
+     "url": "https://github.com/owariband/Seekino/blob/fix/understanding-dialogue-boundaries/docs/design/03-product-reassessment/understanding-dialogue-boundaries-trd.md",
+     "kind": "trd"
+    },
+    {
+     "label": "本次决策与验证",
+     "url": "https://github.com/owariband/Seekino/blob/fix/understanding-dialogue-boundaries/docs/dev/devlog.md#devlog-understanding-dialogue-boundaries-20261114",
+     "kind": "source"
+    },
+    {
+     "label": "分段职责修复 PR #164",
+     "url": "https://github.com/owariband/Seekino/pull/164",
+     "kind": "pr"
     }
    ],
    "source": {

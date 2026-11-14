@@ -1051,6 +1051,14 @@ Cloud 同时存在 JEV 参数和 `models.query_hook=deepseek-flash/high/256`，�
 
 优先级：高。类型：解析语义质量、音频分段、证据供给与可观测性。状态：**截至 2026-10-22 仍未全面闭环；v25 两句固定目标本轮均正确**。历史 v5 曾纠正爽世单例，不代表后续版本稳定识别正确；v11～v18 暴露参考错名、跨人合并及 Refine 决策三类问题。最新归因与未完成项见下，旧轮次记录保留。记录日期：2026-10-16；更新日期：2026-10-22。
 
+#### 2026-11-14：Understanding 不再承担独立语音段合并
+
+Understanding 生成的 DIALOGUE 区间会用于后续 B0 声纹提取；提前合并独立 cue 会扩大采样范围，有混入不同发言的风险。现有 Prompt 已要求复核 ASR 和拆分有据的混人 cue，但没有明确禁止跨独立 cue 合并。
+
+本次只在 Agent Prompt 中明确职责：Understanding 保留独立语音段及各自音频范围；合并交给 Refine 根据证据判断，仅考虑同一人的连续发言，并保留不同人物／未决话轮边界。混人 cue 有据拆分、噪声清理、措辞／时间修正和跨 Chunk 完整 cue 均保留。原声纹分数仍只对应原音频范围。
+
+Understanding／Refine／framework 既有回归 **90 passed**。这是 Prompt 接线及数据合同验证，没有新增语义硬门禁，也没有新一轮 EP04 实模结果。此前 Refine 输入膨胀未在本次修复；算法、部署、数据库及历史任务成果均未改写。设计、后续整集验收与当前状态分别见[本次 TRD](../design/03-product-reassessment/understanding-dialogue-boundaries-trd.md)、[工作台 B12](workbench.html)。
+
 #### 2026-10-31：整片 speaker 分组与身份映射候选（TODO，先评估现有体系）
 
 用户提出的方向：在完整视频范围内先将 speaker1／2／3 分组，再保留各 speaker 已识别为何人，为后续 Agent 提供统一线索，减小跨 Chunk 身份归因和纠错的难度。**先核验现有体系效果是否足够，只有不足时才决定是否引入；本轮不改模型或解析流程。**

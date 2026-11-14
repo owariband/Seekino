@@ -315,6 +315,17 @@ object without tools. The host validates the complete result and imports persons
 and all events in one atomic `ParseContextCanvas.write` batch before the existing
 lease-fenced commit. Full ASR word alignment remains in immutable evidence; the
 initial prompt includes cue text, times and anonymous speaker IDs.
+The Understanding Prompt instructs the model to keep separate ASR cues and distinct
+utterances as separate DIALOGUE events with their own audio intervals. Adjacency or an apparent shared speaker,
+topic or scene does not permit consolidation at this stage. Evidence-supported
+corrections and splitting of mixed-speaker cues remain available, and complete
+cues still retain their whole-video time authority across Chunk boundaries.
+Refine considers consolidation only when the supplied evidence supports continuous
+speech by the same speaker, preserving different-speaker and unresolved turns.
+Voiceprint scores remain valid only for their recorded audio intervals. This is a
+[Prompt responsibility policy](../../docs/design/03-product-reassessment/understanding-dialogue-boundaries-trd.md);
+the host does not add a semantic merge gate.
+
 Refine receives complete member contents and retained observations once and returns
 `IntervalRefinementResult` (`members`, each with `sequence_no`, `persons`, `timeline`).
 It has no model-facing tools or separate completion receipt. The business result
