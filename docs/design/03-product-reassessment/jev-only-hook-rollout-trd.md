@@ -2,7 +2,7 @@
 
 需求：将已测的 JEV-only hook 作为默认路径，完整记录实验用例、用量、耗时和质量，并更新 Cloud 与 CPU server。日期：2026-11-13（UTC+8）；工作分支：`fix/jev-only-hook-default`；目标：`dev`，运行文件另从最新 `main` 建发布分支；[PR #155](https://github.com/owariband/Seekino/pull/155)，发布 [PR #157](https://github.com/owariband/Seekino/pull/157)。
 
-2026-11-14 的部署验收沿用本需求，在 `docs/jev-only-rollout-evidence` 分支、[PR #158](https://github.com/owariband/Seekino/pull/158) 补回实际生效收据与 devlog；内部留痕只进入 dev。
+2026-11-14 的部署验收沿用本需求，在 `docs/jev-only-rollout-evidence` 分支、[PR #158](https://github.com/owariband/Seekino/pull/158) 补回实际生效收据与 devlog；内部留痕只进入 dev。原 T01–T03 完整回放在 `perf/chat-history-latency-replay` 分支、[PR #166](https://github.com/owariband/Seekino/pull/166) 记录，协议与结果见第 5 节。
 
 前两轮实验分别测了 JEV＋改写器和 JEV-only。旧表没有代表纯 JEV，后续又只突出完成数与耗时，缺少直接可读的 query 和质量判据，无法据此判断实际收益。新一轮 27 turn 的模型、输入和用量已经冻结；质量是随后由 Codex 主 Agent 逐条补评，不能写成预先冻结的盲测。现有 `QueryHookConfig.rewriter_enabled`、根配置、本地开发和 Cloud 示例仍开启可选改写器，后续部署可能重新带回不需要的串行调用。
 
@@ -42,6 +42,10 @@
 QueryHook／Gateway／Bootstrap／Parse路由相关回归最终285项通过，1条既有Starlette弃用警告。首次Bootstrap有24项失败，因为旧断言依赖启动时创建改写模型；改为断言JEV-only不创建该模型后，按同一范围重跑通过。容量／工厂／配置发现四文件为262通过、3项失败，失败均为历史默认模型fixture的断言；已在修改前的`96d43e20`工作树复现同名3项失败，未顺带修改业务模型。命令和结果见[回归收据](../../report/agent/chat/query-intent-jev-only-20261113/default-rollout-checks.json)。发布选取后核对 main 此次 19 个发布所需文件、发布树 808 个路径／8 个资产与 GitHub `release-files`，均通过；main 回归为 543 通过、3 项同名既有基线失败。该集合与前述 285 项、262 项范围重叠，不能相加，3 项失败未在本次修复。
 
 # 5. 试点验证与方案取舍
+
+2026-11-14 历史慢请求回放（分支 `perf/chat-history-latency-replay`）：在当前 Cloud 配置下重跑最初 T01–T03 的完整 turn，保留原 query、历史角色与正文、素材范围、播放位置和请求前的原生 checkpoint；旧基线分别为 75.659／47.880／88.877 秒。先只读取得各请求开始前的状态，再为新建的测试身份和会话复制历史与该状态，核对哈希后串行执行。准备时发现三条原请求都带 playback，而当时 QueryHook 对该输入跳过 JEV；若直接回放，只能比较旧链路。用户明确要求先修实时接线再开始实际回放，因此先以 [PR #162](https://github.com/owariband/Seekino/pull/162)（合并 `16d32ff4`）修复，再由 [PR #163](https://github.com/owariband/Seekino/pull/163)（合并 `7b990dd87303f576e91f87078a0f9414f0005bad`）发布 main，三条新 turn 全部在新镜像上执行。部署之后，回放期间未再切换配置或重启服务，也未更新原会话与 checkpoint、迁移素材。私有聊天、图片、工具正文与 checkpoint 只保存在私有工作目录，Git 仅记录脱敏指标、哈希和场景说明。
+
+实际三条新 turn 均经过 JEV，各 1 次 `completed` 的 `retrieve`，耗时 1.5391／1.5107／1.8469 秒，独立改写 0 次；这一批不是跳过 JEV 的回放。整轮结果为 T01 在 196.567 秒后 `AGENT_MODEL_ERROR`、无可见回答，T02 为 17.176 秒、T03 为 19.562 秒并完成。T01 的 Query 耗尽共享 100 次工具预算，Supervisor 恢复读取也失败；T02 的卡片和取帧没有覆盖 17:38.310，T03 的卡片覆盖 17:36 但取帧为 17:35／17:37／17:39／17:41，回答声称提取 17:36 缺乏请求证据。旧请求缺少同口径 FTT／TT，当前 prompt、compact、缓存和后续 Event 内存修复也与旧时点不同；因此只报告描述性前后结果，不把变化归因于 JEV，不以 COMPLETED 代替内容正确。新三条共 115 次 provider 调用、1991676 total token，旧三条为 29 次、807664；本轮各回放一次，不报 p95/p99，也不恢复旧生产配置来凑因果对照。完整协议、逐条用量与交付问题见[回放报告](../../report/agent/chat/history-latency-replay-20261114/README.md)。
 
 部署先确认实际服务拓扑、挂载、镜像与活动请求，备份后切换，必要时只重启拥有该配置的 API。用新建、无私密内容的反馈与检索请求覆盖真实 JEV 和 Supervisor，记录路由、独立改写次数、终态和用量；线上探针与27turn对照分开统计，不能拿少量探针宣布线上性能排名。
 

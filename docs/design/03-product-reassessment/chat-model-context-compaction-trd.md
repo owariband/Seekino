@@ -78,3 +78,7 @@ sequenceDiagram
 模型容量解析与 85% 策略已实现，320 项相关回归通过，3 项既有配置失败在干净 dev 复现；三对真实模型边界均确认提前同步摘要的等待与消除后的净改善。当前支持“选定边界的性能机制已验证”，不支持“完整 Chat 问题已解决”。完整业务交付、近满窗质量、长期稳定性与生产试点继续留在验收边界。当前状态见[管理工作台](../../dev/workbench.html)的 `CHAT-COMPACT-01`；本轮不部署 Cloud。
 
 2026-11-14 上线跟进：main `8a86883f` 对应的 Cloud API 已实际加载 `auto_compact_ratio: 0.85`，日志解析为 context 1048576／trigger 891289／keep 24000；全局 `agent-runtime.yaml` 字节哈希未变，实际值来自模型元数据与 Supervisor 绑定。keep 是最近消息尾部的保留目标，不是整段压缩后请求的大小。该证据只说明配置与容量解析已接入生产；完整业务交付、近满窗质量、并发与长期延迟仍未验证，`CHAT-COMPACT-01` 保持 verifying。见[生产上线报告](../../report/agent/chat/query-intent-jev-only-20261113/production-rollout-20261114.md)。
+
+2026-11-14 完整回放后的只读排查发现接线遗漏：上述动态解析只进入 Supervisor 的 `build_deep_agent`；Query 使用 `build_structured`，没有调用动态容量解析，agent 绑定的 `auto_compact_ratio` 仍为空。云端实际合并策略为 64000／48000／24000，另受 200000 字符上限约束。T01 两个并行 Query 的压缩元数据形成两条链，共 9 次，分别与该回放的 Query 调用起点对应。因此此前“Supervisor summary 为 0”仅说明 Supervisor 没有摘要模型调用，不能代表 Query 没有本地上下文替换。本次未修复该遗漏或做修改后因果回放。
+
+同一回放还确认某个 Chunk 被读 22 次、9 次从第一页重新读，Query checkpoint 不保存分页位置；压缩是否直接导致这些重读与游标错误仍待验证。设计范围需继续覆盖 structured Query 的容量、字符保护和阅读进度恢复，不能只把 Supervisor 上线当作全 Agent 接入验收。证据与边界见[完整回放报告第 9 节](../../report/agent/chat/history-latency-replay-20261114/README.md#9-后续只读排查历史-id首字等待与-query-的旧压缩路径)、[记录 PR #166](https://github.com/owariband/Seekino/pull/166)。

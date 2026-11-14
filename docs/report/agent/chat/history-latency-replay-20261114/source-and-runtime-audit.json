@@ -1,0 +1,70 @@
+{
+  "source": {
+    "source_and_persistence_audit": [
+      {
+        "case_id": "T01",
+        "original_messages_unchanged": true,
+        "original_checkpoint_unchanged": true,
+        "replay_state_hash_identical": true,
+        "persisted_status": "FAILED"
+      },
+      {
+        "case_id": "T02",
+        "original_messages_unchanged": true,
+        "original_checkpoint_unchanged": true,
+        "replay_state_hash_identical": true,
+        "persisted_status": "COMPLETED"
+      },
+      {
+        "case_id": "T03",
+        "original_messages_unchanged": true,
+        "original_checkpoint_unchanged": true,
+        "replay_state_hash_identical": true,
+        "persisted_status": "COMPLETED"
+      }
+    ]
+  },
+  "runtime": {
+    "api": {
+      "id": "26b107907f6e305953f41c158ab5a1cb0538c3ff7a6c6e7a64add642d2be162c",
+      "image": "seekino-api:jev-realtime-7b990dd8",
+      "started_at": "2026-11-14T03:44:09.281633948Z",
+      "health": "healthy",
+      "restart_count": 0
+    },
+    "runtime": {
+      "model_path": "/data/config/cloud/models.yaml",
+      "model_sha256": "547729bafeb922a0e1f0c25916996513f40b1f507a0e4373ce51943ce48067d2",
+      "hook": {
+        "enabled": true,
+        "rewriter_enabled": false,
+        "router_model": "typesafe/jev-1.14"
+      },
+      "combined_binding": false,
+      "rewriter_binding": false,
+      "supervisor": {
+        "source": "deepseek_api",
+        "model": "deepseek-flash",
+        "reasoning_effort": "high",
+        "max_output_tokens": 8192,
+        "auto_compact_ratio": 0.85
+      },
+      "runtime_path": "/data/config/cloud/agent-runtime.yaml",
+      "runtime_sha256": "98c16c9e11e844b04f5da524594029dabc2cba41a7dbcd83aa0c37b7c8217990",
+      "ratio_supported": true
+    },
+    "health": {
+      "http_status": 200,
+      "body": {
+        "status": "ok",
+        "serverTime": 1794629672623,
+        "components": {
+          "parseConsumer": {
+            "status": "running",
+            "failure": null
+          }
+        }
+      }
+    }
+  }
+}
