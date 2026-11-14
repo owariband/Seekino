@@ -83,7 +83,7 @@ PYTHONPATH="$PWD" /Users/hypnos/workspace/agent/Seekino/.venv/bin/python -m pyte
 
 方案取舍是复用现有配置和工厂，而不是再给 Query 增加一套 85% 开关。代价是装配逻辑集中到 `build_chat_runtime` 后，任何父子差异都必须显式说明；旧 Query 环境变量保留解析但不再生效，可能让仍在依赖独立 Query 选模的部署失去原来的覆盖能力。项目选择用兼容解析加文档说明处理，没有静默删除字段，也没有保留一条无人使用的第二模型路径。
 
-是否部署按会话已有授权与发布边界执行；本 TRD 不新增部署授权。当前 PR 为 Draft，未合入 dev、未发布 main、未部署，因此本阶段结论仍是“实现与受控配置预检完成，等待交付和真实效果验证”。若配置无法解析、当前模型不支持子 Agent 的结构化调用或原生行为退化，保留具体失败，不退回全局旧模型伪装完成。
+是否部署按会话已有授权与发布边界执行；本 TRD 不新增部署授权。dev PR #171 已以 `dc9c86fa81952b3ad43d3041d28f151d6d807c82` 合入；正式发布候选 [main PR #172](https://github.com/owariband/Seekino/pull/172) 已通过同范围回归与 release-files、待 main 合并和部署。本阶段结论是“dev 实现已集成、受控配置预检完成，等待正式部署和真实效果验证”。若配置无法解析、当前模型不支持子 Agent 的结构化调用或原生行为退化，保留具体失败，不退回全局旧模型伪装完成。
 
 # 6. 结果验收与闭环
 
@@ -91,7 +91,7 @@ PYTHONPATH="$PWD" /Users/hypnos/workspace/agent/Seekino/.venv/bin/python -m pyte
 
 - **已实现：** Server 从当前 Supervisor 选择一次性装配父子模型、来源、主备、effort、输出／超时／字符预算和容量策略；个人目标与 API builder 走同一条路径；Gateway 使用单一动态解析入口。
 - **已验证：** 修改前红证据成立；Gateway 202 项、Server／个人协议 136 项、共 338 项唯一通过；当前 Cloud 配置预检父子策略一致，元数据请求 1 次、生成调用 0 次，服务未重启。
-- **未验证：** PR 尚未合并；没有 main 发布或部署；没有完整在线 Server assembly；没有修复后的原 T01–T03 回放；TT、FTT、token、压缩次数和准确率收益均未测量。200000 字符上限与 891289 token 阈值的实际先后、主备切换、并发和长期稳定性也未覆盖。
+- **未验证：** main PR #172 尚未合并或部署；没有完整在线 Server assembly；没有修复后的原 T01–T03 回放；TT、FTT、token、压缩次数和准确率收益均未测量。200000 字符上限与 891289 token 阈值的实际先后、主备切换、并发和长期稳定性也未覆盖。
 - **明确不宣称：** 修复已上线；9 次 Query 压缩会变为 0；Query 循环、分页重读、`UNKNOWN_ITEM`、早回应、部分报告或取帧精度已经修复。这些仍在原工作台事项和 [PR #166](https://github.com/owariband/Seekino/pull/166) 的诊断边界内跟踪。
 
 下一步是完成 PR #171 的 review 与合并，按发布流程决定 main 和部署；随后在真实 Server 装配中核对父子实际配置，并用相同历史输入做修复后回放，分别记录耗时、token、压缩、工具预算和回答质量。当前状态见[管理工作台](../../dev/workbench.html)的 `CHAT-MODEL-INHERIT-01`；`CHAT-COMPACT-01` 继续 verifying，`CHAT-QUERY-BUDGET-01` 仍为 todo。
