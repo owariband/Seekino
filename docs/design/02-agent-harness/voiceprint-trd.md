@@ -20,6 +20,8 @@ EP04 v2 的爱音对照句声纹 top1 正确，实际输入仍为若葉睦。核
 
 Engine 在前三之外附上原身份已有评分的候选，Server 只允许第四项是原身份；不更改排序计算、分差、分档或 encoder。模型收到的仍是逐句精简摘要。379 项隔离回归通过；冻结 EP04 的 313 个真实向量重算，前三与 gap 全部不变，63 行补回原身份评分。294500–296500ms 的新草稿为千早愛音 0.757265，原若葉睦 0.512934，仍保留 CONFLICT。没有新模型调用或新整集终态，旧 v2 结果未改写。见[本次六步设计](../03-product-reassessment/voiceprint-conflict-prefill-trd.md)与[回放证据](../../report/agent/video_parse_v2/voiceprint-conflict-prefill-20261114/README.md)；当前状态见[工作台 B12](../../dev/workbench.html)。下方记录按各自冻结版本理解。
 
+同日后续真实整集 v3 COMPLETE，DS Flash high、1fps，24/24 Under、22/22 Refine、24/24 索引，23分59.848秒（含一次失败恢复）。434 项组合回归通过；337 条首次对白的实际输入全覆盖，69 条 CONFLICT 均预填 top1，47 条附原身份评分。但固定姓名仍 1/2：爽世正确预填后被 Refine 改成灯，爱音首次理解已正确；输入旧描述仍归灯发言，原因待查。主链跑通与人物正确分别验收，辅助摘要另有3次失败未修；371源码与旧结果指纹不变，CPU/prod 未访问。见[整集证据](../../report/agent/video_parse_v2/voiceprint-conflict-prefill-20261114/live-run.json)。上段“无新模型调用”限定于离线阶段。
+
 ## 2026-11-14：Refine 复用逐句预填摘要，参考池留在宿主
 
 本分支修复完整 JSON 输入将 `member_evidence.voiceprint` 原样序列化的问题。全片音频大量互为参考，宿主已完成 B0 比较和逐句预填，模型无需再次读取样本目录、来源详情或逐候选引用 ID。现直接投影 Canvas 已按成员、事件位置及区间绑定的有效摘要，保留原始身份、候选分数、参考数量与冲突状态；完整资料继续在宿主留存，预填条件与评分算法不变。

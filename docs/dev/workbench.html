@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-14T19:39:37+08:00",
+ "updatedAt": "2026-11-14T21:25:36+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 69,
+ "revision": 70,
  "categories": [
   {
    "id": "parse",
@@ -2076,14 +2076,14 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "type": "requirement",
    "status": "progressing",
    "priority": "P1",
-   "description": "本机 EP04 v2 整集完成但人物仅 1/2 正确；CONFLICT 先填 top1 并保留原身份评分已实现、冻结输入回放通过，新 Agent 终态待验。",
-   "next": "将独立修复按 #165 → CONFLICT 预填顺序集成后，整集 1fps 验证 Agent 最终归因；Understanding 跨 cue 重组与辅助摘要失败分别跟进。",
-   "verification": "2026-11-14 新任务 v2：24/24 Under、22/22 Refine、24/24 索引；B0 314 行/313 编码。41 次实际输入无参考资料；同窗 1152947→52546 字符（95.4425%）。开头爽世正确但初次 Under 已正确；爱音对照声纹 top1 正确、CONFLICT 未预填且 Refine 仍错标睦。至少确认 1 个 Under 合并 4 cue 反例。CPU/prod 未部署。 后续独立修复：379 项回归通过；313 个冻结向量重算前三/gap/分档不变，63 行补回原身份评分。真实窗口重建中目标 speaker=千早愛音 0.757265，原若葉睦 0.512934，CONFLICT 保留。无新模型调用，未加载新服务；旧 v2 未改写。",
+   "description": "CONFLICT 预填已在整集 v3 生效，主链全部完成；两句固定姓名仍1/2，爽世正确预填后被 Refine 改成灯。",
+   "next": "处理 Refine 覆盖正确身份及预填姓名与旧描述冲突；继续区分目标句身份和整段音频纯度，辅助摘要失败独立跟进。",
+   "verification": "2026-11-14 EP04 v3 cc181952：DS Flash high、1fps，24/24 Under、22/22 Refine、24/24 索引，23分59.848秒。434项组合回归；337条首次版本对白的实际输入全覆盖，69条CONFLICT均先填top1，47条补原身份评分，49次输入无参考池。爽世句先填正确的長崎そよ0.744782，返回／最终却为高松燈；爱音首次理解与最终均正确，不能计为预填纠错。首轮输出50k失败后标准重试同一任务复用19块。371源码不变、旧v2内容不变；ASR166条一致。附带摘要3次失败未修，CPU/prod未访问。",
    "updatedAt": "2026-11-14",
    "tags": [
-    "输入上下文",
     "声纹预填",
-    "整集效果待验"
+    "正确身份被覆盖",
+    "人物效果未通过"
    ],
    "related": [
     "MOD-PARSE"
@@ -2138,6 +2138,11 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
     {
      "label": "原身份评分与冻结输入回放",
      "url": "https://github.com/owariband/Seekino/blob/fix/voiceprint-conflict-prefill/docs/report/agent/video_parse_v2/voiceprint-conflict-prefill-20261114/README.md",
+     "kind": "source"
+    },
+    {
+     "label": "v3实际预填与终态反例",
+     "url": "https://github.com/owariband/Seekino/blob/fix/voiceprint-conflict-prefill/docs/report/agent/video_parse_v2/voiceprint-conflict-prefill-20261114/live-run.json",
      "kind": "source"
     }
    ],

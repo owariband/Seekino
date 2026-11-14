@@ -35,12 +35,12 @@ EP04 v2 的 294.500–296.500s 台词在 Understanding 中标为若葉睦，声�
 | 真实目标原身份评分 | 不在前三，未提供 | 若葉睦 0.512934；爱音 0.757265，仍 CONFLICT |
 | 相关合同回归 | 选定 12 项中 3 失败 | 379 passed，5.30 秒 |
 | 全片评分稳定性 | 313 个已编码目标 | 前三／gap 不变，63 行补回原身份评分 |
-| 新整集最终身份 | 未执行 | 未执行，不能由离线输入推导 |
+| 新整集最终身份 | v2 两个固定目标 1/2 | v3 仍 1/2；爽世正确预填后被改成灯，爱音首次理解已正确 |
 
 # 5. 验证范围与方案取舍
 
-本次采用相关隔离测试和冻结的整集声纹 artifact 回放验证数据流，不以片段实模试点代替整集。若加载到本机空闲测试 API，记录新源码和进程；旧 v2 保留。真实 Agent 最终是否保留正确身份仍需后续整集验证，不通过提高阈值或注入真值伪造通过。
+本次先采用相关隔离测试和冻结的整集声纹 artifact 回放验证数据流，不以片段实模试点代替整集。随后整集 v3 `cc181952-3212-43cf-815c-ef9c0b9d07ba` COMPLETE，1fps、DeepSeek Flash high，Refine 继承同一绑定；本机 API 19731 已加载独立执行副本，保留上轮 Understanding 分段与媒体工作目录修复。组合回归 434 passed。复用有效的 166 条全片 ASR，新旧 SHA 一致；重新执行 Understanding、B0 和 Refine。337 条首次版本对白的实际输入检查通过，69 条 CONFLICT 均预填 top1，47 条保留原身份额外分数；95 条预填不等于 95 条身份正确。首轮输出预算失败后标准重试同一任务，复用 19 块、重试 5 块，未调整配置。旧 v2 保留，不通过提高阈值或注入真值伪造通过。详见[整集留证](../../report/agent/video_parse_v2/voiceprint-conflict-prefill-20261114/live-run.json)，状态统一在 B12。
 
 # 6. 结果验收与闭环
 
-实现和冻结输入回放完成，证据见[报告](../../report/agent/video_parse_v2/voiceprint-conflict-prefill-20261114/README.md)与[精简数据](../../report/agent/video_parse_v2/voiceprint-conflict-prefill-20261114/replay.json)。采用先写候选、后审冲突的职责，保留不确定性与 Agent 权限。代码尚未加载到服务，新整集 Agent 终态未执行，不能认定整集归因达标。原始声纹资料只留宿主，CPU/prod 未访问。
+实现、冻结输入回放和真实整集输入合同验收通过，人物效果未通过。证据见[报告](../../report/agent/video_parse_v2/voiceprint-conflict-prefill-20261114/README.md)、[离线数据](../../report/agent/video_parse_v2/voiceprint-conflict-prefill-20261114/replay.json)及[整集结果](../../report/agent/video_parse_v2/voiceprint-conflict-prefill-20261114/live-run.json)。主链 24/24 Under、22/22 Refine、24/24 索引，23 分 59.848 秒；两句目标仍 1/2。爽世句实际先填正确姓名，Refine 又恢复灯；输入描述仍将发言归于灯，后续需处理身份默认与旧描述冲突，尚未证明单一原因。爱音句初次已正确，长区间纯度未认证。371 源码文件不变、旧结果保留；辅助摘要另有 3 次失败未修。代码只加载本机专用服务，未合并或部署正式环境，CPU/prod 未访问。
