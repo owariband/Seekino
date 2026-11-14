@@ -1,6 +1,6 @@
 # 2026-11-15 Chat 子 Agent 模型配置继承修复验证
 
-日期：2026-11-15（本地 UTC+8）。分支 `fix/chat-model-config-inheritance`，目标 `dev`；实现提交 `30680fe4`，[PR #171](https://github.com/owariband/Seekino/pull/171)。历史回放证据来自已合入 dev 的 [PR #166](https://github.com/owariband/Seekino/pull/166)（合并提交 `ff9f8fe555c1bf0f678d5af0617e1076e4d4390f`）。本分支于 2026-11-14 开始，没有 main 发布，也没有部署；修复尚未在正式环境生效。
+日期：2026-11-15（本地 UTC+8）。分支 `fix/chat-model-config-inheritance`，目标 `dev`；实现提交 `30680fe4`；[dev PR #171](https://github.com/owariband/Seekino/pull/171) 已以 `dc9c86fa81952b3ad43d3041d28f151d6d807c82` 合入。历史回放证据来自已合入 dev 的 [PR #166](https://github.com/owariband/Seekino/pull/166)（合并提交 `ff9f8fe555c1bf0f678d5af0617e1076e4d4390f`）。本分支于 2026-11-14 开始，没有 main 发布，也没有部署；修复尚未在正式环境生效。
 
 ## 1. 结论与边界
 

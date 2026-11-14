@@ -6491,7 +6491,7 @@ Gateway 只保留一个解析入口。`_controls` 对 DeepAgents、structured �
 
 ### 方案验证
 
-实现提交为 `30680fe4`，[PR #171](https://github.com/owariband/Seekino/pull/171)；正式发布候选为 [main PR #172](https://github.com/owariband/Seekino/pull/172)，尚未合并或部署。受控 worker 先得到 7 项 Gateway 新回归失败和 2 项静态控制通过，Bootstrap 捕获到配置的 Query 模型与 Chat 模型不一致；修改后两个不重叠的范围共 338 项唯一通过：Gateway 202 项用 2.73 秒，Server／个人协议 136 项用 32.76 秒，只有 1 条既有 Starlette 弃用警告。
+实现提交为 `30680fe4`，[PR #171](https://github.com/owariband/Seekino/pull/171) 已以 `dc9c86fa` 合入 dev；正式发布候选为 [main PR #172](https://github.com/owariband/Seekino/pull/172)，尚未合并或部署。受控 worker 先得到 7 项 Gateway 新回归失败和 2 项静态控制通过，Bootstrap 捕获到配置的 Query 模型与 Chat 模型不一致；修改后两个不重叠的范围共 338 项唯一通过：Gateway 202 项用 2.73 秒，Server／个人协议 136 项用 32.76 秒，只有 1 条既有 Starlette 弃用警告。
 
 测试覆盖 structured 与 DeepAgents 的动态容量一致、模型切换、主备取小、元数据失败回退、未启用比例保留旧策略；Bootstrap 覆盖独立 Supervisor、仅全局 agent、Codex native、Ark alternate YAML、fallback 和父子输出／超时／字符／容量；个人模型用 mock 跑通 `openai_chat`、`openai_responses`、`anthropic_messages`、`gemini` 四种协议的结构化工具循环，并确认客户端关闭。没有真实 Chat 模型调用。
 
