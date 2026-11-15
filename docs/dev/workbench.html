@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-15T00:30:00+08:00",
+ "updatedAt": "2026-11-15T10:35:00+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 54,
+ "revision": 70,
  "categories": [
   {
    "id": "parse",
@@ -5486,11 +5486,11 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "title": "消息级用户反馈与失败回答报告",
    "category": "chat",
    "type": "requirement",
-   "status": "progressing",
+   "status": "verifying",
    "priority": "P1",
    "description": "为 terminal assistant 消息增加 👍/👎、原因和说明；消息列表/详情回显，失败回答可报告。独立反馈表与 PUT/DELETE，不引入 Langfuse/LangSmith。",
-   "next": "完成定向验证与 TRD 证据回填；迁移和真实部署另验，PR 待创建。",
-   "verification": "后端 4 项反馈测试、139 项 API 回归、143 项 schema 回归通过；前端 682 项测试、类型检查与生产构建通过。全量 server 套件仍有既有视频解析失败，未归因本功能。",
+   "next": "观察两周反馈覆盖率、写入延迟和失败报告；补 main 正式发布；按试点数据决定 triage 导出。",
+   "verification": "后端 297 项定向回归、前端 684 项测试、类型检查与构建通过；生产 MySQL 迁移、API/Web 发布和游客真实反馈链路已验证，刷新回显与清除正常；试点覆盖率仍待观察。",
    "updatedAt": "2026-11-15",
    "tags": [
     "Chat",
@@ -5505,6 +5505,11 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "label": "TRD",
      "kind": "trd",
      "url": "https://github.com/owariband/Seekino/blob/feat/message-feedback/docs/design/03-product-reassessment/message-feedback-trd.md"
+    },
+    {
+     "label": "PR #175",
+     "kind": "pull",
+     "url": "https://github.com/owariband/Seekino/pull/175"
     }
    ]
   },
@@ -5653,6 +5658,394 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "label": "冻结回放与完整链路证据",
      "kind": "evidence",
      "url": "https://github.com/owariband/Seekino/blob/fix/reference-model-judgment/docs/report/agent/video_parse_v2/reference-model-judgment-20261112/README.md"
+    }
+   ]
+  },
+  {
+   "id": "RAG-QUERY-MEM-01",
+   "title": "Event 查询在 ES 召回前读取全部 Chunk 正文",
+   "category": "search",
+   "type": "requirement",
+   "status": "verifying",
+   "priority": "P1",
+   "description": "Event 查询先加载授权范围内全部 Chunk 正文与 detail 重建发布投影，内存随素材库增长；改为发布元数据配对、候选有界回源，完整 detail 延迟加载、仅投影 compact / camera_hints。热修复后又将任务列表改为先排序 ID 再读取 JSON 元数据，避免完整八课程范围触发 MySQL 1038。",
+   "next": "已上线并完成最终镜像两次连续游客 Chat、880 Chunk 范围和真实 ES 召回复测；继续观察长时与多用户并发。旧新镜像同条件整轮 Chat 内存降幅尚未配对验证。",
+   "verification": "PR #154 已合入 dev；2026-11-14 00:38 上线四文件有界读取热修复。完整课程范围暴露 MySQL 1038，PR #159 改为先排序任务 ID 再读取 JSON 元数据，61 passed、1 skipped（此前有界读取八模块248 passed、4 skipped）。最终镜像2bebd9af于00:50:20上线，只有API镜像变化。最终代码只读验证8视频880个Chunk身份，5次范围查询、0正文ORM、RSS+0.50MiB；5候选回源累计+4.95MiB、完整detail0；真实ES词法召回8Event/5Chunk/8视频，partial=false，612.03ms、RSS+28.60MiB。最终镜像同一Python进程连续两次游客Chat均HTTP200/COMPLETED；200ms采样（含结束后15秒）最大RSS增量86.57/40.36MiB，空闲净增86.57/39.04MiB，第二次结束后419.92MiB，swap及OOM增量均0。首版另有一次41.487秒真实Chat，采样+80.48MiB。无同条件旧新整轮对照；长时/多用户未验证。",
+   "updatedAt": "2026-11-14",
+   "tags": [
+    "性能",
+    "Event 检索",
+    "内存",
+    "热修复"
+   ],
+   "related": [
+    "MOD-SEARCH"
+   ],
+   "branch": "fix/event-scope-task-sort",
+   "links": [
+    {
+     "label": "PR #154（合并）",
+     "kind": "pr",
+     "url": "https://github.com/owariband/Seekino/pull/154"
+    },
+    {
+     "label": "PR #159 任务排序",
+     "kind": "pr",
+     "url": "https://github.com/owariband/Seekino/pull/159"
+    },
+    {
+     "label": "有界内容读取 TRD",
+     "kind": "trd",
+     "url": "https://github.com/owariband/Seekino/blob/perf/event-query-bounded-content/docs/design/03-product-reassessment/event-query-bounded-content-trd.md"
+    },
+    {
+     "label": "任务排序 TRD",
+     "kind": "trd",
+     "url": "https://github.com/owariband/Seekino/blob/fix/event-scope-task-sort/docs/design/02-agent-harness/event-scope-task-sort-trd.md"
+    },
+    {
+     "label": "生产热修复报告",
+     "kind": "source",
+     "url": "https://github.com/owariband/Seekino/blob/fix/event-scope-task-sort/docs/report/server/service/video_event_retrieval/cloud-memory-hotfix-20261114.md"
+    },
+    {
+     "label": "生成数据报告",
+     "kind": "source",
+     "url": "https://github.com/owariband/Seekino/blob/perf/event-query-bounded-content/docs/report/server/service/video_event_retrieval/bounded-query-20261113.md"
+    },
+    {
+     "label": "devlog（PR #154 有界读取）",
+     "kind": "source",
+     "url": "https://github.com/owariband/Seekino/blob/perf/event-query-bounded-content/docs/dev/devlog.md#devlog-event-query-bounded-content-20261113"
+    },
+    {
+     "label": "devlog（热修复）",
+     "kind": "source",
+     "url": "https://github.com/owariband/Seekino/blob/fix/event-scope-task-sort/docs/dev/devlog.md#devlog-event-query-cloud-memory-hotfix-20261114"
+    }
+   ]
+  },
+  {
+   "id": "CHAT-MODEL-INHERIT-01",
+   "title": "Chat 子 Agent 另取全局模型，选定 Supervisor 后仍按旧窗口压缩",
+   "category": "chat",
+   "type": "requirement",
+   "status": "verifying",
+   "priority": "P1",
+   "description": "Query 使用全局 agent binding 与 structured 静态窗口，Supervisor 的独立选模和动态容量没有传给子 Agent；修复让两者复用当前 Supervisor 的模型来源、主备、effort、输出／超时／字符预算和容量策略，同时保留 Query prompt、工具、结构化结果与共享预算。",
+   "next": "正式发布候选 main PR #172 待合并与部署；随后核对完整 Server 装配与同一历史输入的 TT／FTT／token／质量。本卡保持 verifying，不以配置预检代替业务验收。",
+   "verification": "实现提交 30680fe4；Gateway 202 项（2.73 秒）与 Server／个人协议 136 项（32.76 秒）共 338 项唯一通过，1 条既有 Starlette 警告。修改前 7 项 Gateway 新回归失败、2 项静态控制通过，Bootstrap 捕获 configured-query-model 与 configured-chat-model 不一致。个人四种协议结构化工具循环均为 mock 并关闭客户端；API／native／legacy／alternate YAML 与父子配置覆盖来源、effort、fallback 和控制值。当前 Cloud 配置预检为 1048576／891289／24000、Flash／high／8192、metadata_requests=1、generation_calls=0，模型／运行哈希与容器未变、健康，未重启服务；只验证配置与 factory，未覆盖完整在线 Server 装配。没有修复后原 Chat 回放，TT／FTT／token／准确率未测；200000 字符上限仍可先于 891289 触发压缩。main 发布选取7个文件，同范围338项回归通过（不另计唯一用例），发布树810路径/10资产通过，沿用main忽略规则；候选未部署。dev PR #171 已以 dc9c86fa 合入；main PR #172 已 Ready，release-files 通过，6个源码/回归文件与集成后的dev逐字一致。",
+   "updatedAt": "2026-11-15",
+   "tags": [
+    "Chat",
+    "模型配置",
+    "上下文",
+    "待发布"
+   ],
+   "related": [
+    "MOD-CHAT",
+    "CHAT-COMPACT-01",
+    "CHAT-QUERY-BUDGET-01"
+   ],
+   "branch": "fix/chat-model-config-inheritance",
+   "links": [
+    {
+     "label": "main 发布 PR #172",
+     "kind": "pr",
+     "url": "https://github.com/owariband/Seekino/pull/172"
+    },
+    {
+     "label": "dev PR #171",
+     "kind": "pr",
+     "url": "https://github.com/owariband/Seekino/pull/171"
+    },
+    {
+     "label": "配置继承 TRD",
+     "kind": "trd",
+     "url": "https://github.com/owariband/Seekino/blob/dev/docs/design/03-product-reassessment/chat-model-config-inheritance-trd.md"
+    },
+    {
+     "label": "验证报告",
+     "kind": "source",
+     "url": "https://github.com/owariband/Seekino/blob/dev/docs/report/gateway/agent_model/chat-model-config-inheritance-20261115/README.md"
+    },
+    {
+     "label": "devlog",
+     "kind": "source",
+     "url": "https://github.com/owariband/Seekino/blob/dev/docs/dev/devlog.md#devlog-chat-model-config-inheritance-20261115"
+    }
+   ]
+  },
+  {
+   "id": "CHAT-COMPACT-01",
+   "title": "静态小窗口提前触发 Chat 同步摘要，需按模型容量对照",
+   "category": "chat",
+   "type": "requirement",
+   "status": "verifying",
+   "priority": "P1",
+   "description": "Cloud三条慢请求的摘要占58%–63%。模型能力1M与实际64k/48k策略不匹配；以真实历史的固定模型边界验证85%动态触发。",
+   "next": "Cloud已部署并加载85%动态策略；仍需完整Chat／视频卡回源、近满窗、并发与长期延迟验收，不能宣称完整问题已解决。",
+   "verification": "320项回归通过，3项既有失败在干净dev复现。9次真实生成全部完成，Flash/high/8192及三对入口哈希一致；模型边界25.283/33.496/25.702秒降至2.752/6.891/5.297秒，摘要75.414秒降至0。正常模型耗时及未缓存输入增加；完整业务与近满窗质量未验收。2026-11-14 Cloud实际上线后日志为1048576/891289/24000，keep 24000为最近消息尾部目标；并发与长期延迟仍未验收。2026-11-14 三条历史回放中，旧摘要为2/1/2次、45.191/30.194/51.932秒，新三条为0；但T01因Query工具预算失败、T02/T03存在播放时间对齐缺口，不能作为完整Chat或整体延迟验收。后续只读排查发现Query structured路径仍为64000/48000/24000，另受200000字符上限约束，未接入Supervisor的动态85%；T01两条Query压缩链共9次。未修复或进行修改后因果回放。2026-11-15 配置继承修复（PR #171）已让 structured Query 复用当前 Supervisor binding 与 Gateway 动态容量，当前 Cloud 预检父子均为 1048576／891289／24000，旧 64k 仅作兼容回退；但未部署、未做完整在线 Server 装配或修复后回放，本卡保持 verifying。",
+   "updatedAt": "2026-11-14",
+   "tags": ["Chat", "性能", "上下文", "边界实测", "待完整业务验收"],
+   "related": [
+    "MOD-CHAT",
+    "C20"
+   ],
+   "branch": "perf/chat-model-context-compact",
+   "links": [
+    {
+     "label": "PR #144",
+     "kind": "pr",
+     "url": "https://github.com/owariband/Seekino/pull/144"
+    },
+    {
+     "label": "TRD",
+     "kind": "trd",
+     "url": "https://github.com/owariband/Seekino/blob/perf/chat-model-context-compact/docs/design/03-product-reassessment/chat-model-context-compaction-trd.md"
+    },
+    {
+     "label": "实验报告",
+     "kind": "source",
+     "url": "https://github.com/owariband/Seekino/blob/perf/chat-model-context-compact/docs/report/gateway/agent_model/chat-context-compaction-20261113/README.md"
+    },
+    {
+     "label": "生产上线报告",
+     "kind": "source",
+     "url": "https://github.com/owariband/Seekino/blob/dev/docs/report/agent/chat/query-intent-jev-only-20261113/production-rollout-20261114.md"
+    }
+   ]
+  },
+  {
+   "id": "CHAT-INTENT-01",
+   "title": "关闭独立改写器后重测 JEV 分类与 Supervisor 直接判断",
+   "category": "chat",
+   "type": "requirement",
+   "status": "done",
+   "priority": "P1",
+   "description": "旧B含独立改写器，现已关闭并全量重测三组各9turn；本卡验收范围为有界实验，不等于C19全场景关闭。",
+   "next": "如继续比较生产效果，先按实际JEV-only配置扩大整季与长历史样本；同Chunk卡片覆盖问题单独处理。",
+   "verification": "27/27完成、无超时；B真实JEV分类9次成功、三组独立改写调用均为0；9组三方输入一致、129次usage完整、27条SQL正文终态一致。A一次前置ValidationError fallback保留。A/B/C平均TT=9.995/9.489/9.722秒，总token=284934/257239/308790；C仍有反馈误检索，Cloud未改。",
+   "updatedAt": "2026-11-13",
+   "tags": [
+    "Chat",
+    "意图判断",
+    "性能",
+    "真实模型对照"
+   ],
+   "related": [
+    "MOD-CHAT",
+    "C19",
+    "CHAT-COMPACT-01"
+   ],
+   "branch": "perf/query-intent-jev-only",
+   "links": [
+    {
+     "label": "JEV-only 复测 PR #151",
+     "kind": "pr",
+     "url": "https://github.com/owariband/Seekino/pull/151"
+    },
+    {
+     "label": "TRD · 关闭改写器复测",
+     "kind": "trd",
+     "url": "https://github.com/owariband/Seekino/blob/dev/docs/design/03-product-reassessment/query-intent-routing-comparison-trd.md#7-关闭独立改写器的同条件复测"
+    },
+    {
+     "label": "JEV-only 实验报告",
+     "kind": "source",
+     "url": "https://github.com/owariband/Seekino/blob/dev/docs/report/agent/chat/query-intent-jev-only-20261113/README.md"
+    },
+    {
+     "label": "含改写器历史实验 PR #145",
+     "kind": "pr",
+     "url": "https://github.com/owariband/Seekino/pull/145"
+    }
+   ]
+  },
+  {
+   "id": "CHAT-JEV-DEFAULT-01",
+   "title": "默认关闭独立改写器，发布JEV-only并验收Cloud与CPU接线",
+   "category": "chat",
+   "type": "requirement",
+   "status": "done",
+   "priority": "P1",
+   "description": "统一类默认值和三份示例为JEV-only，补齐6种query与27turn质量/耗时/用量；运行文件发布main，内部证据留dev，Cloud/CPU实例实际生效验收。",
+   "next": "默认／发布／配置范围已完成；C19全场景、完整生产检索质量与并发／长期延迟仍在对应任务继续。",
+   "verification": "dev #155以9a18c6fb合入，main #157以8a86883f合入；main发布树808路径/8资产与release-files通过，回归543通过/3项既有基线失败，dev定向285、容量262，范围重叠不相加。Cloud API实际运行在CPU主机seekino-server的seekino-local-api-1一处；兼容镜像在上一运行时覆盖5文件，gateway/config.py保留内部embedding URL校验与document_base_urls。active/seed均hook=true、rewriter=false，无query_hook/query_rewriter；Supervisor Flash/high/8192、85%，日志1048576/891289/24000。公网healthz 200，真实JEV与Supervisor各1次、独立改写0；检索hook探针只到retrieve，未跑完整生产检索。后续Event内存热修镜像已接续，5个Chat文件与3份配置哈希保持，最新API健康，85%容量日志保持。",
+   "updatedAt": "2026-11-14",
+   "tags": [
+    "Chat",
+    "JEV-only",
+    "发布",
+    "实际接线"
+   ],
+   "related": [
+    "MOD-CHAT",
+    "CHAT-INTENT-01",
+    "CHAT-COMPACT-01",
+    "C19"
+   ],
+   "branch": "fix/jev-only-hook-default",
+   "links": [
+    {
+     "label": "默认策略与上线PR #155",
+     "kind": "pr",
+     "url": "https://github.com/owariband/Seekino/pull/155"
+    },
+    {
+     "label": "上线TRD",
+     "kind": "trd",
+     "url": "https://github.com/owariband/Seekino/blob/dev/docs/design/03-product-reassessment/jev-only-hook-rollout-trd.md"
+    },
+    {
+     "label": "全量query与质量",
+     "kind": "source",
+     "url": "https://github.com/owariband/Seekino/blob/dev/docs/report/agent/chat/query-intent-jev-only-20261113/query-quality-review.md"
+    },
+    {
+     "label": "发布PR #157",
+     "kind": "pr",
+     "url": "https://github.com/owariband/Seekino/pull/157"
+    },
+    {
+     "label": "生产上线报告",
+     "kind": "source",
+     "url": "https://github.com/owariband/Seekino/blob/dev/docs/report/agent/chat/query-intent-jev-only-20261113/production-rollout-20261114.md"
+    }
+   ]
+  },
+  {
+   "id": "CHAT-JEV-REALTIME-01",
+   "title": "实时播放请求接入 JEV，原文与播放位置保持不变",
+   "category": "chat",
+   "type": "requirement",
+   "status": "done",
+   "priority": "P1",
+   "description": "修复带 playback 的请求被 QueryHook 直接判为 unsupported 的短路；JEV 收到 Server 已构造的 current_video 身份与整数毫秒播放位置，原 query、playback 与 Supervisor 工具不变。本卡只验收实时路由接线，不代表整条 Chat 通过。",
+   "next": "路由范围已按用户决定采用；T01 工具预算失败与 T02/T03 时间锚定缺口转到独立任务，整体 Chat 延迟与质量未关闭。",
+   "verification": "dev PR #162 合并16d32ff4，main PR #163 合并7b990dd87303f576e91f87078a0f9414f0005bad；main只改2个运行时文件+1条直接回归，发布树808路径/8资产与release-files通过，dev/main各250项同范围测试通过（重叠不相加）。2026-11-14 11:44（UTC+8）最小覆盖镜像上线，操作16.943秒非用户停机，其他5容器未变，无配置/数据迁移，健康200。三条真实回放均1次JEV、completed retrieve、0独立改写，耗时1.5391/1.5107/1.8469秒；T01 196.567秒失败，T02 17.176秒、T03 19.562秒完成，公网FTT无/14.817273/17.577218秒。T02卡片未覆盖17:38.310，T03声称17:36但取帧无该秒；无独立视觉盲评。",
+   "updatedAt": "2026-11-14",
+   "tags": [
+    "Chat",
+    "JEV",
+    "实时路由",
+    "已验收范围"
+   ],
+   "related": [
+    "MOD-CHAT",
+    "CHAT-JEV-DEFAULT-01",
+    "C19",
+    "CHAT-QUERY-BUDGET-01"
+   ],
+   "branch": "fix/jev-realtime-routing",
+   "links": [
+    {
+     "label": "dev 修复 PR #162",
+     "kind": "pr",
+     "url": "https://github.com/owariband/Seekino/pull/162"
+    },
+    {
+     "label": "main 发布 PR #163",
+     "kind": "pr",
+     "url": "https://github.com/owariband/Seekino/pull/163"
+    },
+    {
+     "label": "实时路由 TRD",
+     "kind": "trd",
+     "url": "https://github.com/owariband/Seekino/blob/dev/docs/design/03-product-reassessment/chat-realtime-intent-routing-trd.md"
+    },
+    {
+     "label": "完整回放报告",
+     "kind": "source",
+     "url": "https://github.com/owariband/Seekino/blob/dev/docs/report/agent/chat/history-latency-replay-20261114/README.md"
+    },
+    {
+     "label": "devlog",
+     "kind": "source",
+     "url": "https://github.com/owariband/Seekino/blob/dev/docs/dev/devlog.md#devlog-chat-history-replay-20261114"
+    }
+   ]
+  },
+  {
+   "id": "CHAT-QUERY-BUDGET-01",
+   "title": "T01 的 Query 循环耗尽共享工具预算，Supervisor 恢复也失败",
+   "category": "chat",
+   "type": "task",
+   "status": "todo",
+   "priority": "P1",
+   "description": "完整历史回放中 T01 的 query_video 占170.069秒（约86.5%整轮）；Query 反复检索和读取证据，耗尽共享100次工具预算，返回 VIDEO_LOOP_LIMIT_EXCEEDED，Supervisor 直接读取同预算也失败，终态 AGENT_MODEL_ERROR，无可见回答。已诊断，未修复。",
+   "next": "调查 Query 的有界、去重与停止条件，明确循环终止；评估为 Supervisor 预留恢复预算或返回部分失败。不得静默调大100次限制、降低 high 或改写当前工具逻辑。",
+   "verification": "证据：43次 Query search_video_events、10次 retrieve、49次读取完成/尝试记录；101次 provider 调用中52次 embedding、45次 Query，均完成，不是 provider 超时。Cloud bootstrap 强制 limits_enabled=true，max_loop_turns=3 不是该 Query 循环停止条件。尚未实施代码或回归。后续确认T01为两个并行Query合计45次生成；同一Chunk读取22次、9次无cursor重读首页，另有5次分页游标错误。Query仍为旧64k/48k压缩、实际9次本地替换；失败child不交部分证据报告。分页进度恢复与压缩因果仍待验证，未改代码。",
+   "updatedAt": "2026-11-14",
+   "tags": [
+    "Chat",
+    "Query",
+    "工具预算",
+    "待修复"
+   ],
+   "related": [
+    "MOD-CHAT",
+    "CHAT-JEV-REALTIME-01",
+    "CHAT-COMPACT-01"
+   ],
+   "branch": "",
+   "links": [
+    {
+     "label": "完整回放报告",
+     "kind": "source",
+     "url": "https://github.com/owariband/Seekino/blob/dev/docs/report/agent/chat/history-latency-replay-20261114/README.md"
+    },
+    {
+     "label": "实时路由 TRD",
+     "kind": "trd",
+     "url": "https://github.com/owariband/Seekino/blob/dev/docs/design/03-product-reassessment/chat-realtime-intent-routing-trd.md"
+    }
+   ]
+  },
+  {
+   "id": "CHAT-DELETE-HINT-01",
+   "title": "回答中的删除说明只在垃圾桶悬停时显示",
+   "category": "chat",
+   "type": "task",
+   "status": "done",
+   "priority": "P2",
+   "description": "移除历史列表中常驻的“回答完成后可删除”，复用垃圾桶已有原生 title；保留回答中删除禁用和完成后恢复。",
+   "next": "",
+   "verification": "dev 54项与main锁文件55项App回归、TypeScript、构建及本地/GitHub release-files通过。PR #150以4增/3删发布main 271f519f；2026-11-13 19:20（UTC+8）只更新Web。50个镜像/运行文件及公网资源哈希匹配，HTTPS聊天页和健康通过；公网桌面/手机隔离API浏览器检查通过，其他五项服务未重启。无真实聊天或模型调用，旧镜像与rollback-web保留。",
+   "updatedAt": "2026-11-13",
+   "tags": [
+    "UI"
+   ],
+   "related": [
+    "MOD-CHAT",
+    "CHAT-LAYOUT-01"
+   ],
+   "branch": "fix/chat-delete-hint-tooltip",
+   "links": [
+    {
+     "label": "TRD 与本地验收",
+     "url": "https://github.com/owariband/Seekino/blob/fix/chat-delete-hint-tooltip/docs/design/03-product-reassessment/chat-delete-hint-tooltip-trd.md",
+     "kind": "trd"
+    },
+    {
+     "label": "决策与对照",
+     "url": "https://github.com/owariband/Seekino/blob/fix/chat-delete-hint-tooltip/docs/dev/devlog.md#devlog-chat-delete-hint-20261113",
+     "kind": "source"
+    },
+    {
+     "label": "PR #147",
+     "url": "https://github.com/owariband/Seekino/pull/147",
+     "kind": "pr"
+    },
+    {
+     "label": "main发布 PR #150",
+     "url": "https://github.com/owariband/Seekino/pull/150",
+     "kind": "pr"
+    },
+    {
+     "label": "线上聊天页",
+     "url": "https://seekino.hypn0s.cloud/search",
+     "kind": "source"
     }
    ]
   }

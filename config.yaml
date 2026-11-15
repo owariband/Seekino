@@ -8,10 +8,10 @@ supervisor_harness: deepagents
 supervisor_choices:
   agent: DeepSeek Flash
 
-# Once per Chat turn: Jev chooses the template; models.query_rewriter fills retrieval_query.
+# Once per Chat turn, Jev chooses the fixed response/retrieval template; optional slot rewriting stays off.
 query_hook:
   enabled: true
-  rewriter_enabled: true
+  rewriter_enabled: false
   router_endpoint: https://openrouter.ai/api/alpha/decisions
   router_model: typesafe/jev-1.14
   router_api_key_env: OPENROUTER_JEV_API_KEY
@@ -145,12 +145,6 @@ models:
     reasoning_effort: none
     max_output_tokens: 8192
     request_timeout_seconds: 180
-  query_rewriter:
-    source: deepseek_api
-    model: deepseek-flash
-    reasoning_effort: none
-    max_output_tokens: 256
-    stream: false
 
 # Global Chat Agent settings. Changes to these values apply to new messages,
 # except maximum_concurrent_kicks, which takes effect after restarting Server.

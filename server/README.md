@@ -459,6 +459,15 @@ encoder identity；任一候选不一致即 fail closed。Series 中只有部分
 结果明确返回 `partial=true`、实际 `searchedVideoIds` 和 `warnings`，不会把尚未完成或失败
 任务的旧版本静默纳入。
 
+Event 查询的范围装配只读取当前 COMPLETE 任务、冻结 Event target 及 INDEX 完成且正文版本
+一致的 Chunk 标识，不在 ES 召回前加载全部 Chunk 正文或完整 detail。ES 后的候选按
+`candidate_budget` 有界批量回源，相邻上下文和单条证据按需读取正文；完整 `detail` 以 raiseload 延迟加载，候选与邻居
+仅以 SQL JSON 路径投影 `detail.compact` 与 `detail.evidence.camera_hints`，不读 `_index_embeddings_v2`，
+单条证据的身份查询仍不投影 detail。`published_reference_sources` 为核对编辑参考回执仍显式读取
+完整 detail。INDEX 发布事务的 Event 内容/版本校验和显式覆盖审计保持原行为，显式审计继续逐块
+读取正文/完整 detail。范围元数据仍随授权范围内 Chunk 数增长，不能理解为所有 SQL 都只读取 top_k。
+设计与生成数据证据见[有界查询 TRD](../docs/design/03-product-reassessment/event-query-bounded-content-trd.md)和[报告](../docs/report/server/service/video_event_retrieval/bounded-query-20261113.md)。
+
 ```bash
 uv run python -m server.cli search \
   --query '爽世为什么哭着质问大家要演奏春日影' \

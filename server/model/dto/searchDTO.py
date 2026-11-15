@@ -33,6 +33,7 @@ class VideoParseRetrievalTaskData:
     status: str
     parse_config: dict[str, Any]
     chunk_count: int
+    event_index_target: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +43,8 @@ class VideoParseRetrievalChunkData:
     video_task_id: str
     video_id: str
     sequence_no: int
+    video_chunk_id: str
+    content_version: int
 
 
 @dataclass(frozen=True, slots=True)

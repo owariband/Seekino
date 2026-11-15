@@ -886,6 +886,20 @@ Whisper/音轨对齐由另一项工作处理，因此不再执行课程、回看
 
 优先级：高。类型：多轮对话意图识别、Query 改写与回答目标偏移。状态：**`query_hook` 已接入 Chat；当前优先测试短对话效果，长对话上下文截断与 harness 对接暂缓。** 下方 2026-10-20 的 schema 与“待接入”描述保留为历史方案，当前实现以本次更新为准；分类准确率、回答效果与长对话稳定性仍待验收。
 
+#### 2026-11-13：关闭独立改写器后重新比较 JEV-only
+
+旧三路径实验的 B 含独立改写器，不能代表 JEV-only。本轮三组均关闭独立改写，使用相同源码、六类样本和短片，全量重跑各 9 turn：A／B／C 平均 FTT 为 7.069／6.729／6.596 秒，平均 TT 为 9.995／9.489／9.722 秒，总 token 为 284934／257239／308790。B 实际 9 次成功 JEV 分类、0 次改写；C 比 B 首段正文早约 0.13 秒，但总 token 多 20.0%。A 有一次结构化决策 ValidationError 后跳过提示追加，耗时和用量保留，三组均 9/9 完成。
+
+C 仍有一次把反馈转成检索、一次未遵守单句约束，三组仍有卡片覆盖范围问题。这里只完成了有界复测，未关闭 C19 全场景，未改 Cloud。证据见[JEV-only 报告](../report/agent/chat/query-intent-jev-only-20261113/README.md)、[devlog](devlog.md#devlog-chat-intent-jev-only-20261113)及[PR #151](https://github.com/owariband/Seekino/pull/151)；当前状态由工作台 `CHAT-INTENT-01` 维护。
+
+#### 2026-11-13：Cloud 配置覆盖 JEV 与三路径隔离对照
+
+Cloud 同时存在 JEV 参数和 `models.query_hook=deepseek-flash/high/256`，后者通过 `decision_model` 选择合并决策图，实际跳过 JEV。已备份并只删除该 binding，重启后新建真实 API 测试消息确认 JEV/respond，路由 1.533 秒、整轮 4.690 秒。改写器保留既有 Flash/high/256。
+
+同一 dev Supervisor、模型、历史、工具与动态 85% 基线的正式隔离对照为 27 个完整 turn，三组均 9/9 完成。DeepSeek前置／JEV＋改写器／直接判断的平均 TT 为 8.319／10.404／9.588 秒，总 token 为 238332／260639／311226。两种前置 action 均 9/9 正确；A/B 六对追加后输入相同，回答质量差不能都归于路由。直接判断在本批未表现为总体更优；三路仍有输出或卡片交付问题，尤其同 Chunk 重复提交会原地覆盖。当前试点仅一段真实 12 秒 MyGO 片段，不能替代整季、长历史或全部 C19 验收。
+
+证据见[三路径报告](../report/agent/chat/query-intent-routing-20261113/README.md)、[devlog](devlog.md#devlog-chat-intent-routing-20261113)及[TRD](../design/03-product-reassessment/query-intent-routing-comparison-trd.md)。唯一当前状态由[工作台](workbench.html) `CHAT-INTENT-01` 维护；下方“当前链路”按各自历史日期理解，不把当时本地 8B 设置写成今天 Cloud 实际配置。
+
 #### 2026-10-21：沿用服务层近期消息，先验收短对话
 
 - **当前链路。** Supervisor 进入 harness 前执行一次 `query_hook`：Jev 判定 `respond / retrieve / mixed`；`retrieve / mixed` 再由纯文本 Qwen3-8B 填写 `retrieval_query`，`respond` 跳过 8B；代码将固定模板与候选词追加到模型输入。业务消息仍保留用户原文。当前不采用下方历史方案中的 `clarify / current_task` 输出。
@@ -2938,3 +2952,22 @@ micrograd v5 共 146 块，整集 90 分 04.884 秒。调度反复锁取候选�
 2026-11-12。剪辑素材库首轮 8 支公开视频中 4 支完成，P4、《人是猫》《快使用恋爱笔记》因动作时间分段未命中检测候选或未铺满区间被拒，P5R 因逐段 JSON 少外层右括号被拒。冻结的九条动作响应和三条 JSON 响应经过既有 observe_segments 入口回放，基线为 0/12 接收，不涉及新模型调用。进一步审计发现风格卡锚点只允许检测位置、有观察就必须有风格信号、Refine 必须全量复述且恰好一次等同类门槛；这些限制与来源归属、视频范围及租约版本不同。
 
 验收要求：保持原始中文和动作时间，12 条真实失败响应进入既有解析链路；合法的非切点动作/风格锚点、空风格卡和部分 Refine 更新可以提交并由 MCP 回源；外部来源、越界、过期版本仍被拒绝。真实模型批量完成率与业务质量另行记录，不由离线回放推定。设计与证据见 [TRD](../design/03-product-reassessment/reference-model-judgment-trd.md)，当前状态只维护在 [工作台](workbench.html) 的 EDIT-REFERENCE-02。
+
+### RAG-QUERY-MEM-01：Event 查询在 ES 召回前加载全部 Chunk 正文，内存随素材库增长
+
+2026-11-13。`VideoEventRetrievalService.search` 先调用 `resolve_retrieval_scope`，后者通过 `validate_event_coverage` 读取选中范围的全部 Chunk 正文和 `ChunkParseContent.detail`，逐块重建 Event 投影后才执行 ES 有界召回。`top_k` 不限制前置数据读取；detail 中的 `_index_embeddings_v2.representations` 也会被 ORM 二次解码。影响的是单用户搜索的内存峰值和范围扩展成本，而不是召回分数或排序合同。
+
+验收要求：ES 前只读取权限、最新 COMPLETE 任务、冻结 Event target 以及 INDEX 完成且 content version 一致的 Chunk 元数据，正文与完整 detail（含 `_index_embeddings_v2`）读取为 0；ES 后候选正文只读取 `candidate_budget` 内候选，不读取完整 detail 与 `_index_embeddings_v2`，仅投影 `detail.compact` / `detail.evidence.camera_hints`，单条证据身份查询仍不投影 detail；发布回执缺少事件集合、回执哈希被伪造或索引缓存被移除时仍按持久完成状态可检索，版本不一致、未完成 Chunk 或 target 不符的视频被排除；INDEX 发布写入校验和显式审计保持原强度。相关八模块隔离回归 248 passed、4 skipped，摘要与运镜提示在搜索和直接证据读取中保留；合并、部署、真实 RSS/延迟与业务质量仍待验证。证据见[报告](../report/server/service/video_event_retrieval/bounded-query-20261113.md)；设计见 [TRD](../design/03-product-reassessment/event-query-bounded-content-trd.md)，当前状态见[工作台](workbench.html) `RAG-QUERY-MEM-01`。
+
+### CHAT-COMPACT-01：模型容量与静态窗口不匹配，Chat 同步摘要延迟需本地验证
+
+记录日期：2026-11-13。关联历史上下文职责 C20，但不据此重写或关闭 C20 的验收边界。Cloud T01–T03 的摘要占整轮 58%–63%；实际 64k／48k 策略与当前 DeepSeek Flash 1M 能力不同。候选方案通过模型绑定显式 ratio，从当前模型容量派生 85% 触发点，保留输出／安全／主备预算与同步摘要合同。
+
+验收需固定模型、思考、输出、prompt/tools 与真实历史，分别记录摘要与正常调用耗时、完整输入前后 token、provider 用量和交付质量；不能用更少的摘要次数直接代替时延收益，不能把局部模型边界当作整个 Chat。当前证据与未覆盖范围见[TRD](../design/03-product-reassessment/chat-model-context-compaction-trd.md)、[本地对照报告](../report/gateway/agent_model/chat-context-compaction-20261113/README.md)、[devlog](devlog.md#devlog-chat-model-context-compaction-20261113)和 [PR #144](https://github.com/owariband/Seekino/pull/144)。执行状态以[工作台](workbench.html) `CHAT-COMPACT-01` 为准。
+
+2026-11-13 本地同输入的 9 次真实生成验证了三处模型边界：总耗时 84.481→14.940 秒、摘要 75.414→0 秒。完整 Chat、视频卡与近满窗质量尚未验收，不据此关闭整体问题。详细 token、缓存和质量差异保留在同一报告。
+
+
+### CHAT-DELETE-HINT-01 · 回答中的删除说明常驻占用历史列表空间
+
+2026-11-13。当前对话正在回答时，垃圾桶已有说明原因的原生 title，但列表项下方还渲染“回答完成后可删除”，造成重复信息和额外高度。验收要求未悬停时不出现这行说明，鼠标命中垃圾桶可读取原有提示；回答中不能触发删除，回答结束后按钮和普通 title 恢复。[设计与验收](../design/03-product-reassessment/chat-delete-hint-tooltip-trd.md) · [决策记录](devlog.md#devlog-chat-delete-hint-20261113)。当前状态见[工作台](workbench.html) CHAT-DELETE-HINT-01。

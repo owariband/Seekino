@@ -304,6 +304,10 @@ class ModelBinding(BaseModel):
     supports_vision_input: bool = False
     fallback: ModelBinding | None = None
     context_window_tokens: int | None = Field(default=None, ge=2)
+    auto_compact_ratio: float | None = Field(
+        default=None, gt=0, lt=1, strict=True, allow_inf_nan=False,
+        exclude_if=lambda value: value is None,
+    )
     context_safety_margin_tokens: int | None = Field(default=None, ge=1)
     auto_compact_tokens: int | None = Field(default=None, ge=1)
     compact_target_tokens: int | None = Field(default=None, ge=1)
@@ -456,7 +460,7 @@ class QueryHookConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
     enabled: bool = False
-    rewriter_enabled: bool = Field(default=True, strict=True)
+    rewriter_enabled: bool = Field(default=False, strict=True)
     router_endpoint: Annotated[_HttpsBaseUrl, AfterValidator(_query_hook_url)] = (
         "https://openrouter.ai/api/alpha/decisions"
     )
@@ -743,7 +747,7 @@ class GatewayConfig(BaseModel):
             raise ValueError(f"{source.adapter} does not support max_output_tokens")
         if kind in {"speaker_embedding", "diarization"} and any(getattr(binding, name) is not None for name in (
             "context_window_tokens", "context_safety_margin_tokens", "auto_compact_tokens",
-            "compact_target_tokens", "max_input_chars",
+            "compact_target_tokens", "max_input_chars", "auto_compact_ratio",
         )):
             raise ValueError(f"{ref} {kind} does not use generative context budgets")
         if binding.fallback is not None:

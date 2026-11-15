@@ -1,0 +1,367 @@
+{
+  "recorded_date": "2026-11-14",
+  "scope": "Read-only follow-up of the same three completed historical replays; no additional Chat model generations.",
+  "private_source_log_sha256": {
+    "T01": "23475a2e8dc0ce9ed56148175e885c111b7ac6e3a129d56da2163e3612fb46c8",
+    "T02": "839a6f989c132edc39d5a313ffd3289db9489eeca50d873e1156f9a6b024df41",
+    "T03": "cde74a1858b844a85420a569b58ec6e9b168d7fb4af74660933192a171cba303"
+  },
+  "unknown_item": {
+    "definition": "video_chunk_id absent from current-kick successful RetrievalCall hits; recoverable tool feedback.",
+    "current_kick_registry_recreated_each_turn": true,
+    "observed_cases": [
+      {
+        "case_id": "T02",
+        "initial_failed_tools": [
+          {
+            "tool": "read_retrieval_evidence",
+            "duration_ms": 8
+          },
+          {
+            "tool": "inspect_video_frames",
+            "duration_ms": 9
+          }
+        ],
+        "error_code": "UNKNOWN_ITEM",
+        "target_present_in_original_pre_turn_sql_history": false,
+        "target_present_in_original_pre_turn_native_state": true,
+        "same_target_succeeds_after_fresh_retrieval": true,
+        "missing_current_kick_retrieval_membership": true,
+        "not_a_database_existence_check": true
+      },
+      {
+        "case_id": "T03",
+        "initial_failed_tools": [
+          {
+            "tool": "inspect_video_frames",
+            "duration_ms": 7
+          }
+        ],
+        "error_code": "UNKNOWN_ITEM",
+        "target_present_in_original_pre_turn_sql_history": true,
+        "target_present_in_original_pre_turn_native_state": true,
+        "same_target_succeeds_after_fresh_retrieval": true,
+        "missing_current_kick_retrieval_membership": true,
+        "not_a_database_existence_check": true
+      }
+    ]
+  },
+  "ftt": {
+    "definition": "Client send to first nonempty visible model body; reasoning/progress are separate.",
+    "timelines": [
+      {
+        "case_id": "T02",
+        "answer_started_seconds": 0.819224,
+        "first_reasoning_seconds": 3.310385,
+        "jev_provider_completion_seconds": 2.132812,
+        "supervisor_calls": [
+          {
+            "index": 1,
+            "start_client_relative_seconds": 2.308812,
+            "end_client_relative_seconds": 5.020812,
+            "duration_seconds": 2.712,
+            "input_tokens": 35048,
+            "output_tokens": 391,
+            "reasoning_tokens": 215
+          },
+          {
+            "index": 2,
+            "start_client_relative_seconds": 5.077812,
+            "end_client_relative_seconds": 6.890812,
+            "duration_seconds": 1.813,
+            "input_tokens": 35597,
+            "output_tokens": 170,
+            "reasoning_tokens": 38
+          },
+          {
+            "index": 3,
+            "start_client_relative_seconds": 8.198812,
+            "end_client_relative_seconds": 9.959812,
+            "duration_seconds": 1.761,
+            "input_tokens": 41023,
+            "output_tokens": 208,
+            "reasoning_tokens": 88
+          },
+          {
+            "index": 4,
+            "start_client_relative_seconds": 11.094812,
+            "end_client_relative_seconds": 16.201812,
+            "duration_seconds": 5.107,
+            "input_tokens": 44889,
+            "output_tokens": 652,
+            "reasoning_tokens": 402
+          },
+          {
+            "index": 5,
+            "start_client_relative_seconds": 16.342812,
+            "end_client_relative_seconds": 17.575812,
+            "duration_seconds": 1.233,
+            "input_tokens": 45640,
+            "output_tokens": 51,
+            "reasoning_tokens": 0
+          }
+        ],
+        "first_visible_body_seconds": 14.817273,
+        "first_visible_body_call_index": 4,
+        "post_frame_model_start_seconds": 11.094812,
+        "post_frame_model_start_to_visible_body_seconds": 3.722461,
+        "client_terminal_seconds": 19.011393139000575,
+        "source_precision": "Provider ledger timestamps, monotonic SSE receipt offsets; tool log timestamps have second precision.",
+        "no_database_or_transport_overhead_ablation": true
+      },
+      {
+        "case_id": "T03",
+        "answer_started_seconds": 0.823885,
+        "first_reasoning_seconds": 3.81902,
+        "jev_provider_completion_seconds": 2.395274,
+        "supervisor_calls": [
+          {
+            "index": 1,
+            "start_client_relative_seconds": 2.547274,
+            "end_client_relative_seconds": 4.709274,
+            "duration_seconds": 2.162,
+            "input_tokens": 31048,
+            "output_tokens": 218,
+            "reasoning_tokens": 98
+          },
+          {
+            "index": 2,
+            "start_client_relative_seconds": 4.760274,
+            "end_client_relative_seconds": 6.791274,
+            "duration_seconds": 2.031,
+            "input_tokens": 31347,
+            "output_tokens": 186,
+            "reasoning_tokens": 53
+          },
+          {
+            "index": 3,
+            "start_client_relative_seconds": 8.023274,
+            "end_client_relative_seconds": 10.120274,
+            "duration_seconds": 2.097,
+            "input_tokens": 36667,
+            "output_tokens": 270,
+            "reasoning_tokens": 150
+          },
+          {
+            "index": 4,
+            "start_client_relative_seconds": 11.076274,
+            "end_client_relative_seconds": 18.502274,
+            "duration_seconds": 7.426,
+            "input_tokens": 40610,
+            "output_tokens": 1059,
+            "reasoning_tokens": 748
+          },
+          {
+            "index": 5,
+            "start_client_relative_seconds": 18.650274,
+            "end_client_relative_seconds": 19.867274,
+            "duration_seconds": 1.217,
+            "input_tokens": 41768,
+            "output_tokens": 27,
+            "reasoning_tokens": 0
+          }
+        ],
+        "first_visible_body_seconds": 17.577218,
+        "first_visible_body_call_index": 4,
+        "post_frame_model_start_seconds": 11.076274,
+        "post_frame_model_start_to_visible_body_seconds": 6.500944,
+        "client_terminal_seconds": 21.282713027998398,
+        "source_precision": "Provider ledger timestamps, monotonic SSE receipt offsets; tool log timestamps have second precision.",
+        "no_database_or_transport_overhead_ablation": true
+      }
+    ],
+    "prompt_explicitly_discourages_progress_commentary": true,
+    "runtime_accepts_visible_text_then_tool_calls_and_preserves_text": true,
+    "no_early_commentary_change_tested": true
+  },
+  "T01_query": {
+    "parallel_child_tasks": 2,
+    "query_model_calls_across_children": 45,
+    "query_reasoning_tokens": 30025,
+    "query_output_tokens": 43558,
+    "query_video_duration_seconds": 170.069,
+    "shared_tool_limit": 100,
+    "tool_attempts": {
+      "read_retrieval_evidence": {
+        "attempts": 49,
+        "outcomes": {
+          "success": 41,
+          "INVALID_EVIDENCE_CURSOR": 5,
+          "budget_rejected": 3
+        }
+      },
+      "retrieve": {
+        "attempts": 10,
+        "outcomes": {
+          "success": 10
+        }
+      },
+      "search_video_events": {
+        "attempts": 43,
+        "outcomes": {
+          "success": 41,
+          "INVALID_ARGUMENTS": 2
+        }
+      }
+    },
+    "distinct_search_query_hashes": 37,
+    "repeated_search_query_hash_counts": [
+      4,
+      2,
+      2,
+      2
+    ],
+    "query_hash_summary_does_not_include_all_filters": true,
+    "distinct_read_chunk_ids": 10,
+    "most_read_chunk_attempts": 22,
+    "most_read_chunk_first_page_successes": 9,
+    "most_read_chunk_evidence_pages": 15,
+    "all_reads_are_combined_across_two_children": true,
+    "budget_rejected_query_attempts": 3,
+    "budget_rejected_supervisor_attempts": 2,
+    "no_unknown_item_observed": true,
+    "partial_child_retrieval_not_returned_on_failure": true,
+    "full_model_responses_and_actual_cursor_values_not_recorded": true,
+    "structured_output_retry_cause_not_established": true,
+    "no_new_progress_or_dedup_stop_implemented": true
+  },
+  "code_evidence": [
+    "agent/chat/video_search/output.py:387-396",
+    "agent/chat/video_search/tools/frames.py:45-53",
+    "agent/chat/common/tool.py:142-151",
+    "agent/chat/supervisor.py:241-242",
+    "agent/chat/supervisor.py:1258-1262",
+    "agent/chat/supervisor.py:446-506",
+    "gateway/agent_model/deepagents.py:351-377",
+    "server/service/agent_chat.py:1044-1063",
+    "agent/chat/supervisor.py:736-799",
+    "agent/chat/video_search/tools/retrieval.py:277-333",
+    "gateway/openai/structured.py:758-803",
+    "agent/chat/video_search/runtime.py:241-273",
+    "gateway/agent_model/factory.py:354-358",
+    "gateway/agent_model/factory.py:413-429",
+    "server/bootstrap.py:387-401",
+    "gateway/openai/structured.py:455-482",
+    "agent/chat/video_search/context.py:328-341"
+  ],
+  "limits": [
+    "No causal timing ablation, provider replay or visual blind grading was performed.",
+    "Same first-page reads are counted across both child tasks, not assigned to a specific child.",
+    "Nonempty retrieval results do not establish that they answer the user question.",
+    "No product code, configuration, budget or deployment was changed."
+  ],
+  "T01_query_context": {
+    "configuration": {
+      "model_config_sha256": "547729bafeb922a0e1f0c25916996513f40b1f507a0e4373ce51943ce48067d2",
+      "runtime_sha256": "98c16c9e11e844b04f5da524594029dabc2cba41a7dbcd83aa0c37b7c8217990",
+      "agent_model": {
+        "model": "deepseek-flash",
+        "context_window_tokens": 262144,
+        "auto_compact_tokens": 200000,
+        "compact_target_tokens": 150000,
+        "auto_compact_ratio": null
+      },
+      "runtime_policy": {
+        "context_window_tokens": 64000,
+        "output_reserve_tokens": 8192,
+        "safety_margin_tokens": 4096,
+        "auto_compact_tokens": 48000,
+        "compact_target_tokens": 24000
+      },
+      "effective_query_policy": {
+        "context_window_tokens": 64000,
+        "output_reserve_tokens": 8192,
+        "safety_margin_tokens": 4096,
+        "auto_compact_tokens": 48000,
+        "compact_target_tokens": 24000
+      },
+      "query_max_input_chars": 200000,
+      "max_tool_result_bytes": 16384,
+      "max_read_chars_per_call": 16384,
+      "query_reasoning_effort": "high"
+    },
+    "compaction_event_count": 9,
+    "independent_window_chains": 2,
+    "events": [
+      {
+        "time_utc": "2026-11-14T03:48:34Z",
+        "reason": "auto",
+        "window_number": 2,
+        "estimated_tokens_before": 50115,
+        "estimated_tokens_after": 10224,
+        "aligned_replay_query_call_start_second": true
+      },
+      {
+        "time_utc": "2026-11-14T03:48:38Z",
+        "reason": "hard_limit",
+        "window_number": 2,
+        "estimated_tokens_before": 60510,
+        "estimated_tokens_after": 13332,
+        "aligned_replay_query_call_start_second": true
+      },
+      {
+        "time_utc": "2026-11-14T03:49:06Z",
+        "reason": "hard_limit",
+        "window_number": 3,
+        "estimated_tokens_before": 59011,
+        "estimated_tokens_after": 23094,
+        "aligned_replay_query_call_start_second": true
+      },
+      {
+        "time_utc": "2026-11-14T03:49:17Z",
+        "reason": "hard_limit",
+        "window_number": 3,
+        "estimated_tokens_before": 64247,
+        "estimated_tokens_after": 19266,
+        "aligned_replay_query_call_start_second": true
+      },
+      {
+        "time_utc": "2026-11-14T03:49:45Z",
+        "reason": "auto",
+        "window_number": 4,
+        "estimated_tokens_before": 49689,
+        "estimated_tokens_after": 10091,
+        "aligned_replay_query_call_start_second": true
+      },
+      {
+        "time_utc": "2026-11-14T03:49:58Z",
+        "reason": "auto",
+        "window_number": 4,
+        "estimated_tokens_before": 50003,
+        "estimated_tokens_after": 7576,
+        "aligned_replay_query_call_start_second": true
+      },
+      {
+        "time_utc": "2026-11-14T03:50:19Z",
+        "reason": "hard_limit",
+        "window_number": 5,
+        "estimated_tokens_before": 53127,
+        "estimated_tokens_after": 9425,
+        "aligned_replay_query_call_start_second": true
+      },
+      {
+        "time_utc": "2026-11-14T03:50:31Z",
+        "reason": "hard_limit",
+        "window_number": 5,
+        "estimated_tokens_before": 53440,
+        "estimated_tokens_after": 17147,
+        "aligned_replay_query_call_start_second": true
+      },
+      {
+        "time_utc": "2026-11-14T03:50:41Z",
+        "reason": "hard_limit",
+        "window_number": 6,
+        "estimated_tokens_before": 61004,
+        "estimated_tokens_after": 28817,
+        "aligned_replay_query_call_start_second": true
+      }
+    ],
+    "method": "Metadata-only log window03:47:40–03:51:00UTC; every compaction aligns to a recorded T01 Query call start second; window IDs form two chains.",
+    "structured_builder_does_not_call_dynamic_capacity_resolver": true,
+    "agent_binding_auto_compact_ratio_is_null": true,
+    "query_checkpoint_tracks_ids_and_frame_receipts_but_not_per_chunk_read_cursor": true,
+    "local_replacement_compaction_not_additional_supervisor_summary_model_calls": true,
+    "compaction_causing_cursor_loss_or_repeated_reads_not_causally_tested": true,
+    "no_85_percent_query_change_or_model_replay_performed": true
+  }
+}

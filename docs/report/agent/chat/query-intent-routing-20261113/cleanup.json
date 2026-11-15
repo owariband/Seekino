@@ -1,0 +1,29 @@
+{
+  "services": [
+    {
+      "name": "embedding",
+      "pid": 15015,
+      "sent": "SIGTERM",
+      "port": 18843,
+      "port_closed": true
+    },
+    {
+      "name": "elasticsearch",
+      "pid": 15014,
+      "sent": "SIGTERM",
+      "port": 9200,
+      "port_closed": true
+    },
+    {
+      "name": "mysql",
+      "pid": 15013,
+      "sent": "SIGTERM",
+      "port": 3306,
+      "port_closed": true
+    }
+  ],
+  "data_removed": false,
+  "source_database_migrated": false,
+  "test_database_retained": true,
+  "raw_run_retained": true
+}

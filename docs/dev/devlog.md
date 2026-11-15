@@ -27,6 +27,14 @@
 
 | 记录 | 原问题编号 |
 |---|---|
+| [2026-11-15：Chat 子 Agent 另取全局模型，选定 Supervisor 后仍按旧窗口提前压缩](#devlog-chat-model-config-inheritance-20261115) | CHAT-MODEL-INHERIT-01；CHAT-COMPACT-01；PR #171 |
+| [2026-11-14：实时播放请求绕过 JEV，接入后完整回放仍因工具预算与时间锚定失败](#devlog-chat-history-replay-20261114) | CHAT-JEV-REALTIME-01；CHAT-QUERY-BUDGET-01；PR #162、PR #163 |
+| [2026-11-14：生产镜像未含 Event 查询内存修复，完整课程范围又因任务排序内存溢出](#devlog-event-query-cloud-memory-hotfix-20261114) | RAG-QUERY-MEM-01；PR #154、PR #159 |
+| [2026-11-13：Event 查询在 ES 召回前加载全部 Chunk 正文，检索内存随素材库增长](#devlog-event-query-bounded-content-20261113) | RAG-QUERY-MEM-01；PR #154 |
+| [2026-11-13：可选改写器混入基线，JEV 的净耗时被算错](#devlog-chat-intent-jev-only-20261113) | CHAT-INTENT-01；C19；PR #151 |
+| [2026-11-13：删除原因重复渲染，回答中的历史列表额外占高](#devlog-chat-delete-hint-20261113) | CHAT-DELETE-HINT-01 |
+| [2026-11-13：前置配置覆盖 JEV，省去路由未必缩短 Chat 等待](#devlog-chat-intent-routing-20261113) | CHAT-INTENT-01；C19；PR #145 |
+| [2026-11-13：固定小窗口让 Chat 提前同步摘要，命中后多等数十秒](#devlog-chat-model-context-compaction-20261113) | CHAT-COMPACT-01；PR #144 |
 | [2026-11-12：检测切点被当成动作边界，真实素材在理解阶段被拒](#devlog-reference-model-judgment-20261112) | EDIT-REFERENCE-02；PR #139 |
 | [2026-11-12：dialog瞬时关闭并卸载内容，手机导航缺少开合过渡](#devlog-mobile-drawer-motion-20261112) | MOBILE-UI-01；PR #129第二轮 |
 | [2026-11-12：手机隐藏文档并放大全宽选集，初次引导与连续浏览困难](#devlog-mobile-docs-episodes-20261112) | MOBILE-UI-01；PR #129 |
@@ -188,6 +196,220 @@
 | [日期未明确（2026-10-23归档）：当前播放窗口的按需理解与复用](#devlog-history-60) | 独立实验/设计 |
 
 </details>
+
+<a id="devlog-event-query-cloud-memory-hotfix-20261114"></a>
+## 2026-11-14：生产镜像未含 Event 查询内存修复，完整课程范围又因任务排序内存溢出
+
+### 问题与现状
+
+PR #154 已把 Event 查询在 ES 召回前读取全部 Chunk 正文和完整 `detail` 的路径改为只读发布元数据、候选有界回源，并在 2026-11-13 合入 `dev`（`8f0f14d3`）。CPU 生产 API 仍运行旧的 main 镜像（`a0fb93d9`），这次修复没有随镜像进入生产；真实素材库继续走旧路径，单次查询会在召回前按授权范围创建正文、JSON 解码结果和索引缓存对象，内存风险随课程数量增长。当时的任务是在不发布整包 main、不重建 ES、不改模型与媒体资源的前提下，让修复进入生产并保留可回滚镜像。
+
+热修复上线后的第一次真实游客 Chat 用来确认正式链路可用，而不是证明内存已经改善。公开课程素材库收到「attention 是怎么让 token 互相交流的？请检索课程，给出相关原片时间段。」，`topK=5`，实际发生四次 `search_video_graph` 工具调用，最终 9 条命中覆盖 E07，HTTP 200，整轮 41.487 秒。采样对象是 API 的 Python 进程而不是 docker-init，每 200 ms 一次：请求前 297.40 MiB，请求及结束后 15 秒观察窗口内最高 377.88 MiB（+80.48 MiB），请求结束 375.51 MiB，空闲 15 秒 375.63 MiB（相对请求前 +78.23 MiB）；宿主可用内存最低 3,311.17 MiB，swap 与 OOM 增量均为 0。这只有一轮 Chat，没有同请求的旧镜像配对；历史记录里的 GiB 级整轮数据来自其他工作负载，不能拿来计算本次降幅，也不能写成“整轮 Chat 降低 3 GB”。
+
+随后对八部课程的完整 Event 查询范围做只读验收，`list_video_tasks` 报 MySQL 1038：`Out of sort memory`。查询同时选择 `parse_config` 与 `detail._event_index_target_v1`，再按视频、版本和任务 ID 排序，JSON 投影被 filesort 一并携带。第一个热修复只覆盖 Event 查询的有界内容读取，不包含任务列表排序，不能把单次 Chat 成功当成完整范围已经可用。
+
+### 方案候选
+
+1. 等 main 正式发布或从 `dev` 整包重建生产镜像。这样能让代码来源最单一，但会把尚未逐项验收的 agent、gateway、prompt、配置和索引改动一起带入，也无法把本次变化限制在 Event 查询路径。
+2. 保留旧镜像，只提高 MySQL 全局排序缓冲。它能绕过当前 1038，却把单次查询的排序成本转成实例级内存上限，影响其他数据库负载，也没有解决 JSON 投影参与排序的原因。
+3. 在现有生产镜像上只覆盖四个后端运行文件，先验证 Event 查询路径；随后再在第一个镜像上替换一个 Repository 文件，修复完整范围的任务列表。镜像按层保留，旧镜像回滚，Compose 环境变量、挂载和其他服务都不动。
+4. 任务列表改为先按原过滤和排序条件只取任务 ID，再按 ID 读取元数据且不再带 `ORDER BY`，最后按原 ID 顺序生成 DTO。它比直接提高全局缓冲多一次轻量数据库往返，但不改全局数据库配置、排序语义和删除过滤。
+
+最终选择第 3 种部署路径和第 4 种查询改法。没有合并或发布 main，没有修改 agent、gateway、prompt、模型配置、Schema、ES 索引重建或媒体资源，DeepSeek Flash 的 agent 与 supervisor `reasoning_effort=high` 保持原值。
+
+### 方案验证
+
+第一次热修复镜像 `seekino-api:hotfix-event-memory-8f0f14d3` 于 2026-11-14 00:38（UTC+8）部署；整个 Compose 的环境变量、挂载和其他服务逐项比较未变，只有 `api.image` 变化，旧镜像保留回滚。上述游客 Chat 和内存采样都在这个镜像上完成，可确认正式链路能返回带时间段的证据，但不构成旧版与新版的配对实验。
+
+完整范围失败后，分支 `fix/event-scope-task-sort` 以 TRD 为首个提交（`fad02e7b`），实现提交 `2bebd9af`，PR 为 [#159](https://github.com/owariband/Seekino/pull/159)。回归命令覆盖 `tests/server/test_public_course_readiness.py`、`tests/server/test_video_retrieval_service.py`、`tests/server/test_video_event_retrieval.py`，结果 **61 passed、1 skipped**，另有一条 AnyIO 弃用警告；使用项目既有 `.venv` 实际运行。新增用例覆盖任务顺序、最新失败任务保留、删除过滤、空范围及 JSON 查询不携带排序。
+
+候选代码在生产容器的独立只读进程中验证，不修改服务进程。同一八部课程取得 880 个 Chunk 身份，范围阶段 5 次查询、0 个正文 ORM 实体，37.73 ms、RSS 增加 0.50 MiB；随后回源 5 个候选，完整 `detail` 加载 0，累计 RSS 增加 4.89 MiB。真实 ES 词法 Event 召回查询 `attention tokens communicate`，返回 8 个 Event、5 个 Chunk、覆盖 8 个视频，`partial=false`，862.42 ms、进程 RSS 增加 28.50 MiB，完整 `detail` 仍为 0。SQL 捕获和 ORM load 监听确认完整 `detail` 未加载，回归测试验证 `compact` 与 `evidence.camera_hints` 小字段保留。该探针不包含 embedding 与 LLM，不等同端到端 Chat；同一探针早前冷启动为 320.83 ms、RSS +0.38 MiB，冷热缓存差异不作为优化收益。
+
+最终镜像 `seekino-api:hotfix-event-memory-2bebd9af`（`sha256:66b296c2…f9e6`）于 2026-11-14 00:50:20（UTC+8）部署，仅再次替换一个 Repository 文件。直接验证最终运行代码：880 个身份、正文 ORM 0，范围阶段 37.22 ms / RSS +0.50 MiB；回源 5 个候选累计 +4.95 MiB / 完整 detail 0；真实 ES 召回 8 Event / 5 Chunk / 8 视频、612.03 ms / RSS +28.60 MiB，`partial=false`。
+
+最终镜像的同一个 Python 进程连续接受两次新游客 Chat，分别询问 attention 和反向传播课程，均 HTTP 200 / COMPLETED。请求及结束后 15 秒窗口的最大 RSS 增量为 86.57 / 40.36 MiB，结束后 15 秒净增量为 86.57 / 39.04 MiB。第二次结束后 RSS 419.92 MiB；两个窗口内 swap 与 OOM 增量均为 0。采样包括整个 API 进程的后台活动，无法精确分摊到每个对象。发布目录 `releases/event-memory-sort-2bebd9af-20261114/` 保存部署、采样和回滚证据，第二轮在其 `smoke-backprop/` 子目录；详见[生产报告](../report/server/service/video_event_retrieval/cloud-memory-hotfix-20261114.md)。
+
+### 指标对比
+
+这次影响的是单次 Event 查询在 ES 召回前的内存占用随素材库增长，以及完整八课程范围能否完成检索。因此看单轮请求的进程 RSS、隔离探针的范围解析与候选回源、ES 词法召回耗时和内存，以及 1038 是否消失；不能只看最终命中数。本次上线验收没有配对重跑旧镜像的完整 Chat，以下区分历史仓库读取实验、当前有界读取探针和线上 API 状态，不计算整轮 Chat 的优化百分比。
+
+| 指标 | 观测 | 口径与边界 |
+| --- | --- | --- |
+| 游客 Chat HTTP 结果 | 200，41.487 秒，9 条命中覆盖 E07 | 一轮真实 JEV Chat，含 Supervisor、工具调用与模型生成 |
+| 游客 Chat 请求前 RSS | 297.40 MiB | API Python 进程，每 200 ms 采样，非 docker-init |
+| 游客 Chat 观察窗口最高 RSS | 377.88 MiB（+80.48 MiB） | 同上；无旧镜像配对 |
+| 游客 Chat 请求结束 / 空闲 15 秒 | 375.51 / 375.63 MiB | 空闲值相对请求前 +78.23 MiB |
+| 宿主可用内存最低值 / swap / OOM | 3,311.17 MiB / 0 / 0 | 采样窗口内 |
+| 八课程完整 Event 范围 | MySQL 1038 → 最终镜像取得 880 个 Chunk 身份、0 正文 ORM | 候选和最终运行代码均已复测 |
+| 范围阶段资源 | 5 次查询、0 个正文 ORM 实体、37.73 ms、RSS +0.50 MiB | 隔离进程，暖缓存 |
+| 候选回源 | 5 个候选、68.04 ms、累计 RSS +4.89 MiB、完整 detail 0 | 隔离进程 |
+| ES 词法 Event 召回 | 8 Event / 5 Chunk / 8 视频，`partial=false`，862.42 ms、RSS +28.50 MiB、完整 detail 0 | 不含 embedding 与 LLM |
+| 最终镜像 attention Chat | 33.641 s，RSS 最大 +86.57 MiB，结束后 15 秒 376.13 MiB | 含模型生成与工具编排；API 每 200 ms 采样 |
+| 最终镜像反向传播 Chat | 97.811 s，RSS 最大 +40.36 MiB，结束后 15 秒 419.92 MiB | 与上一条为同一进程，未重启，问题不同不比较耗时 |
+| 最终镜像完整 Event 召回 | 612.03 ms、RSS +28.60 MiB、完整 detail 0 | 独立只读进程，词法召回，不含模型生成 |
+| 任务排序回归 | 61 passed、1 skipped | 使用既有 `.venv` 实跑 |
+| 最终镜像第二次重启 RSS | 287,596 KiB | 重启下降不作为修复收益 |
+
+2026-11-14 补记：将旧表与本次上线结果按读取职责和增量口径并排保存。旧数值沿用 11 月 13 日已核对的独立只读仓库实验：两个进程读取同一课程系列的 8 个视频、880 个 Chunk，未启用 tracemalloc，阶段采样 Swap 为 0；完整读取和仅排除 `_index_embeddings_v2.representations` 分别测量。本次补记没有重跑旧路径。新数值来自上述[生产验收报告](../report/server/service/video_event_retrieval/cloud-memory-hotfix-20261114.md)的最终镜像探针。
+
+| 读取流程指标 | 旧版：完整读取 | 旧实验：仅排除 representations | 当前上线方案 |
+| --- | ---: | ---: | --- |
+| ES 召回前读取的正文数量 | 880 块 | 880 块 | 0 块；取得 880 个身份与版本 |
+| 前置读取内容 | 正文、完整 detail、向量缓存 | 正文、排除 representations 后的 detail | 任务、Chunk ID、版本等轻量元数据 |
+| 前置读取结束后的 RSS 增量 | +1,632.96 MiB | +143.29 MiB | +0.50 MiB |
+| ES 后 5 个候选回源的累计 RSS 增量 | 未单独测量 | 未单独测量 | +4.95 MiB，已包含前置 +0.50 MiB |
+
+旧表的函数返回值是进程总 RSS，扣除各自预热基线后，才得到本表的增量：完整读取 `1,710.26 − 77.30 = 1,632.96 MiB`；仅排除向量 `220.32 − 77.03 = 143.29 MiB`。仅排除向量的实验仍在前置阶段加载 880 块正文；当前方案取消这段全量正文读取，ES 形成候选后再有界回源。三列对应的读取职责和返回对象数量已经变化，不能把这些差额当作同一函数的逐阶段消融，或拿 +0.50 / +4.95 MiB 代表完整 Chat。当前方案未重新采样数据库结果缓冲、ORM 解码和 DTO 复制各自的阶段增量。
+
+线上状态另以 2026-11-14 01:25（UTC+8，上线约 35 分钟后）复查，避免将单次独立探针与整个 API 进程混为一谈。历史 API 数据为此前单次分配器回收前的快照；期间发生过回收和重启。
+
+| 线上状态指标 | 历史异常快照 | 01:25 复查／本次已完成的 Chat 采样 |
+| --- | ---: | --- |
+| API Python 进程总 RSS | 4,015.61 MiB | 415.13 MiB（425,092 KiB ÷ 1,024） |
+| 整机可用内存 | 443.49 MiB | 3,233 MiB |
+| 整机 Swap 使用 | 1,987.86 MiB | 0 MiB |
+| 单次完整 Chat 的观测最大 RSS 增量 | 未逐请求采样 | +86.57 / +40.36 MiB；同一 API 进程连续两次游客会话，窗口含结束后 15 秒 |
+| Chat 结束后 15 秒相对请求前的净增量 | 未测 | +86.57 / +39.04 MiB |
+
+01:25 复查时，API 健康、自动重启计数 0、当前启动周期 `oom_kill=0`；这只说明该次检查与本次观察窗口，不代表长期零 OOM。历史总 RSS 与复查值相差约 89.7%，属于包含回收和重启影响的运行状态对比，不能全部归因于代码修改，更不能替代同请求、同配置的旧新镜像完整 Chat 对照。连续游客请求和约 35 分钟观察已完成；长时间运行和多用户并发压力测试尚未完成。
+
+热修复已经进入生产：ES 前只读轻量发布元数据，候选正文和小字段按预算回源；完整课程范围的 1038 在同数据复测中消失，最终镜像连续两次游客 Chat 成功，API RSS 维持在约 420 MiB。当前证据支持上线这一结构性修复。旧新镜像整轮 Chat 的配对对照、长期运行及多用户并发仍未验证，因此不计算相对历史其他负载的降幅，工作台 `RAG-QUERY-MEM-01` 保留验证中并指向长时与并发观察。
+
+<a id="devlog-event-query-bounded-content-20261113"></a>
+## 2026-11-13：Event 查询在 ES 召回前加载全部 Chunk 正文，检索内存随素材库增长
+
+### 问题与现状
+
+Event 查询先从 `resolve_retrieval_scope` 进入 `validate_event_coverage`，读取选中范围内全部 Chunk 的正文和 `ChunkParseContent.detail`，再逐块重建预期 Event 投影核对发布凭据，之后才执行 ES 有界召回。`top_k` 只限制最终返回的片段数，不限制这段前置读取；素材库越大、授权范围越广，单次搜索先创建的 ORM 实体、JSON 解码结果和临时对象越多。`detail` 中的 `_index_embeddings_v2.representations` 还会被一起实例化和深拷贝，使一次普通搜索先承担与候选命中无关的索引缓存成本。授权、当前任务、内容版本、逐视频代次和部分就绪仍需保持准确，不能为了省内存把旧版本或越权来源交给 ES。
+
+### 方案候选
+
+1. 保留逐块重建投影后再查 ES。正确性最直接，但热路径成本仍与授权范围绑定，无法解决原问题。
+2. 删除搜索入口的全部发布校验，只按最新任务查询。这样会把冻结 target 不符、正文版本不一致或 Chunk 未完成的来源放给 ES，实际候选还要回源核对，不能接受。
+3. 前置只读取最新 COMPLETE 任务、冻结 Event target、INDEX 完成且 content version 一致的 Chunk 元数据，保留来源元组配对过滤；候选正文由既有 `candidate_budget` 限制，在 ES 召回后批量回源。搜索入口不再调用 `validate_event_coverage`，但 INDEX 完成事务仍调用 `_require_event_publication`，显式审计仍使用原逐块校验。
+
+最终选择第 3 种。检索回源、相邻上下文和单条证据读取用 `defer(..., raiseload=True)` 延迟完整 `detail`；候选与邻居另以 SQL JSON 路径仅投影 `detail.compact` 和 `detail.evidence.camera_hints`，供 `_video_parse_evidence` 使用，且不读 `_index_embeddings_v2`，单条证据的身份查询仍不投影 detail。`published_reference_sources` 需要读取编辑参考的发布回执才能核对来源，仍显式 `include_detail=True`；这条路径不能算作“编辑参考查询也不读 detail”，本次只覆盖 Event 正文检索的回源。
+
+### 方案验证
+
+使用仓库内生成的隔离数据：8 个视频 × 2 个 Chunk，其中 6 个视频的 2 个 Chunk 都有匹配的 Event 发布，1 个视频只有 Chunk 发布，1 个视频处于 INDEXING。`top_k` / `candidate_budget` 分别取 1 和 5。测试在 ES 调用前断言来源元数据为 12 条、正文实体为 0、完整 `ChunkParseContent.detail`（含 `_index_embeddings_v2`）未加载，ES 调用后只有 1 次批量正文查询，加载并返回 1 或 5 个正文实体。小字段保留修正后，候选查询经测试确认只投影 `compact` / `evidence.camera_hints`、不读 `_index_embeddings_v2`。发布回执缺少事件集合、回执哈希被伪造或索引缓存被移除时，已完成发布仍可检索；正文版本不一致、Chunk 未完成或冻结目标不符时，该视频被排除并返回部分结果。既有公开课程授权、片段子范围和逐视频代次用例仍在。
+
+主 Agent 提供的修正前定向回归命令为 `python -m pytest tests/server/test_public_course_readiness.py tests/server/test_video_parse_repository.py -k 'bounded_candidate or completed_publication or incomplete_current or scope_reads_only' -q`，结果 9 passed、140 deselected。最终相关八模块隔离回归为 **248 passed、4 skipped**，摘要与运镜提示在搜索和直接证据读取中均保留，INDEX/编辑参考回归通过；完整命令见报告。
+
+### 指标对比
+
+这次影响的是单用户 Event 搜索在 ES 召回前的读取结构和范围扩展成本，因此看查询前正文/detail 读取、候选正文读取和来源元数据规模，而不是只看最终命中数。以下“修改前”是按调用路径推导的结构基线，本轮没有在旧实现上复跑同一生成数据；修改后数字来自隔离 SQL/ORM 断言，小字段投影和原值保留均由集成测试确认。
+
+| 指标 | 修改前（调用路径） | 修改后（生成数据） |
+| --- | --- | --- |
+| ES 查询前读取的 Chunk 正文 | 选中范围全部 Chunk；本 fixture 为 6 个已发布视频 × 2 Chunk，等价 12 份 | 0 |
+| ES 查询前读取的完整 ChunkParseContent.detail | 选中范围全部 Chunk | 0；ORM 未加载 |
+| 查询前逐块重建 Event 投影 | 每个 Chunk 一次 | 0；搜索入口不再调用 `validate_event_coverage` |
+| ES 后候选读取的 detail | 原有候选回源 | 完整 detail 延迟加载；仅 SQL 投影 `compact` / `evidence.camera_hints`，不读 `_index_embeddings_v2` |
+| ES 后正文 SQL | 原有候选回源，本轮未单独复测 | 1 次批量查询 |
+| ES 后加载并返回的正文实体 | 原有候选预算内 | `top_k`/`candidate_budget` 1 → 1；5 → 5 |
+| ES 前来源元数据 | 随授权范围 Chunk 数增长 | 仍随范围增长；本 fixture 为 12 条 |
+| RSS、延迟、token、真实召回质量 | 未测 | 未测 |
+
+结构上的改善是：旧路径在任何 ES 请求前就要把授权范围内的正文和索引缓存读入内存；新路径把前置成本压到标量元数据，正文只在候选预算内按批读取，detail 只取 `compact` 和 `evidence.camera_hints` 两个小字段。代价是查询侧信任 INDEX 完成时写入的发布事实，逐块 receipt 重验转移到写入和显式审计；元数据仍是 O(scoped Chunk count)，也没有证据证明所有 SQL 都已按 `top_k` 收敛。由于没有真实环境测量，本次只支持采用结构性修复，不宣称 RSS、延迟或业务质量已经改善。设计与生成数据证据见[TRD](../design/03-product-reassessment/event-query-bounded-content-trd.md)、[报告](../report/server/service/video_event_retrieval/bounded-query-20261113.md)和[工作台](workbench.html) `RAG-QUERY-MEM-01`。
+
+<a id="devlog-chat-intent-routing-20261113"></a>
+
+## 2026-11-13：前置配置覆盖 JEV，省去路由未必缩短 Chat 等待
+
+> 本条 B 为 JEV＋独立改写器，保留为历史实验。关闭独立改写后的完整新表见[同日 JEV-only 复测](#devlog-chat-intent-jev-only-20261113)，不能用下表评价纯 JEV。
+
+### 1. 问题与现状
+
+Chat 已有前置意图判断，但服务“有 JEV 参数”和“正在用 JEV”并不等价。核对 Cloud 配置发现，`models.query_hook=deepseek-flash/high/256` 会被启动代码作为 `decision_model` 注入，选择一次输出 action 与检索候选的合并决策图，因此绕过 JEV 分类和独立改写。这使此前围绕 JEV 职责的讨论与实际运行路径不一致。
+
+Cloud 已在没有处理中聊天时备份原配置，只删除该 binding，保留 JEV 1.14 与既有 Flash/high/256 改写器。API 重启健康，新建无私密内容的反馈测试消息经真实 HTTP 链路完成，JEV 返回 `respond`，路由 1.533 秒，整轮 4.690 秒。备份、前后哈希与消息证据见[配置收据](../report/agent/chat/query-intent-routing-20261113/cloud-config-switch.json)。这次只切配置，Cloud 镜像仍是原版本；动态 85% compact 已入 dev，本轮未将新代码发布至 Cloud。
+
+### 2. 方案候选
+
+本次比较 A 原 Cloud 的 DeepSeek 合并决策、B JEV 分类后按需调用改写器、C 让 Supervisor 接原文自行判断。A／B 都追加当前轮处理说明，C 由当前 Supervisor prompt 承担同样职责。前置层可能只多一两秒，也可能避免一次多余检索；省去前置不等于后续循环会相同，必须连同正文、工具、完整交付与 token 比较。
+
+Cloud 维持已授权切换的 JEV。直接判断只做隔离实验，没有据平均速度自动推广。没有同步修改 prompt、工具语义或 reasoning effort，以免多因素变化失去可比性。
+
+### 3. 方案验证
+
+在 `dev` 同一实现、Flash/high/8192 Supervisor、相同 prompt／历史／工具及动态 85% 策略下运行 27 个完整 turn，三组各 9 个，全部自然完成。当前模型窗口实测 1,048,576，触发值 891,289；本批输入远低于阈值，未观察到 compact，不能将本轮路由差异写成压缩收益。每个 turn 新建会话，使用真实模型、数据库、ES 和回源；不是单次续推或替身工具。
+
+旧整季 MyGO 评测数据已不在本机当前库，本轮使用真实已发布的 12.012 秒台阶夜谈片段，复制必要事实到独立 `*_test` 库和索引。没有复制旧 Cloud 聊天、个人模型或凭据。正式前保留了 16-turn 环境诊断：5 个请求因测试环境 generation=2 与素材 generation=1 不符失败，连续三个失败后停止；两条检索预检通过后，固定 generation=1 全量重跑原先同一份 27 turn，不只重跑失败例，诊断数字单列。
+
+逐一核对九个三元组，Supervisor prompt、工具 schema、历史正文一致，A／B 追加后的模型消息有 6/9 对也完全一致；因此几例生成或工具选择差异不能都归因于分类器。A／B action 均 9/9 正确，B 改写 5/5 成功，未发生失败开放。独立 SQL 核对正式 27/27 正文与 COMPLETED 一致，测试库无 PROCESSING。测试启动的 MySQL、ES、embedding 已按自有 PID 停止，保留数据与结果。
+
+输出并非全部无问题：A 把“高高在上”错误定位到所选短片，另有一次重新确认未核验历史、一次多给压缩版本；B／C 首轮 mixed 都先检索后回应，并把同一 Chunk 提交两次后误称有两段卡片。现有合同按 Chunk ID 原地更新，最终只留后一张卡。复测三组均做到先答后查且一次提交完整片段。意图标签正确不能代替交付验收。语义评分由本次会话的 Codex 主 Agent 按冻结规则与工具／卡片证据逐条评阅，具体模型 ID 未导出，没有独立模型评委或人工盲评；程序审计只核对输入、时间、用量与持久化。逐字回答、逐例评分、数据与版本见[完整报告](../report/agent/chat/query-intent-routing-20261113/README.md)及 [TRD](../design/03-product-reassessment/query-intent-routing-comparison-trd.md)，关联 [PR #145](https://github.com/owariband/Seekino/pull/145)。
+
+### 4. 指标对比
+
+首字等待与整轮等待分别影响可感知响应和任务完成，因此同时比较 FTT、TT、完整用量和输出。FTT 是 send 至首个非空可见正文事件，排除思考／状态；本批首次均为 snapshot，是服务层首段正文时间，不是 provider 原生 TTFT 或浏览器渲染。TT 到自然终态及提交完成。每组仅九个 turn，不报告 p95／p99；总 token 含全部阶段，reasoning 属于 output 子集。
+
+| 指标 | A DeepSeek 前置决策 | B JEV＋改写器 | C Supervisor 直接判断 |
+| --- | ---: | ---: | ---: |
+| FTT 平均／中位（秒） | 6.099 / 4.994 | 8.886 / 7.416 | 7.713 / 6.872 |
+| TT 平均／中位（秒） | 8.319 / 9.560 | 10.404 / 11.488 | 9.588 / 8.102 |
+| 前置平均（秒） | 1.452 | 2.701 | 0 |
+| 全部 input／output token | 230,188 / 8,144 | 251,037 / 9,602 | 299,718 / 11,508 |
+| 全部 total token | 238,332 | 260,639 | 311,226 |
+| Supervisor provider 请求数 | 24 | 27 | 31 |
+| 主要意图行为通过 | 9/9 | 9/9 | 9/9 |
+| mixed 检索前已公开回应 | 2/2 | 1/2 | 1/2 |
+| Codex 逐条评阅 pass／partial／fail | 6 / 2 / 1 | 8 / 1 / 0 | 8 / 1 / 0 |
+
+C 相比 B 的平均 FTT 减少 13.2%、平均 TT 减少 7.8%，总 token 增加 19.4%；相比 A，平均 TT 增加 15.2%、总 token 增加 30.6%。C 的 TT 中位数又比 A 低，不能说某一路每种 query 都快。前置 token 只占 A／B 总量约 2.5%／3.6%，后续重复携带工具和证据的请求才是本批主要消耗。DeepSeek 已报告的未缓存 input 分别为 33,692／28,807／32,948，费用还受缓存及供应商计价影响，不能按总 token 比例推算账单。
+
+本批支持的判断是：省去一个前置调用能减少固定开销，却可能被后续循环抵消；JEV 的当前串行成本也没有带来可直接归因的质量优势。维持已切换的 Cloud JEV，保留 Direct 为候选，优先另行处理重复检索、相同 cursor 反复读取及单 Chunk 多次提交后的交付说明。本轮没有扩大为这些生产修复。整季、大索引、长对话、图片／回放、Query 子 Agent、并发、浏览器播放和完整账单仍未验证；本次结果不能直接宣布 C19 或全部 Chat 延迟问题已解决。
+
+
+<a id="devlog-chat-model-context-compaction-20261113"></a>
+## 2026-11-13：固定小窗口让 Chat 提前同步摘要，命中后多等数十秒
+
+### 问题与现状
+
+Cloud 的三条观看问答在获得候选后仍等待，已有诊断中同步摘要占整轮用时的 58%–63%。本地 `dev` 的 DeepAgents 同样先生成摘要再继续主模型请求，而模型 binding 与 runtime 的较小值让实际策略成为 64k／48k／24k。当前 DeepSeek Flash 的真实模型列表返回 1,048,576 context tokens；旧 64k 是应用声明，不能作为该模型的容量。本轮要先验证触发机制，再用同输入区分摘要等待与正常模型耗时，不能只把阈值放大后就宣布提速。
+
+本地没有运行 SQL、ES 或 Chat 服务，默认模型又是 Kimi。为固定变量，我们在获得授权后只读取得三条请求前后的必要 checkpoint，在本机重建 DeltaChannel 消息和旧摘要，冻结“证据已返回、下一次模型调用之前”的真实消息边界。完整历史、图片和工具内容留在私有临时目录；仓库只保存脚本、配置、摘要指标与哈希。[设计与对照计划](../design/03-product-reassessment/chat-model-context-compaction-trd.md)绑定 [PR #144](https://github.com/owariband/Seekino/pull/144)，状态统一在工作台 `CHAT-COMPACT-01`。
+
+### 方案候选
+
+保留现有绝对 token 策略作为 A；B 在 Supervisor 模型绑定显式设置 `auto_compact_ratio: 0.85`，通过已有连接读取选中模型的 context size，按比例推导 trigger，并扣住本轮输出和安全预留。模型列表缺少能力字段时使用明确的 binding 声明，主备取较小容量；不把 runtime 默认 64k 再次合并回动态结果。省略 ratio 保留旧行为，便于回退与对照。
+
+本轮保持 `high` 思考、8192 输出、4096 安全余量、24000 最近消息保留预算及字符控制，不同时改变模型、工具并发或摘要模型。选择显式比例入口，是为了让动态策略可单独开关，避免把未完成的性能验证扩散到其他 Query/Parse 和个人 BYOK 路径。该实现仍同步等待摘要；50% 后台 compact 不是本轮交付。
+
+### 方案验证
+
+新能力发现函数已通过真实 GET 读到 1M，动态 factory 实际策略为 1,048,576／891,289／24,000。主 Agent 运行相关 Gateway/SDK 测试 190 passed，配置测试 130 passed、3 项既有失败排除；这三项在干净 `git archive dev` 中独立复现，未修改无关断言。编译、diff 和三对完整 SDK 离线回放通过。
+
+实验中发现额外 middleware 的位置可能落在 SDK 摘要之后，因此将观测点放在实际 SummarizationMiddleware 入口；请求哈希按 Gateway 可见的 OpenAI 消息、reasoning 与工具定义计算，排除框架随机生成的内部消息 ID。三对入口哈希一致，避免把已经压缩后的输入误记成压缩前输入。
+
+随后完成 9 次真实生成：A 每例摘要加一次续推，B 每例一次续推。trace 核实全部为 Flash／high／8192，两组入口哈希逐一相同，9 次均完成、无重试。三个同步摘要分别阻塞 22.302／29.739／23.372 秒，均结束后才开始正常模型请求。当前脚本只执行 compact 与一次主模型续推，响应后在执行新业务工具前停止；原 Cloud system prompt 未记录，当前 prompt 从 dev 代码和冻结上下文重建，不称为逐字 Cloud 回放。完整 Chat、SQL／ES、HTTP／SSE／DOM、视频卡交付、近 891k 满窗与长期摘要质量均未验证。详细边界见[实验报告](../report/gateway/agent_model/chat-context-compaction-20261113/README.md)与[脱敏指标](../report/gateway/agent_model/chat-context-compaction-20261113/metrics.json)。
+
+### 指标对比
+
+本次首先关注命中证据后的模型等待，所以比较相同输入下摘要是否发生，并记录完整请求 token，避免把历史缩短或跳过工具当成收益。先前的本地替身仅用于冻结输入与验证触发条件；下表为相同输入的真实模型对照，统计 compact 加一次续推，不能和 Cloud 整轮秒数相减。
+
+| 输入 | 压缩前完整输入估算（token） | A：摘要＋续推 | 其中摘要 | B：无摘要续推 | 时间减少 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| T01：桥上场景 | 49395 | 25.283 s | 22.302 s | 2.752 s | 89.12% |
+| T02：拉手核验 | 48267 | 33.496 s | 29.739 s | 6.891 s | 79.43% |
+| T03：17:36 抽帧 | 50152 | 25.702 s | 23.372 s | 5.297 s | 79.39% |
+
+三例合计 84.481→14.940 秒，减少 69.541 秒／82.32%；摘要合计 75.414→0 秒，正常续推却从 9.016 增至 14.906 秒。单个摘要实际只释放约 10328／16518／20947 个完整输入估算 token；不能从 48k／24k 配置直接推定净回收。provider 对同一未压缩输入与压后正常请求的净差分别为 10157／15030／13091，口径与本地估算分列。
+
+| 三例合计的 provider 用量 | A | B |
+| --- | ---: | ---: |
+| input token | 117635 | 114473 |
+| output token | 15865 | 1437 |
+| 其中 reasoning token | 9626 | 863 |
+| cached input token | 48128 | 21504 |
+| 未缓存 input token | 69507 | 92969 |
+
+reasoning 属于 output，不能重复相加。B 的正常请求保留了更多上下文，模型耗时与未缓存输入均有增加，但省掉摘要后本轮净等待仍显著下降。未缓存输入增加 23462 token，未按实时单价或账单核算费用，不能把 token 总量减少视作费用同比减少。能力查询首次构建耗时 0.334 秒，在本次模型边界计时之外，随后由 factory 缓存。
+
+本轮真实数据支持把提前同步摘要列为这些边界的主要等待原因，并支持保留动态模型窗口策略。六次正常续推均返回工具调用，参数 Schema 校验通过；T03 压缩组出现无法解析的 cursor，动态组 cursor 可解析且匹配冻结回执，T02 两组片段结束点却有 5 秒差异，不能宣布完整质量相同。样本各一对且先 A 后 B，缓存与决策存在差异，不报告 p95/p99 或 85% 最优结论。当前为实现、离线回归和选定真实模型边界验证完成；完整交付与近满窗质量待验收，未合入 dev、未部署 Cloud。
+
+2026-11-14 上线跟进：`auto_compact_ratio: 0.85` 已随 main `8a86883f` 对应的 Cloud API 实际加载，日志为 context 1048576、trigger 891289、keep 24000；全局 `agent-runtime.yaml` 字节哈希未变。keep 是最近消息尾部目标，不是整段压缩后请求的大小。这里只确认配置和容量解析已接入生产，完整业务交付、近满窗质量、并发与长期延迟仍未验收，`CHAT-COMPACT-01` 保持 verifying。证据见[生产上线报告](../report/agent/chat/query-intent-jev-only-20261113/production-rollout-20261114.md)。
 
 <a id="devlog-mobile-drawer-motion-20261112"></a>
 ## 2026-11-12：dialog瞬时关闭并卸载内容，手机导航缺少开合过渡
@@ -6093,3 +6315,198 @@ Flash worker 改写两份第三方正文，主 Agent 完成公共 Skill、服务
 ### 指标对比
 
 本次指标针对“可用描述被规则拒绝”的作用因素，固定响应能隔离模型随机性及 30000→50000 配置变化。动作输出由 0/9 接收变为 9/9，JSON 由 0/3 变为 3/3，合计 0/12→12/12；原始中文和动作时间保持，新增模型调用为 0。离线无模型费，真实解析耗时、token、费用和整片完成率仍需试点记录。收益是减少重复纠错和整片误终止，代价是描述标签更自由，编辑仍需回原片判断语义质量。基于本轮证据采用代码改造，继续验证正式任务，不把接纳率当成长期运行稳定性。
+
+<a id="devlog-chat-intent-jev-only-20261113"></a>
+## 2026-11-13：可选改写器混入基线，JEV 的净耗时被算错
+
+### 问题与现状
+
+我们要判断 JEV 是否值得保留，需要比较只由 JEV 分类的完整 Chat。上一轮 B 额外调用了可选改写器，前置平均 2.70 秒、平均 TT 10.40 秒只代表“JEV 分类后再改写”这条路径。用这张旧表评价纯 JEV，会把不需要的串行调用算到 JEV 头上。新表最初又只突出耗时和完成数，没有把 query、历史与质量判据直接列出，读者无法判断更快是否伴随错误。
+
+### 方案候选
+
+沿用三路比较：A 保留 DeepSeek 的 `action + retrieval_query` 合并决策，B 由 JEV 分类后直接进入 Supervisor，C 由 Supervisor 自己判断。三份隔离配置都关闭独立改写并移除 `models.query_rewriter`，共同的 prompt、工具、模型与 85% 容量策略保持。前置结果会影响后续生成和检索，不能从旧 B 减掉一次改写耗时后填表，因此重新跑完整 A／B／C，各 9 turn。
+
+### 方案验证
+
+使用相同六类样本、历史和已发布的 12.012 秒 MyGO 短片，隔离测试库与索引、generation=1、原编码合同保持。三个 runtime 均为 Flash/high/8192，模型窗口 1048576、compact 阈值 891289。源码和配置冻结后正式 27/27 完成，无超时；129 次 provider usage 完整、27 条 SQL 正文及终态一致、无遗留 PROCESSING。B 有 9 次成功 JEV 分类，三组实际独立改写调用均为 0；九组三方 prompt、工具 schema 和角色／正文历史一致。
+
+A 有一次前置结构化决策 ValidationError，跳过提示追加后由 Supervisor 完成，耗时和 token 全部计入。129 次 provider 请求中128次完成、1次失败，usage均完整；27/27是整轮执行完成数，不是正确率。原实验在 [PR #151](https://github.com/owariband/Seekino/pull/151) 合入 dev，复测时未改 Cloud；测试服务已停、数据保留。
+
+实际只有6条不同query，反馈、混合任务和原话检索各重复一次。以下历史是冻结的测试上下文，不是云端T01–T03的逐字回放；拒绝邀请的文字用于解释测试，不代表它出现在这段MyGO素材里。
+
+| 用例 | 已给历史 | 当前query（逐字） | 期望 |
+| --- | --- | --- | --- |
+| Q1 反馈，运行2次 | 用户：“真是高高在上呢，哪里出现过？”；助手：“已定位到第13集开头的相近表述。该片段包含人物之间的言语冲突，下面将从集数、时间位置、人物关系三个维度展开说明。” | 那又咋了，你说话怎么这么无趣啊 | 回应对助手的反馈，不新增检索 |
+| Q2 已有文字，运行1次 | 用户：“帮我找她拒绝邀请的片段。”；助手：“找到了。片段里她说：我不是不想去，只是已经答应陪妹妹了。” | 只根据你刚贴出的这句话，她是在拒绝邀请，还是不喜欢邀请她的人？ | 只解释原句，不推断讨厌对方，不检索 |
+| Q3 单句，运行1次 | 助手：“这段主要表达她虽然想去，但因为已经答应陪妹妹而拒绝了邀请。我还可以继续找相似片段。” | 不用继续找视频了。刚才那段解释太长，帮我压缩成一句话。 | 停止检索，只返回一句概括 |
+| Q4 混合任务，运行2次 | 用户：“你刚才完全没回应我对你的吐槽。”；助手：“我可以继续找相关视频。” | 先回应一下我刚才对你的吐槽。另外，帮我找爱音和燈坐在台阶上谈《春日影》的片段。 | 先回应反馈，再检索并交付相符片段 |
+| Q5 指代，运行1次 | 用户：“我想找两种场景：夜晚坐在台阶上谈《春日影》，还有登台演唱。”；助手：“你想先找哪一种？” | 第一种，最好能看到燈接着回应她说了什么。 | 解析为台阶夜谈，交付燈的回应 |
+| Q6 原话，运行2次 | 无 | 帮我找“因为《春日影》是首好歌”这句台词的出处，保留原话，不用解释检索过程。 | 实际检索、保留原话，不讲检索过程 |
+
+最初只记录了可定位的问题，随后由本次会话的Codex主Agent逐条补评。query和expected在运行前冻结，完整／部分／失败的细化判定是事后明确的，没有独立人工盲评。任务选择只看是否正确回应／检索，混合任务还要求先回应；完整交付进一步看主要结论、明确指令和最终卡片。核心任务成立但有单句要求偏离、镜头顺序错误或卡片漏段，记为部分通过，不折算成半分。完整27条原文、工具和卡片见[按query排列的逐条评阅](../report/agent/chat/query-intent-jev-only-20261113/query-quality-review.md)，结构化评分见[reviews.json](../report/agent/chat/query-intent-jev-only-20261113/reviews.json)。
+
+| 用例完整交付 | A DeepSeek前置 | B JEV-only | C 直接判断 | 扣分依据 |
+| --- | --- | --- | --- | --- |
+| Q1 两次 | 通过／通过 | 通过／通过 | 失败／通过 | C第一次把当前吐槽重新当成询问出处，调用概览和Event检索 |
+| Q2 一次 | 通过 | 通过 | 通过 | 三组主要结论均说明不能由此推断内心态度；部分论述偏强，不代表全部措辞无可改进 |
+| Q3 一次 | 通过 | 通过 | 部分 | C给出一句后又追加解释和索取文本 |
+| Q4 两次 | 部分／通过 | 部分／通过 | 部分／部分 | 三组都先答后查；A/B第一次卡片漏开头，C两次卡片与声称交付的范围不符 |
+| Q5 一次 | 部分 | 通过 | 通过 | A最终卡片9.700–12.012秒，没有燈3.100–8.900秒的回应 |
+| Q6 两次 | 通过／通过 | 部分／通过 | 通过／部分 | B第一次把切远景和燈回应顺序写反；C第二次仍说“已检索并核对全部1集” |
+
+这些卡片与内容问题不能全归因于路由；C19全场景仍未关闭。质量、用量与执行证据见[JEV-only报告](../report/agent/chat/query-intent-jev-only-20261113/README.md)和[原TRD第7节](../design/03-product-reassessment/query-intent-routing-comparison-trd.md#7-关闭独立改写器的同条件复测)。本次据此采用JEV-only默认值，关闭改写；dev/main发布及Cloud/CPU的实际生效证据单独记在[上线TRD](../design/03-product-reassessment/jev-only-hook-rollout-trd.md)与[PR #155](https://github.com/owariband/Seekino/pull/155)，不能把实验已完成写成两台服务都已切换。
+
+2026-11-14 发布补充：dev PR #155 已以 `9a18c6fb` 合入，main PR #157 以 `8a86883f` 合入，27 turn 基准仍是 11 月 13 日的数据，没有重跑。Cloud API 实际运行在 CPU 主机 `seekino-server` 的 `seekino-local-api-1`，是一个实例，不是两台独立部署；镜像为 `seekino-api:jev-only-8a86883f-compat`，在上一 `main-a0fb93d9` 运行时上只覆盖 5 个文件，`gateway/config.py` 保留该部署已有的内部 embedding URL 校验和 `document_base_urls`，不能称为与 main 逐字相同。active 与 seed 均为 hook=true、rewriter=false，没有合并决策或改写绑定；Supervisor 为 Flash/high/8192、85% 动态 compact，日志实际为 1048576／891289／24000。API stop/recreate 到 ready 的 17.891 秒是部署操作耗时，不是精确用户停机。公网健康 200，新建游客身份，经认证的会话创建与 SSE 请求到 `answer.completed`；真实 JEV 与 Supervisor 各 1 次、独立改写 0 次。检索 hook 探针只到 `retrieve`，没有执行后续完整生产检索，单次探针也不与 27 turn 平均耗时比较。原始收据与兼容边界见[生产上线报告](../report/agent/chat/query-intent-jev-only-20261113/production-rollout-20261114.md)。
+
+### 指标对比
+
+前置层决定初始等待，后续模型与工具又可能抵消省去的时间，因此同时看首段正文、整轮完成、全阶段 token 和 Supervisor 请求数。FTT 是服务层首个非空正文事件，排除思考／状态／工具；本批首次均为 snapshot，不等于 provider 原生 TTFT 或浏览器首字。以下全为本次新数据；reasoning 已包含在 output，不重复相加。
+
+| 指标 | A DeepSeek 前置决策 | B JEV-only，独立改写关闭 | C Supervisor 直接判断 |
+| --- | ---: | ---: | ---: |
+| 前置平均（秒） | 1.40 | 1.67 | 0 |
+| FTT 平均／中位（秒） | 7.07 / 6.23 | 6.73 / 5.97 | 6.60 / 4.81 |
+| TT 平均／中位（秒） | 9.99 / 10.28 | 9.49 / 8.29 | 9.72 / 10.39 |
+| 全阶段 input token | 274684 | 248674 | 297434 |
+| 全阶段 output token | 10250 | 8565 | 11356 |
+| 总 token，9 turn | 284934 | 257239 | 308790 |
+| Supervisor 请求数 | 29 | 27 | 32 |
+| 全阶段 provider 请求数 | 45 | 43 | 41 |
+| 独立改写模型请求数 | 0 | 0 | 0 |
+| 前置有效标签／尝试数 | 8/9 | 9/9 | 不适用 |
+| 前置结构化失败数 | 1 | 0 | 不适用 |
+| 完成数 | 9/9 | 9/9 | 9/9 |
+| 整轮失败／超时 | 0 / 0 | 0 / 0 | 0 / 0 |
+| 实际任务选择正确 | 9/9（100%） | 9/9（100%） | 8/9（88.9%） |
+| 完整交付通过 | 7/9（77.8%） | 7/9（77.8%） | 4/9（44.4%） |
+| 完整／部分／失败 | 7 / 2 / 0 | 7 / 2 / 0 | 4 / 4 / 1 |
+
+任务选择9/9不等于前置分类成功9/9：A有一次无有效标签的fallback，B的9次JEV调用均成功且标签符合expected。C第020条只有一句多余的检索过程说明；若宽松忽略这一项，完整交付为5/9（55.6%），其余计数不变。以上是6种测试query上的逐条验收，不是线上总体准确率。
+
+| 总token按阶段拆分 | A DeepSeek前置 | B JEV-only | C 直接判断 |
+| --- | ---: | ---: | ---: |
+| 前置判断 | 5813 | 6647 | 0 |
+| Supervisor | 278906 | 250386 | 308555 |
+| 检索embedding | 215 | 206 | 235 |
+
+原始[metrics.json](../report/agent/chat/query-intent-jev-only-20261113/metrics.json)保留各模型、角色、operation和stage的input/output/total、cache与reasoning明细；没有提供的字段仍为未知，不补0。三组总计850963 token，reasoning是output的子集，不能再加一次，也不能把总token比例当实际费用比例。
+
+本批 B 的平均 TT 和总 token 最低；C 的平均正文仅早 0.13 秒，却多 20.0% 总 token、平均 TT 多 2.5%。跳过前置层并没有稳定减少后续工作，不能把少一次分类调用直接当收益。每组只有 9 turn，素材小且有生成、网络和缓存变化，不能将该排序外推到整季、长历史、Query 子 Agent、并发或实际费用；也不能把和旧表的差值全部当成关闭改写器的因果收益。
+
+2026-11-14 的线上探针另行记录。两次 HTTP 请求都使用“请不要检索视频，只用一句话确认：配置检查完成。”，JEV 均选择 `respond`，都完成；第一次正文为“配置检查完成，未检索任何视频。”，第二次为“配置检查完成。”。第一次在回答完成后才发生采集 SQL 错误，随后修正采集器重跑，第一次客户端计时未保留，用量已从这条自建消息回源补齐。检索 hook 原文为“请帮我找一下视频里讲反向传播的片段。”，只验证到真实 JEV 返回 `retrieve`，没有继续跑完整片库检索。
+
+| 线上接线探针 | 首次 HTTP | 修正采集后的 HTTP | 检索 hook |
+| --- | ---: | ---: | ---: |
+| 公网客户端 FTT／TT（秒） | 未保留 | 3.617 / 4.750 | 不适用 |
+| 服务端整轮／hook 总耗时（秒） | 4.310 | 3.273 | 2.170 |
+| JEV 路由日志耗时（秒） | 2.0692 | 2.1659 | 2.1560 |
+| JEV／Supervisor 请求数 | 1 / 1 | 1 / 1 | 1 / 0 |
+| 独立改写／合并决策调用数 | 0 / 0 | 0 / 0 | 0 / 0 |
+| input／output／total token | 16775 / 48 / 16823 | 16775 / 43 / 16818 | 631 / 38 / 669 |
+| 终态／路由 | COMPLETED / respond | COMPLETED / respond | hook 返回 / retrieve |
+
+这三条探针共 5 次 provider 调用，input 34181、output 129、total 34310 token，不并入原 27 turn 的表格。公网 HTTP FTT 从请求开始到首个非空可见正文，包含网络传输，排除思考、状态和工具；它与原实验的服务层 FTT 口径不同。配置备份、仅 API 重建及健康恢复已核实，其他五个容器未变，没有迁移或重建索引。由此采用 JEV-only 默认配置；完整生产检索、近满窗质量、并发和长期延迟仍需验证，不能把本次接线成功写成整体 Chat 延迟与正确性问题已经解决。
+
+00:37:52（UTC+8）另一项 Event 内存修复接续更新 API 为 `seekino-api:hotfix-event-memory-8f0f14d3`。最终复核的 5 个 Chat/Gateway 文件和 active／seed／runtime 配置哈希都与本次上线一致，最新 API 健康，容量日志仍为 1048576／891289／24000。原兼容镜像上的两次 HTTP 探针与后续镜像的配置复核分别保存；本次没有覆盖后续部署，也没有新增模型调用来评测其内存效果。
+
+<a id="devlog-chat-delete-hint-20261113"></a>
+## 2026-11-13：删除原因重复渲染，回答中的历史列表额外占高
+
+### 问题与现状
+
+当前对话回答中，删除按钮既有说明原因的 title，也在列表项下方额外渲染“回答完成后可删除”。这行常驻说明重复且占高，独立侧栏与观看页共用的历史菜单都会经过该渲染分支。源码和目标测试均确认问题来自额外的 small 节点，删除状态本身没有错误。详见 [CHAT-DELETE-HINT-01 设计与验收](../design/03-product-reassessment/chat-delete-hint-tooltip-trd.md)。
+
+### 方案候选
+
+复用按钮已有的原生 title，仅移除常驻节点和专用 CSS，无需新增 Tooltip、状态或事件。原有删除禁用、确认与恢复逻辑继续使用。DeepSeek Flash 在启动取证前因缺少凭据退出；本轮直接复核相关源码和测试，没有修改委托配置。
+
+### 方案验证
+
+先只更新既有回归断言，旧代码因仍存在 small.deleteHint 按预期失败；随后移除节点及专用样式，App 文件 54 项测试通过，含禁用点击不打开确认、完成后恢复按钮及普通 title。构建内的 TypeScript 编译检查与 Vite 生产构建通过。隔离 Chromium 153 在 1440×1000 和 390×844 两个尺寸验证，常驻说明均不存在，鼠标能命中垃圾桶且保留原有 title，禁用点击无删除请求，完成后恢复，页面无 JS 异常。全部 API 使用测试响应，原生浮层外观未逐浏览器验收，首次本地验收时现有服务和线上未发布，后续正式发布见下段。原始截图、JSON 与脚本保存在本分支本机 outputs/verification/chat-delete-hint-tooltip-20261113/。
+
+2026-11-13 19:20（UTC+8）通过独立 main 发布 PR #150 上线 `271f519f`，仅两个运行文件和原有回归断言，4 增 / 3 删；main 锁文件下 55 项测试、类型编译、构建、发布树与 GitHub release-files 通过。Web 镜像和运行容器的 50 个文件、公网 50 个静态资源与聊天页 HTML 哈希均匹配，真实健康接口为 200，其他五项服务未重启。公网实际资源的隔离 API 浏览器检查通过，没有生成真实对话；证据和回滚见同一 TRD 的正式发布记录。
+
+### 指标对比
+
+这次只处理删除提示造成的视觉干扰，因此比较常驻节点及删除保护，不测模型时延或生成质量。相同 App 夹具中，常驻说明由 1 个变为 0 个；运行中禁用与完成后恢复均通过，浏览器禁用点击发出的删除请求为 0。没有新增模型调用、接口或运行时依赖，原生提示的外观与延迟仍由浏览器控制。采用这一局部修复；本地验收支持界面展示与删除保护，首次本地证据不能代替部署；后续已取得 main 集成、仅 Web 上线和公网哈希及浏览器证据。
+
+<a id="devlog-chat-history-replay-20261114"></a>
+## 2026-11-14：实时播放请求绕过 JEV，接入后完整回放仍因工具预算与时间锚定失败
+
+### 问题与现状
+
+观看页的请求只要带 `extra_context.playback`，QueryHook 就把整条输入判为 unsupported 并直接返回原文。JEV-only 虽然已经上线，实时播放这条路径却没有真正分类；用户看到的是旧链路继续执行，慢请求也绕过了新路由。修复前三条原请求都能完成，服务端耗时 75.659／47.880／88.877 秒，摘要调用分别为 45.191／30.194／51.932 秒，但首字数据没有留存。
+
+回放准备时发现，三条历史请求都带播放位置，按旧逻辑会跳过 JEV。若直接按原计划回放，只能比较旧链路，无法验证实时接线，因此先修这个问题，再开始实际三条回放。用户已明确采用实时 JEV 接线；这不等于原 Chat 的延迟和回答质量问题已经解决。
+
+### 方案候选
+
+修复只改实时路由：移除 playback 短路，把 Server 已经构造好的当前视频身份和播放位置作为文字上下文交给 JEV，原 query、playback 和 Supervisor 工具不变。分类器只拿到身份与时间线索，不被描述成已经看过画面；普通文字请求保持原有输入形状，默认独立改写仍关闭。没有新增路由配置，也没有重写分类模板。
+
+回放选择原 T01–T03 三条完整 turn，不是 12.012 秒的 27 turn 实验。每条新建游客身份和会话，复制原请求前的 6／10／12 条历史消息及 26／49／60 条原生消息、0／1／1 个文件和已有 summary，哈希核对后串行发送。旧 prompt 没有完整留存，SQL 历史 ID 也是新的，因此只能做描述性前后对照，不能做字节级复现或 JEV 因果消融。发布采用最小运行文件覆盖，不调整模型、容量、工具预算或数据。
+
+### 方案验证
+
+修复后 dev 和 main 各跑同一组 250 项测试，均通过；两组范围重叠，不能相加成 500 项唯一测试。main 发布只改两个运行时文件和一条直接回归，本地发布树 808 个路径／8 个资产及 GitHub `release-files` 通过，没有无关业务修改。API 于 03:44:08Z 开始、03:44:25Z 完成，本地 11:44，操作耗时 16.943 秒，不是用户停机；新镜像从既有 Event 内存修复镜像派生，只覆盖两个文件，另外五个容器未变，无配置或数据迁移，最终健康 200。
+
+三条真实请求的 JEV 都只调用一次，都是 `completed` 的 `retrieve`，耗时 1.5391／1.5107／1.8469 秒，独立改写为 0。T02、T03 各用 7 次 provider 调用并完成；T01 用了 101 次，其中 52 次是 embedding、45 次是 Query 子 Agent，不能把 101 次当成 101 次模型推理回合。
+
+T01 的 `query_video` 用了 170.069 秒，约占 196.567 秒整轮时间的 86.5%。Query 反复检索和读取证据，耗尽共享的 100 次工具预算，返回 `VIDEO_LOOP_LIMIT_EXCEEDED`；Supervisor 随后直接读取也因同一预算失败，整轮以 `AGENT_MODEL_ERROR` 结束。所有 provider 调用都完成，这是应用层循环与预算问题，不是 provider 超时。Cloud bootstrap 会强制打开 `limits_enabled`，YAML 写 false 也关不掉实际预算；`max_loop_turns=3` 不是这次 Query 循环的停止条件。
+
+T02 和 T03 虽然完成，交付仍有时间问题。T02 目标播放位置是 1058310ms（17:38.310），最终卡片只有 1030500–1041166ms（17:10.5–17:21.166），实际取帧 1034737／1036212／1037687／1039162ms，看的是更早场景。T03 卡片 1054800–1063500ms 覆盖了 1056000ms（17:36），但取帧请求是 1055000／1057000／1059000／1061000ms（17:35／17:37／17:39／17:41），没有恰好 17:36 的帧，回答声称提取了 17:36 没有得到请求证据支持。两条都先遇到一次 `UNKNOWN_ITEM`，随后重新取到证据并完成。这里能确认的是时间锚定与表述缺口，不能据此判定整条回答是幻觉，也没有独立视觉盲评。2/3 只是执行完成数。
+
+后续只读排查确认，`UNKNOWN_ITEM` 是历史 ID 不在本轮成功检索结果中，并不表示视频文件不存在；同一 ID 经本轮重新检索后均能成功抽帧。T02／T03 约 3.310／3.819 秒已经收到思考事件，正文却在第 4 次 Supervisor 调用内、14.817／17.577 秒才出现。运行时支持先正文再工具，prompt 却禁止通用过程播报；允许有内容的前置回应是可行方向，但本轮未改 prompt 或测量新 FTT。
+
+T01 实际派出两个并行 Query，45 次生成是两者合计。同一个 Chunk 被读 22 次、9 次从第一页重读，另有 5 次分页游标错误和 2 次参数错误。还查出此前只验收 Supervisor 的遗漏：Query 的 structured 构建没有动态容量解析，agent 绑定也未配置比例，实际仍为 64000／48000／24000，另有 200000 字符上限。该回放内两条 Query 压缩链共 9 次，与各模型调用起点对应；它们是本地上下文替换，不增加 Supervisor summary 调用。Query checkpoint 不保存分页进度，压缩放大重读是机制风险，尚未做因果对照。失败 child 不返回已取得证据的部分报告，共享额度耗尽后 Supervisor 也无法恢复；这些问题均未在本轮修改。完整时点、源码与脱敏证据补在[报告第 9 节](../report/agent/chat/history-latency-replay-20261114/README.md#9-后续只读排查历史-id首字等待与-query-的旧压缩路径)。
+
+### 指标对比
+
+旧三条全部完成，新三条为 2 条完成、1 条失败。T01 的新耗时是失败持续时间，不是成功首答时间；不能把三条混在一起平均，也不能只拿两条成功条目算整体加速。服务端整轮时间和公网 FTT／客户端 TT 分开看，旧请求没有同口径 FTT／TT，保留为未知。
+
+| 用例 | 旧服务端秒／终态 | 新服务端秒／终态 | 新公网 FTT 秒 | 新客户端 TT 秒 | token 旧→新 |
+| --- | --- | --- | ---: | ---: | ---: |
+| T01 | 75.659 / COMPLETED | 196.567 / FAILED | 无 | 197.331248 | 360096→1600836 |
+| T02 | 47.880 / COMPLETED | 17.176 / COMPLETED | 14.817273 | 19.011393 | 195931→205578 |
+| T03 | 88.877 / COMPLETED | 19.562 / COMPLETED | 17.577218 | 21.282713 | 251637→185262 |
+
+三条合计 provider 调用由 29 次增至 115 次，total token 由 807664 增至 1991676，Supervisor summary 由 5 次降为 0。T02、T03 的耗时下降；token 则是 T02 略增、T03 下降，T01 的失败与大量 Query／embedding 调用把总量推高。这个样本每条只跑一次，旧请求的 prompt、compact、缓存和后续内存修复也都与现在不同，不能把差值全部记在 JEV 头上，也不能据此报 p95/p99 或一般准确率。
+
+因此只按“实时路由接线”采用并验收：三条真实请求确实进入 JEV，分支和原文保持符合预期。原 Chat 的延迟与质量没有闭环，T01 的 Query 预算是新暴露的失败，T02／T03 的播放位置锚定和精确取帧仍未验证。后续候选是调查 Query 的有界、去重与停止条件，并为 Supervisor 预留恢复预算或提供部分失败反馈；这些没有在本轮实现。完整协议、逐条 token／调用和部署收据见[回放报告](../report/agent/chat/history-latency-replay-20261114/README.md)，路由与上线边界见[实时 TRD](../design/03-product-reassessment/chat-realtime-intent-routing-trd.md)。工作台以 `CHAT-JEV-REALTIME-01` 记录本次路由范围完成，`CHAT-QUERY-BUDGET-01` 保持待办，`CHAT-COMPACT-01` 继续验证。
+
+<a id="devlog-chat-model-config-inheritance-20261115"></a>
+## 2026-11-15：Chat 子 Agent 另取全局模型，选定 Supervisor 后仍按旧窗口提前压缩
+
+### 问题与现状
+
+观看页选定模型后，Supervisor 使用当前会话的 binding，Query 子 Agent 却仍从全局 `agent` 配置取模型。两者名字恰好相同时也不代表配置相同：来源、主备、思考档位、输出预算和容量策略都可能不同。更直接的缺口在容量接线，DeepAgents 构建会解析模型元数据，structured Query 构建没有走同一入口，仍合并旧静态窗口。Cloud 的 Supervisor 实际为 1048576／891289／24000，Query 为 64000／48000／24000，另受 200000 字符上限约束。
+
+2026-11-14 的完整回放里，T01 的两个 Query 子任务共出现 9 次本地上下文替换，整轮失败持续 196.567 秒。这里能确认的是配置分叉和旧窗口仍在，不能把这 9 次压缩全部归因为 T01 失败；共享工具预算耗尽、分页重读和循环停止是同时存在的问题。原始证据见[完整回放报告](../report/agent/chat/history-latency-replay-20261114/README.md)，设计与边界见[配置继承 TRD](../design/03-product-reassessment/chat-model-config-inheritance-trd.md)。
+
+### 方案候选
+
+本次复用既有模型 binding、factory 和容量缓存，从当前 Supervisor 的选择装配父子角色：Server 一次性装配父子两个角色的 binding／factory 或个人 target、输出／超时／字符预算和 `ContextWindowPolicy`；有独立 Supervisor 时不再创建 Chat 用不到的全局 agent factory。
+
+Gateway 只保留一个解析入口。`_controls` 对 DeepAgents、structured 与 loop 共用动态容量解析，继续使用既有元数据缓存、主备取小和失败回退，没有新增容量、比例或策略类。旧 `SEEKINO_AGENT_QUERY_MODEL` 与 `query_reasoning_effort` 仍能解析，避免旧配置报错，但 Chat 不再用它们选择子 Agent；未启用比例，或容量既不能发现也没有声明时，沿用原共享静态策略；发现失败但有声明容量时仍按声明推导。native harness 自行管理上下文，不套 API 窗口。显式输出、超时、字符保护和原生上下文所有权都保留。
+
+### 方案验证
+
+实现提交为 `30680fe4`，[PR #171](https://github.com/owariband/Seekino/pull/171) 已以 `dc9c86fa` 合入 dev；正式发布候选为 [main PR #172](https://github.com/owariband/Seekino/pull/172)，尚未合并或部署。受控 worker 先得到 7 项 Gateway 新回归失败和 2 项静态控制通过，Bootstrap 捕获到配置的 Query 模型与 Chat 模型不一致；修改后两个不重叠的范围共 338 项唯一通过：Gateway 202 项用 2.73 秒，Server／个人协议 136 项用 32.76 秒，只有 1 条既有 Starlette 弃用警告。
+
+测试覆盖 structured 与 DeepAgents 的动态容量一致、模型切换、主备取小、元数据失败回退、未启用比例保留旧策略；Bootstrap 覆盖独立 Supervisor、仅全局 agent、Codex native、Ark alternate YAML、fallback 和父子输出／超时／字符／容量；个人模型用 mock 跑通 `openai_chat`、`openai_responses`、`anthropic_messages`、`gemini` 四种协议的结构化工具循环，并确认客户端关闭。没有真实 Chat 模型调用。
+
+当前 Cloud 配置预检读取实际生产 YAML，只发一次真实模型元数据 GET。PATCHED Gateway 在同一个容器内的独立临时进程导入，未改生产模块文件、未重启服务、未替换在线 Server。结果是父子均为 1048576／891289／24000、deepseek-flash／high／8192，元数据请求 1 次、生成调用 0 次，模型与运行哈希、容器和启动状态未变，服务健康。它验证配置与 factory，不验证完整在线 Server 装配，也没有修复后的原 Chat 回放。命令、哈希和范围见[验证报告](../report/gateway/agent_model/chat-model-config-inheritance-20261115/README.md)。
+
+### 指标对比
+
+这次先看模型配置是否真的从同一个当前选择传给父子，再看旧窗口是否还会提前触发压缩。选择这些指标是因为“模型名相同”不足以证明来源、主备、effort 和容量一致；而延迟、token 和回答质量只有在同一输入回放后才有比较意义，本轮没有这些数据。
+
+| 观察项 | 修改前 | 修改后 | 证据与边界 |
+| --- | --- | --- | --- |
+| 模型来源 | Query 用全局 agent，Supervisor 可独立选模 | 父子共用当前 Supervisor binding／factory 或个人 target | Bootstrap 与个人协议断言，338 项测试 |
+| 上下文策略 | Query 64000／48000／24000，Supervisor 1048576／891289／24000 | 当前 Cloud 预检父子均为 1048576／891289／24000 | 实际 YAML＋1 次元数据 GET；未跑完整 Server |
+| 思考档位 | Query 读独立 `query_reasoning_effort` | 跟随 binding 的 effort；个人目标为 `none` | 旧字段仍解析但不决定 Chat 子 Agent |
+| 显式保护 | 两次装配，保护值来源不同 | 父子共用输出／超时／字符取小，200000 字符上限保留 | 字符上限可早于 891289 token 触发压缩 |
+| TT／FTT／token／准确率 | T01 失败 196.567 秒，9 次 Query 压缩 | 未测 | 没有修复后回放，不宣称 9 次变 0 或任何收益 |
+
+因此本轮只采用“配置继承实现＋回归＋当前 Cloud 配置预检”这一层结论。main PR #172 尚未合并，正式环境的完整装配、修复后原始回放、延迟与回答质量仍待验证；Query 的循环、分页进度、部分失败报告和共享预算继续由 `CHAT-QUERY-BUDGET-01` 跟踪，`CHAT-COMPACT-01` 保持 verifying。

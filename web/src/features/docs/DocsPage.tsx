@@ -36,7 +36,7 @@ function Block({ block, content }: { block: DocBlock; content: DocsContent }) {
     case "shot": return <figure className={styles.shot}>
       <p className={styles.shotLabel}>{block.label}</p>
       <p className={styles.shotQuery}><span>{block.asked}</span>“{block.query}”</p>
-      <img src={block.src} alt={block.alt} width={1170} height={772} loading="lazy" />
+      <img src={block.src} alt={block.alt} width={1170} height={597} loading="lazy" />
       <figcaption>{block.note}</figcaption>
     </figure>;
     case "examples": return <div className={styles.examples}>

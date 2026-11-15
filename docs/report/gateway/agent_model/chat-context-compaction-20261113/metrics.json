@@ -1,0 +1,679 @@
+{
+  "schema_version": 1,
+  "recorded_on": "2026-11-13",
+  "timezone": "Asia/Singapore",
+  "base_dev": "80cd796bba25dd3d0e28ff9d896dc317ace7b2d8",
+  "branch": "perf/chat-model-context-compact",
+  "pr": "https://github.com/owariband/Seekino/pull/144",
+  "model_metadata": {
+    "id": "deepseek-flash",
+    "name": "DeepSeek-V4.1-Flash",
+    "context_window": 1048576,
+    "max_output_tokens": 393216,
+    "input_modalities": [
+      "text",
+      "image"
+    ]
+  },
+  "generation_controls": {
+    "model": "deepseek-flash",
+    "reasoning_effort": "high",
+    "requested_output_tokens": 8192,
+    "safety_margin_tokens": 4096,
+    "recent_keep_tokens": 24000
+  },
+  "scope": "production SDK compact plus one model continuation; no business tool/HTTP/SQL/SSE completion",
+  "private_input_files_not_committed": true,
+  "private_snapshot_sha256": "f96cbe489ff5dadf3f7a7ccfaf8bbee395d22b23d34ae773ae09627438ef2a00",
+  "offline_checks": [
+    {
+      "case": "T01",
+      "fixture_sha256": "721fa5c26d29ef609befba4ca1d52236b52861630eed4417526374919734386a",
+      "before_request": {
+        "estimated_tokens": 49395,
+        "sha256": "4d7c6e9cb3107f70f94c45f69751209e27e7a15a88ef9a1bea24ab8111cc165e"
+      },
+      "same_input": true,
+      "baseline_compact_calls": 1,
+      "dynamic_compact_calls": 0,
+      "baseline_policy": {
+        "context_window_tokens": 64000,
+        "output_reserve_tokens": 8192,
+        "safety_margin_tokens": 4096,
+        "auto_compact_tokens": 48000,
+        "compact_target_tokens": 24000
+      },
+      "dynamic_policy": {
+        "context_window_tokens": 1048576,
+        "output_reserve_tokens": 8192,
+        "safety_margin_tokens": 4096,
+        "auto_compact_tokens": 891289,
+        "compact_target_tokens": 24000
+      },
+      "timings_not_real_model_measurements": true
+    },
+    {
+      "case": "T02",
+      "fixture_sha256": "3eb63d81e9a39293e5c04746ac626da7ae897193031c79e255d083ca62732056",
+      "before_request": {
+        "estimated_tokens": 48267,
+        "sha256": "3205d04323b810e1fd23f324a38b6fbf9699b929c44012b06334c9e0c7cab250"
+      },
+      "same_input": true,
+      "baseline_compact_calls": 1,
+      "dynamic_compact_calls": 0,
+      "baseline_policy": {
+        "context_window_tokens": 64000,
+        "output_reserve_tokens": 8192,
+        "safety_margin_tokens": 4096,
+        "auto_compact_tokens": 48000,
+        "compact_target_tokens": 24000
+      },
+      "dynamic_policy": {
+        "context_window_tokens": 1048576,
+        "output_reserve_tokens": 8192,
+        "safety_margin_tokens": 4096,
+        "auto_compact_tokens": 891289,
+        "compact_target_tokens": 24000
+      },
+      "timings_not_real_model_measurements": true
+    },
+    {
+      "case": "T03",
+      "fixture_sha256": "04f4eac8abbb309d233f023387a5a3675222235bc673687851ed50d934bdf11e",
+      "before_request": {
+        "estimated_tokens": 50152,
+        "sha256": "f5a5c648d04e3d5a3282f857845cae491de7a980628e759a361924cfd296f814"
+      },
+      "same_input": true,
+      "baseline_compact_calls": 1,
+      "dynamic_compact_calls": 0,
+      "baseline_policy": {
+        "context_window_tokens": 64000,
+        "output_reserve_tokens": 8192,
+        "safety_margin_tokens": 4096,
+        "auto_compact_tokens": 48000,
+        "compact_target_tokens": 24000
+      },
+      "dynamic_policy": {
+        "context_window_tokens": 1048576,
+        "output_reserve_tokens": 8192,
+        "safety_margin_tokens": 4096,
+        "auto_compact_tokens": 891289,
+        "compact_target_tokens": 24000
+      },
+      "timings_not_real_model_measurements": true
+    }
+  ],
+  "real_model_runs": [
+    {
+      "case": "T01",
+      "fixture_sha256": "721fa5c26d29ef609befba4ca1d52236b52861630eed4417526374919734386a",
+      "before_request": {
+        "estimated_tokens": 49395,
+        "sha256": "4d7c6e9cb3107f70f94c45f69751209e27e7a15a88ef9a1bea24ab8111cc165e"
+      },
+      "same_input": true,
+      "baseline": {
+        "status": "boundary_complete",
+        "wall_seconds": 25.283236917000067,
+        "policy": {
+          "context_window_tokens": 64000,
+          "output_reserve_tokens": 8192,
+          "safety_margin_tokens": 4096,
+          "auto_compact_tokens": 48000,
+          "compact_target_tokens": 24000
+        },
+        "factory_build_seconds": 0.0006867499996587867,
+        "factory_source": "gateway/agent_model/factory.py",
+        "factory_sha256": "3b4c43ca2f03e8692401ea62be587afecba01048d9bf2c21f55902b15740f91f",
+        "private_result_sha256": "364c59586ea0c931a4aff52ff4e0c5373175c27fe877daa658918642b7c54bd5",
+        "calls": [
+          {
+            "kind": "compact",
+            "seconds": 22.302366500000062,
+            "estimated_input_tokens": 13823,
+            "provider_duration_ms": 22262,
+            "call_id": "75343e8a-ef2f-4f1b-ae19-8b161e693f77",
+            "usage": {
+              "input_tokens": 12632,
+              "output_tokens": 4120,
+              "total_tokens": 16752,
+              "cached_input_tokens": 12416,
+              "reasoning_tokens": 2169,
+              "text_input_tokens": null,
+              "image_input_tokens": null,
+              "audio_input_tokens": null,
+              "cached_audio_input_tokens": null,
+              "cache_write_input_tokens": null,
+              "cache_write_5m_input_tokens": null,
+              "cache_write_1h_input_tokens": null
+            },
+            "response_type": "text",
+            "tool_names": []
+          },
+          {
+            "kind": "normal",
+            "seconds": 2.964967459000036,
+            "estimated_input_tokens": 39067,
+            "provider_duration_ms": 2964,
+            "call_id": "fe7ca159-b7e6-453b-860d-037ad3d211de",
+            "usage": {
+              "input_tokens": 33752,
+              "output_tokens": 371,
+              "total_tokens": 34123,
+              "cached_input_tokens": 2432,
+              "reasoning_tokens": 193,
+              "text_input_tokens": null,
+              "image_input_tokens": null,
+              "audio_input_tokens": null,
+              "cached_audio_input_tokens": null,
+              "cache_write_input_tokens": null,
+              "cache_write_5m_input_tokens": null,
+              "cache_write_1h_input_tokens": null
+            },
+            "response_type": "tool_calls",
+            "tool_names": [
+              "search_video_events"
+            ],
+            "tool_arguments_schema_valid": true
+          }
+        ],
+        "compact_seconds": 22.302366500000062,
+        "normal_seconds": 2.964967459000036,
+        "compact_count": 1,
+        "usage_total": {
+          "input_tokens": 46384,
+          "output_tokens": 4491,
+          "total_tokens": 50875,
+          "cached_input_tokens": 14848,
+          "reasoning_tokens": 2362
+        },
+        "normal_estimated_input_tokens": 39067,
+        "normal_provider_input_tokens": 33752,
+        "summary_finished_before_normal_started": true,
+        "source_role": "unmodified_dev"
+      },
+      "dynamic": {
+        "status": "boundary_complete",
+        "wall_seconds": 2.7520375000003696,
+        "policy": {
+          "context_window_tokens": 1048576,
+          "output_reserve_tokens": 8192,
+          "safety_margin_tokens": 4096,
+          "auto_compact_tokens": 891289,
+          "compact_target_tokens": 24000
+        },
+        "factory_build_seconds": 0.33375695899940183,
+        "factory_source": "gateway/agent_model/factory.py",
+        "factory_sha256": "45386c2dafe95cebd4141aca4c0ac798e84a2de460349d5a9e816cc10ca9bc6a",
+        "private_result_sha256": "39558912ba63307f71fe1b21707d9bb63ca01ee2a1994c41e15362c424cae008",
+        "calls": [
+          {
+            "kind": "normal",
+            "seconds": 2.736811333999867,
+            "estimated_input_tokens": 49395,
+            "provider_duration_ms": 2695,
+            "call_id": "930f8456-9a11-4ca4-a051-83af61825706",
+            "usage": {
+              "input_tokens": 43909,
+              "output_tokens": 178,
+              "total_tokens": 44087,
+              "cached_input_tokens": 7168,
+              "reasoning_tokens": 110,
+              "text_input_tokens": null,
+              "image_input_tokens": null,
+              "audio_input_tokens": null,
+              "cached_audio_input_tokens": null,
+              "cache_write_input_tokens": null,
+              "cache_write_5m_input_tokens": null,
+              "cache_write_1h_input_tokens": null
+            },
+            "response_type": "tool_calls",
+            "tool_names": [
+              "read_retrieval_evidence"
+            ],
+            "tool_arguments_schema_valid": true
+          }
+        ],
+        "compact_seconds": 0,
+        "normal_seconds": 2.736811333999867,
+        "compact_count": 0,
+        "usage_total": {
+          "input_tokens": 43909,
+          "output_tokens": 178,
+          "total_tokens": 44087,
+          "cached_input_tokens": 7168,
+          "reasoning_tokens": 110
+        },
+        "normal_estimated_input_tokens": 49395,
+        "normal_provider_input_tokens": 43909,
+        "summary_finished_before_normal_started": true,
+        "source_role": "experiment_worktree"
+      },
+      "saved_seconds": 22.531199416999698,
+      "saved_percent": 89.1151694340611,
+      "estimated_tokens_reclaimed_by_baseline_compact": 10328,
+      "provider_input_tokens_reclaimed_by_baseline_compact": 10157
+    },
+    {
+      "case": "T02",
+      "fixture_sha256": "3eb63d81e9a39293e5c04746ac626da7ae897193031c79e255d083ca62732056",
+      "before_request": {
+        "estimated_tokens": 48267,
+        "sha256": "3205d04323b810e1fd23f324a38b6fbf9699b929c44012b06334c9e0c7cab250"
+      },
+      "same_input": true,
+      "baseline": {
+        "status": "boundary_complete",
+        "wall_seconds": 33.4957674999996,
+        "policy": {
+          "context_window_tokens": 64000,
+          "output_reserve_tokens": 8192,
+          "safety_margin_tokens": 4096,
+          "auto_compact_tokens": 48000,
+          "compact_target_tokens": 24000
+        },
+        "factory_build_seconds": 0.0006867499996587867,
+        "factory_source": "gateway/agent_model/factory.py",
+        "factory_sha256": "3b4c43ca2f03e8692401ea62be587afecba01048d9bf2c21f55902b15740f91f",
+        "private_result_sha256": "c022fa7c728e1d093d76b3961f936a705ee40a8d9de4024546749eb4de34384b",
+        "calls": [
+          {
+            "kind": "compact",
+            "seconds": 29.73932291700021,
+            "estimated_input_tokens": 19463,
+            "provider_duration_ms": 29725,
+            "call_id": "63203b53-0f82-463e-b5f5-46610ca9d57c",
+            "usage": {
+              "input_tokens": 16555,
+              "output_tokens": 5801,
+              "total_tokens": 22356,
+              "cached_input_tokens": 16384,
+              "reasoning_tokens": 4104,
+              "text_input_tokens": null,
+              "image_input_tokens": null,
+              "audio_input_tokens": null,
+              "cached_audio_input_tokens": null,
+              "cache_write_input_tokens": null,
+              "cache_write_5m_input_tokens": null,
+              "cache_write_1h_input_tokens": null
+            },
+            "response_type": "text",
+            "tool_names": []
+          },
+          {
+            "kind": "normal",
+            "seconds": 3.736832375000631,
+            "estimated_input_tokens": 31749,
+            "provider_duration_ms": 3735,
+            "call_id": "693025aa-7aed-4ff7-a35d-9dd2a9b055f1",
+            "usage": {
+              "input_tokens": 21624,
+              "output_tokens": 440,
+              "total_tokens": 22064,
+              "cached_input_tokens": 2432,
+              "reasoning_tokens": 303,
+              "text_input_tokens": null,
+              "image_input_tokens": null,
+              "audio_input_tokens": null,
+              "cached_audio_input_tokens": null,
+              "cache_write_input_tokens": null,
+              "cache_write_5m_input_tokens": null,
+              "cache_write_1h_input_tokens": null
+            },
+            "response_type": "tool_calls",
+            "tool_names": [
+              "submit_video_item"
+            ],
+            "tool_arguments_schema_valid": true
+          }
+        ],
+        "compact_seconds": 29.73932291700021,
+        "normal_seconds": 3.736832375000631,
+        "compact_count": 1,
+        "usage_total": {
+          "input_tokens": 38179,
+          "output_tokens": 6241,
+          "total_tokens": 44420,
+          "cached_input_tokens": 18816,
+          "reasoning_tokens": 4407
+        },
+        "normal_estimated_input_tokens": 31749,
+        "normal_provider_input_tokens": 21624,
+        "summary_finished_before_normal_started": true,
+        "source_role": "unmodified_dev"
+      },
+      "dynamic": {
+        "status": "boundary_complete",
+        "wall_seconds": 6.89095508399987,
+        "policy": {
+          "context_window_tokens": 1048576,
+          "output_reserve_tokens": 8192,
+          "safety_margin_tokens": 4096,
+          "auto_compact_tokens": 891289,
+          "compact_target_tokens": 24000
+        },
+        "factory_build_seconds": 0.33375695899940183,
+        "factory_source": "gateway/agent_model/factory.py",
+        "factory_sha256": "45386c2dafe95cebd4141aca4c0ac798e84a2de460349d5a9e816cc10ca9bc6a",
+        "private_result_sha256": "5f3d7f2b8228b41bee0950746a4573c164d1df52ab716ecd364e80378033164f",
+        "calls": [
+          {
+            "kind": "normal",
+            "seconds": 6.881147792000775,
+            "estimated_input_tokens": 48267,
+            "provider_duration_ms": 6866,
+            "call_id": "24e13ad0-df28-4634-a1a6-13c03606a9c7",
+            "usage": {
+              "input_tokens": 36654,
+              "output_tokens": 866,
+              "total_tokens": 37520,
+              "cached_input_tokens": 7168,
+              "reasoning_tokens": 568,
+              "text_input_tokens": null,
+              "image_input_tokens": null,
+              "audio_input_tokens": null,
+              "cached_audio_input_tokens": null,
+              "cache_write_input_tokens": null,
+              "cache_write_5m_input_tokens": null,
+              "cache_write_1h_input_tokens": null
+            },
+            "response_type": "tool_calls",
+            "tool_names": [
+              "submit_video_item"
+            ],
+            "tool_arguments_schema_valid": true
+          }
+        ],
+        "compact_seconds": 0,
+        "normal_seconds": 6.881147792000775,
+        "compact_count": 0,
+        "usage_total": {
+          "input_tokens": 36654,
+          "output_tokens": 866,
+          "total_tokens": 37520,
+          "cached_input_tokens": 7168,
+          "reasoning_tokens": 568
+        },
+        "normal_estimated_input_tokens": 48267,
+        "normal_provider_input_tokens": 36654,
+        "summary_finished_before_normal_started": true,
+        "source_role": "experiment_worktree"
+      },
+      "saved_seconds": 26.60481241599973,
+      "saved_percent": 79.42738561222711,
+      "estimated_tokens_reclaimed_by_baseline_compact": 16518,
+      "provider_input_tokens_reclaimed_by_baseline_compact": 15030,
+      "submitted_ranges_seconds": {
+        "baseline": {
+          "end_seconds": 1040.0,
+          "start_seconds": 1028.9
+        },
+        "dynamic": {
+          "end_seconds": 1045,
+          "start_seconds": 1028.8
+        }
+      }
+    },
+    {
+      "case": "T03",
+      "fixture_sha256": "04f4eac8abbb309d233f023387a5a3675222235bc673687851ed50d934bdf11e",
+      "before_request": {
+        "estimated_tokens": 50152,
+        "sha256": "f5a5c648d04e3d5a3282f857845cae491de7a980628e759a361924cfd296f814"
+      },
+      "same_input": true,
+      "baseline": {
+        "status": "boundary_complete",
+        "wall_seconds": 25.70244220800032,
+        "policy": {
+          "context_window_tokens": 64000,
+          "output_reserve_tokens": 8192,
+          "safety_margin_tokens": 4096,
+          "auto_compact_tokens": 48000,
+          "compact_target_tokens": 24000
+        },
+        "factory_build_seconds": 0.0006867499996587867,
+        "factory_source": "gateway/agent_model/factory.py",
+        "factory_sha256": "3b4c43ca2f03e8692401ea62be587afecba01048d9bf2c21f55902b15740f91f",
+        "private_result_sha256": "54781b95dbf531afa0cf75079e71fb96bdd2937e43414a814de4a1128cd68ef5",
+        "calls": [
+          {
+            "kind": "compact",
+            "seconds": 23.372472500000185,
+            "estimated_input_tokens": 13835,
+            "provider_duration_ms": 23360,
+            "call_id": "52934ef9-70c1-430f-b829-f12ccfca33b7",
+            "usage": {
+              "input_tokens": 12253,
+              "output_tokens": 4788,
+              "total_tokens": 17041,
+              "cached_input_tokens": 12032,
+              "reasoning_tokens": 2719,
+              "text_input_tokens": null,
+              "image_input_tokens": null,
+              "audio_input_tokens": null,
+              "cached_audio_input_tokens": null,
+              "cache_write_input_tokens": null,
+              "cache_write_5m_input_tokens": null,
+              "cache_write_1h_input_tokens": null
+            },
+            "response_type": "text",
+            "tool_names": []
+          },
+          {
+            "kind": "normal",
+            "seconds": 2.3142504580000605,
+            "estimated_input_tokens": 29205,
+            "provider_duration_ms": 2311,
+            "call_id": "6e4566b3-e442-4fb0-970d-9f3ed5a2638e",
+            "usage": {
+              "input_tokens": 20819,
+              "output_tokens": 345,
+              "total_tokens": 21164,
+              "cached_input_tokens": 2432,
+              "reasoning_tokens": 138,
+              "text_input_tokens": null,
+              "image_input_tokens": null,
+              "audio_input_tokens": null,
+              "cached_audio_input_tokens": null,
+              "cache_write_input_tokens": null,
+              "cache_write_5m_input_tokens": null,
+              "cache_write_1h_input_tokens": null
+            },
+            "response_type": "tool_calls",
+            "tool_names": [
+              "read_retrieval_evidence"
+            ],
+            "tool_arguments_schema_valid": true
+          }
+        ],
+        "compact_seconds": 23.372472500000185,
+        "normal_seconds": 2.3142504580000605,
+        "compact_count": 1,
+        "usage_total": {
+          "input_tokens": 33072,
+          "output_tokens": 5133,
+          "total_tokens": 38205,
+          "cached_input_tokens": 14464,
+          "reasoning_tokens": 2857
+        },
+        "normal_estimated_input_tokens": 29205,
+        "normal_provider_input_tokens": 20819,
+        "summary_finished_before_normal_started": true,
+        "source_role": "unmodified_dev"
+      },
+      "dynamic": {
+        "status": "boundary_complete",
+        "wall_seconds": 5.2971919999999955,
+        "policy": {
+          "context_window_tokens": 1048576,
+          "output_reserve_tokens": 8192,
+          "safety_margin_tokens": 4096,
+          "auto_compact_tokens": 891289,
+          "compact_target_tokens": 24000
+        },
+        "factory_build_seconds": 0.33375695899940183,
+        "factory_source": "gateway/agent_model/factory.py",
+        "factory_sha256": "45386c2dafe95cebd4141aca4c0ac798e84a2de460349d5a9e816cc10ca9bc6a",
+        "private_result_sha256": "214a9f2522c3fb707c1ccedb979bf80656d279ccdfef580a5ff79bd6ce70088f",
+        "calls": [
+          {
+            "kind": "normal",
+            "seconds": 5.2880813339997985,
+            "estimated_input_tokens": 50152,
+            "provider_duration_ms": 5274,
+            "call_id": "7a1312b0-2ab8-4b05-8667-3ecd63804a45",
+            "usage": {
+              "input_tokens": 33910,
+              "output_tokens": 393,
+              "total_tokens": 34303,
+              "cached_input_tokens": 7168,
+              "reasoning_tokens": 185,
+              "text_input_tokens": null,
+              "image_input_tokens": null,
+              "audio_input_tokens": null,
+              "cached_audio_input_tokens": null,
+              "cache_write_input_tokens": null,
+              "cache_write_5m_input_tokens": null,
+              "cache_write_1h_input_tokens": null
+            },
+            "response_type": "tool_calls",
+            "tool_names": [
+              "read_retrieval_evidence"
+            ],
+            "tool_arguments_schema_valid": true
+          }
+        ],
+        "compact_seconds": 0,
+        "normal_seconds": 5.2880813339997985,
+        "compact_count": 0,
+        "usage_total": {
+          "input_tokens": 33910,
+          "output_tokens": 393,
+          "total_tokens": 34303,
+          "cached_input_tokens": 7168,
+          "reasoning_tokens": 185
+        },
+        "normal_estimated_input_tokens": 50152,
+        "normal_provider_input_tokens": 33910,
+        "summary_finished_before_normal_started": true,
+        "source_role": "experiment_worktree"
+      },
+      "saved_seconds": 20.405250208000325,
+      "saved_percent": 79.39031646435856,
+      "estimated_tokens_reclaimed_by_baseline_compact": 20947,
+      "provider_input_tokens_reclaimed_by_baseline_compact": 13091,
+      "offline_next_cursor_check": {
+        "baseline": {
+          "parse_valid": false,
+          "error_type": "AgentToolInvocationError"
+        },
+        "dynamic": {
+          "parse_valid": true,
+          "resource_matches_request": true,
+          "matches_frozen_tool_cursor": true
+        }
+      }
+    }
+  ],
+  "real_model_replay_status": "completed",
+  "tests": {
+    "gateway_sdk": {
+      "passed": 190
+    },
+    "config": {
+      "passed": 130,
+      "deselected_existing_failures": 3
+    },
+    "pristine_dev_same_failures": 3,
+    "compile": "pass",
+    "diff_check": "pass"
+  },
+  "real_model_generation_calls": 9,
+  "totals": {
+    "baseline": {
+      "wall_seconds": 84.48144662499999,
+      "compact_seconds": 75.41416191700046,
+      "normal_seconds": 9.016050292000727,
+      "compact_count": 3,
+      "usage_total": {
+        "input_tokens": 117635,
+        "output_tokens": 15865,
+        "total_tokens": 133500,
+        "cached_input_tokens": 48128,
+        "reasoning_tokens": 9626,
+        "uncached_input_tokens": 69507
+      },
+      "compact_usage_total": {
+        "input_tokens": 41440,
+        "output_tokens": 14709,
+        "total_tokens": 56149,
+        "cached_input_tokens": 40832,
+        "reasoning_tokens": 8992
+      },
+      "normal_usage_total": {
+        "input_tokens": 76195,
+        "output_tokens": 1156,
+        "total_tokens": 77351,
+        "cached_input_tokens": 7296,
+        "reasoning_tokens": 634
+      }
+    },
+    "dynamic": {
+      "wall_seconds": 14.940184584000235,
+      "compact_seconds": 0,
+      "normal_seconds": 14.90604046000044,
+      "compact_count": 0,
+      "usage_total": {
+        "input_tokens": 114473,
+        "output_tokens": 1437,
+        "total_tokens": 115910,
+        "cached_input_tokens": 21504,
+        "reasoning_tokens": 863,
+        "uncached_input_tokens": 92969
+      },
+      "compact_usage_total": {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "cached_input_tokens": 0,
+        "reasoning_tokens": 0
+      },
+      "normal_usage_total": {
+        "input_tokens": 114473,
+        "output_tokens": 1437,
+        "total_tokens": 115910,
+        "cached_input_tokens": 21504,
+        "reasoning_tokens": 863
+      }
+    },
+    "saved_seconds": 69.54126204099975,
+    "saved_percent": 82.31542524322838
+  },
+  "run_order": "A:T01,T02,T03 then B:T01,T02,T03; one paired observation per case",
+  "model_controls_verified_on_all_requests": {
+    "provider": "deepseek",
+    "model": "deepseek-flash",
+    "reasoning_effort": "high",
+    "thinking_type": "enabled",
+    "max_tokens": 8192
+  },
+  "dependency_versions": {
+    "deepagents": "0.7.23",
+    "langchain": "1.4.4",
+    "langgraph": "1.2.11",
+    "langgraph-prebuilt": "1.1.0"
+  },
+  "limitations": [
+    "Not full Chat completion, no new business tool execution, SQL/ES/HTTP/SSE/DOM or video-card validation.",
+    "Three different boundaries, one pair each; no p95/p99 or repeat variance inference.",
+    "All baseline calls ran first. Provider cache hits and normal model outputs differ; do not attribute every millisecond to compaction alone.",
+    "These inputs are ~50k, not near 891289. This does not establish 85% as optimal or validate full-window summary quality."
+  ],
+  "real_run_interval_epoch_ms": {
+    "start": 1794560952217,
+    "end": 1794561092118
+  }
+}

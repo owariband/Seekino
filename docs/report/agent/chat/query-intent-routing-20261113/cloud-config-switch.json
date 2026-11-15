@@ -1,0 +1,45 @@
+{
+  "config_path": "/data/config/cloud/models.yaml",
+  "active_chat_messages": 0,
+  "before_sha256": "5f85d0fdb687bd59834c485454c9a5fba5000f520f5f21fcf810a808659c6af4",
+  "after_sha256": "fef4055318dbded9dce779716e71167d5f73957294f9877fc26278927ad4a9da",
+  "backup_path": "/data/config/cloud/models.yaml.before-jev-20261113T100259Z.bak",
+  "removed_binding": {
+    "model": "deepseek-flash",
+    "reasoning_effort": "high",
+    "max_output_tokens": 256,
+    "stream": false
+  },
+  "router_model": "typesafe/jev-1.14",
+  "rewriter_model": "deepseek-flash",
+  "rewriter_effort": "high",
+  "changed_only": "models.query_hook binding removed; existing JEV and rewriter settings retained",
+  "changed_at_utc": "20261113T100259Z",
+  "live_api_check": {
+    "auth_mode": "cloud",
+    "conversation_id": "8c369ce5-be47-4670-b35f-3282fb6921b6",
+    "assistant_message_id": "799f6268-80a0-4e5e-b697-ed5b31fea61c",
+    "status": "COMPLETED",
+    "content": "好的，收到，这次就不用再找视频了，之后有需要随时叫我。",
+    "elapsed_seconds": 4.690063693094999,
+    "http_status": 200
+  },
+  "live_route_log": {
+    "stage": "query_hook_route",
+    "status": "completed",
+    "action": "respond",
+    "duration_ms": 1533.3,
+    "message_id": "799f6268-80a0-4e5e-b697-ed5b31fea61c"
+  },
+  "api_health_after_restart": "healthy",
+  "cloud_image": "seekino-api:main-a0fb93d9",
+  "dynamic85_deployed_to_cloud": false,
+  "final_public_health": {
+    "url": "https://seekino.hypn0s.cloud/healthz",
+    "http_status": 200,
+    "checked_at_utc": "2026-11-13T10:54:06.164749+00:00",
+    "status": "ok",
+    "parse_consumer_status": "running",
+    "method": "Public HTTPS check after SSH proxy connection closed and direct SSH timed out; no model calls"
+  }
+}

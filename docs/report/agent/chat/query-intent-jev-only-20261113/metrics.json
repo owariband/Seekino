@@ -1,0 +1,4035 @@
+{
+  "schema_version": 1,
+  "experiment": {
+    "arms": [
+      "deepseek_decider",
+      "jev_only",
+      "supervisor_direct"
+    ],
+    "case_ids": [
+      "mixed_feedback_and_search",
+      "respond_existing_evidence",
+      "respond_feedback",
+      "respond_stop_retrieval",
+      "retrieve_original_quote",
+      "retrieve_reference"
+    ],
+    "cases_sha256": "0551bc0706305b9b4c9c78220bddbc06c34b311b774e2de7985d05614d8fe385",
+    "fixture": "isolated copy of real published MyGO 12.012s native-acceptance EP04 clip; one formal Chunk, six Events; no private chat",
+    "git_head": "0bc42b6734f183b5dad12446d70a24396c0999d8",
+    "protocol_started_at": "2026-11-13T11:31:41.151227+00:00",
+    "repeat_case_ids": [
+      "respond_feedback",
+      "mixed_feedback_and_search",
+      "retrieve_original_quote"
+    ],
+    "rounds": {
+      "1": 18,
+      "2": 9
+    },
+    "schedule_steps": 27
+  },
+  "policy": {
+    "factual_quality": "not_inferred",
+    "quality_flags_source": "case_expected",
+    "reasoning_tokens": "subset_of_output_tokens",
+    "response_data": "local_only",
+    "semantic_review": "Codex 主 Agent 逐条核对输出与卡片，未做独立人工盲评；本轮不发布语义通过率。"
+  },
+  "checks": {
+    "arm_usage_matches_total": true,
+    "final_matches_observed": true,
+    "result_ids_unique": true,
+    "role_buckets_complete": true,
+    "runtime_context_policy_consistent_across_arms": true,
+    "runtime_model_consistent_across_arms": true,
+    "schedule_complete": true,
+    "usage_call_ids_unique": true
+  },
+  "totals": {
+    "failures": 0,
+    "output_chars": 10380,
+    "status_counts": {
+      "COMPLETED": 27
+    },
+    "timeouts": 0,
+    "tool_counts": {
+      "get_series_overview": 2,
+      "get_video_outline": 1,
+      "read_retrieval_evidence": 5,
+      "retrieve": 5,
+      "search_video_events": 18,
+      "submit_video_item": 23
+    },
+    "turns": 27,
+    "video_render_blocks": 15
+  },
+  "usage": {
+    "by_model": {
+      "deepseek-flash": {
+        "cached_input_tokens": {
+          "known": 97,
+          "missing": 0,
+          "partial": false,
+          "sum": 723072
+        },
+        "calls": 97,
+        "completed": 96,
+        "failed": 1,
+        "input_tokens": {
+          "known": 97,
+          "missing": 0,
+          "partial": false,
+          "sum": 813831
+        },
+        "missing_usage": 0,
+        "output_tokens": {
+          "known": 97,
+          "missing": 0,
+          "partial": false,
+          "sum": 29829
+        },
+        "provider_duration_seconds": {
+          "known": 97,
+          "missing": 0,
+          "partial": false,
+          "sum": 231.441
+        },
+        "reasoning_tokens": {
+          "known": 97,
+          "missing": 0,
+          "partial": false,
+          "sum": 14059
+        },
+        "total_tokens": {
+          "known": 97,
+          "missing": 0,
+          "partial": false,
+          "sum": 843660
+        }
+      },
+      "doubao-embedding-vision-251215": {
+        "cached_input_tokens": {
+          "known": 0,
+          "missing": 23,
+          "partial": true,
+          "sum": null
+        },
+        "calls": 23,
+        "completed": 23,
+        "failed": 0,
+        "input_tokens": {
+          "known": 23,
+          "missing": 0,
+          "partial": false,
+          "sum": 656
+        },
+        "missing_usage": 0,
+        "output_tokens": {
+          "known": 23,
+          "missing": 0,
+          "partial": false,
+          "sum": 0
+        },
+        "provider_duration_seconds": {
+          "known": 23,
+          "missing": 0,
+          "partial": false,
+          "sum": 4.415
+        },
+        "reasoning_tokens": {
+          "known": 0,
+          "missing": 23,
+          "partial": true,
+          "sum": null
+        },
+        "total_tokens": {
+          "known": 23,
+          "missing": 0,
+          "partial": false,
+          "sum": 656
+        }
+      },
+      "typesafe/jev-1.14-20261014": {
+        "cached_input_tokens": {
+          "known": 0,
+          "missing": 9,
+          "partial": true,
+          "sum": null
+        },
+        "calls": 9,
+        "completed": 9,
+        "failed": 0,
+        "input_tokens": {
+          "known": 9,
+          "missing": 0,
+          "partial": false,
+          "sum": 6305
+        },
+        "missing_usage": 0,
+        "output_tokens": {
+          "known": 9,
+          "missing": 0,
+          "partial": false,
+          "sum": 342
+        },
+        "provider_duration_seconds": {
+          "known": 9,
+          "missing": 0,
+          "partial": false,
+          "sum": 14.93
+        },
+        "reasoning_tokens": {
+          "known": 0,
+          "missing": 9,
+          "partial": true,
+          "sum": null
+        },
+        "total_tokens": {
+          "known": 9,
+          "missing": 0,
+          "partial": false,
+          "sum": 6647
+        }
+      }
+    },
+    "by_operation": {
+      "query_hook_decision": {
+        "cached_input_tokens": {
+          "known": 9,
+          "missing": 0,
+          "partial": false,
+          "sum": 3456
+        },
+        "calls": 9,
+        "completed": 8,
+        "failed": 1,
+        "input_tokens": {
+          "known": 9,
+          "missing": 0,
+          "partial": false,
+          "sum": 5242
+        },
+        "missing_usage": 0,
+        "output_tokens": {
+          "known": 9,
+          "missing": 0,
+          "partial": false,
+          "sum": 571
+        },
+        "provider_duration_seconds": {
+          "known": 9,
+          "missing": 0,
+          "partial": false,
+          "sum": 12.577
+        },
+        "reasoning_tokens": {
+          "known": 9,
+          "missing": 0,
+          "partial": false,
+          "sum": 371
+        },
+        "total_tokens": {
+          "known": 9,
+          "missing": 0,
+          "partial": false,
+          "sum": 5813
+        }
+      },
+      "query_hook_route": {
+        "cached_input_tokens": {
+          "known": 0,
+          "missing": 9,
+          "partial": true,
+          "sum": null
+        },
+        "calls": 9,
+        "completed": 9,
+        "failed": 0,
+        "input_tokens": {
+          "known": 9,
+          "missing": 0,
+          "partial": false,
+          "sum": 6305
+        },
+        "missing_usage": 0,
+        "output_tokens": {
+          "known": 9,
+          "missing": 0,
+          "partial": false,
+          "sum": 342
+        },
+        "provider_duration_seconds": {
+          "known": 9,
+          "missing": 0,
+          "partial": false,
+          "sum": 14.93
+        },
+        "reasoning_tokens": {
+          "known": 0,
+          "missing": 9,
+          "partial": true,
+          "sum": null
+        },
+        "total_tokens": {
+          "known": 9,
+          "missing": 0,
+          "partial": false,
+          "sum": 6647
+        }
+      },
+      "read_file,task,submit_video_item,remove_video_item,search_web,query_video,read_query_report,retrieve,read_retrieval_evidence,search_video_events,get_video_outline,get_series_overview": {
+        "cached_input_tokens": {
+          "known": 88,
+          "missing": 0,
+          "partial": false,
+          "sum": 719616
+        },
+        "calls": 88,
+        "completed": 88,
+        "failed": 0,
+        "input_tokens": {
+          "known": 88,
+          "missing": 0,
+          "partial": false,
+          "sum": 808589
+        },
+        "missing_usage": 0,
+        "output_tokens": {
+          "known": 88,
+          "missing": 0,
+          "partial": false,
+          "sum": 29258
+        },
+        "provider_duration_seconds": {
+          "known": 88,
+          "missing": 0,
+          "partial": false,
+          "sum": 218.864
+        },
+        "reasoning_tokens": {
+          "known": 88,
+          "missing": 0,
+          "partial": false,
+          "sum": 13688
+        },
+        "total_tokens": {
+          "known": 88,
+          "missing": 0,
+          "partial": false,
+          "sum": 837847
+        }
+      },
+      "text_embedding": {
+        "cached_input_tokens": {
+          "known": 0,
+          "missing": 23,
+          "partial": true,
+          "sum": null
+        },
+        "calls": 23,
+        "completed": 23,
+        "failed": 0,
+        "input_tokens": {
+          "known": 23,
+          "missing": 0,
+          "partial": false,
+          "sum": 656
+        },
+        "missing_usage": 0,
+        "output_tokens": {
+          "known": 23,
+          "missing": 0,
+          "partial": false,
+          "sum": 0
+        },
+        "provider_duration_seconds": {
+          "known": 23,
+          "missing": 0,
+          "partial": false,
+          "sum": 4.415
+        },
+        "reasoning_tokens": {
+          "known": 0,
+          "missing": 23,
+          "partial": true,
+          "sum": null
+        },
+        "total_tokens": {
+          "known": 23,
+          "missing": 0,
+          "partial": false,
+          "sum": 656
+        }
+      }
+    },
+    "by_role": {
+      "decision": {
+        "cached_input_tokens": {
+          "known": 9,
+          "missing": 0,
+          "partial": false,
+          "sum": 3456
+        },
+        "calls": 9,
+        "completed": 8,
+        "failed": 1,
+        "input_tokens": {
+          "known": 9,
+          "missing": 0,
+          "partial": false,
+          "sum": 5242
+        },
+        "missing_usage": 0,
+        "output_tokens": {
+          "known": 9,
+          "missing": 0,
+          "partial": false,
+          "sum": 571
+        },
+        "provider_duration_seconds": {
+          "known": 9,
+          "missing": 0,
+          "partial": false,
+          "sum": 12.577
+        },
+        "reasoning_tokens": {
+          "known": 9,
+          "missing": 0,
+          "partial": false,
+          "sum": 371
+        },
+        "total_tokens": {
+          "known": 9,
+          "missing": 0,
+          "partial": false,
+          "sum": 5813
+        }
+      },
+      "embeddings": {
+        "cached_input_tokens": {
+          "known": 0,
+          "missing": 23,
+          "partial": true,
+          "sum": null
+        },
+        "calls": 23,
+        "completed": 23,
+        "failed": 0,
+        "input_tokens": {
+          "known": 23,
+          "missing": 0,
+          "partial": false,
+          "sum": 656
+        },
+        "missing_usage": 0,
+        "output_tokens": {
+          "known": 23,
+          "missing": 0,
+          "partial": false,
+          "sum": 0
+        },
+        "provider_duration_seconds": {
+          "known": 23,
+          "missing": 0,
+          "partial": false,
+          "sum": 4.415
+        },
+        "reasoning_tokens": {
+          "known": 0,
+          "missing": 23,
+          "partial": true,
+          "sum": null
+        },
+        "total_tokens": {
+          "known": 23,
+          "missing": 0,
+          "partial": false,
+          "sum": 656
+        }
+      },
+      "route": {
+        "cached_input_tokens": {
+          "known": 0,
+          "missing": 9,
+          "partial": true,
+          "sum": null
+        },
+        "calls": 9,
+        "completed": 9,
+        "failed": 0,
+        "input_tokens": {
+          "known": 9,
+          "missing": 0,
+          "partial": false,
+          "sum": 6305
+        },
+        "missing_usage": 0,
+        "output_tokens": {
+          "known": 9,
+          "missing": 0,
+          "partial": false,
+          "sum": 342
+        },
+        "provider_duration_seconds": {
+          "known": 9,
+          "missing": 0,
+          "partial": false,
+          "sum": 14.93
+        },
+        "reasoning_tokens": {
+          "known": 0,
+          "missing": 9,
+          "partial": true,
+          "sum": null
+        },
+        "total_tokens": {
+          "known": 9,
+          "missing": 0,
+          "partial": false,
+          "sum": 6647
+        }
+      },
+      "supervisor": {
+        "cached_input_tokens": {
+          "known": 88,
+          "missing": 0,
+          "partial": false,
+          "sum": 719616
+        },
+        "calls": 88,
+        "completed": 88,
+        "failed": 0,
+        "input_tokens": {
+          "known": 88,
+          "missing": 0,
+          "partial": false,
+          "sum": 808589
+        },
+        "missing_usage": 0,
+        "output_tokens": {
+          "known": 88,
+          "missing": 0,
+          "partial": false,
+          "sum": 29258
+        },
+        "provider_duration_seconds": {
+          "known": 88,
+          "missing": 0,
+          "partial": false,
+          "sum": 218.864
+        },
+        "reasoning_tokens": {
+          "known": 88,
+          "missing": 0,
+          "partial": false,
+          "sum": 13688
+        },
+        "total_tokens": {
+          "known": 88,
+          "missing": 0,
+          "partial": false,
+          "sum": 837847
+        }
+      }
+    },
+    "by_stage": {
+      "agent_chat": {
+        "cached_input_tokens": {
+          "known": 88,
+          "missing": 0,
+          "partial": false,
+          "sum": 719616
+        },
+        "calls": 88,
+        "completed": 88,
+        "failed": 0,
+        "input_tokens": {
+          "known": 88,
+          "missing": 0,
+          "partial": false,
+          "sum": 808589
+        },
+        "missing_usage": 0,
+        "output_tokens": {
+          "known": 88,
+          "missing": 0,
+          "partial": false,
+          "sum": 29258
+        },
+        "provider_duration_seconds": {
+          "known": 88,
+          "missing": 0,
+          "partial": false,
+          "sum": 218.864
+        },
+        "reasoning_tokens": {
+          "known": 88,
+          "missing": 0,
+          "partial": false,
+          "sum": 13688
+        },
+        "total_tokens": {
+          "known": 88,
+          "missing": 0,
+          "partial": false,
+          "sum": 837847
+        }
+      },
+      "event_retrieval": {
+        "cached_input_tokens": {
+          "known": 0,
+          "missing": 18,
+          "partial": true,
+          "sum": null
+        },
+        "calls": 18,
+        "completed": 18,
+        "failed": 0,
+        "input_tokens": {
+          "known": 18,
+          "missing": 0,
+          "partial": false,
+          "sum": 507
+        },
+        "missing_usage": 0,
+        "output_tokens": {
+          "known": 18,
+          "missing": 0,
+          "partial": false,
+          "sum": 0
+        },
+        "provider_duration_seconds": {
+          "known": 18,
+          "missing": 0,
+          "partial": false,
+          "sum": 3.199
+        },
+        "reasoning_tokens": {
+          "known": 0,
+          "missing": 18,
+          "partial": true,
+          "sum": null
+        },
+        "total_tokens": {
+          "known": 18,
+          "missing": 0,
+          "partial": false,
+          "sum": 507
+        }
+      },
+      "query_hook": {
+        "cached_input_tokens": {
+          "known": 9,
+          "missing": 9,
+          "partial": true,
+          "sum": 3456
+        },
+        "calls": 18,
+        "completed": 17,
+        "failed": 1,
+        "input_tokens": {
+          "known": 18,
+          "missing": 0,
+          "partial": false,
+          "sum": 11547
+        },
+        "missing_usage": 0,
+        "output_tokens": {
+          "known": 18,
+          "missing": 0,
+          "partial": false,
+          "sum": 913
+        },
+        "provider_duration_seconds": {
+          "known": 18,
+          "missing": 0,
+          "partial": false,
+          "sum": 27.507
+        },
+        "reasoning_tokens": {
+          "known": 9,
+          "missing": 9,
+          "partial": true,
+          "sum": 371
+        },
+        "total_tokens": {
+          "known": 18,
+          "missing": 0,
+          "partial": false,
+          "sum": 12460
+        }
+      },
+      "retrieval": {
+        "cached_input_tokens": {
+          "known": 0,
+          "missing": 5,
+          "partial": true,
+          "sum": null
+        },
+        "calls": 5,
+        "completed": 5,
+        "failed": 0,
+        "input_tokens": {
+          "known": 5,
+          "missing": 0,
+          "partial": false,
+          "sum": 149
+        },
+        "missing_usage": 0,
+        "output_tokens": {
+          "known": 5,
+          "missing": 0,
+          "partial": false,
+          "sum": 0
+        },
+        "provider_duration_seconds": {
+          "known": 5,
+          "missing": 0,
+          "partial": false,
+          "sum": 1.216
+        },
+        "reasoning_tokens": {
+          "known": 0,
+          "missing": 5,
+          "partial": true,
+          "sum": null
+        },
+        "total_tokens": {
+          "known": 5,
+          "missing": 0,
+          "partial": false,
+          "sum": 149
+        }
+      }
+    },
+    "cached_input_tokens": {
+      "known": 97,
+      "missing": 32,
+      "partial": true,
+      "sum": 723072
+    },
+    "calls": 129,
+    "completed": 128,
+    "failed": 1,
+    "input_tokens": {
+      "known": 129,
+      "missing": 0,
+      "partial": false,
+      "sum": 820792
+    },
+    "missing_usage": 0,
+    "output_tokens": {
+      "known": 129,
+      "missing": 0,
+      "partial": false,
+      "sum": 30171
+    },
+    "provider_duration_seconds": {
+      "known": 129,
+      "missing": 0,
+      "partial": false,
+      "sum": 250.786
+    },
+    "reasoning_tokens": {
+      "known": 97,
+      "missing": 32,
+      "partial": true,
+      "sum": 14059
+    },
+    "total_tokens": {
+      "known": 129,
+      "missing": 0,
+      "partial": false,
+      "sum": 850963
+    }
+  },
+  "arms": {
+    "deepseek_decider": {
+      "failures": 0,
+      "ftt_seconds": {
+        "mean": 7.068771,
+        "median": 6.233305,
+        "missing": 0,
+        "samples": 9
+      },
+      "hook_elapsed_seconds": {
+        "mean": 1.404952,
+        "median": 1.340011,
+        "missing_turns": 0,
+        "samples": 9
+      },
+      "runtime_model": {
+        "consistent": true,
+        "context_policy_consistent": true,
+        "models": [
+          {
+            "context_policy": {
+              "auto_compact_tokens": 891289,
+              "compact_target_tokens": 24000,
+              "context_window_tokens": 1048576,
+              "output_reserve_tokens": 8192,
+              "safety_margin_tokens": 4096
+            },
+            "model_name": "deepseek-flash",
+            "provider_name": "deepseek",
+            "supports_text_deltas": true
+          }
+        ]
+      },
+      "status_counts": {
+        "COMPLETED": 9
+      },
+      "successful_tt_seconds": {
+        "mean": 9.994685,
+        "median": 10.279669,
+        "missing": 0,
+        "samples": 9,
+        "successful_only": true
+      },
+      "timeouts": 0,
+      "turns": 9,
+      "usage": {
+        "by_model": {
+          "deepseek-flash": {
+            "cached_input_tokens": {
+              "known": 38,
+              "missing": 0,
+              "partial": false,
+              "sum": 244224
+            },
+            "calls": 38,
+            "completed": 37,
+            "failed": 1,
+            "input_tokens": {
+              "known": 38,
+              "missing": 0,
+              "partial": false,
+              "sum": 274469
+            },
+            "missing_usage": 0,
+            "output_tokens": {
+              "known": 38,
+              "missing": 0,
+              "partial": false,
+              "sum": 10250
+            },
+            "provider_duration_seconds": {
+              "known": 38,
+              "missing": 0,
+              "partial": false,
+              "sum": 84.625
+            },
+            "reasoning_tokens": {
+              "known": 38,
+              "missing": 0,
+              "partial": false,
+              "sum": 5264
+            },
+            "total_tokens": {
+              "known": 38,
+              "missing": 0,
+              "partial": false,
+              "sum": 284719
+            }
+          },
+          "doubao-embedding-vision-251215": {
+            "cached_input_tokens": {
+              "known": 0,
+              "missing": 7,
+              "partial": true,
+              "sum": null
+            },
+            "calls": 7,
+            "completed": 7,
+            "failed": 0,
+            "input_tokens": {
+              "known": 7,
+              "missing": 0,
+              "partial": false,
+              "sum": 215
+            },
+            "missing_usage": 0,
+            "output_tokens": {
+              "known": 7,
+              "missing": 0,
+              "partial": false,
+              "sum": 0
+            },
+            "provider_duration_seconds": {
+              "known": 7,
+              "missing": 0,
+              "partial": false,
+              "sum": 1.322
+            },
+            "reasoning_tokens": {
+              "known": 0,
+              "missing": 7,
+              "partial": true,
+              "sum": null
+            },
+            "total_tokens": {
+              "known": 7,
+              "missing": 0,
+              "partial": false,
+              "sum": 215
+            }
+          }
+        },
+        "by_operation": {
+          "query_hook_decision": {
+            "cached_input_tokens": {
+              "known": 9,
+              "missing": 0,
+              "partial": false,
+              "sum": 3456
+            },
+            "calls": 9,
+            "completed": 8,
+            "failed": 1,
+            "input_tokens": {
+              "known": 9,
+              "missing": 0,
+              "partial": false,
+              "sum": 5242
+            },
+            "missing_usage": 0,
+            "output_tokens": {
+              "known": 9,
+              "missing": 0,
+              "partial": false,
+              "sum": 571
+            },
+            "provider_duration_seconds": {
+              "known": 9,
+              "missing": 0,
+              "partial": false,
+              "sum": 12.577
+            },
+            "reasoning_tokens": {
+              "known": 9,
+              "missing": 0,
+              "partial": false,
+              "sum": 371
+            },
+            "total_tokens": {
+              "known": 9,
+              "missing": 0,
+              "partial": false,
+              "sum": 5813
+            }
+          },
+          "read_file,task,submit_video_item,remove_video_item,search_web,query_video,read_query_report,retrieve,read_retrieval_evidence,search_video_events,get_video_outline,get_series_overview": {
+            "cached_input_tokens": {
+              "known": 29,
+              "missing": 0,
+              "partial": false,
+              "sum": 240768
+            },
+            "calls": 29,
+            "completed": 29,
+            "failed": 0,
+            "input_tokens": {
+              "known": 29,
+              "missing": 0,
+              "partial": false,
+              "sum": 269227
+            },
+            "missing_usage": 0,
+            "output_tokens": {
+              "known": 29,
+              "missing": 0,
+              "partial": false,
+              "sum": 9679
+            },
+            "provider_duration_seconds": {
+              "known": 29,
+              "missing": 0,
+              "partial": false,
+              "sum": 72.048
+            },
+            "reasoning_tokens": {
+              "known": 29,
+              "missing": 0,
+              "partial": false,
+              "sum": 4893
+            },
+            "total_tokens": {
+              "known": 29,
+              "missing": 0,
+              "partial": false,
+              "sum": 278906
+            }
+          },
+          "text_embedding": {
+            "cached_input_tokens": {
+              "known": 0,
+              "missing": 7,
+              "partial": true,
+              "sum": null
+            },
+            "calls": 7,
+            "completed": 7,
+            "failed": 0,
+            "input_tokens": {
+              "known": 7,
+              "missing": 0,
+              "partial": false,
+              "sum": 215
+            },
+            "missing_usage": 0,
+            "output_tokens": {
+              "known": 7,
+              "missing": 0,
+              "partial": false,
+              "sum": 0
+            },
+            "provider_duration_seconds": {
+              "known": 7,
+              "missing": 0,
+              "partial": false,
+              "sum": 1.322
+            },
+            "reasoning_tokens": {
+              "known": 0,
+              "missing": 7,
+              "partial": true,
+              "sum": null
+            },
+            "total_tokens": {
+              "known": 7,
+              "missing": 0,
+              "partial": false,
+              "sum": 215
+            }
+          }
+        },
+        "by_role": {
+          "decision": {
+            "cached_input_tokens": {
+              "known": 9,
+              "missing": 0,
+              "partial": false,
+              "sum": 3456
+            },
+            "calls": 9,
+            "completed": 8,
+            "failed": 1,
+            "input_tokens": {
+              "known": 9,
+              "missing": 0,
+              "partial": false,
+              "sum": 5242
+            },
+            "missing_usage": 0,
+            "output_tokens": {
+              "known": 9,
+              "missing": 0,
+              "partial": false,
+              "sum": 571
+            },
+            "provider_duration_seconds": {
+              "known": 9,
+              "missing": 0,
+              "partial": false,
+              "sum": 12.577
+            },
+            "reasoning_tokens": {
+              "known": 9,
+              "missing": 0,
+              "partial": false,
+              "sum": 371
+            },
+            "total_tokens": {
+              "known": 9,
+              "missing": 0,
+              "partial": false,
+              "sum": 5813
+            }
+          },
+          "embeddings": {
+            "cached_input_tokens": {
+              "known": 0,
+              "missing": 7,
+              "partial": true,
+              "sum": null
+            },
+            "calls": 7,
+            "completed": 7,
+            "failed": 0,
+            "input_tokens": {
+              "known": 7,
+              "missing": 0,
+              "partial": false,
+              "sum": 215
+            },
+            "missing_usage": 0,
+            "output_tokens": {
+              "known": 7,
+              "missing": 0,
+              "partial": false,
+              "sum": 0
+            },
+            "provider_duration_seconds": {
+              "known": 7,
+              "missing": 0,
+              "partial": false,
+              "sum": 1.322
+            },
+            "reasoning_tokens": {
+              "known": 0,
+              "missing": 7,
+              "partial": true,
+              "sum": null
+            },
+            "total_tokens": {
+              "known": 7,
+              "missing": 0,
+              "partial": false,
+              "sum": 215
+            }
+          },
+          "supervisor": {
+            "cached_input_tokens": {
+              "known": 29,
+              "missing": 0,
+              "partial": false,
+              "sum": 240768
+            },
+            "calls": 29,
+            "completed": 29,
+            "failed": 0,
+            "input_tokens": {
+              "known": 29,
+              "missing": 0,
+              "partial": false,
+              "sum": 269227
+            },
+            "missing_usage": 0,
+            "output_tokens": {
+              "known": 29,
+              "missing": 0,
+              "partial": false,
+              "sum": 9679
+            },
+            "provider_duration_seconds": {
+              "known": 29,
+              "missing": 0,
+              "partial": false,
+              "sum": 72.048
+            },
+            "reasoning_tokens": {
+              "known": 29,
+              "missing": 0,
+              "partial": false,
+              "sum": 4893
+            },
+            "total_tokens": {
+              "known": 29,
+              "missing": 0,
+              "partial": false,
+              "sum": 278906
+            }
+          }
+        },
+        "by_stage": {
+          "agent_chat": {
+            "cached_input_tokens": {
+              "known": 29,
+              "missing": 0,
+              "partial": false,
+              "sum": 240768
+            },
+            "calls": 29,
+            "completed": 29,
+            "failed": 0,
+            "input_tokens": {
+              "known": 29,
+              "missing": 0,
+              "partial": false,
+              "sum": 269227
+            },
+            "missing_usage": 0,
+            "output_tokens": {
+              "known": 29,
+              "missing": 0,
+              "partial": false,
+              "sum": 9679
+            },
+            "provider_duration_seconds": {
+              "known": 29,
+              "missing": 0,
+              "partial": false,
+              "sum": 72.048
+            },
+            "reasoning_tokens": {
+              "known": 29,
+              "missing": 0,
+              "partial": false,
+              "sum": 4893
+            },
+            "total_tokens": {
+              "known": 29,
+              "missing": 0,
+              "partial": false,
+              "sum": 278906
+            }
+          },
+          "event_retrieval": {
+            "cached_input_tokens": {
+              "known": 0,
+              "missing": 6,
+              "partial": true,
+              "sum": null
+            },
+            "calls": 6,
+            "completed": 6,
+            "failed": 0,
+            "input_tokens": {
+              "known": 6,
+              "missing": 0,
+              "partial": false,
+              "sum": 182
+            },
+            "missing_usage": 0,
+            "output_tokens": {
+              "known": 6,
+              "missing": 0,
+              "partial": false,
+              "sum": 0
+            },
+            "provider_duration_seconds": {
+              "known": 6,
+              "missing": 0,
+              "partial": false,
+              "sum": 1.168
+            },
+            "reasoning_tokens": {
+              "known": 0,
+              "missing": 6,
+              "partial": true,
+              "sum": null
+            },
+            "total_tokens": {
+              "known": 6,
+              "missing": 0,
+              "partial": false,
+              "sum": 182
+            }
+          },
+          "query_hook": {
+            "cached_input_tokens": {
+              "known": 9,
+              "missing": 0,
+              "partial": false,
+              "sum": 3456
+            },
+            "calls": 9,
+            "completed": 8,
+            "failed": 1,
+            "input_tokens": {
+              "known": 9,
+              "missing": 0,
+              "partial": false,
+              "sum": 5242
+            },
+            "missing_usage": 0,
+            "output_tokens": {
+              "known": 9,
+              "missing": 0,
+              "partial": false,
+              "sum": 571
+            },
+            "provider_duration_seconds": {
+              "known": 9,
+              "missing": 0,
+              "partial": false,
+              "sum": 12.577
+            },
+            "reasoning_tokens": {
+              "known": 9,
+              "missing": 0,
+              "partial": false,
+              "sum": 371
+            },
+            "total_tokens": {
+              "known": 9,
+              "missing": 0,
+              "partial": false,
+              "sum": 5813
+            }
+          },
+          "retrieval": {
+            "cached_input_tokens": {
+              "known": 0,
+              "missing": 1,
+              "partial": true,
+              "sum": null
+            },
+            "calls": 1,
+            "completed": 1,
+            "failed": 0,
+            "input_tokens": {
+              "known": 1,
+              "missing": 0,
+              "partial": false,
+              "sum": 33
+            },
+            "missing_usage": 0,
+            "output_tokens": {
+              "known": 1,
+              "missing": 0,
+              "partial": false,
+              "sum": 0
+            },
+            "provider_duration_seconds": {
+              "known": 1,
+              "missing": 0,
+              "partial": false,
+              "sum": 0.154
+            },
+            "reasoning_tokens": {
+              "known": 0,
+              "missing": 1,
+              "partial": true,
+              "sum": null
+            },
+            "total_tokens": {
+              "known": 1,
+              "missing": 0,
+              "partial": false,
+              "sum": 33
+            }
+          }
+        },
+        "cached_input_tokens": {
+          "known": 38,
+          "missing": 7,
+          "partial": true,
+          "sum": 244224
+        },
+        "calls": 45,
+        "completed": 44,
+        "failed": 1,
+        "input_tokens": {
+          "known": 45,
+          "missing": 0,
+          "partial": false,
+          "sum": 274684
+        },
+        "missing_usage": 0,
+        "output_tokens": {
+          "known": 45,
+          "missing": 0,
+          "partial": false,
+          "sum": 10250
+        },
+        "provider_duration_seconds": {
+          "known": 45,
+          "missing": 0,
+          "partial": false,
+          "sum": 85.947
+        },
+        "reasoning_tokens": {
+          "known": 38,
+          "missing": 7,
+          "partial": true,
+          "sum": 5264
+        },
+        "total_tokens": {
+          "known": 45,
+          "missing": 0,
+          "partial": false,
+          "sum": 284934
+        }
+      }
+    },
+    "jev_only": {
+      "failures": 0,
+      "ftt_seconds": {
+        "mean": 6.728552,
+        "median": 5.966937,
+        "missing": 0,
+        "samples": 9
+      },
+      "hook_elapsed_seconds": {
+        "mean": 1.673505,
+        "median": 1.655851,
+        "missing_turns": 0,
+        "samples": 9
+      },
+      "runtime_model": {
+        "consistent": true,
+        "context_policy_consistent": true,
+        "models": [
+          {
+            "context_policy": {
+              "auto_compact_tokens": 891289,
+              "compact_target_tokens": 24000,
+              "context_window_tokens": 1048576,
+              "output_reserve_tokens": 8192,
+              "safety_margin_tokens": 4096
+            },
+            "model_name": "deepseek-flash",
+            "provider_name": "deepseek",
+            "supports_text_deltas": true
+          }
+        ]
+      },
+      "status_counts": {
+        "COMPLETED": 9
+      },
+      "successful_tt_seconds": {
+        "mean": 9.488602,
+        "median": 8.288976,
+        "missing": 0,
+        "samples": 9,
+        "successful_only": true
+      },
+      "timeouts": 0,
+      "turns": 9,
+      "usage": {
+        "by_model": {
+          "deepseek-flash": {
+            "cached_input_tokens": {
+              "known": 27,
+              "missing": 0,
+              "partial": false,
+              "sum": 217216
+            },
+            "calls": 27,
+            "completed": 27,
+            "failed": 0,
+            "input_tokens": {
+              "known": 27,
+              "missing": 0,
+              "partial": false,
+              "sum": 242163
+            },
+            "missing_usage": 0,
+            "output_tokens": {
+              "known": 27,
+              "missing": 0,
+              "partial": false,
+              "sum": 8223
+            },
+            "provider_duration_seconds": {
+              "known": 27,
+              "missing": 0,
+              "partial": false,
+              "sum": 65.126
+            },
+            "reasoning_tokens": {
+              "known": 27,
+              "missing": 0,
+              "partial": false,
+              "sum": 3557
+            },
+            "total_tokens": {
+              "known": 27,
+              "missing": 0,
+              "partial": false,
+              "sum": 250386
+            }
+          },
+          "doubao-embedding-vision-251215": {
+            "cached_input_tokens": {
+              "known": 0,
+              "missing": 7,
+              "partial": true,
+              "sum": null
+            },
+            "calls": 7,
+            "completed": 7,
+            "failed": 0,
+            "input_tokens": {
+              "known": 7,
+              "missing": 0,
+              "partial": false,
+              "sum": 206
+            },
+            "missing_usage": 0,
+            "output_tokens": {
+              "known": 7,
+              "missing": 0,
+              "partial": false,
+              "sum": 0
+            },
+            "provider_duration_seconds": {
+              "known": 7,
+              "missing": 0,
+              "partial": false,
+              "sum": 1.494
+            },
+            "reasoning_tokens": {
+              "known": 0,
+              "missing": 7,
+              "partial": true,
+              "sum": null
+            },
+            "total_tokens": {
+              "known": 7,
+              "missing": 0,
+              "partial": false,
+              "sum": 206
+            }
+          },
+          "typesafe/jev-1.14-20261014": {
+            "cached_input_tokens": {
+              "known": 0,
+              "missing": 9,
+              "partial": true,
+              "sum": null
+            },
+            "calls": 9,
+            "completed": 9,
+            "failed": 0,
+            "input_tokens": {
+              "known": 9,
+              "missing": 0,
+              "partial": false,
+              "sum": 6305
+            },
+            "missing_usage": 0,
+            "output_tokens": {
+              "known": 9,
+              "missing": 0,
+              "partial": false,
+              "sum": 342
+            },
+            "provider_duration_seconds": {
+              "known": 9,
+              "missing": 0,
+              "partial": false,
+              "sum": 14.93
+            },
+            "reasoning_tokens": {
+              "known": 0,
+              "missing": 9,
+              "partial": true,
+              "sum": null
+            },
+            "total_tokens": {
+              "known": 9,
+              "missing": 0,
+              "partial": false,
+              "sum": 6647
+            }
+          }
+        },
+        "by_operation": {
+          "query_hook_route": {
+            "cached_input_tokens": {
+              "known": 0,
+              "missing": 9,
+              "partial": true,
+              "sum": null
+            },
+            "calls": 9,
+            "completed": 9,
+            "failed": 0,
+            "input_tokens": {
+              "known": 9,
+              "missing": 0,
+              "partial": false,
+              "sum": 6305
+            },
+            "missing_usage": 0,
+            "output_tokens": {
+              "known": 9,
+              "missing": 0,
+              "partial": false,
+              "sum": 342
+            },
+            "provider_duration_seconds": {
+              "known": 9,
+              "missing": 0,
+              "partial": false,
+              "sum": 14.93
+            },
+            "reasoning_tokens": {
+              "known": 0,
+              "missing": 9,
+              "partial": true,
+              "sum": null
+            },
+            "total_tokens": {
+              "known": 9,
+              "missing": 0,
+              "partial": false,
+              "sum": 6647
+            }
+          },
+          "read_file,task,submit_video_item,remove_video_item,search_web,query_video,read_query_report,retrieve,read_retrieval_evidence,search_video_events,get_video_outline,get_series_overview": {
+            "cached_input_tokens": {
+              "known": 27,
+              "missing": 0,
+              "partial": false,
+              "sum": 217216
+            },
+            "calls": 27,
+            "completed": 27,
+            "failed": 0,
+            "input_tokens": {
+              "known": 27,
+              "missing": 0,
+              "partial": false,
+              "sum": 242163
+            },
+            "missing_usage": 0,
+            "output_tokens": {
+              "known": 27,
+              "missing": 0,
+              "partial": false,
+              "sum": 8223
+            },
+            "provider_duration_seconds": {
+              "known": 27,
+              "missing": 0,
+              "partial": false,
+              "sum": 65.126
+            },
+            "reasoning_tokens": {
+              "known": 27,
+              "missing": 0,
+              "partial": false,
+              "sum": 3557
+            },
+            "total_tokens": {
+              "known": 27,
+              "missing": 0,
+              "partial": false,
+              "sum": 250386
+            }
+          },
+          "text_embedding": {
+            "cached_input_tokens": {
+              "known": 0,
+              "missing": 7,
+              "partial": true,
+              "sum": null
+            },
+            "calls": 7,
+            "completed": 7,
+            "failed": 0,
+            "input_tokens": {
+              "known": 7,
+              "missing": 0,
+              "partial": false,
+              "sum": 206
+            },
+            "missing_usage": 0,
+            "output_tokens": {
+              "known": 7,
+              "missing": 0,
+              "partial": false,
+              "sum": 0
+            },
+            "provider_duration_seconds": {
+              "known": 7,
+              "missing": 0,
+              "partial": false,
+              "sum": 1.494
+            },
+            "reasoning_tokens": {
+              "known": 0,
+              "missing": 7,
+              "partial": true,
+              "sum": null
+            },
+            "total_tokens": {
+              "known": 7,
+              "missing": 0,
+              "partial": false,
+              "sum": 206
+            }
+          }
+        },
+        "by_role": {
+          "embeddings": {
+            "cached_input_tokens": {
+              "known": 0,
+              "missing": 7,
+              "partial": true,
+              "sum": null
+            },
+            "calls": 7,
+            "completed": 7,
+            "failed": 0,
+            "input_tokens": {
+              "known": 7,
+              "missing": 0,
+              "partial": false,
+              "sum": 206
+            },
+            "missing_usage": 0,
+            "output_tokens": {
+              "known": 7,
+              "missing": 0,
+              "partial": false,
+              "sum": 0
+            },
+            "provider_duration_seconds": {
+              "known": 7,
+              "missing": 0,
+              "partial": false,
+              "sum": 1.494
+            },
+            "reasoning_tokens": {
+              "known": 0,
+              "missing": 7,
+              "partial": true,
+              "sum": null
+            },
+            "total_tokens": {
+              "known": 7,
+              "missing": 0,
+              "partial": false,
+              "sum": 206
+            }
+          },
+          "route": {
+            "cached_input_tokens": {
+              "known": 0,
+              "missing": 9,
+              "partial": true,
+              "sum": null
+            },
+            "calls": 9,
+            "completed": 9,
+            "failed": 0,
+            "input_tokens": {
+              "known": 9,
+              "missing": 0,
+              "partial": false,
+              "sum": 6305
+            },
+            "missing_usage": 0,
+            "output_tokens": {
+              "known": 9,
+              "missing": 0,
+              "partial": false,
+              "sum": 342
+            },
+            "provider_duration_seconds": {
+              "known": 9,
+              "missing": 0,
+              "partial": false,
+              "sum": 14.93
+            },
+            "reasoning_tokens": {
+              "known": 0,
+              "missing": 9,
+              "partial": true,
+              "sum": null
+            },
+            "total_tokens": {
+              "known": 9,
+              "missing": 0,
+              "partial": false,
+              "sum": 6647
+            }
+          },
+          "supervisor": {
+            "cached_input_tokens": {
+              "known": 27,
+              "missing": 0,
+              "partial": false,
+              "sum": 217216
+            },
+            "calls": 27,
+            "completed": 27,
+            "failed": 0,
+            "input_tokens": {
+              "known": 27,
+              "missing": 0,
+              "partial": false,
+              "sum": 242163
+            },
+            "missing_usage": 0,
+            "output_tokens": {
+              "known": 27,
+              "missing": 0,
+              "partial": false,
+              "sum": 8223
+            },
+            "provider_duration_seconds": {
+              "known": 27,
+              "missing": 0,
+              "partial": false,
+              "sum": 65.126
+            },
+            "reasoning_tokens": {
+              "known": 27,
+              "missing": 0,
+              "partial": false,
+              "sum": 3557
+            },
+            "total_tokens": {
+              "known": 27,
+              "missing": 0,
+              "partial": false,
+              "sum": 250386
+            }
+          }
+        },
+        "by_stage": {
+          "agent_chat": {
+            "cached_input_tokens": {
+              "known": 27,
+              "missing": 0,
+              "partial": false,
+              "sum": 217216
+            },
+            "calls": 27,
+            "completed": 27,
+            "failed": 0,
+            "input_tokens": {
+              "known": 27,
+              "missing": 0,
+              "partial": false,
+              "sum": 242163
+            },
+            "missing_usage": 0,
+            "output_tokens": {
+              "known": 27,
+              "missing": 0,
+              "partial": false,
+              "sum": 8223
+            },
+            "provider_duration_seconds": {
+              "known": 27,
+              "missing": 0,
+              "partial": false,
+              "sum": 65.126
+            },
+            "reasoning_tokens": {
+              "known": 27,
+              "missing": 0,
+              "partial": false,
+              "sum": 3557
+            },
+            "total_tokens": {
+              "known": 27,
+              "missing": 0,
+              "partial": false,
+              "sum": 250386
+            }
+          },
+          "event_retrieval": {
+            "cached_input_tokens": {
+              "known": 0,
+              "missing": 5,
+              "partial": true,
+              "sum": null
+            },
+            "calls": 5,
+            "completed": 5,
+            "failed": 0,
+            "input_tokens": {
+              "known": 5,
+              "missing": 0,
+              "partial": false,
+              "sum": 146
+            },
+            "missing_usage": 0,
+            "output_tokens": {
+              "known": 5,
+              "missing": 0,
+              "partial": false,
+              "sum": 0
+            },
+            "provider_duration_seconds": {
+              "known": 5,
+              "missing": 0,
+              "partial": false,
+              "sum": 0.835
+            },
+            "reasoning_tokens": {
+              "known": 0,
+              "missing": 5,
+              "partial": true,
+              "sum": null
+            },
+            "total_tokens": {
+              "known": 5,
+              "missing": 0,
+              "partial": false,
+              "sum": 146
+            }
+          },
+          "query_hook": {
+            "cached_input_tokens": {
+              "known": 0,
+              "missing": 9,
+              "partial": true,
+              "sum": null
+            },
+            "calls": 9,
+            "completed": 9,
+            "failed": 0,
+            "input_tokens": {
+              "known": 9,
+              "missing": 0,
+              "partial": false,
+              "sum": 6305
+            },
+            "missing_usage": 0,
+            "output_tokens": {
+              "known": 9,
+              "missing": 0,
+              "partial": false,
+              "sum": 342
+            },
+            "provider_duration_seconds": {
+              "known": 9,
+              "missing": 0,
+              "partial": false,
+              "sum": 14.93
+            },
+            "reasoning_tokens": {
+              "known": 0,
+              "missing": 9,
+              "partial": true,
+              "sum": null
+            },
+            "total_tokens": {
+              "known": 9,
+              "missing": 0,
+              "partial": false,
+              "sum": 6647
+            }
+          },
+          "retrieval": {
+            "cached_input_tokens": {
+              "known": 0,
+              "missing": 2,
+              "partial": true,
+              "sum": null
+            },
+            "calls": 2,
+            "completed": 2,
+            "failed": 0,
+            "input_tokens": {
+              "known": 2,
+              "missing": 0,
+              "partial": false,
+              "sum": 60
+            },
+            "missing_usage": 0,
+            "output_tokens": {
+              "known": 2,
+              "missing": 0,
+              "partial": false,
+              "sum": 0
+            },
+            "provider_duration_seconds": {
+              "known": 2,
+              "missing": 0,
+              "partial": false,
+              "sum": 0.659
+            },
+            "reasoning_tokens": {
+              "known": 0,
+              "missing": 2,
+              "partial": true,
+              "sum": null
+            },
+            "total_tokens": {
+              "known": 2,
+              "missing": 0,
+              "partial": false,
+              "sum": 60
+            }
+          }
+        },
+        "cached_input_tokens": {
+          "known": 27,
+          "missing": 16,
+          "partial": true,
+          "sum": 217216
+        },
+        "calls": 43,
+        "completed": 43,
+        "failed": 0,
+        "input_tokens": {
+          "known": 43,
+          "missing": 0,
+          "partial": false,
+          "sum": 248674
+        },
+        "missing_usage": 0,
+        "output_tokens": {
+          "known": 43,
+          "missing": 0,
+          "partial": false,
+          "sum": 8565
+        },
+        "provider_duration_seconds": {
+          "known": 43,
+          "missing": 0,
+          "partial": false,
+          "sum": 81.55
+        },
+        "reasoning_tokens": {
+          "known": 27,
+          "missing": 16,
+          "partial": true,
+          "sum": 3557
+        },
+        "total_tokens": {
+          "known": 43,
+          "missing": 0,
+          "partial": false,
+          "sum": 257239
+        }
+      }
+    },
+    "supervisor_direct": {
+      "failures": 0,
+      "ftt_seconds": {
+        "mean": 6.595774,
+        "median": 4.806246,
+        "missing": 0,
+        "samples": 9
+      },
+      "hook_elapsed_seconds": {
+        "mean": null,
+        "median": null,
+        "missing_turns": 9,
+        "samples": 0
+      },
+      "runtime_model": {
+        "consistent": true,
+        "context_policy_consistent": true,
+        "models": [
+          {
+            "context_policy": {
+              "auto_compact_tokens": 891289,
+              "compact_target_tokens": 24000,
+              "context_window_tokens": 1048576,
+              "output_reserve_tokens": 8192,
+              "safety_margin_tokens": 4096
+            },
+            "model_name": "deepseek-flash",
+            "provider_name": "deepseek",
+            "supports_text_deltas": true
+          }
+        ]
+      },
+      "status_counts": {
+        "COMPLETED": 9
+      },
+      "successful_tt_seconds": {
+        "mean": 9.722362,
+        "median": 10.392602,
+        "missing": 0,
+        "samples": 9,
+        "successful_only": true
+      },
+      "timeouts": 0,
+      "turns": 9,
+      "usage": {
+        "by_model": {
+          "deepseek-flash": {
+            "cached_input_tokens": {
+              "known": 32,
+              "missing": 0,
+              "partial": false,
+              "sum": 261632
+            },
+            "calls": 32,
+            "completed": 32,
+            "failed": 0,
+            "input_tokens": {
+              "known": 32,
+              "missing": 0,
+              "partial": false,
+              "sum": 297199
+            },
+            "missing_usage": 0,
+            "output_tokens": {
+              "known": 32,
+              "missing": 0,
+              "partial": false,
+              "sum": 11356
+            },
+            "provider_duration_seconds": {
+              "known": 32,
+              "missing": 0,
+              "partial": false,
+              "sum": 81.69
+            },
+            "reasoning_tokens": {
+              "known": 32,
+              "missing": 0,
+              "partial": false,
+              "sum": 5238
+            },
+            "total_tokens": {
+              "known": 32,
+              "missing": 0,
+              "partial": false,
+              "sum": 308555
+            }
+          },
+          "doubao-embedding-vision-251215": {
+            "cached_input_tokens": {
+              "known": 0,
+              "missing": 9,
+              "partial": true,
+              "sum": null
+            },
+            "calls": 9,
+            "completed": 9,
+            "failed": 0,
+            "input_tokens": {
+              "known": 9,
+              "missing": 0,
+              "partial": false,
+              "sum": 235
+            },
+            "missing_usage": 0,
+            "output_tokens": {
+              "known": 9,
+              "missing": 0,
+              "partial": false,
+              "sum": 0
+            },
+            "provider_duration_seconds": {
+              "known": 9,
+              "missing": 0,
+              "partial": false,
+              "sum": 1.599
+            },
+            "reasoning_tokens": {
+              "known": 0,
+              "missing": 9,
+              "partial": true,
+              "sum": null
+            },
+            "total_tokens": {
+              "known": 9,
+              "missing": 0,
+              "partial": false,
+              "sum": 235
+            }
+          }
+        },
+        "by_operation": {
+          "read_file,task,submit_video_item,remove_video_item,search_web,query_video,read_query_report,retrieve,read_retrieval_evidence,search_video_events,get_video_outline,get_series_overview": {
+            "cached_input_tokens": {
+              "known": 32,
+              "missing": 0,
+              "partial": false,
+              "sum": 261632
+            },
+            "calls": 32,
+            "completed": 32,
+            "failed": 0,
+            "input_tokens": {
+              "known": 32,
+              "missing": 0,
+              "partial": false,
+              "sum": 297199
+            },
+            "missing_usage": 0,
+            "output_tokens": {
+              "known": 32,
+              "missing": 0,
+              "partial": false,
+              "sum": 11356
+            },
+            "provider_duration_seconds": {
+              "known": 32,
+              "missing": 0,
+              "partial": false,
+              "sum": 81.69
+            },
+            "reasoning_tokens": {
+              "known": 32,
+              "missing": 0,
+              "partial": false,
+              "sum": 5238
+            },
+            "total_tokens": {
+              "known": 32,
+              "missing": 0,
+              "partial": false,
+              "sum": 308555
+            }
+          },
+          "text_embedding": {
+            "cached_input_tokens": {
+              "known": 0,
+              "missing": 9,
+              "partial": true,
+              "sum": null
+            },
+            "calls": 9,
+            "completed": 9,
+            "failed": 0,
+            "input_tokens": {
+              "known": 9,
+              "missing": 0,
+              "partial": false,
+              "sum": 235
+            },
+            "missing_usage": 0,
+            "output_tokens": {
+              "known": 9,
+              "missing": 0,
+              "partial": false,
+              "sum": 0
+            },
+            "provider_duration_seconds": {
+              "known": 9,
+              "missing": 0,
+              "partial": false,
+              "sum": 1.599
+            },
+            "reasoning_tokens": {
+              "known": 0,
+              "missing": 9,
+              "partial": true,
+              "sum": null
+            },
+            "total_tokens": {
+              "known": 9,
+              "missing": 0,
+              "partial": false,
+              "sum": 235
+            }
+          }
+        },
+        "by_role": {
+          "embeddings": {
+            "cached_input_tokens": {
+              "known": 0,
+              "missing": 9,
+              "partial": true,
+              "sum": null
+            },
+            "calls": 9,
+            "completed": 9,
+            "failed": 0,
+            "input_tokens": {
+              "known": 9,
+              "missing": 0,
+              "partial": false,
+              "sum": 235
+            },
+            "missing_usage": 0,
+            "output_tokens": {
+              "known": 9,
+              "missing": 0,
+              "partial": false,
+              "sum": 0
+            },
+            "provider_duration_seconds": {
+              "known": 9,
+              "missing": 0,
+              "partial": false,
+              "sum": 1.599
+            },
+            "reasoning_tokens": {
+              "known": 0,
+              "missing": 9,
+              "partial": true,
+              "sum": null
+            },
+            "total_tokens": {
+              "known": 9,
+              "missing": 0,
+              "partial": false,
+              "sum": 235
+            }
+          },
+          "supervisor": {
+            "cached_input_tokens": {
+              "known": 32,
+              "missing": 0,
+              "partial": false,
+              "sum": 261632
+            },
+            "calls": 32,
+            "completed": 32,
+            "failed": 0,
+            "input_tokens": {
+              "known": 32,
+              "missing": 0,
+              "partial": false,
+              "sum": 297199
+            },
+            "missing_usage": 0,
+            "output_tokens": {
+              "known": 32,
+              "missing": 0,
+              "partial": false,
+              "sum": 11356
+            },
+            "provider_duration_seconds": {
+              "known": 32,
+              "missing": 0,
+              "partial": false,
+              "sum": 81.69
+            },
+            "reasoning_tokens": {
+              "known": 32,
+              "missing": 0,
+              "partial": false,
+              "sum": 5238
+            },
+            "total_tokens": {
+              "known": 32,
+              "missing": 0,
+              "partial": false,
+              "sum": 308555
+            }
+          }
+        },
+        "by_stage": {
+          "agent_chat": {
+            "cached_input_tokens": {
+              "known": 32,
+              "missing": 0,
+              "partial": false,
+              "sum": 261632
+            },
+            "calls": 32,
+            "completed": 32,
+            "failed": 0,
+            "input_tokens": {
+              "known": 32,
+              "missing": 0,
+              "partial": false,
+              "sum": 297199
+            },
+            "missing_usage": 0,
+            "output_tokens": {
+              "known": 32,
+              "missing": 0,
+              "partial": false,
+              "sum": 11356
+            },
+            "provider_duration_seconds": {
+              "known": 32,
+              "missing": 0,
+              "partial": false,
+              "sum": 81.69
+            },
+            "reasoning_tokens": {
+              "known": 32,
+              "missing": 0,
+              "partial": false,
+              "sum": 5238
+            },
+            "total_tokens": {
+              "known": 32,
+              "missing": 0,
+              "partial": false,
+              "sum": 308555
+            }
+          },
+          "event_retrieval": {
+            "cached_input_tokens": {
+              "known": 0,
+              "missing": 7,
+              "partial": true,
+              "sum": null
+            },
+            "calls": 7,
+            "completed": 7,
+            "failed": 0,
+            "input_tokens": {
+              "known": 7,
+              "missing": 0,
+              "partial": false,
+              "sum": 179
+            },
+            "missing_usage": 0,
+            "output_tokens": {
+              "known": 7,
+              "missing": 0,
+              "partial": false,
+              "sum": 0
+            },
+            "provider_duration_seconds": {
+              "known": 7,
+              "missing": 0,
+              "partial": false,
+              "sum": 1.196
+            },
+            "reasoning_tokens": {
+              "known": 0,
+              "missing": 7,
+              "partial": true,
+              "sum": null
+            },
+            "total_tokens": {
+              "known": 7,
+              "missing": 0,
+              "partial": false,
+              "sum": 179
+            }
+          },
+          "retrieval": {
+            "cached_input_tokens": {
+              "known": 0,
+              "missing": 2,
+              "partial": true,
+              "sum": null
+            },
+            "calls": 2,
+            "completed": 2,
+            "failed": 0,
+            "input_tokens": {
+              "known": 2,
+              "missing": 0,
+              "partial": false,
+              "sum": 56
+            },
+            "missing_usage": 0,
+            "output_tokens": {
+              "known": 2,
+              "missing": 0,
+              "partial": false,
+              "sum": 0
+            },
+            "provider_duration_seconds": {
+              "known": 2,
+              "missing": 0,
+              "partial": false,
+              "sum": 0.403
+            },
+            "reasoning_tokens": {
+              "known": 0,
+              "missing": 2,
+              "partial": true,
+              "sum": null
+            },
+            "total_tokens": {
+              "known": 2,
+              "missing": 0,
+              "partial": false,
+              "sum": 56
+            }
+          }
+        },
+        "cached_input_tokens": {
+          "known": 32,
+          "missing": 9,
+          "partial": true,
+          "sum": 261632
+        },
+        "calls": 41,
+        "completed": 41,
+        "failed": 0,
+        "input_tokens": {
+          "known": 41,
+          "missing": 0,
+          "partial": false,
+          "sum": 297434
+        },
+        "missing_usage": 0,
+        "output_tokens": {
+          "known": 41,
+          "missing": 0,
+          "partial": false,
+          "sum": 11356
+        },
+        "provider_duration_seconds": {
+          "known": 41,
+          "missing": 0,
+          "partial": false,
+          "sum": 83.289
+        },
+        "reasoning_tokens": {
+          "known": 32,
+          "missing": 9,
+          "partial": true,
+          "sum": 5238
+        },
+        "total_tokens": {
+          "known": 41,
+          "missing": 0,
+          "partial": false,
+          "sum": 308790
+        }
+      }
+    }
+  },
+  "turns": [
+    {
+      "index": 0,
+      "round": 1,
+      "arm": "deepseek_decider",
+      "case_id": "respond_feedback",
+      "status": "COMPLETED",
+      "timeout": false,
+      "ftt_seconds": 6.233304875000613,
+      "tt_seconds": 6.2474848330002715,
+      "first_text_event_type": "answer.snapshot",
+      "tool_counts": {},
+      "usage": {
+        "cached_input_tokens": {
+          "known": 2,
+          "missing": 0,
+          "partial": false,
+          "sum": 7040
+        },
+        "calls": 2,
+        "completed": 2,
+        "failed": 0,
+        "input_tokens": {
+          "known": 2,
+          "missing": 0,
+          "partial": false,
+          "sum": 7396
+        },
+        "missing_usage": 0,
+        "output_tokens": {
+          "known": 2,
+          "missing": 0,
+          "partial": false,
+          "sum": 556
+        },
+        "provider_duration_seconds": {
+          "known": 2,
+          "missing": 0,
+          "partial": false,
+          "sum": 5.958
+        },
+        "reasoning_tokens": {
+          "known": 2,
+          "missing": 0,
+          "partial": false,
+          "sum": 404
+        },
+        "total_tokens": {
+          "known": 2,
+          "missing": 0,
+          "partial": false,
+          "sum": 7952
+        }
+      },
+      "output_chars": 215,
+      "video_render_blocks": 0
+    },
+    {
+      "index": 1,
+      "round": 1,
+      "arm": "jev_only",
+      "case_id": "respond_feedback",
+      "status": "COMPLETED",
+      "timeout": false,
+      "ftt_seconds": 5.966936958999213,
+      "tt_seconds": 5.982591250000041,
+      "first_text_event_type": "answer.snapshot",
+      "tool_counts": {},
+      "usage": {
+        "cached_input_tokens": {
+          "known": 1,
+          "missing": 1,
+          "partial": true,
+          "sum": 6656
+        },
+        "calls": 2,
+        "completed": 2,
+        "failed": 0,
+        "input_tokens": {
+          "known": 2,
+          "missing": 0,
+          "partial": false,
+          "sum": 7525
+        },
+        "missing_usage": 0,
+        "output_tokens": {
+          "known": 2,
+          "missing": 0,
+          "partial": false,
+          "sum": 475
+        },
+        "provider_duration_seconds": {
+          "known": 2,
+          "missing": 0,
+          "partial": false,
+          "sum": 5.718
+        },
+        "reasoning_tokens": {
+          "known": 1,
+          "missing": 1,
+          "partial": true,
+          "sum": 262
+        },
+        "total_tokens": {
+          "known": 2,
+          "missing": 0,
+          "partial": false,
+          "sum": 8000
+        }
+      },
+      "output_chars": 276,
+      "video_render_blocks": 0
+    },
+    {
+      "index": 2,
+      "round": 1,
+      "arm": "supervisor_direct",
+      "case_id": "respond_feedback",
+      "status": "COMPLETED",
+      "timeout": false,
+      "ftt_seconds": 11.623592292000467,
+      "tt_seconds": 11.641471124999953,
+      "first_text_event_type": "answer.snapshot",
+      "tool_counts": {
+        "get_series_overview": 1,
+        "search_video_events": 1
+      },
+      "usage": {
+        "cached_input_tokens": {
+          "known": 3,
+          "missing": 1,
+          "partial": true,
+          "sum": 21376
+        },
+        "calls": 4,
+        "completed": 4,
+        "failed": 0,
+        "input_tokens": {
+          "known": 4,
+          "missing": 0,
+          "partial": false,
+          "sum": 25270
+        },
+        "missing_usage": 0,
+        "output_tokens": {
+          "known": 4,
+          "missing": 0,
+          "partial": false,
+          "sum": 1517
+        },
+        "provider_duration_seconds": {
+          "known": 4,
+          "missing": 0,
+          "partial": false,
+          "sum": 11.018
+        },
+        "reasoning_tokens": {
+          "known": 3,
+          "missing": 1,
+          "partial": true,
+          "sum": 996
+        },
+        "total_tokens": {
+          "known": 4,
+          "missing": 0,
+          "partial": false,
+          "sum": 26787
+        }
+      },
+      "output_chars": 490,
+      "video_render_blocks": 0
+    },
+    {
+      "index": 3,
+      "round": 1,
+      "arm": "jev_only",
+      "case_id": "respond_existing_evidence",
+      "status": "COMPLETED",
+      "timeout": false,
+      "ftt_seconds": 4.940411625000706,
+      "tt_seconds": 4.954828625001028,
+      "first_text_event_type": "answer.snapshot",
+      "tool_counts": {},
+      "usage": {
+        "cached_input_tokens": {
+          "known": 1,
+          "missing": 1,
+          "partial": true,
+          "sum": 6656
+        },
+        "calls": 2,
+        "completed": 2,
+        "failed": 0,
+        "input_tokens": {
+          "known": 2,
+          "missing": 0,
+          "partial": false,
+          "sum": 7507
+        },
+        "missing_usage": 0,
+        "output_tokens": {
+          "known": 2,
+          "missing": 0,
+          "partial": false,
+          "sum": 373
+        },
+        "provider_duration_seconds": {
+          "known": 2,
+          "missing": 0,
+          "partial": false,
+          "sum": 4.668
+        },
+        "reasoning_tokens": {
+          "known": 1,
+          "missing": 1,
+          "partial": true,
+          "sum": 133
+        },
+        "total_tokens": {
+          "known": 2,
+          "missing": 0,
+          "partial": false,
+          "sum": 7880
+        }
+      },
+      "output_chars": 349,
+      "video_render_blocks": 0
+    },
+    {
+      "index": 4,
+      "round": 1,
+      "arm": "supervisor_direct",
+      "case_id": "respond_existing_evidence",
+      "status": "COMPLETED",
+      "timeout": false,
+      "ftt_seconds": 4.698684375000084,
+      "tt_seconds": 4.712917791999644,
+      "first_text_event_type": "answer.snapshot",
+      "tool_counts": {},
+      "usage": {
+        "cached_input_tokens": {
+          "known": 1,
+          "missing": 0,
+          "partial": false,
+          "sum": 6400
+        },
+        "calls": 1,
+        "completed": 1,
+        "failed": 0,
+        "input_tokens": {
+          "known": 1,
+          "missing": 0,
+          "partial": false,
+          "sum": 6648
+        },
+        "missing_usage": 0,
+        "output_tokens": {
+          "known": 1,
+          "missing": 0,
+          "partial": false,
+          "sum": 588
+        },
+        "provider_duration_seconds": {
+          "known": 1,
+          "missing": 0,
+          "partial": false,
+          "sum": 4.497
+        },
+        "reasoning_tokens": {
+          "known": 1,
+          "missing": 0,
+          "partial": false,
+          "sum": 319
+        },
+        "total_tokens": {
+          "known": 1,
+          "missing": 0,
+          "partial": false,
+          "sum": 7236
+        }
+      },
+      "output_chars": 472,
+      "video_render_blocks": 0
+    },
+    {
+      "index": 5,
+      "round": 1,
+      "arm": "deepseek_decider",
+      "case_id": "respond_existing_evidence",
+      "status": "COMPLETED",
+      "timeout": false,
+      "ftt_seconds": 5.126939874999152,
+      "tt_seconds": 5.14021212499938,
+      "first_text_event_type": "answer.snapshot",
+      "tool_counts": {},
+      "usage": {
+        "cached_input_tokens": {
+          "known": 2,
+          "missing": 0,
+          "partial": false,
+          "sum": 7040
+        },
+        "calls": 2,
+        "completed": 2,
+        "failed": 0,
+        "input_tokens": {
+          "known": 2,
+          "missing": 0,
+          "partial": false,
+          "sum": 7381
+        },
+        "missing_usage": 0,
+        "output_tokens": {
+          "known": 2,
+          "missing": 0,
+          "partial": false,
+          "sum": 489
+        },
+        "provider_duration_seconds": {
+          "known": 2,
+          "missing": 0,
+          "partial": false,
+          "sum": 4.885
+        },
+        "reasoning_tokens": {
+          "known": 2,
+          "missing": 0,
+          "partial": false,
+          "sum": 284
+        },
+        "total_tokens": {
+          "known": 2,
+          "missing": 0,
+          "partial": false,
+          "sum": 7870
+        }
+      },
+      "output_chars": 319,
+      "video_render_blocks": 0
+    },
+    {
+      "index": 6,
+      "round": 1,
+      "arm": "supervisor_direct",
+      "case_id": "respond_stop_retrieval",
+      "status": "COMPLETED",
+      "timeout": false,
+      "ftt_seconds": 2.9094164170001022,
+      "tt_seconds": 2.922305584001151,
+      "first_text_event_type": "answer.snapshot",
+      "tool_counts": {},
+      "usage": {
+        "cached_input_tokens": {
+          "known": 1,
+          "missing": 0,
+          "partial": false,
+          "sum": 6400
+        },
+        "calls": 1,
+        "completed": 1,
+        "failed": 0,
+        "input_tokens": {
+          "known": 1,
+          "missing": 0,
+          "partial": false,
+          "sum": 6639
+        },
+        "missing_usage": 0,
+        "output_tokens": {
+          "known": 1,
+          "missing": 0,
+          "partial": false,
+          "sum": 398
+        },
+        "provider_duration_seconds": {
+          "known": 1,
+          "missing": 0,
+          "partial": false,
+          "sum": 2.717
+        },
+        "reasoning_tokens": {
+          "known": 1,
+          "missing": 0,
+          "partial": false,
+          "sum": 335
+        },
+        "total_tokens": {
+          "known": 1,
+          "missing": 0,
+          "partial": false,
+          "sum": 7037
+        }
+      },
+      "output_chars": 104,
+      "video_render_blocks": 0
+    },
+    {
+      "index": 7,
+      "round": 1,
+      "arm": "deepseek_decider",
+      "case_id": "respond_stop_retrieval",
+      "status": "COMPLETED",
+      "timeout": false,
+      "ftt_seconds": 2.401081707999765,
+      "tt_seconds": 2.413772957999754,
+      "first_text_event_type": "answer.snapshot",
+      "tool_counts": {},
+      "usage": {
+        "cached_input_tokens": {
+          "known": 2,
+          "missing": 0,
+          "partial": false,
+          "sum": 6912
+        },
+        "calls": 2,
+        "completed": 2,
+        "failed": 0,
+        "input_tokens": {
+          "known": 2,
+          "missing": 0,
+          "partial": false,
+          "sum": 7359
+        },
+        "missing_usage": 0,
+        "output_tokens": {
+          "known": 2,
+          "missing": 0,
+          "partial": false,
+          "sum": 114
+        },
+        "provider_duration_seconds": {
+          "known": 2,
+          "missing": 0,
+          "partial": false,
+          "sum": 2.096
+        },
+        "reasoning_tokens": {
+          "known": 2,
+          "missing": 0,
+          "partial": false,
+          "sum": 83
+        },
+        "total_tokens": {
+          "known": 2,
+          "missing": 0,
+          "partial": false,
+          "sum": 7473
+        }
+      },
+      "output_chars": 21,
+      "video_render_blocks": 0
+    },
+    {
+      "index": 8,
+      "round": 1,
+      "arm": "jev_only",
+      "case_id": "respond_stop_retrieval",
+      "status": "COMPLETED",
+      "timeout": false,
+      "ftt_seconds": 2.528587000000698,
+      "tt_seconds": 2.5415053329998045,
+      "first_text_event_type": "answer.snapshot",
+      "tool_counts": {},
+      "usage": {
+        "cached_input_tokens": {
+          "known": 1,
+          "missing": 1,
+          "partial": true,
+          "sum": 6528
+        },
+        "calls": 2,
+        "completed": 2,
+        "failed": 0,
+        "input_tokens": {
+          "known": 2,
+          "missing": 0,
+          "partial": false,
+          "sum": 7478
+        },
+        "missing_usage": 0,
+        "output_tokens": {
+          "known": 2,
+          "missing": 0,
+          "partial": false,
+          "sum": 49
+        },
+        "provider_duration_seconds": {
+          "known": 2,
+          "missing": 0,
+          "partial": false,
+          "sum": 2.311
+        },
+        "reasoning_tokens": {
+          "known": 1,
+          "missing": 1,
+          "partial": true,
+          "sum": 0
+        },
+        "total_tokens": {
+          "known": 2,
+          "missing": 0,
+          "partial": false,
+          "sum": 7527
+        }
+      },
+      "output_chars": 15,
+      "video_render_blocks": 0
+    },
+    {
+      "index": 9,
+      "round": 1,
+      "arm": "deepseek_decider",
+      "case_id": "mixed_feedback_and_search",
+      "status": "COMPLETED",
+      "timeout": false,
+      "ftt_seconds": 5.777454207998744,
+      "tt_seconds": 17.61374245799925,
+      "first_text_event_type": "answer.snapshot",
+      "tool_counts": {
+        "retrieve": 1,
+        "search_video_events": 1,
+        "submit_video_item": 2
+      },
+      "usage": {
+        "cached_input_tokens": {
+          "known": 5,
+          "missing": 2,
+          "partial": true,
+          "sum": 34176
+        },
+        "calls": 7,
+        "completed": 7,
+        "failed": 0,
+        "input_tokens": {
+          "known": 7,
+          "missing": 0,
+          "partial": false,
+          "sum": 40515
+        },
+        "missing_usage": 0,
+        "output_tokens": {
+          "known": 7,
+          "missing": 0,
+          "partial": false,
+          "sum": 2402
+        },
+        "provider_duration_seconds": {
+          "known": 7,
+          "missing": 0,
+          "partial": false,
+          "sum": 17.163
+        },
+        "reasoning_tokens": {
+          "known": 5,
+          "missing": 2,
+          "partial": true,
+          "sum": 1215
+        },
+        "total_tokens": {
+          "known": 7,
+          "missing": 0,
+          "partial": false,
+          "sum": 42917
+        }
+      },
+      "output_chars": 843,
+      "video_render_blocks": 1
+    },
+    {
+      "index": 10,
+      "round": 1,
+      "arm": "jev_only",
+      "case_id": "mixed_feedback_and_search",
+      "status": "COMPLETED",
+      "timeout": false,
+      "ftt_seconds": 4.486301083001308,
+      "tt_seconds": 16.759085167001103,
+      "first_text_event_type": "answer.snapshot",
+      "tool_counts": {
+        "read_retrieval_evidence": 1,
+        "retrieve": 1,
+        "search_video_events": 1,
+        "submit_video_item": 2
+      },
+      "usage": {
+        "cached_input_tokens": {
+          "known": 6,
+          "missing": 3,
+          "partial": true,
+          "sum": 54144
+        },
+        "calls": 9,
+        "completed": 9,
+        "failed": 0,
+        "input_tokens": {
+          "known": 9,
+          "missing": 0,
+          "partial": false,
+          "sum": 62388
+        },
+        "missing_usage": 0,
+        "output_tokens": {
+          "known": 9,
+          "missing": 0,
+          "partial": false,
+          "sum": 2132
+        },
+        "provider_duration_seconds": {
+          "known": 9,
+          "missing": 0,
+          "partial": false,
+          "sum": 16.22
+        },
+        "reasoning_tokens": {
+          "known": 6,
+          "missing": 3,
+          "partial": true,
+          "sum": 755
+        },
+        "total_tokens": {
+          "known": 9,
+          "missing": 0,
+          "partial": false,
+          "sum": 64520
+        }
+      },
+      "output_chars": 729,
+      "video_render_blocks": 1
+    },
+    {
+      "index": 11,
+      "round": 1,
+      "arm": "supervisor_direct",
+      "case_id": "mixed_feedback_and_search",
+      "status": "COMPLETED",
+      "timeout": false,
+      "ftt_seconds": 4.255915791000007,
+      "tt_seconds": 13.106823207999696,
+      "first_text_event_type": "answer.snapshot",
+      "tool_counts": {
+        "get_series_overview": 1,
+        "search_video_events": 1,
+        "submit_video_item": 2
+      },
+      "usage": {
+        "cached_input_tokens": {
+          "known": 4,
+          "missing": 1,
+          "partial": true,
+          "sum": 32128
+        },
+        "calls": 5,
+        "completed": 5,
+        "failed": 0,
+        "input_tokens": {
+          "known": 5,
+          "missing": 0,
+          "partial": false,
+          "sum": 36898
+        },
+        "missing_usage": 0,
+        "output_tokens": {
+          "known": 5,
+          "missing": 0,
+          "partial": false,
+          "sum": 1760
+        },
+        "provider_duration_seconds": {
+          "known": 5,
+          "missing": 0,
+          "partial": false,
+          "sum": 12.618
+        },
+        "reasoning_tokens": {
+          "known": 4,
+          "missing": 1,
+          "partial": true,
+          "sum": 792
+        },
+        "total_tokens": {
+          "known": 5,
+          "missing": 0,
+          "partial": false,
+          "sum": 38658
+        }
+      },
+      "output_chars": 724,
+      "video_render_blocks": 1
+    },
+    {
+      "index": 12,
+      "round": 1,
+      "arm": "jev_only",
+      "case_id": "retrieve_reference",
+      "status": "COMPLETED",
+      "timeout": false,
+      "ftt_seconds": 15.46899250000024,
+      "tt_seconds": 16.903986541999984,
+      "first_text_event_type": "answer.snapshot",
+      "tool_counts": {
+        "get_video_outline": 1,
+        "search_video_events": 1,
+        "submit_video_item": 2
+      },
+      "usage": {
+        "cached_input_tokens": {
+          "known": 5,
+          "missing": 2,
+          "partial": true,
+          "sum": 43392
+        },
+        "calls": 7,
+        "completed": 7,
+        "failed": 0,
+        "input_tokens": {
+          "known": 7,
+          "missing": 0,
+          "partial": false,
+          "sum": 48683
+        },
+        "missing_usage": 0,
+        "output_tokens": {
+          "known": 7,
+          "missing": 0,
+          "partial": false,
+          "sum": 1959
+        },
+        "provider_duration_seconds": {
+          "known": 7,
+          "missing": 0,
+          "partial": false,
+          "sum": 16.308
+        },
+        "reasoning_tokens": {
+          "known": 5,
+          "missing": 2,
+          "partial": true,
+          "sum": 1062
+        },
+        "total_tokens": {
+          "known": 7,
+          "missing": 0,
+          "partial": false,
+          "sum": 50642
+        }
+      },
+      "output_chars": 530,
+      "video_render_blocks": 1
+    },
+    {
+      "index": 13,
+      "round": 1,
+      "arm": "supervisor_direct",
+      "case_id": "retrieve_reference",
+      "status": "COMPLETED",
+      "timeout": false,
+      "ftt_seconds": 12.256931791998795,
+      "tt_seconds": 14.126807208998798,
+      "first_text_event_type": "answer.snapshot",
+      "tool_counts": {
+        "read_retrieval_evidence": 2,
+        "retrieve": 1,
+        "search_video_events": 1,
+        "submit_video_item": 1
+      },
+      "usage": {
+        "cached_input_tokens": {
+          "known": 7,
+          "missing": 2,
+          "partial": true,
+          "sum": 67456
+        },
+        "calls": 9,
+        "completed": 9,
+        "failed": 0,
+        "input_tokens": {
+          "known": 9,
+          "missing": 0,
+          "partial": false,
+          "sum": 75916
+        },
+        "missing_usage": 0,
+        "output_tokens": {
+          "known": 9,
+          "missing": 0,
+          "partial": false,
+          "sum": 1926
+        },
+        "provider_duration_seconds": {
+          "known": 9,
+          "missing": 0,
+          "partial": false,
+          "sum": 13.352
+        },
+        "reasoning_tokens": {
+          "known": 7,
+          "missing": 2,
+          "partial": true,
+          "sum": 689
+        },
+        "total_tokens": {
+          "known": 9,
+          "missing": 0,
+          "partial": false,
+          "sum": 77842
+        }
+      },
+      "output_chars": 401,
+      "video_render_blocks": 1
+    },
+    {
+      "index": 14,
+      "round": 1,
+      "arm": "deepseek_decider",
+      "case_id": "retrieve_reference",
+      "status": "COMPLETED",
+      "timeout": false,
+      "ftt_seconds": 11.215901208001014,
+      "tt_seconds": 16.350564832999225,
+      "first_text_event_type": "answer.snapshot",
+      "tool_counts": {
+        "read_retrieval_evidence": 1,
+        "search_video_events": 1,
+        "submit_video_item": 3
+      },
+      "usage": {
+        "cached_input_tokens": {
+          "known": 8,
+          "missing": 1,
+          "partial": true,
+          "sum": 69248
+        },
+        "calls": 9,
+        "completed": 9,
+        "failed": 0,
+        "input_tokens": {
+          "known": 9,
+          "missing": 0,
+          "partial": false,
+          "sum": 75671
+        },
+        "missing_usage": 0,
+        "output_tokens": {
+          "known": 9,
+          "missing": 0,
+          "partial": false,
+          "sum": 2098
+        },
+        "provider_duration_seconds": {
+          "known": 9,
+          "missing": 0,
+          "partial": false,
+          "sum": 15.714
+        },
+        "reasoning_tokens": {
+          "known": 8,
+          "missing": 1,
+          "partial": true,
+          "sum": 866
+        },
+        "total_tokens": {
+          "known": 9,
+          "missing": 0,
+          "partial": false,
+          "sum": 77769
+        }
+      },
+      "output_chars": 568,
+      "video_render_blocks": 1
+    },
+    {
+      "index": 15,
+      "round": 1,
+      "arm": "supervisor_direct",
+      "case_id": "retrieve_original_quote",
+      "status": "COMPLETED",
+      "timeout": false,
+      "ftt_seconds": 8.66676654100047,
+      "tt_seconds": 10.392601833000299,
+      "first_text_event_type": "answer.snapshot",
+      "tool_counts": {
+        "search_video_events": 1,
+        "submit_video_item": 2
+      },
+      "usage": {
+        "cached_input_tokens": {
+          "known": 6,
+          "missing": 1,
+          "partial": true,
+          "sum": 46976
+        },
+        "calls": 7,
+        "completed": 7,
+        "failed": 0,
+        "input_tokens": {
+          "known": 7,
+          "missing": 0,
+          "partial": false,
+          "sum": 51321
+        },
+        "missing_usage": 0,
+        "output_tokens": {
+          "known": 7,
+          "missing": 0,
+          "partial": false,
+          "sum": 921
+        },
+        "provider_duration_seconds": {
+          "known": 7,
+          "missing": 0,
+          "partial": false,
+          "sum": 9.773
+        },
+        "reasoning_tokens": {
+          "known": 6,
+          "missing": 1,
+          "partial": true,
+          "sum": 116
+        },
+        "total_tokens": {
+          "known": 7,
+          "missing": 0,
+          "partial": false,
+          "sum": 52242
+        }
+      },
+      "output_chars": 376,
+      "video_render_blocks": 1
+    },
+    {
+      "index": 16,
+      "round": 1,
+      "arm": "deepseek_decider",
+      "case_id": "retrieve_original_quote",
+      "status": "COMPLETED",
+      "timeout": false,
+      "ftt_seconds": 9.166271124999184,
+      "tt_seconds": 10.732544499998767,
+      "first_text_event_type": "answer.snapshot",
+      "tool_counts": {
+        "search_video_events": 2,
+        "submit_video_item": 1
+      },
+      "usage": {
+        "cached_input_tokens": {
+          "known": 5,
+          "missing": 2,
+          "partial": true,
+          "sum": 34048
+        },
+        "calls": 7,
+        "completed": 7,
+        "failed": 0,
+        "input_tokens": {
+          "known": 7,
+          "missing": 0,
+          "partial": false,
+          "sum": 41261
+        },
+        "missing_usage": 0,
+        "output_tokens": {
+          "known": 7,
+          "missing": 0,
+          "partial": false,
+          "sum": 900
+        },
+        "provider_duration_seconds": {
+          "known": 7,
+          "missing": 0,
+          "partial": false,
+          "sum": 9.822
+        },
+        "reasoning_tokens": {
+          "known": 5,
+          "missing": 2,
+          "partial": true,
+          "sum": 263
+        },
+        "total_tokens": {
+          "known": 7,
+          "missing": 0,
+          "partial": false,
+          "sum": 42161
+        }
+      },
+      "output_chars": 201,
+      "video_render_blocks": 1
+    },
+    {
+      "index": 17,
+      "round": 1,
+      "arm": "jev_only",
+      "case_id": "retrieve_original_quote",
+      "status": "COMPLETED",
+      "timeout": false,
+      "ftt_seconds": 9.421295749998535,
+      "tt_seconds": 10.290014332998908,
+      "first_text_event_type": "answer.snapshot",
+      "tool_counts": {
+        "retrieve": 1,
+        "search_video_events": 1,
+        "submit_video_item": 1
+      },
+      "usage": {
+        "cached_input_tokens": {
+          "known": 4,
+          "missing": 3,
+          "partial": true,
+          "sum": 31744
+        },
+        "calls": 7,
+        "completed": 7,
+        "failed": 0,
+        "input_tokens": {
+          "known": 7,
+          "missing": 0,
+          "partial": false,
+          "sum": 37662
+        },
+        "missing_usage": 0,
+        "output_tokens": {
+          "known": 7,
+          "missing": 0,
+          "partial": false,
+          "sum": 898
+        },
+        "provider_duration_seconds": {
+          "known": 7,
+          "missing": 0,
+          "partial": false,
+          "sum": 9.583
+        },
+        "reasoning_tokens": {
+          "known": 4,
+          "missing": 3,
+          "partial": true,
+          "sum": 267
+        },
+        "total_tokens": {
+          "known": 7,
+          "missing": 0,
+          "partial": false,
+          "sum": 38560
+        }
+      },
+      "output_chars": 210,
+      "video_render_blocks": 1
+    },
+    {
+      "index": 18,
+      "round": 2,
+      "arm": "deepseek_decider",
+      "case_id": "retrieve_original_quote",
+      "status": "COMPLETED",
+      "timeout": false,
+      "ftt_seconds": 9.356551333001335,
+      "tt_seconds": 10.279669291001483,
+      "first_text_event_type": "answer.snapshot",
+      "tool_counts": {
+        "read_retrieval_evidence": 1,
+        "search_video_events": 1,
+        "submit_video_item": 1
+      },
+      "usage": {
+        "cached_input_tokens": {
+          "known": 7,
+          "missing": 1,
+          "partial": true,
+          "sum": 46848
+        },
+        "calls": 8,
+        "completed": 8,
+        "failed": 0,
+        "input_tokens": {
+          "known": 8,
+          "missing": 0,
+          "partial": false,
+          "sum": 51332
+        },
+        "missing_usage": 0,
+        "output_tokens": {
+          "known": 8,
+          "missing": 0,
+          "partial": false,
+          "sum": 1034
+        },
+        "provider_duration_seconds": {
+          "known": 8,
+          "missing": 0,
+          "partial": false,
+          "sum": 9.809
+        },
+        "reasoning_tokens": {
+          "known": 7,
+          "missing": 1,
+          "partial": true,
+          "sum": 347
+        },
+        "total_tokens": {
+          "known": 8,
+          "missing": 0,
+          "partial": false,
+          "sum": 52366
+        }
+      },
+      "output_chars": 237,
+      "video_render_blocks": 1
+    },
+    {
+      "index": 19,
+      "round": 2,
+      "arm": "jev_only",
+      "case_id": "retrieve_original_quote",
+      "status": "COMPLETED",
+      "timeout": false,
+      "ftt_seconds": 7.000654875000691,
+      "tt_seconds": 8.288975875000688,
+      "first_text_event_type": "answer.snapshot",
+      "tool_counts": {
+        "search_video_events": 1,
+        "submit_video_item": 1
+      },
+      "usage": {
+        "cached_input_tokens": {
+          "known": 4,
+          "missing": 2,
+          "partial": true,
+          "sum": 29184
+        },
+        "calls": 6,
+        "completed": 6,
+        "failed": 0,
+        "input_tokens": {
+          "known": 6,
+          "missing": 0,
+          "partial": false,
+          "sum": 32667
+        },
+        "missing_usage": 0,
+        "output_tokens": {
+          "known": 6,
+          "missing": 0,
+          "partial": false,
+          "sum": 750
+        },
+        "provider_duration_seconds": {
+          "known": 6,
+          "missing": 0,
+          "partial": false,
+          "sum": 7.81
+        },
+        "reasoning_tokens": {
+          "known": 4,
+          "missing": 2,
+          "partial": true,
+          "sum": 85
+        },
+        "total_tokens": {
+          "known": 6,
+          "missing": 0,
+          "partial": false,
+          "sum": 33417
+        }
+      },
+      "output_chars": 225,
+      "video_render_blocks": 1
+    },
+    {
+      "index": 20,
+      "round": 2,
+      "arm": "supervisor_direct",
+      "case_id": "retrieve_original_quote",
+      "status": "COMPLETED",
+      "timeout": false,
+      "ftt_seconds": 5.513604290999865,
+      "tt_seconds": 6.495724791000612,
+      "first_text_event_type": "answer.snapshot",
+      "tool_counts": {
+        "retrieve": 1,
+        "search_video_events": 1,
+        "submit_video_item": 1
+      },
+      "usage": {
+        "cached_input_tokens": {
+          "known": 4,
+          "missing": 2,
+          "partial": true,
+          "sum": 31104
+        },
+        "calls": 6,
+        "completed": 6,
+        "failed": 0,
+        "input_tokens": {
+          "known": 6,
+          "missing": 0,
+          "partial": false,
+          "sum": 36673
+        },
+        "missing_usage": 0,
+        "output_tokens": {
+          "known": 6,
+          "missing": 0,
+          "partial": false,
+          "sum": 740
+        },
+        "provider_duration_seconds": {
+          "known": 6,
+          "missing": 0,
+          "partial": false,
+          "sum": 6.022
+        },
+        "reasoning_tokens": {
+          "known": 4,
+          "missing": 2,
+          "partial": true,
+          "sum": 121
+        },
+        "total_tokens": {
+          "known": 6,
+          "missing": 0,
+          "partial": false,
+          "sum": 37413
+        }
+      },
+      "output_chars": 192,
+      "video_render_blocks": 1
+    },
+    {
+      "index": 21,
+      "round": 2,
+      "arm": "jev_only",
+      "case_id": "mixed_feedback_and_search",
+      "status": "COMPLETED",
+      "timeout": false,
+      "ftt_seconds": 6.456833665999511,
+      "tt_seconds": 15.383260082999186,
+      "first_text_event_type": "answer.snapshot",
+      "tool_counts": {
+        "search_video_events": 1,
+        "submit_video_item": 1
+      },
+      "usage": {
+        "cached_input_tokens": {
+          "known": 4,
+          "missing": 2,
+          "partial": true,
+          "sum": 32256
+        },
+        "calls": 6,
+        "completed": 6,
+        "failed": 0,
+        "input_tokens": {
+          "known": 6,
+          "missing": 0,
+          "partial": false,
+          "sum": 37239
+        },
+        "missing_usage": 0,
+        "output_tokens": {
+          "known": 6,
+          "missing": 0,
+          "partial": false,
+          "sum": 1690
+        },
+        "provider_duration_seconds": {
+          "known": 6,
+          "missing": 0,
+          "partial": false,
+          "sum": 14.903
+        },
+        "reasoning_tokens": {
+          "known": 4,
+          "missing": 2,
+          "partial": true,
+          "sum": 925
+        },
+        "total_tokens": {
+          "known": 6,
+          "missing": 0,
+          "partial": false,
+          "sum": 38929
+        }
+      },
+      "output_chars": 605,
+      "video_render_blocks": 1
+    },
+    {
+      "index": 22,
+      "round": 2,
+      "arm": "supervisor_direct",
+      "case_id": "mixed_feedback_and_search",
+      "status": "COMPLETED",
+      "timeout": false,
+      "ftt_seconds": 4.630809750000481,
+      "tt_seconds": 19.287869292000323,
+      "first_text_event_type": "answer.snapshot",
+      "tool_counts": {
+        "search_video_events": 2,
+        "submit_video_item": 2
+      },
+      "usage": {
+        "cached_input_tokens": {
+          "known": 5,
+          "missing": 2,
+          "partial": true,
+          "sum": 43392
+        },
+        "calls": 7,
+        "completed": 7,
+        "failed": 0,
+        "input_tokens": {
+          "known": 7,
+          "missing": 0,
+          "partial": false,
+          "sum": 51418
+        },
+        "missing_usage": 0,
+        "output_tokens": {
+          "known": 7,
+          "missing": 0,
+          "partial": false,
+          "sum": 2865
+        },
+        "provider_duration_seconds": {
+          "known": 7,
+          "missing": 0,
+          "partial": false,
+          "sum": 18.76
+        },
+        "reasoning_tokens": {
+          "known": 5,
+          "missing": 2,
+          "partial": true,
+          "sum": 1389
+        },
+        "total_tokens": {
+          "known": 7,
+          "missing": 0,
+          "partial": false,
+          "sum": 54283
+        }
+      },
+      "output_chars": 1076,
+      "video_render_blocks": 1
+    },
+    {
+      "index": 23,
+      "round": 2,
+      "arm": "deepseek_decider",
+      "case_id": "mixed_feedback_and_search",
+      "status": "COMPLETED",
+      "timeout": false,
+      "ftt_seconds": 4.389558082999429,
+      "tt_seconds": 11.208589791000122,
+      "first_text_event_type": "answer.snapshot",
+      "tool_counts": {
+        "search_video_events": 1,
+        "submit_video_item": 1
+      },
+      "usage": {
+        "cached_input_tokens": {
+          "known": 5,
+          "missing": 1,
+          "partial": true,
+          "sum": 32128
+        },
+        "calls": 6,
+        "completed": 6,
+        "failed": 0,
+        "input_tokens": {
+          "known": 6,
+          "missing": 0,
+          "partial": false,
+          "sum": 36516
+        },
+        "missing_usage": 0,
+        "output_tokens": {
+          "known": 6,
+          "missing": 0,
+          "partial": false,
+          "sum": 1286
+        },
+        "provider_duration_seconds": {
+          "known": 6,
+          "missing": 0,
+          "partial": false,
+          "sum": 10.796
+        },
+        "reasoning_tokens": {
+          "known": 5,
+          "missing": 1,
+          "partial": true,
+          "sum": 622
+        },
+        "total_tokens": {
+          "known": 6,
+          "missing": 0,
+          "partial": false,
+          "sum": 37802
+        }
+      },
+      "output_chars": 495,
+      "video_render_blocks": 1
+    },
+    {
+      "index": 24,
+      "round": 2,
+      "arm": "jev_only",
+      "case_id": "respond_feedback",
+      "status": "COMPLETED",
+      "timeout": false,
+      "ftt_seconds": 4.28695795800013,
+      "tt_seconds": 4.293168874999537,
+      "first_text_event_type": "answer.snapshot",
+      "tool_counts": {},
+      "usage": {
+        "cached_input_tokens": {
+          "known": 1,
+          "missing": 1,
+          "partial": true,
+          "sum": 6656
+        },
+        "calls": 2,
+        "completed": 2,
+        "failed": 0,
+        "input_tokens": {
+          "known": 2,
+          "missing": 0,
+          "partial": false,
+          "sum": 7525
+        },
+        "missing_usage": 0,
+        "output_tokens": {
+          "known": 2,
+          "missing": 0,
+          "partial": false,
+          "sum": 239
+        },
+        "provider_duration_seconds": {
+          "known": 2,
+          "missing": 0,
+          "partial": false,
+          "sum": 4.029
+        },
+        "reasoning_tokens": {
+          "known": 1,
+          "missing": 1,
+          "partial": true,
+          "sum": 68
+        },
+        "total_tokens": {
+          "known": 2,
+          "missing": 0,
+          "partial": false,
+          "sum": 7764
+        }
+      },
+      "output_chars": 208,
+      "video_render_blocks": 0
+    },
+    {
+      "index": 25,
+      "round": 2,
+      "arm": "supervisor_direct",
+      "case_id": "respond_feedback",
+      "status": "COMPLETED",
+      "timeout": false,
+      "ftt_seconds": 4.806246457999805,
+      "tt_seconds": 4.814736500000436,
+      "first_text_event_type": "answer.snapshot",
+      "tool_counts": {},
+      "usage": {
+        "cached_input_tokens": {
+          "known": 1,
+          "missing": 0,
+          "partial": false,
+          "sum": 6400
+        },
+        "calls": 1,
+        "completed": 1,
+        "failed": 0,
+        "input_tokens": {
+          "known": 1,
+          "missing": 0,
+          "partial": false,
+          "sum": 6651
+        },
+        "missing_usage": 0,
+        "output_tokens": {
+          "known": 1,
+          "missing": 0,
+          "partial": false,
+          "sum": 641
+        },
+        "provider_duration_seconds": {
+          "known": 1,
+          "missing": 0,
+          "partial": false,
+          "sum": 4.532
+        },
+        "reasoning_tokens": {
+          "known": 1,
+          "missing": 0,
+          "partial": false,
+          "sum": 481
+        },
+        "total_tokens": {
+          "known": 1,
+          "missing": 0,
+          "partial": false,
+          "sum": 7292
+        }
+      },
+      "output_chars": 251,
+      "video_render_blocks": 0
+    },
+    {
+      "index": 26,
+      "round": 2,
+      "arm": "deepseek_decider",
+      "case_id": "respond_feedback",
+      "status": "COMPLETED",
+      "timeout": false,
+      "ftt_seconds": 9.951879166999788,
+      "tt_seconds": 9.965585792000638,
+      "first_text_event_type": "answer.snapshot",
+      "tool_counts": {},
+      "usage": {
+        "cached_input_tokens": {
+          "known": 2,
+          "missing": 0,
+          "partial": false,
+          "sum": 6784
+        },
+        "calls": 2,
+        "completed": 1,
+        "failed": 1,
+        "input_tokens": {
+          "known": 2,
+          "missing": 0,
+          "partial": false,
+          "sum": 7253
+        },
+        "missing_usage": 0,
+        "output_tokens": {
+          "known": 2,
+          "missing": 0,
+          "partial": false,
+          "sum": 1371
+        },
+        "provider_duration_seconds": {
+          "known": 2,
+          "missing": 0,
+          "partial": false,
+          "sum": 9.704
+        },
+        "reasoning_tokens": {
+          "known": 2,
+          "missing": 0,
+          "partial": false,
+          "sum": 1180
+        },
+        "total_tokens": {
+          "known": 2,
+          "missing": 0,
+          "partial": false,
+          "sum": 8624
+        }
+      },
+      "output_chars": 248,
+      "video_render_blocks": 0
+    }
+  ]
+}

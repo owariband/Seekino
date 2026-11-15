@@ -45,6 +45,7 @@ class QueryHookDecision(RetrievalSlot):
 class _HookState(TypedDict):
     query: str
     recent_messages: list[dict[str, str]]
+    current_video: dict | None
     control: ExecutionControl
     deadline: float
     action: Action | None
@@ -89,11 +90,10 @@ class QueryHook:
     def __call__(self, inputs: RunInputs, control: ExecutionControl) -> str:
         control.check()
         query = inputs["user_message"]
-        # Text-only routing cannot decide what an image or frozen playback asks for.
+        # Text-only routing cannot decide what an image asks for.
         if not self._config.enabled:
             return query
         if (inputs.get("attachments") or inputs.get("image_urls")
-                or (inputs.get("extra_context") or {}).get("playback")
                 or len(query) > self._config.query_max_chars):
             _logger.info(
                 "event=query_hook_skipped conversation_id=%s message_id=%s reason=unsupported_input",
@@ -116,6 +116,7 @@ class QueryHook:
         with model_call_context({"stage": "query_hook"}):
             result = self._graph.invoke({
                 "query": query, "recent_messages": list(reversed(history)),
+                "current_video": inputs.get("current_video"),
                 "control": control,
                 "deadline": monotonic() + self._config.total_timeout_seconds,
                 "action": None, "retrieval_query": None, "output": query,
@@ -141,9 +142,13 @@ class QueryHook:
         remaining = self._remaining(state)
         try:
             if remaining > 0:
+                model_state = {
+                    "query": state["query"], "recent_messages": state["recent_messages"],
+                }
+                if state.get("current_video"):
+                    model_state["current_video"] = state["current_video"]
                 action = self._models.route(
-                    {"query": state["query"], "recent_messages": state["recent_messages"]},
-                    ROUTE_QUESTION, timeout_seconds=remaining,
+                    model_state, ROUTE_QUESTION, timeout_seconds=remaining,
                 )
                 if self._remaining(state) > 0:
                     status = "completed"
@@ -169,7 +174,9 @@ class QueryHook:
         if remaining > 0:
             prompt = (
                 f"{DECISION_PROMPT}\n分类规则：{context_json(ROUTE_QUESTION)}\n"
-                f"近期对话：{context_json(state['recent_messages'])}\n"
+                + (f"当前视频上下文：{context_json(state['current_video'])}\n"
+                   if state.get("current_video") else "")
+                + f"近期对话：{context_json(state['recent_messages'])}\n"
                 f"当前消息：{context_json(state['query'])}"
             )
             try:

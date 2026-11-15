@@ -89,6 +89,8 @@ Event / Sub-Chunk 的实施入口是 [sub-chunk-trd.md](02-agent-harness/sub-chu
 |---|---|---|
 | 本地文本向量与可选视觉索引 | [local-text-embedding-trd.md](03-product-reassessment/local-text-embedding-trd.md) | 课程实验：Qwen3-Embedding-0.6B、冻结输入模式、纯文本索引与原多模态兼容。 |
 | Event / Sub-Chunk 检索 | [sub-chunk-trd.md](02-agent-harness/sub-chunk-trd.md) | 主 TRD：独立 Event ES 索引、词法与文本／视觉向量、抽帧、发布及恢复合同。 |
+| Event 查询有界内容读取 | [event-query-bounded-content-trd.md](03-product-reassessment/event-query-bounded-content-trd.md) | 前置只读 COMPLETE 任务、冻结 Event 目标与 INDEX 版本元数据；候选正文有界回源，完整 detail 延迟加载、仅投影 compact / camera_hints，发布写入与显式审计保留。 |
+| Event 范围任务元数据排序 | [event-scope-task-sort-trd.md](02-agent-harness/event-scope-task-sort-trd.md) | 八课程完整 Event 范围因 `list_video_tasks` 同时选择 JSON 投影并用 `ORDER BY` 触发 MySQL 1038；先排序任务 ID 再读取元数据，保持原过滤、顺序与删除语义，不提高全局排序内存。 |
 | 视觉媒体输入与检索 | [visual-retrieval-trd.md](02-agent-harness/visual-retrieval-trd.md) | 专项 TRD：文字与视觉查询分工，图片、GIF、MP4 输入及检索接入。 |
 | Event 早期方案 | [event-retrieval-trd.md](02-agent-harness/event-retrieval-trd.md) | 历史方案与后续合同说明；当前实施依据已转到 Sub-Chunk TRD。 |
 | 多模态检索需求 | [multimodel-retrieve-trd.md](02-agent-harness/multimodel-retrieve-trd.md) | 目标 Query Set、召回与评测研究记录；检索需求与候选路线的来源。 |
@@ -103,6 +105,7 @@ Event / Sub-Chunk 的实施入口是 [sub-chunk-trd.md](02-agent-harness/sub-chu
 | Feature / 主题 | 文档 | 内容与定位 |
 |---|---|---|
 | 独立对话页布局 | [chat-sidebar-layout-trd.md](03-product-reassessment/chat-sidebar-layout-trd.md) | 左侧历史、居中草稿、简洁输入栏；依赖 #66，状态见工作台 CHAT-LAYOUT-01。 |
+| 回答中删除提示 | [chat-delete-hint-tooltip-trd.md](03-product-reassessment/chat-delete-hint-tooltip-trd.md) | 去掉历史列表常驻说明，复用垃圾桶的原生悬停提示，保留删除保护。 |
 | 公开课程解析期间的访问 | [公开观看、对话与逐集检索](03-product-reassessment/public-course-readiness-trd.md) | 显式公开、原片播放、零索引对话、按集覆盖和撤回校验。 |
 | 聊天页顶栏与公开范围 | [chat-header-scope-trd.md](03-product-reassessment/chat-header-scope-trd.md) | 紧凑的 Seekino 字标导航、公开系列空态及 CPU 侧栏实测。 |
 | 个人模型服务 | [personal-model-connections-trd.md](03-product-reassessment/personal-model-connections-trd.md) | 本机或 cloud 管理员编辑 YAML 中的协议、地址和模型，聊天按会话选模。 |
@@ -117,6 +120,8 @@ Event / Sub-Chunk 的实施入口是 [sub-chunk-trd.md](02-agent-harness/sub-chu
 | 对话延迟创建 | [chat-lazy-conversation-trd.md](03-product-reassessment/chat-lazy-conversation-trd.md) | 修复：打开页面、新对话、删除补位不再创建空对话，首次发送时才创建；实现完成，待合并。 |
 | Chat 正文流式与真实 FTT | [chat-streaming-trd.md](03-product-reassessment/chat-streaming-trd.md) | 承接课程 PRD：正文增量交付、调用来源、浏览器采证及非流式/缓冲反例；关联 #18 / #25。 |
 | 聊天页前端性能 | [chat-frontend-performance-trd.md](03-product-reassessment/chat-frontend-performance-trd.md) | 连接状态与传输收尾、历史 Markdown 渲染隔离、滚动及 Kino 的同条件对照；对应 #126，当前执行状态见工作台 CHAT-PERF-01。 |
+| 实时播放的 JEV 路由 | [chat-realtime-intent-routing-trd.md](03-product-reassessment/chat-realtime-intent-routing-trd.md) | 带 playback 的请求不再跳过 JEV；三条真实路由均 retrieve，但完整回放 1 条失败、2 条完成且时间锚定有缺口，不能据此关闭整体 Chat 延迟与质量。 |
+| Chat 子 Agent 模型配置继承 | [chat-model-config-inheritance-trd.md](03-product-reassessment/chat-model-config-inheritance-trd.md) | 子 Agent 跟随当前 Supervisor 的模型来源、主备、effort、输出／超时／字符预算与动态容量；338 项测试和当前 Cloud 预检通过，关联 #171，尚未部署，延迟与质量待修复后回放。 |
 | Chat 模型重试提示 | [设计](03-product-reassessment/chat-model-retry-status-trd.md) | 首次响应超时后的重试次数与恢复反馈。 |
 | 消息级用户反馈 | [message-feedback-trd.md](03-product-reassessment/message-feedback-trd.md) | 对 terminal assistant 消息记录 👍/👎、原因与说明；消息列表/详情回显，失败回答可报告；独立反馈表与 PUT/DELETE 接口。 |
 | Chat 工具与证据交付 | [agent-chat-delivery-contract.md](01-mvp/agent-chat-delivery-contract.md) | 交付合同与演进记录：Query / Evaluator、业务工具、证据核准及答案交付；Event 工具结合 Sub-Chunk TRD 阅读。 |
@@ -136,6 +141,7 @@ Event / Sub-Chunk 的实施入口是 [sub-chunk-trd.md](02-agent-harness/sub-chu
 | ContextCanvas | [context-canvas-design.md](02-agent-harness/context-canvas-design.md) | 专项设计：Parse / Chat 共用上下文工作区、工具协议、读取与修改边界。 |
 | 当前播放位置理解 | [realtime-parse-trd.md](02-agent-harness/realtime-parse-trd.md) | 专项 TRD：实时理解、临时解析与 Supervisor 接线；附执行流程图。 |
 | Agent Loop 参考 | [agent-loop-references.md](01-mvp/agent-loop-references.md) | 源码与设计参考：循环出口、Output Node 及前端消费。 |
+| Chat 模型窗口与压缩延迟 | [动态压缩触发与本地对照](03-product-reassessment/chat-model-context-compaction-trd.md) | 2026-11-13：冻结真实慢请求的模型边界，比较旧阈值与当前模型 context size 的 85%；关联 PR #144。 |
 | 陪看与按需解析 | [agent_harness_refactor.md](02-agent-harness/agent_harness_refactor.md) | 候选产品与 Harness 讨论：当前内容解释、历史召回和按需解析。 |
 | 上下文隔离修复 | [agent_harness_context修复.md](02-agent-harness/agent_harness_context修复.md) | 历史讨论与修复记录：上下文隔离、证据读取、草稿和工具输出约束。 |
 | Harness 调教 | [agent-harness调教log.md](02-agent-harness/agent-harness调教log.md) | 历史故障与调教日志；后续实施记录统一写入 devlog。 |

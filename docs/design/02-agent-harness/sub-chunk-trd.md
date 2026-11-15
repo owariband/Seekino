@@ -107,9 +107,9 @@ Refine 正式提交且覆盖依赖完成
 
 ## 5. 查询与 Agent 合同
 
-Server 先用 SQL 确定可信授权范围和已完成 Event 发布的来源，再将 `(parse_task_id, video_chunk_id, version)` 配对组合交给 ES。必须按元组 OR 过滤，不得拆成三个独立 terms 集合。
+Server 先用 SQL 读取可信授权范围、最新 COMPLETE 任务、冻结 Event 目标以及 INDEX 完成且正文版本一致的 Chunk 标识，再将 `(parse_task_id, video_chunk_id, version)` 配对组合交给 ES；查询前不加载 Chunk 正文或完整 detail。必须按元组 OR 过滤，不得拆成三个独立 terms 集合。
 
-词法、text vector、vision vector 都在 topK 前应用同一来源范围及 event_type / root speaker 条件。候选先按 Event 融合，随后按 distinct Chunk 批量回源，核对原始 Timeline 的下标、类型、speaker、内容与版本，再按 Chunk 组织结果。
+词法、text vector、vision vector 都在 topK 前应用同一来源范围及 event_type / root speaker 条件。候选先按 Event 融合，随后按 distinct Chunk 批量回源，核对原始 Timeline 的下标、类型、speaker、内容与版本，再按 Chunk 组织结果。回源正文只读取 `candidate_budget` 内的候选；相邻上下文和单条证据读取按需读取正文。完整 `ChunkParseContent.detail` 以 `defer(..., raiseload=True)` 延迟加载，候选和邻居另以 SQL JSON 路径只投影 `compact` 与 `evidence.camera_hints`，不读 `_index_embeddings_v2`；单条证据的身份查询不投影 detail，实际证据回源走候选查询并保留小字段。`published_reference_sources` 为核对编辑参考回执仍显式读取完整 detail，不属于本段检索回源的豁免。
 
 新增业务工具 `search_video_events(query, event_types?, speaker?, video_chunk_ids?, top_k, channel_weights, cursor?)`：
 
@@ -145,6 +145,7 @@ MyGO 实验使用“高高在上／居高临下”、指定 speaker、已确认 
 
 ## 8. 实施记录
 
+- 2026-11-13：移除 Event 查询前对 `validate_event_coverage` 的调用；范围装配改读最新 COMPLETE 任务、冻结 target 及 Chunk ID/content version 元数据。候选、邻居和单条证据的身份查询延迟加载完整 `detail`，候选与邻居另以 SQL JSON 路径投影 `compact` / `evidence.camera_hints`，正文只读取 `candidate_budget` 内候选。相关八模块隔离回归 248 passed、4 skipped，搜索和直接证据读取的摘要与运镜提示保留已验证。INDEX 发布写入校验、显式审计及 `published_reference_sources` 的回执读取保持不变。设计与证据见 [TRD](../03-product-reassessment/event-query-bounded-content-trd.md)、[报告](../../report/server/service/video_event_retrieval/bounded-query-20261113.md)。
 - 2026-10-21：用户确认 description、原文及已有译文分别编码到同一 `semantic_vectors` 集合，Event 语义检索取 max；投影合同和默认物理索引改为 v3。此前 v2 的纯 description 方案由此替代，Timeline 字段拆分与 interpretation 提案未实施。保留已有正文和 Event 身份，部署须显式绑定 v3 目标并补建，不能复用旧混合文本向量代替各独立表示。
 - 2026-10-21：多向量定向组合回归 **514 passed**，覆盖 Engine、Event / Chunk Coordinator、Event Store、检索服务、SQL→索引→Agent Canvas、CLI、配置与调用装配。真实本机 ES 隔离测试 **2 passed**：精确与 ANN 均验证 max 而非 sum、父 Event TopK 去重、父级授权与 speaker 过滤，以及版本可见性和删除清理。测试仅创建随机 test 索引并清理，没有操作运行视频索引或调用真实模型；本轮没有执行 MyGO 重建、服务切换、commit 或 push。
 - 2026-10-17：持久化上述最终设计，用户授权按 check-out 范围直接开发。当前开始实现；尚未创建运行索引、回填或重启服务。

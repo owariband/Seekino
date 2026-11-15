@@ -9,6 +9,8 @@ Gateway 是 seekino 的模型调用边界。除把统一输入转换成 Provider
 Tool Loop、Adapter 选择和 Provider fallback。它不拥有 Video、Query、Speaker、
 Conversation 或 Parse Job 等领域语义。
 
+Deep Agents Supervisor 的模型绑定可设置 `auto_compact_ratio: 0.85`，由 Gateway 从当前模型能力解析触发值；未提供能力字段时使用明确的绑定声明，省略该字段则保留旧策略。缓存、主备容量及输出预留的合同见 [模型窗口配置](../docs/model-config.md#deep-agents-按模型窗口触发压缩)。该机制仍同步等待摘要；性能证据及验证边界见 [TRD](../docs/design/03-product-reassessment/chat-model-context-compaction-trd.md)。
+
 Gateway 可控的 API 工具循环在上下文压缩时优先保留近期、有长度上限的工具反馈。
 Schema 错误和重试提示、写入的 batch/revision 回执不会被笼统改写成“已完成”；
 硬预算释放大块结果时也保留最多 500 字符的控制反馈。摘要不是业务事实来源，
@@ -38,6 +40,11 @@ Schema 错误和重试提示、写入的 batch/revision 回执不会被笼统改
 `create_agent_factory()` 保留现有 Agent 的循环和 Supervisor 接口。模型名、来源、
 连接、预算和回退从配置解析，供应商实例创建与关闭均在 Gateway 内完成。Engine
 和 Server 保留抽帧、转写提示词、时间戳归一、检索候选身份与任务状态等业务职责。
+
+同一 Chat 的 Supervisor 与 Query 子任务复用当前所选 binding/factory。Deep Agents、
+structured Agent 与工具循环通过同一控制入口解析模型容量、比例压缩和主备安全窗口，
+复用模型能力缓存；角色 prompt、工具和执行次数限制仍分别由 Agent runtime 管理。
+应用字符保护继续生效，原生 runtime 继续自行管理上下文，详见[模型配置](../docs/model-config.md#chat-与工具-agent-按模型窗口触发压缩)。
 
 HTTP 生成模型在创建时读取 `ModelBinding.stream`，默认 `true`，显式 `false` 使用完整响应；
 主模型与 fallback 分别保留自己的配置，不按 Kimi profile 或业务入口决定开关。

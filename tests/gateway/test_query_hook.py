@@ -49,7 +49,7 @@ def test_video_question_validates_its_own_labels(config):
 def test_query_hook_defaults_are_disabled_and_survive_gateway_loading():
     config = QueryHookConfig()
     assert not config.enabled
-    assert config.rewriter_enabled
+    assert not config.rewriter_enabled
     assert config.router_endpoint == "https://openrouter.ai/api/alpha/decisions"
     assert config.router_model == "typesafe/jev-1.14"
     assert config.router_api_key_env == "OPENROUTER_JEV_API_KEY"

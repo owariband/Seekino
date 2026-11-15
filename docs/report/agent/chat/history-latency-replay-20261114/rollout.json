@@ -1,0 +1,40 @@
+{
+  "revision": "7b990dd87303f576e91f87078a0f9414f0005bad",
+  "base_image": "seekino-api:hotfix-event-memory-2bebd9af",
+  "base_image_id": "sha256:66b296c20370a52240c76fe9fb401748bdc1470ca1e0e34a1e46810d2244f9e6",
+  "new_image": "seekino-api:jev-realtime-7b990dd8",
+  "new_image_id": "sha256:369c8f6613d525600bd7a9b74c1d0d201e4dd788f1fb74148657e87341dc834e",
+  "patched_files": {
+    "agent/chat/query_hook.py": "a650713826e2b9467b84855192bd7bd50d711cb9c493702d549b282ef2e9eab2",
+    "agent/chat/query_hook_prompts.py": "5a62e664b84d7c1f5de09267a179e7803be9773fc2fb5ebd6c2ae945a797dc65"
+  },
+  "verification": {
+    "files_verified": 2,
+    "playback_route_called_once": true,
+    "original_input_unchanged": true,
+    "active_model_config_preserved": true
+  },
+  "activity_before": {
+    "chat": 0,
+    "parse": 0,
+    "chunks": 0,
+    "intervals": 0
+  },
+  "started_at": "2026-11-14T03:44:08.570634+00:00",
+  "configuration_changed": false,
+  "database_migration": false,
+  "rollback": false,
+  "health": {
+    "status": "ok",
+    "serverTime": 1794627865489,
+    "components": {
+      "parseConsumer": {
+        "status": "running",
+        "failure": null
+      }
+    }
+  },
+  "other_five_containers_unchanged": true,
+  "seconds": 16.942583461997856,
+  "completed_at": "2026-11-14T03:44:25.513248+00:00"
+}

@@ -82,13 +82,13 @@ def task_data(row: ChunkParseTask) -> ChunkParseTaskData:
     )
 
 
-def content_data(row: ChunkParseContent) -> ChunkParseContentData:
+def content_data(row: ChunkParseContent, *, include_detail: bool = True) -> ChunkParseContentData:
     return ChunkParseContentData(
         id=row.id,
         chunk_task_id=row.chunk_task_id,
         content=deepcopy(row.content),
         version=row.version,
-        detail=deepcopy(row.detail),
+        detail=deepcopy(row.detail) if include_detail else None,
         create_time=row.create_time,
         create_date=row.create_date,
         update_time=row.update_time,

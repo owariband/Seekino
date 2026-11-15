@@ -57,6 +57,12 @@ class DecisionModel:
             return options["result_type"].model_validate(self.result)
 
 
+CURRENT_VIDEO = {
+    "series": "Course", "seriesDisplayName": "课程", "episode": 3,
+    "title": "第三集", "positionSeconds": 125000,
+}
+
+
 @pytest.mark.parametrize("action,query", [("respond", None), ("retrieve", "原句不是你说的那样"), ("mixed", "雨中等人")])
 def test_combined_decision_preserves_original_without_calling_legacy_models(action, query):
     legacy, model = Models(), DecisionModel(action, query)
@@ -131,7 +137,10 @@ def test_combined_late_result_is_discarded_and_parent_deadline_is_not_swallowed(
 
 def hook(models, rewrite=None, **config):
     rewrite_model = RewriteModel() if rewrite is None else rewrite
-    return QueryHook(QueryHookConfig(enabled=True, **config), models, rewrite_model=rewrite_model)
+    return QueryHook(
+        QueryHookConfig(**{"enabled": True, "rewriter_enabled": True, **config}),
+        models, rewrite_model=rewrite_model,
+    )
 
 
 def test_rewrite_injects_slot_options_into_injected_model():
@@ -154,6 +163,72 @@ def test_rewrite_injects_slot_options_into_injected_model():
     assert callable(options["check_control"])
     assert [c.operation for c in usage] == ["query_hook_route", "query_hook_rewrite"]
     assert all(call.context["stage"] == "query_hook" for call in usage)
+
+
+@pytest.mark.parametrize(("action", "template"), [
+    ("respond", "简单回应"), ("retrieve", "简单检索"), ("mixed", "回应与检索混合"),
+])
+def test_playback_routes_once_with_current_video_and_preserves_input(action, template):
+    models, rewrite = Models(action), RewriteModel()
+    inputs = _inputs()
+    inputs["user_message"] = "真是高高在上呢，哪里出现过？"
+    inputs["current_video"] = deepcopy(CURRENT_VIDEO)
+    inputs["extra_context"] = {"playback": {"positionSeconds": 125000}}
+    original = deepcopy(inputs)
+    output = QueryHook(QueryHookConfig(enabled=True), models, rewrite_model=rewrite)(
+        inputs, ExecutionControl(None),
+    )
+    assert inputs == original
+    assert output.startswith(inputs["user_message"] + "\n\n")
+    assert [call[0] for call in models.calls] == ["route"]
+    assert models.calls[0][1] == {
+        "query": inputs["user_message"], "recent_messages": [],
+        "current_video": CURRENT_VIDEO,
+    }
+    assert not rewrite.calls
+    assert template in output and "候选检索用语：" not in output
+
+
+def test_playback_route_failure_falls_back_and_disabled_hook_skips():
+    models, inputs = Models(), _inputs()
+    inputs["current_video"] = deepcopy(CURRENT_VIDEO)
+    inputs["extra_context"] = {"playback": {"positionSeconds": 125000}}
+    original = deepcopy(inputs)
+    models.route_error = QueryHookModelError("unavailable")
+    assert QueryHook(QueryHookConfig(enabled=True), models)(
+        inputs, ExecutionControl(None),
+    ) == inputs["user_message"]
+    assert inputs == original and len(models.calls) == 1
+    models.route_error = None
+    assert QueryHook(QueryHookConfig(), models)(
+        inputs, ExecutionControl(None),
+    ) == inputs["user_message"]
+    assert inputs == original and len(models.calls) == 1
+
+
+def test_ordinary_text_payload_keeps_query_and_recent_messages_only():
+    models, inputs = Models("respond"), _inputs()
+    inputs["history"] = [{"role": "user", "content": "之前的话", "status": "COMPLETED"}]
+    QueryHook(QueryHookConfig(enabled=True), models)(inputs, ExecutionControl(None))
+    assert models.calls[0][1] == {
+        "query": inputs["user_message"],
+        "recent_messages": [{"role": "user", "content": "之前的话"}],
+    }
+
+
+def test_combined_decision_prompt_includes_current_video_only_when_present():
+    inputs, with_video = _inputs(), DecisionModel()
+    inputs["current_video"] = deepcopy(CURRENT_VIDEO)
+    QueryHook(QueryHookConfig(enabled=True), Models(), decision_model=with_video)(
+        inputs, ExecutionControl(None),
+    )
+    prompt = with_video.calls[0][0][0].text
+    assert "当前视频上下文：" in prompt and '"positionSeconds":125000' in prompt
+    without_video = DecisionModel()
+    QueryHook(QueryHookConfig(enabled=True), Models(), decision_model=without_video)(
+        _inputs(), ExecutionControl(None),
+    )
+    assert "当前视频上下文：" not in without_video.calls[0][0][0].text
 
 
 @pytest.mark.parametrize("action", ["respond", "retrieve", "mixed"])
@@ -218,12 +293,14 @@ def test_admission_failures_are_not_silently_bypassed(stage):
             hook(models, rewrite)(_inputs(), ExecutionControl(None))
 
 
-def test_disabled_rewriter_skips_model_call_and_logs_once(caplog):
+@pytest.mark.parametrize("config", [{}, {"rewriter_enabled": False}])
+def test_disabled_rewriter_skips_model_call_and_logs_once(caplog, config):
     models = Models("retrieve")
     rewrite = RewriteModel()
     inputs = _inputs()
+    before = QueryHook(QueryHookConfig(enabled=True, **config), models, rewrite_model=rewrite)
     with caplog.at_level(logging.INFO):
-        output = hook(models, rewrite, rewriter_enabled=False)(inputs, ExecutionControl(None))
+        output = before(inputs, ExecutionControl(None))
     assert [call[0] for call in models.calls] == ["route"]
     assert not rewrite.calls
     assert "简单检索" in output
@@ -236,7 +313,7 @@ def test_disabled_rewriter_skips_model_call_and_logs_once(caplog):
 def test_missing_rewrite_model_skips_and_logs_once(caplog):
     models = Models("retrieve")
     inputs = _inputs()
-    before = QueryHook(QueryHookConfig(enabled=True), models)
+    before = QueryHook(QueryHookConfig(enabled=True, rewriter_enabled=True), models)
     with caplog.at_level(logging.INFO):
         output = before(inputs, ExecutionControl(None))
     assert [call[0] for call in models.calls] == ["route"]
@@ -305,7 +382,6 @@ def test_recent_history_is_bounded_plain_text_without_attachments():
 @pytest.mark.parametrize("extra", [
     {"attachments": [{"mediaUri": "image"}]},
     {"image_urls": ["data:image/png;base64,test"]},
-    {"extra_context": {"playback": {"positionSeconds": 2}}},
     {"user_message": "长" * 2001},
 ])
 def test_text_hook_does_not_override_visual_or_oversized_requests(extra):
@@ -355,7 +431,7 @@ def test_supervisor_receives_append_once_while_tools_history_and_inputs_keep_ori
         video, supervisor, FakeWebSearcher(),
         max_web_results=5, web_timeout_seconds=12, execution_timeout_seconds=60,
         max_tool_result_bytes=4096, max_prompt_chars=10000,
-        query_hook=QueryHook(QueryHookConfig(enabled=True), models,
+        query_hook=QueryHook(QueryHookConfig(enabled=True, rewriter_enabled=True), models,
             decision_model=DecisionModel("retrieve", "真是高高在上呢") if combined else None,
             rewrite_model=None if combined else rewrite),
     )

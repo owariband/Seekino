@@ -15,11 +15,23 @@
 
 ## Docs / dev / workbench
 
+[2026-11-13 Chat 模型窗口与同步压缩本地对照](gateway/agent_model/chat-context-compaction-20261113/README.md)：模型窗口自动发现、85% 触发接线、冻结真实模型边界的对照方法与验证范围；真实秒数与整轮效果按报告证据理解。
+
 [2026-11-03 管理工作台与课程闭环地图](docs/dev/workbench/README.md)：同步 Kimi 工作区 revision 4，新增里程碑概览、闭环地图、验收门槛与四列看板，36 项浏览器检查。门槛结果引用已有 QA 报告，未重跑业务验收。
 
 ## Docs / dev / kanban
 
 [2026-11-02 单文件项目看板设计与验收](docs/dev/kanban/README.md)：真实条目导入、唯一状态入口迁移、桌面/移动端与离线保存重开验证。历史业务状态未重新验收。
+
+## Agent / chat
+
+[2026-11-14 实时 JEV 接线与三条历史 Chat 完整回放](agent/chat/history-latency-replay-20261114/README.md)：三条真实路由均进入 JEV 并返回 `retrieve`，但 T01 因 Query 耗尽共享工具预算失败，T02／T03 虽完成却分别漏掉目标播放位置、声称取到 17:36 而实际取帧为相邻秒；保留逐条 token、调用、部署与未验证边界。
+
+[2026-11-14 JEV-only 默认配置生产上线](agent/chat/query-intent-jev-only-20261113/production-rollout-20261114.md)：dev #155 / main #157 合并、兼容镜像、Cloud API 配置与真实 HTTP／检索 hook 探针；区分部署操作耗时与用户停机，保留未验证范围。
+
+[2026-11-13 关闭独立改写器后的 Chat 三路径复测](agent/chat/query-intent-jev-only-20261113/README.md)：三组全部重跑，B 为 JEV 单独分类，实际 9 次成功分类、零独立改写；完整 FTT／TT／token、输出及卡片证据。原实验没有改 Cloud；后续上线见上一项。
+
+[2026-11-13 Chat 三路径意图判断完整对照](agent/chat/query-intent-routing-20261113/README.md)：Cloud 恢复 JEV 的配置证据，及 DeepSeek 前置决策、JEV＋改写器、Supervisor 直接判断的相同模型实验；首字、完成耗时、用量与内容分别核对。
 
 ## Agent / video_parse_v2
 
@@ -44,6 +56,8 @@
 - [video-parse-v2-migration-stages.svg](agent/video_parse_v2/video-parse-v2-migration-stages.svg)
 
 ## Gateway
+
+[2026-11-15 Chat 子 Agent 模型配置继承修复](gateway/agent_model/chat-model-config-inheritance-20261115/README.md)：Server 按当前 Supervisor 选择装配父子模型与请求／输出／字符／容量控制，Gateway 对 API builder 共用动态解析；202＋136 项唯一测试与当前 Cloud 配置预检通过，修复关联 PR #171，未部署，未做修复后回放。
 
 [2026-11-03 Flash逐块费用、耗时与质量审计](gateway/deepseek-flash-chunk-audit-20261103.md)，附[117块及115个Refine区间明细](gateway/deepseek-flash-chunk-audit-20261103.html)。只读真实任务；区分none／low、共享Refine费用、原话丢失和时间错配，不把结构通过写成质量通过。
 
@@ -78,6 +92,8 @@ API 并发：[2026-10-30 Kimi Code 10 路并发实测](gateway/kimi-concurrency-
 - [agent-bridge-stages.svg](gateway/bridge/agent-bridge-stages.svg)
 
 ## Server
+
+- [Event 查询有界内容读取（2026-11-13）](server/service/video_event_retrieval/bounded-query-20261113.md)：生成数据验证 ES 前只读元数据、候选正文有界，完整 detail 延迟加载且仅投影 compact / camera_hints；相关八模块隔离回归 248 passed、4 skipped，摘要与运镜提示保留已验证。
 
 11 月 7 日，micrograd v5 在隔离实例跑完 146 个索引块，用时 90 分 04.884 秒，414 份终态草稿都能对上模型调用。[草稿写入、整集计时与合并后的数据库回放](server/service/parse-output-drafts-20261107.md#micrograd-v5)
 

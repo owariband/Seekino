@@ -1,0 +1,550 @@
+{
+  "recorded_date_local": "2026-11-14",
+  "timezone": "Asia/Singapore",
+  "dev_pr": "https://github.com/owariband/Seekino/pull/155",
+  "dev_merge": "9a18c6fb097a1dfffea5b7c9b06ddff9b3f55439",
+  "main_pr": "https://github.com/owariband/Seekino/pull/157",
+  "main_merge": "8a86883fb154ecb3f46d7ef0ebeb049f62e46bdd",
+  "topology": "Cloud API runs on seekino-server CPU host as seekino-local-api-1; one instance, not two independent deployments",
+  "remote_release_directory": "/home/ubuntu/seekino-cloud-runtime/releases/jev-only-8a86883f-20261113",
+  "evidence": {
+    "runtime-verification": {
+      "active": {
+        "path": "/data/config/cloud/models.yaml",
+        "sha256": "547729bafeb922a0e1f0c25916996513f40b1f507a0e4373ce51943ce48067d2",
+        "hook_enabled": true,
+        "rewriter_enabled": false,
+        "jev_model": "typesafe/jev-1.14",
+        "has_combined_decision_binding": false,
+        "has_rewriter_binding": false,
+        "supervisor": {
+          "source": "deepseek_api",
+          "model": "deepseek-flash",
+          "reasoning_effort": "high",
+          "max_output_tokens": 8192,
+          "auto_compact_ratio": 0.85
+        }
+      },
+      "seed": {
+        "path": "/etc/seekino/models.yaml",
+        "sha256": "91728e8fdbc6903089187d35a3ddf81a75e0ca57055e0b0ff5b9cfed40d1429f",
+        "hook_enabled": true,
+        "rewriter_enabled": false,
+        "jev_model": "typesafe/jev-1.14",
+        "has_combined_decision_binding": false,
+        "has_rewriter_binding": false,
+        "supervisor": {
+          "source": "deepseek_api",
+          "model": "deepseek-flash",
+          "reasoning_effort": "high",
+          "max_output_tokens": 8192,
+          "auto_compact_ratio": 0.85
+        }
+      },
+      "runtime": {
+        "path": "/data/config/cloud/agent-runtime.yaml",
+        "sha256": "98c16c9e11e844b04f5da524594029dabc2cba41a7dbcd83aa0c37b7c8217990"
+      },
+      "api": {
+        "image": "seekino-api:jev-only-8a86883f-compat",
+        "image_id": "sha256:2a8a72ef9cf66efeb9d6992c57be22a0ac61ce9e049141ca355cc163ad2a14f8",
+        "container_id": "8521b1b297f7dc0009631970fc209d6c79c83116285271c320d6a60a62156143",
+        "started_at": "2026-11-13T16:24:47.369175452Z",
+        "health": "healthy",
+        "revision": "8a86883fb154ecb3f46d7ef0ebeb049f62e46bdd",
+        "release_mode": "existing-runtime-overlay"
+      },
+      "capacity_events": [
+        "2026-11-13T16:24:59+0000 INFO gateway.agent_model.factory request_id=- event=agent_context_capacity_resolved model=deepseek-flash source=deepseek_api capacity_source=metadata fallback_model=- fallback_capacity_source=none context_window_tokens=1048576 trigger=891289 keep=24000",
+        "2026-11-13T16:25:35+0000 INFO gateway.agent_model.factory request_id=3191347d-411a-4f05-8437-afa3b4e8fe97 event=agent_context_capacity_resolved model=deepseek-flash source=deepseek_api capacity_source=metadata fallback_model=- fallback_capacity_source=none context_window_tokens=1048576 trigger=891289 keep=24000"
+      ],
+      "config_plan_activated": true
+    },
+    "deploy-receipt": {
+      "started_at": "2026-11-13T16:24:45.721505+00:00",
+      "old_api_id": "6c223ee2e14705f5ebe489473785cfc44a729bc99a1f83e658f4c4c920de98cd",
+      "old_image": "seekino-api:main-a0fb93d9",
+      "new_image": "seekino-api:jev-only-8a86883f-compat",
+      "activity_before": {
+        "processing_messages": 2,
+        "processing_since_api_start": 0,
+        "active_or_due_parse_tasks": 0,
+        "running_chunk_tasks": 0,
+        "refining_interval_tasks": 0,
+        "parse_status_counts": {
+          "COMPLETE": 21,
+          "PARSING_FAILED": 7,
+          "PENDING": 1
+        }
+      },
+      "config_backup_plan": {
+        "prepared_at": "2026-11-13T16:24:45.446917+00:00",
+        "files": [
+          {
+            "active": "/data/config/cloud/models.yaml",
+            "backup": "/data/config/cloud/models.yaml.before-jev-only-20261113T162445Z",
+            "candidate": "/data/config/cloud/models.yaml.jev-only-8a86883f-candidate",
+            "before_sha256": "fef4055318dbded9dce779716e71167d5f73957294f9877fc26278927ad4a9da",
+            "after_sha256": "547729bafeb922a0e1f0c25916996513f40b1f507a0e4373ce51943ce48067d2",
+            "mode": 384,
+            "uid": 10001,
+            "gid": 10001,
+            "semantic_changes": [
+              "query_hook.rewriter_enabled=false",
+              "models.query_rewriter removed",
+              "models.query_hook removed if present",
+              "models.supervisor.auto_compact_ratio=0.85"
+            ]
+          },
+          {
+            "active": "/seed/models.yaml",
+            "backup": "/seed/models.yaml.before-jev-only-20261113T162445Z",
+            "candidate": "/seed/models.yaml.jev-only-8a86883f-candidate",
+            "before_sha256": "c3ffd985b39d6e08fb8e4642fd91b56b39ce734c125defae3aec54d2d79d7618",
+            "after_sha256": "91728e8fdbc6903089187d35a3ddf81a75e0ca57055e0b0ff5b9cfed40d1429f",
+            "mode": 420,
+            "uid": 0,
+            "gid": 0,
+            "semantic_changes": [
+              "query_hook.rewriter_enabled=false",
+              "models.query_rewriter removed",
+              "models.query_hook removed if present",
+              "models.supervisor.auto_compact_ratio=0.85"
+            ]
+          }
+        ],
+        "runtime_path": "/data/config/cloud/agent-runtime.yaml",
+        "runtime_sha256": "98c16c9e11e844b04f5da524594029dabc2cba41a7dbcd83aa0c37b7c8217990",
+        "runtime_backup": "/data/config/cloud/agent-runtime.yaml.before-jev-only-20261113T162445Z",
+        "activated": false,
+        "private_config_exported": false
+      },
+      "database_migrated": false,
+      "rolled_back": false,
+      "new_api_id": "8521b1b297f7dc0009631970fc209d6c79c83116285271c320d6a60a62156143",
+      "health": {
+        "status": "ok",
+        "serverTime": 1794587103571,
+        "components": {
+          "parseConsumer": {
+            "status": "running",
+            "failure": null
+          }
+        }
+      },
+      "config_activated": true,
+      "other_five_containers_unchanged": true,
+      "seconds": 17.891,
+      "completed_at": "2026-11-13T16:25:03.612343+00:00"
+    },
+    "compat-image-receipt": {
+      "image": "seekino-api:jev-only-8a86883f-compat",
+      "image_id": "sha256:2a8a72ef9cf66efeb9d6992c57be22a0ac61ce9e049141ca355cc163ad2a14f8",
+      "base_image_id": "sha256:bca80fd66d806e9079f40338d6cbc2482eeaff94229efaaa766ce5cb289d3956",
+      "main_revision": "8a86883fb154ecb3f46d7ef0ebeb049f62e46bdd",
+      "release_mode": "existing-runtime-overlay",
+      "overlaid_files": {
+        "gateway/config.py": "18aed137ce0be52cb39b5284828f9830f07c05a7472ebacb730d3d9bd0c95ace",
+        "gateway/agent_model/context.py": "474be15032ba5b5734077b5e9668030d2e1abc0ada01169a7fb98171233723ff",
+        "gateway/agent_model/factory.py": "45386c2dafe95cebd4141aca4c0ac798e84a2de460349d5a9e816cc10ca9bc6a",
+        "gateway/model_discovery.py": "65e99c035cd32acf845cadfd9d8bd84847968c1be9ef0b3d1eca80825e6b4197",
+        "config.yaml": "b0d5c7b64d72a7b3bc060d34bece0b0a307bef477874382a887a96928cde3ab6"
+      },
+      "compatibility_difference_from_main": "gateway/config.py preserves the pre-existing Compose embedding URL validator and document_base_urls; all other overlay files match main",
+      "verification": {
+        "overlay_files_hash_verified": 5,
+        "active_config_loads": true,
+        "existing_embedding_contract_preserved": true,
+        "default_rewriter_enabled": false,
+        "derived_trigger_test": 891289,
+        "network": "none"
+      },
+      "seconds": 3.084,
+      "no_dependency_changes": true,
+      "api_replaced": false
+    },
+    "production-smoke-receipt": {
+      "started_at": "2026-11-13T16:27:43.424377+00:00",
+      "scope": "new nonprivate smoke only; not part of the 27-turn benchmark",
+      "public_health": {
+        "http_status": 200,
+        "body": {
+          "status": "ok",
+          "serverTime": 1794587263887,
+          "components": {
+            "parseConsumer": {
+              "status": "running",
+              "failure": null
+            }
+          }
+        }
+      },
+      "http_chat": {
+        "query": "请不要检索视频，只用一句话确认：配置检查完成。",
+        "conversation_id": "beed7e94-1472-4552-8d13-65b2feebce02",
+        "assistant_message_id": "b87793c4-94c2-4476-a2ea-19b14b0d59cf",
+        "terminal_type": "answer.completed",
+        "status": "COMPLETED",
+        "content": "配置检查完成。",
+        "ftt_seconds": 3.6166010650003955,
+        "tt_seconds": 4.7497292159996505,
+        "timing": {
+          "startedAt": 1794587264238,
+          "totalDurationMs": 3273,
+          "stages": [
+            {
+              "phase": "QUEUED",
+              "durationMs": 3258
+            },
+            {
+              "phase": "RESPONDING",
+              "durationMs": 15
+            }
+          ]
+        },
+        "event_counts": {
+          "answer.started": 1,
+          "answer.delta": 2,
+          "answer.model.completed": 1,
+          "answer.snapshot": 2,
+          "answer.progress": 1,
+          "answer.completed": 1
+        },
+        "ftt_definition": "public HTTP client first nonempty visible answer.delta or answer.snapshot/content; excludes reasoning/status/tools",
+        "model_calls": [
+          {
+            "operation": "query_hook_route",
+            "model_name": "typesafe/jev-1.14-20261014",
+            "provider": "openrouter",
+            "status": "completed",
+            "usage_scope": null,
+            "usage": {
+              "tokens": {
+                "input_tokens": 636,
+                "total_tokens": 674,
+                "output_tokens": 38,
+                "reasoning_tokens": null,
+                "text_input_tokens": null,
+                "audio_input_tokens": null,
+                "image_input_tokens": null,
+                "cached_input_tokens": null,
+                "cache_write_input_tokens": null,
+                "cached_audio_input_tokens": null,
+                "cache_write_1h_input_tokens": null,
+                "cache_write_5m_input_tokens": null
+              },
+              "sdk_model_usage": []
+            },
+            "started_at": "2026-11-13 16:27:44.386000",
+            "ended_at": 1794587266509
+          },
+          {
+            "operation": "read_file,task,submit_video_item,remove_video_item,search_web,query_video,read_query_report,retrieve,read_retrieval_evidence,search_video_events,get_video_outline,get_series_overview,inspect_video_frames",
+            "model_name": "deepseek-flash",
+            "provider": "deepseek",
+            "status": "completed",
+            "usage_scope": null,
+            "usage": {
+              "tokens": {
+                "input_tokens": 16139,
+                "total_tokens": 16144,
+                "output_tokens": 5,
+                "reasoning_tokens": 0,
+                "text_input_tokens": null,
+                "audio_input_tokens": null,
+                "image_input_tokens": null,
+                "cached_input_tokens": 16000,
+                "cache_write_input_tokens": null,
+                "cached_audio_input_tokens": null,
+                "cache_write_1h_input_tokens": null,
+                "cache_write_5m_input_tokens": null
+              },
+              "sdk_model_usage": []
+            },
+            "started_at": "2026-11-13 16:27:46.650000",
+            "ended_at": 1794587267456
+          }
+        ]
+      },
+      "retrieval_hook": {
+        "query": "请帮我找一下视频里讲反向传播的片段。",
+        "output": "请帮我找一下视频里讲反向传播的片段。\n\n[本轮处理说明｜应用生成]\n简单检索：按当前原文和已有上下文查找视频证据，并回应检索诉求。\n本说明仅适用于当前消息，不评价上一轮检索是否正确，也不约束后续轮次。\n候选检索用语仅供参考；台词及其他约束以用户原文为准，不得用候选词覆盖原话。\n原文与已有上下文中的要求仍需遵循；不要向用户复述本处理说明。\n[/本轮处理说明]",
+        "seconds": 2.1699801869999646,
+        "events": [
+          "event=query_hook_route conversation_id=jev-only-smoke-retrieval message_id=jev-only-smoke-retrieval status=completed action=retrieve duration_ms=2156.0 error=None",
+          "event=query_hook_rewrite conversation_id=jev-only-smoke-retrieval message_id=jev-only-smoke-retrieval status=skipped duration_ms=0.0 error=disabled"
+        ],
+        "calls": [
+          {
+            "operation": "query_hook_route",
+            "model": "typesafe/jev-1.14-20261014",
+            "provider": "openrouter",
+            "status": "completed",
+            "usage": {
+              "input_tokens": 631,
+              "output_tokens": 38,
+              "total_tokens": 669,
+              "cached_input_tokens": null,
+              "reasoning_tokens": null,
+              "text_input_tokens": null,
+              "image_input_tokens": null,
+              "audio_input_tokens": null,
+              "cached_audio_input_tokens": null,
+              "cache_write_input_tokens": null,
+              "cache_write_5m_input_tokens": null,
+              "cache_write_1h_input_tokens": null
+            }
+          }
+        ],
+        "full_retrieval_executed": false
+      },
+      "completed_at": "2026-11-13T16:27:54.998745+00:00"
+    }
+  },
+  "http_chat_total_usage": {
+    "input_tokens": 16775,
+    "output_tokens": 43,
+    "total_tokens": 16818
+  },
+  "initial_probe_instrumentation_note": {
+    "assistant_message_id": "f104d366-b509-43b6-8763-62e5594b41f3",
+    "result": "HTTP reached answer.completed; collector then failed with MySQL 1064 because usage was not quoted. The same nonprivate query was rerun once with the corrected collector. First HTTP client FTT/TT were not retained.",
+    "included_in_benchmark": false
+  },
+  "preflight_compatibility_note": "The full-main candidate was never activated. Its schema rejected pre-existing internal embedding URL and document_base_urls. The deployed image is a five-file overlay on the prior runtime, preserving this deployment adaptation, dependencies and other service code.",
+  "main_release_validation": {
+    "passed": 543,
+    "failed": 3,
+    "failure_scope": "same known baseline default-model fixture assertions as default-rollout-checks.json; not fixed in this task",
+    "release_tree": {
+      "tracked_paths": 808,
+      "assets": 8,
+      "passed": true
+    },
+    "github_release_files": "SUCCESS",
+    "new_27_turn_benchmark_calls": 0,
+    "command": "python -m pytest tests/agent/chat/test_query_hook.py tests/gateway/test_agent_factory.py tests/gateway/test_config.py tests/gateway/test_context_window.py tests/gateway/test_model_config_v2.py tests/gateway/test_model_discovery.py tests/gateway/test_query_hook.py tests/server/test_bootstrap.py -m \"not live_agent\" -q --tb=short"
+  },
+  "limitations": [
+    "One full public feedback Chat and one real retrieval-hook probe are rollout checks, not a performance benchmark.",
+    "The HTTP collector includes public HTTPS transport, unlike the 27-turn service-level FTT; no direct latency ranking is valid.",
+    "Full production library retrieval, near-full-context quality, concurrency and long-term latency were not rebenchmarked.",
+    "The first HTTP attempt completed, then collection failed; repeat kept separate from the frozen 27-turn experiment.",
+    "Existing stale PROCESSING records and the future 2037 PENDING Parse were left unchanged."
+  ],
+  "post_rollout_audit": {
+    "new_nonprivate_probe_messages": [
+      {
+        "id": "b87793c4-94c2-4476-a2ea-19b14b0d59cf",
+        "role": "ASSISTANT",
+        "status": "COMPLETED",
+        "content": "配置检查完成。",
+        "model_calls": [
+          {
+            "operation": "query_hook_route",
+            "provider": "openrouter",
+            "model_name": "typesafe/jev-1.14-20261014",
+            "status": "completed",
+            "usage": {
+              "tokens": {
+                "input_tokens": 636,
+                "total_tokens": 674,
+                "output_tokens": 38,
+                "reasoning_tokens": null,
+                "text_input_tokens": null,
+                "audio_input_tokens": null,
+                "image_input_tokens": null,
+                "cached_input_tokens": null,
+                "cache_write_input_tokens": null,
+                "cached_audio_input_tokens": null,
+                "cache_write_1h_input_tokens": null,
+                "cache_write_5m_input_tokens": null
+              },
+              "sdk_model_usage": []
+            },
+            "started_at": "2026-11-13 16:27:44.386000",
+            "ended_at": 1794587266509
+          },
+          {
+            "operation": "read_file,task,submit_video_item,remove_video_item,search_web,query_video,read_query_report,retrieve,read_retrieval_evidence,search_video_events,get_video_outline,get_series_overview,inspect_video_frames",
+            "provider": "deepseek",
+            "model_name": "deepseek-flash",
+            "status": "completed",
+            "usage": {
+              "tokens": {
+                "input_tokens": 16139,
+                "total_tokens": 16144,
+                "output_tokens": 5,
+                "reasoning_tokens": 0,
+                "text_input_tokens": null,
+                "audio_input_tokens": null,
+                "image_input_tokens": null,
+                "cached_input_tokens": 16000,
+                "cache_write_input_tokens": null,
+                "cached_audio_input_tokens": null,
+                "cache_write_1h_input_tokens": null,
+                "cache_write_5m_input_tokens": null
+              },
+              "sdk_model_usage": []
+            },
+            "started_at": "2026-11-13 16:27:46.650000",
+            "ended_at": 1794587267456
+          }
+        ]
+      },
+      {
+        "id": "f104d366-b509-43b6-8763-62e5594b41f3",
+        "role": "ASSISTANT",
+        "status": "COMPLETED",
+        "content": "配置检查完成，未检索任何视频。",
+        "model_calls": [
+          {
+            "operation": "query_hook_route",
+            "provider": "openrouter",
+            "model_name": "typesafe/jev-1.14-20261014",
+            "status": "completed",
+            "usage": {
+              "tokens": {
+                "input_tokens": 636,
+                "total_tokens": 674,
+                "output_tokens": 38,
+                "reasoning_tokens": null,
+                "text_input_tokens": null,
+                "audio_input_tokens": null,
+                "image_input_tokens": null,
+                "cached_input_tokens": null,
+                "cache_write_input_tokens": null,
+                "cached_audio_input_tokens": null,
+                "cache_write_1h_input_tokens": null,
+                "cache_write_5m_input_tokens": null
+              },
+              "sdk_model_usage": []
+            },
+            "started_at": "2026-11-13 16:25:35.343000",
+            "ended_at": 1794587137357
+          },
+          {
+            "operation": "read_file,task,submit_video_item,remove_video_item,search_web,query_video,read_query_report,retrieve,read_retrieval_evidence,search_video_events,get_video_outline,get_series_overview,inspect_video_frames",
+            "provider": "deepseek",
+            "model_name": "deepseek-flash",
+            "status": "completed",
+            "usage": {
+              "tokens": {
+                "input_tokens": 16139,
+                "total_tokens": 16149,
+                "output_tokens": 10,
+                "reasoning_tokens": 0,
+                "text_input_tokens": null,
+                "audio_input_tokens": null,
+                "image_input_tokens": null,
+                "cached_input_tokens": 2048,
+                "cache_write_input_tokens": null,
+                "cached_audio_input_tokens": null,
+                "cache_write_1h_input_tokens": null,
+                "cache_write_5m_input_tokens": null
+              },
+              "sdk_model_usage": []
+            },
+            "started_at": "2026-11-13 16:25:37.660000",
+            "ended_at": 1794587139444
+          }
+        ]
+      }
+    ],
+    "probe_events": [],
+    "completed_respond_routes": 0,
+    "other_five_containers_still_unchanged": true,
+    "local_health": {
+      "status": 200,
+      "body": {
+        "status": "ok",
+        "serverTime": 1794587922391,
+        "components": {
+          "parseConsumer": {
+            "status": "running",
+            "failure": null
+          }
+        }
+      }
+    },
+    "probe_log_window_note": "This later audit ran against the replacement Event memory hotfix container, whose start time is after these two probes; the empty log window does not mean the earlier routes did not run. The earlier captured route logs are retained separately below."
+  },
+  "all_three_online_probe_usage": {
+    "provider_calls": 5,
+    "input_tokens": 34181,
+    "output_tokens": 129,
+    "total_tokens": 34310,
+    "includes": "both HTTP attempts and the real retrieve hook; excludes the historical 27-turn benchmark"
+  },
+  "latest_runtime_after_parallel_event_memory_hotfix": {
+    "active": {
+      "path": "/data/config/cloud/models.yaml",
+      "sha256": "547729bafeb922a0e1f0c25916996513f40b1f507a0e4373ce51943ce48067d2",
+      "hook_enabled": true,
+      "rewriter_enabled": false,
+      "jev_model": "typesafe/jev-1.14",
+      "has_combined_decision_binding": false,
+      "has_rewriter_binding": false,
+      "supervisor": {
+        "source": "deepseek_api",
+        "model": "deepseek-flash",
+        "reasoning_effort": "high",
+        "max_output_tokens": 8192,
+        "auto_compact_ratio": 0.85
+      }
+    },
+    "seed": {
+      "path": "/etc/seekino/models.yaml",
+      "sha256": "91728e8fdbc6903089187d35a3ddf81a75e0ca57055e0b0ff5b9cfed40d1429f",
+      "hook_enabled": true,
+      "rewriter_enabled": false,
+      "jev_model": "typesafe/jev-1.14",
+      "has_combined_decision_binding": false,
+      "has_rewriter_binding": false,
+      "supervisor": {
+        "source": "deepseek_api",
+        "model": "deepseek-flash",
+        "reasoning_effort": "high",
+        "max_output_tokens": 8192,
+        "auto_compact_ratio": 0.85
+      }
+    },
+    "runtime": {
+      "path": "/data/config/cloud/agent-runtime.yaml",
+      "sha256": "98c16c9e11e844b04f5da524594029dabc2cba41a7dbcd83aa0c37b7c8217990"
+    },
+    "runtime_file_hashes": {
+      "gateway/config.py": "18aed137ce0be52cb39b5284828f9830f07c05a7472ebacb730d3d9bd0c95ace",
+      "gateway/agent_model/context.py": "474be15032ba5b5734077b5e9668030d2e1abc0ada01169a7fb98171233723ff",
+      "gateway/agent_model/factory.py": "45386c2dafe95cebd4141aca4c0ac798e84a2de460349d5a9e816cc10ca9bc6a",
+      "gateway/model_discovery.py": "65e99c035cd32acf845cadfd9d8bd84847968c1be9ef0b3d1eca80825e6b4197",
+      "config.yaml": "b0d5c7b64d72a7b3bc060d34bece0b0a307bef477874382a887a96928cde3ab6"
+    },
+    "api": {
+      "image": "seekino-api:hotfix-event-memory-8f0f14d3",
+      "image_id": "sha256:a18914fb7c8daa7d1745e4a8b2454aaf91251eac1bb2d41c040c17d323aef503",
+      "container_id": "aab17355f8f02bf61cbc785a0c8187f73d37863542f2a2891cffbeb780612cfa",
+      "started_at": "2026-11-13T16:37:52.671608911Z",
+      "health": "healthy",
+      "revision": "8a86883fb154ecb3f46d7ef0ebeb049f62e46bdd",
+      "release_mode": "existing-runtime-overlay"
+    },
+    "capacity_events": [
+      "2026-11-13T16:38:05+0000 INFO gateway.agent_model.factory request_id=- event=agent_context_capacity_resolved model=deepseek-flash source=deepseek_api capacity_source=metadata fallback_model=- fallback_capacity_source=none context_window_tokens=1048576 trigger=891289 keep=24000",
+      "2026-11-13T16:40:16+0000 INFO gateway.agent_model.factory request_id=6b8559f7-7d04-47e5-8818-3d3cefa1911c event=agent_context_capacity_resolved model=deepseek-flash source=deepseek_api capacity_source=metadata fallback_model=- fallback_capacity_source=none context_window_tokens=1048576 trigger=891289 keep=24000"
+    ],
+    "config_plan_activated": true
+  },
+  "pre_replacement_probe_log_capture": {
+    "source": "Observed output of post-rollout-audit.py before the subsequent image replacement, preserved from the tool result",
+    "completed_respond_routes": 2,
+    "local_health_server_time": 1794587686986,
+    "other_five_containers_still_unchanged": true,
+    "probe_events": [
+      "2026-11-13T16:25:37+0000 INFO agent.chat.query_hook request_id=- event=query_hook_route conversation_id=4ee77325-53e7-4e6d-9fd2-f5940087a91a message_id=f104d366-b509-43b6-8763-62e5594b41f3 status=completed action=respond duration_ms=2069.2 error=None",
+      "2026-11-13T16:25:39+0000 INFO server.service.agent_chat request_id=- agent_execution_completed conversation_id=4ee77325-53e7-4e6d-9fd2-f5940087a91a message_id=f104d366-b509-43b6-8763-62e5594b41f3 phase=RESPONDING duration_ms=4310 stage_count=2 output_chars=15 evidence_hits=0 answer_snapshots=2 max_model_calls_per_turn=100 max_tool_calls_per_turn=100",
+      "2026-11-13T16:27:46+0000 INFO agent.chat.query_hook request_id=- event=query_hook_route conversation_id=beed7e94-1472-4552-8d13-65b2feebce02 message_id=b87793c4-94c2-4476-a2ea-19b14b0d59cf status=completed action=respond duration_ms=2165.9 error=None",
+      "2026-11-13T16:27:47+0000 INFO server.service.agent_chat request_id=- agent_execution_completed conversation_id=beed7e94-1472-4552-8d13-65b2feebce02 message_id=b87793c4-94c2-4476-a2ea-19b14b0d59cf phase=RESPONDING duration_ms=3273 stage_count=2 output_chars=7 evidence_hits=0 answer_snapshots=2 max_model_calls_per_turn=100 max_tool_calls_per_turn=100"
+    ]
+  }
+}

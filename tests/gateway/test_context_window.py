@@ -6,6 +6,7 @@ from gateway.agent_model.context import (
     ContextWindowController,
     ContextWindowOverflow,
     ContextWindowPolicy,
+    derive_auto_compact_policy,
     measure_context,
     preflight_context,
 )
@@ -87,6 +88,62 @@ def test_policy_reserves_output_and_safety_tokens() -> None:
             safety_margin_tokens=1_000,
             auto_compact_tokens=2_001,
             compact_target_tokens=500,
+        )
+
+
+def test_dynamic_policy_uses_model_capacity_and_preserves_recent_keep() -> None:
+    policy = derive_auto_compact_policy(
+        context_window_tokens=1_048_576,
+        output_reserve_tokens=8_192,
+        safety_margin_tokens=4_096,
+        auto_compact_ratio=0.85,
+        previous=ContextWindowPolicy(64_000, 8_192, 4_096, 48_000, 24_000),
+    )
+
+    assert policy.context_window_tokens == 1_048_576
+    assert policy.output_reserve_tokens == 8_192
+    assert policy.safety_margin_tokens == 4_096
+    assert policy.auto_compact_tokens == 891_289
+    assert policy.compact_target_tokens == 24_000
+
+
+def test_dynamic_policy_clamps_a_small_window_before_the_output_budget() -> None:
+    policy = derive_auto_compact_policy(
+        context_window_tokens=30_000,
+        output_reserve_tokens=8_192,
+        safety_margin_tokens=4_096,
+        auto_compact_ratio=0.85,
+        previous=ContextWindowPolicy(64_000, 8_192, 4_096, 48_000, 24_000),
+    )
+
+    assert policy.auto_compact_tokens == 17_711
+    assert policy.compact_target_tokens == min(24_000, 17_710)
+    assert policy.auto_compact_tokens < policy.maximum_input_tokens
+
+
+@pytest.mark.parametrize("ratio", [0, 1, -0.1, 1.1, True, float("nan"), float("inf")])
+def test_dynamic_policy_rejects_invalid_ratios(ratio) -> None:
+    with pytest.raises(ValueError, match="auto_compact_ratio"):
+        derive_auto_compact_policy(
+            context_window_tokens=1_048_576,
+            output_reserve_tokens=8_192,
+            safety_margin_tokens=4_096,
+            auto_compact_ratio=ratio,
+            previous=ContextWindowPolicy(64_000, 8_192, 4_096, 48_000, 24_000),
+        )
+
+
+@pytest.mark.parametrize("context_window_tokens", [2, 12_287, 12_288])
+def test_dynamic_policy_rejects_a_window_that_cannot_hold_output_and_safety(
+    context_window_tokens,
+) -> None:
+    with pytest.raises(ValueError, match="output and safety reserves"):
+        derive_auto_compact_policy(
+            context_window_tokens=context_window_tokens,
+            output_reserve_tokens=8_192,
+            safety_margin_tokens=4_096,
+            auto_compact_ratio=0.85,
+            previous=ContextWindowPolicy(64_000, 8_192, 4_096, 48_000, 24_000),
         )
 
 

@@ -6,6 +6,18 @@
 
 ## 本阶段的提出背景
 
+2026-11-15，Chat 子 Agent 原先另取全局 agent 模型，选定 Supervisor 后仍可能沿用旧 64k 静态窗口。本次让 Query 与 Supervisor 共用当前选择的模型来源、主备、effort、输出／超时／字符预算和 Gateway 动态容量解析，角色工具与原生上下文边界保留。设计与证据见[配置继承 TRD](chat-model-config-inheritance-trd.md)、[验证报告](../../report/gateway/agent_model/chat-model-config-inheritance-20261115/README.md)；dev PR #171 已合入；正式候选 main PR #172 待合并和部署，状态见工作台 `CHAT-MODEL-INHERIT-01`。
+
+2026-11-14，实时观看请求原先带 playback 就跳过 JEV，导致 JEV-only 在观看页没有实际分类。本次移除该短路，把已构造的当前视频身份与播放位置作为文字上下文交给 JEV；三条真实路由都返回 `retrieve`，但完整回放 T01 因 Query 耗尽工具预算失败，T02／T03 虽完成却存在卡片与取帧的时间对齐缺口。路由接线按[实时意图路由 TRD](chat-realtime-intent-routing-trd.md)采用，原 Chat 延迟与质量没有闭环，证据见[完整回放报告](../../report/agent/chat/history-latency-replay-20261114/README.md)，当前状态由工作台 `CHAT-JEV-REALTIME-01`、`CHAT-QUERY-BUDGET-01` 和 `CHAT-COMPACT-01` 分别维护。
+
+2026-11-13，JEV-only复测确认没有独立改写调用，随即将该路径设为默认，并补齐query、质量和用量记录。2026-11-14 已完成 dev/main 发布与 Cloud/CPU 实例上线核查：dev PR #155 为 `9a18c6fb`，main PR #157 为 `8a86883f`；Cloud API 实际运行在 CPU 主机 `seekino-server` 的 `seekino-local-api-1`，是一个实例。生产收据与兼容边界见[上线报告](../../report/agent/chat/query-intent-jev-only-20261113/production-rollout-20261114.md)，当前状态由工作台`CHAT-JEV-DEFAULT-01`维护。
+
+2026-11-13，三路径实验的旧 B 含独立改写器，不能代表只用 JEV 的预期。关闭独立改写后已全量重测三组，见[同一 TRD 第 7 节](query-intent-routing-comparison-trd.md#7-关闭独立改写器的同条件复测)／[PR #151](https://github.com/owariband/Seekino/pull/151)；本轮未改 Cloud，当前状态仍由工作台 `CHAT-INTENT-01` 维护。
+
+2026-11-13，Cloud 的 `models.query_hook` 使 DeepSeek 合并决策覆盖了保留的 JEV 配置。本轮恢复 Cloud JEV，并在相同 Supervisor、工具与动态 85% 基线下比较三种意图路径；见 [三路径对照 TRD](query-intent-routing-comparison-trd.md) / [PR #145](https://github.com/owariband/Seekino/pull/145)，当前状态由工作台 `CHAT-INTENT-01` 维护。
+
+2026-11-13，Chat 命中证据后仍等待同步摘要；本次从模型容量与压缩阈值的装配关系核对原因，以本地真实请求边界对照验证。设计与证据入口见 [Chat 模型窗口与压缩 TRD](chat-model-context-compaction-trd.md) / [PR #144](https://github.com/owariband/Seekino/pull/144)，当前状态由工作台 `CHAT-COMPACT-01` 维护。
+
 2026-11-12，手机访客找不到抽屉内的文档入口，系列选集的全宽大图也使连续浏览困难。本次以现有导航与选集组件为边界，参考横向细条布局，设计与验证见[移动端文档与紧凑选集 TRD](mobile-docs-episodes-trd.md) / [PR #129](https://github.com/owariband/Seekino/pull/129)，执行状态见工作台 `MOBILE-UI-01`。
 
 本阶段的转向至少可以追溯到 [2026-10-23 的 reflection](../../dev/reflection.md)。字节二面的直接反馈让 hypnos 重新看待其作为产品 owner 的职责：最初想做的是“本地素材自动解析＋Codex 剪视频一条龙”，实际推进中却不断扩展技术和功能，交付期限、外部反馈与整体收益没有得到同样的重视。同行同样在做剧本和分镜，却能收敛复杂度，这个对照成为 hypnos 重新审视 Seekino 的触发点。10 月 23 日是反思记录日期，原文没有单独确认面试当天的日期。
@@ -30,6 +42,7 @@ hypnos 于 **2026-04-27 入职实习**，到这次面试复盘时已接近半年
 
 | 文档 | 时间归属与证据 | 提出时的视角与背景 | 本次整理时的阅读边界 |
 |---|---|---|---|
+| [Event 查询有界内容读取](event-query-bounded-content-trd.md) | 2026-11-13，Event 查询在 ES 召回前加载选中范围的全部 Chunk 正文与索引缓存 | 前置只读 COMPLETE 任务、冻结 Event 目标与 INDEX 版本元数据；候选回源有界，完整 detail 延迟加载、仅投影 compact / camera_hints，发布写入与显式审计保留 | 实现完成，修正前定向回归通过；小字段保留待最终回归，部署与真实效果待验，见 [#154](https://github.com/owariband/Seekino/pull/154) 与工作台 `RAG-QUERY-MEM-01` |
 | [首页明暗主题切换](theme-transition-trd.md) | 2026-11-09，线上观看首页的封面与页面换色不同步 | 让画布与预览画面协调变亮或变暗，保留正片色彩 | [PR #80](https://github.com/owariband/Seekino/pull/80) |
 | [parse-media-link-lease-trd.md](parse-media-link-lease-trd.md) | 2026-11-07，198 帧交付逐个触发 chunk 续租 | 清单就绪后与交付前各校验一次 | [PR #75](https://github.com/owariband/Seekino/pull/75) |
 | [parse-ready-dispatch-trd.md](parse-ready-dispatch-trd.md) | 2026-11-07，micrograd 的索引在 refine 结束后继续约 39 分钟 | 提交后按 ID 派发、有限等锁与轻量收尾；记录同一素材的真实索引对照 | [PR #70](https://github.com/owariband/Seekino/pull/70) |
@@ -119,6 +132,7 @@ hypnos 于 **2026-04-27 入职实习**，到这次面试复盘时已接近半年
 - [任务历史版本筛选](task-history-filter-trd.md)：2026-10-30，默认当前版本、历史追溯与操作权限说明。
 
 - [独立对话页布局](chat-sidebar-layout-trd.md)：左侧历史与居中草稿，状态见[工作台](../../dev/workbench.html) CHAT-LAYOUT-01。
+- [回答中删除提示](chat-delete-hint-tooltip-trd.md)，2026-11-13。历史列表的重复说明常驻占高，改为复用垃圾桶原生悬停提示；状态见[工作台](../../dev/workbench.html) CHAT-DELETE-HINT-01。
 - [聊天页顶栏与公开范围](chat-header-scope-trd.md)，2026-11-08。游客视角下的紧凑导航、选择器空态与独立聊天侧栏。
 - [个人模型服务](personal-model-connections-trd.md) 记录生效 YAML 的管理接口、凭证掩码、cloud 权限和会话选模。依赖设置工作区 #72。
 - [模型注册与用途](model-registry-roles-trd.md) 延伸 #74，将同一组注册模型接入聊天、解析和检索。

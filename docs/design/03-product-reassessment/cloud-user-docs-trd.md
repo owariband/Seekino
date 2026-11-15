@@ -1,6 +1,6 @@
 # 1. 问题与现状
 
-需求：Seekino Cloud 站内使用文档与 GitHub 推广入口。提出日期：2026-11-10（Asia/Shanghai）。分支：`feat/cloud-user-docs`；PR：[#89](https://github.com/owariband/Seekino/pull/89)。状态：实现完成、本地验证通过，待合并与 Cloud 发布；交流群链接仍为 `[xxx]` 占位。
+需求：Seekino Cloud 站内使用文档与 GitHub 推广入口。提出日期：2026-11-10（Asia/Shanghai）。分支：`feat/cloud-user-docs`；PR：[#89](https://github.com/owariband/Seekino/pull/89)。状态：实现完成、本地验证通过，待合并与 Cloud 发布。2026-11-14 已补入交流群号 `1127823767`。
 
 **背景与触发场景。** Cloud 首发只开放已解析、已发布的公共样例，游客与普通邮箱用户可以观看、检索和问答，上传与管理仅限管理员（[云端部署说明](../../../deploy/cloud/README.md)）。hypnos 参加的多项比赛要求项目具备真实用户，而目前 Cloud 没有外部用户。第一次打开 Cloud 的访客看不到 Seekino 能做什么、Cloud 与本地版的区别、如何自己部署，也找不到 GitHub 仓库与交流渠道，因此访问难以转化为 Star、部署或反馈。
 
@@ -95,7 +95,7 @@ flowchart LR
 - 欢迎卡片的示例检索词：等 Cloud 课程与 MyGO 内容就绪，逐条实测命中后再加。
 - 很长的系列标题在 1024px 左右可能与欢迎卡片靠近，未用真实标题验证。
 
-- 交流群链接由 hypnos 提供后替换 `web/src/features/docs/content.ts` 中的 `[xxx]`。替换前不对外推广。
+- ~~交流群链接由 hypnos 提供后替换 `web/src/features/docs/content.ts` 中的 `[xxx]`。替换前不对外推广。~~ 2026-11-14 已提供群号 `1127823767`，文档页与欢迎卡片均已显示。
 - 文档页仍在 `AuthProvider` 的身份门槛之后：API 不可用时，文档也无法显示。Cloud 正常运行时不受影响，本次不改。
 - Docker 端口映射下 MCP 的 loopback 校验未实测；文档只承诺宿主机运行。
 - 依赖旧 `/docs`、`/openapi.json` 的外部脚本需要改用新路径。
