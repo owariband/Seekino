@@ -1,0 +1,24 @@
+[
+  {
+    "call_id": "02cdb138-53ef-42c3-b139-70a77a0f3abf",
+    "attempt": "attempt-before-scope-fix",
+    "prompt_sha256": "5836086e0e196242b882a9a0023873d09d39761ab8392d7456a60df476c0d1f6",
+    "model": "deepseek-flash",
+    "reasoning_effort": "low",
+    "temperature": 0.0,
+    "speakers": [
+      "長崎そよ"
+    ]
+  },
+  {
+    "call_id": "14e0e745-3898-4988-ac49-9b35effe175e",
+    "attempt": "calls",
+    "prompt_sha256": "5836086e0e196242b882a9a0023873d09d39761ab8392d7456a60df476c0d1f6",
+    "model": "deepseek-flash",
+    "reasoning_effort": "low",
+    "temperature": 0.0,
+    "speakers": [
+      "高松燈"
+    ]
+  }
+]

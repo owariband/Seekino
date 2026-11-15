@@ -4,6 +4,8 @@
 
 本文依据[第一轮统计](audio-first-summary.json)、[具名预填对照](prefill-comparison.json)与[验证及成对比较](verification.json)，均为离线测量；ASR复用已有结果，旧Understanding按提交顺序回放。
 
+2026-11-15追加的两组新Understanding／Refine实际调用，单独记录在[整集真实A/B对照](live-ab-report.md)。以下原离线数据和manifest保留原实验口径，不代替该次新模型结果。
+
 ## 1. 实际测试范围
 
 本条链路只测“整段视频音频先行 + 复用旧 Understanding”的离线流程，不包含新的模型解析，也不包含标准解析链路的实际加速测量。

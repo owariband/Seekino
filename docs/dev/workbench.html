@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-15T10:31:29+08:00",
+ "updatedAt": "2026-11-15T12:09:32+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 73,
+ "revision": 74,
  "categories": [
   {
    "id": "parse",
@@ -2078,7 +2078,7 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "priority": "P1",
    "description": "EP04 v4 DS Flash low整集完成，两个固定姓名2/2且描述一致；其它人物、混人纯度和边界尚未认证。",
    "next": "扩大有真值的固定样本及重复验证，复核混人台词与边界；保留low已验证样例，辅助摘要失败另查，不将两句通过当全片准确。",
-   "verification": "2026-11-15 v4 df165ebc：1fps，Understanding/Refine/fallback均low，24/24 Under、22/22 Refine、24/24索引，24分27.473秒。434项组合回归；45次实际请求均有画外音新段且绑定low，无参考池，309条首次对白全覆盖、67条CONFLICT预填通过。爽世48.0–49.8s和爱音292.5–295.499s最终姓名正确，描述一致；首次理解均已正确，两个目标不触发自动预填，不作单因素因果结论。371源码与旧v3内容不变，旧任务保留，CPU/prod未访问；辅助摘要尚有失败记录。",
+   "verification": "2026-11-15 v4 df165ebc：1fps，Understanding/Refine/fallback均low，24/24 Under、22/22 Refine、24/24索引，24分27.473秒。434项组合回归；45次实际请求均有画外音新段且绑定low，无参考池，309条首次对白全覆盖、67条CONFLICT预填通过。爽世48.0–49.8s和爱音292.5–295.499s最终姓名正确，描述一致；首次理解均已正确，两个目标不触发自动预填，不作单因素因果结论。371源码与旧v3内容不变，旧任务保留，CPU/prod未访问；辅助摘要尚有失败记录；2026-11-15真实音频A/B各24/22完成，2/3提前触发通过，B正确爽世预填仍被low回改高松燈，B12未闭环。",
    "updatedAt": "2026-11-15",
    "tags": [
     "画外音",
@@ -5996,14 +5996,15 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "type": "requirement",
    "status": "progressing",
    "priority": "P2",
-   "description": "两轮完整EP04原型及实际Canvas预填合同跑通；初轮短窗匿名分组过碎，稳定身份输入未通过，正式Server未接入。",
-   "next": "复用既有ASR，先验证可靠匿名声音分段；按窗口证据与评分版本接入2/3具名预填和晚到参考补映射，再跑新Under/Refine及实际时长。",
-   "verification": "2026-11-15：ASR166条复用，本机CPU8线程编码1001窗，总16.886秒；AHC默认距离0.35得到749组、626单窗组，仅17/166 cue单一ID。36短cue共4.462秒/989.710秒。308表达仅6个精确命中初轮窗，另4个重复命中，298次补算8.320秒；同批重跑两轮0编码。4组各309行真实Canvas检查；16块短窗参考129条预填、84条改名，精确表达参考147/88。两目标本来已正确且未预填；副本注入错名时两种16块方案2/2仅证明合同。短窗16→24块43条top1、68分档变；全片准确率、新Agent、标准链路提速未测，GPU/CPU/prod及旧任务未改。",
+   "description": "两组真实EP04各24个Understanding和22个Refine完成，2/3在18块时放行；正确声纹预填仍被low回改，质量未通过，Server未接入。",
+   "next": "处理Refine覆盖正确预填的条件并验证匿名分组质量；保留本次失败证据，标准Server接入与端到端时延仍待验。",
+   "verification": "2026-11-15：主对照各24/24新Understanding、22/22 Refine；初始24份请求相等，旧ASR复用，无GPU/CPU-prod/DB。B第16提交触发，12.188秒后18块时就绪，Refine在18/24发起，早于最后理解80.951秒。两组开头均高松燈错误、爱音段正确；B先预填爽世0.764492后又回改灯0.592243。恢复B同一文字prompt、同样low和temperature0曾分别返回爽世与灯。132测试与真实scope故障复验通过。原26次中断Refine入口和额外B完整运行均留证；匿名749组问题、全片身份真值及Server部署未通过。",
    "updatedAt": "2026-11-15",
    "tags": [
     "ASR复用",
-    "两轮回放",
-    "匿名分组未过"
+    "真实A/B",
+    "2/3提前触发",
+    "Refine回改"
    ],
    "related": [
     "MOD-PARSE",
@@ -6031,6 +6032,11 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "label": "两轮预填实验PR #176",
      "url": "https://github.com/owariband/Seekino/pull/176",
      "kind": "pr"
+    },
+    {
+     "label": "真实A/B与同输入回改证据",
+     "url": "https://github.com/owariband/Seekino/blob/perf/audio-first-prefill-evaluation/docs/report/agent/video_parse_v2/audio-first-prefill-evaluation-20261115/live-ab-report.md",
+     "kind": "source"
     }
    ],
    "source": {

@@ -1,0 +1,44 @@
+{
+  "whole_episode": true,
+  "fresh_understanding_tasks_primary": 48,
+  "committed_refine_intervals_primary": 44,
+  "per_case_understanding": 24,
+  "per_case_refine": 22,
+  "initial_requests_equal": true,
+  "immutable_asr": true,
+  "asr_calls": 0,
+  "gpu_access": false,
+  "cpu_prod_access": false,
+  "database_access": false,
+  "production_code_changed": false,
+  "local_cpu_threads": 8,
+  "named_start_understanding_count": 16,
+  "named_ready_understanding_count": 18,
+  "named_preparation_seconds": 12.187601,
+  "first_refine_understanding_count": 18,
+  "refine_start_before_last_understanding_seconds": 80.950934,
+  "known_target_name_checks": {
+    "A": {
+      "opening_soyo": false,
+      "anon_introduction": true
+    },
+    "B": {
+      "opening_soyo": false,
+      "anon_introduction": true
+    }
+  },
+  "same_refine_prompt_returned_two_different_names": true,
+  "agent_canvas_related_tests": {
+    "passed": 132,
+    "seconds": 1.76
+  },
+  "actual_merged_scope_incident_replay": "passed",
+  "full_identity_ground_truth": false,
+  "provider_token_fee_accounting": "not collected",
+  "b_primary_executed_source_sha256": "6e15d58b8ea2a33b563bc442ebaa5db84f9233f0180c4a01a718ffd5627865f1",
+  "script_sha256": {
+    "live-ab.py": "6e15d58b8ea2a33b563bc442ebaa5db84f9233f0180c4a01a718ffd5627865f1",
+    "resume-live-refine.py": "d8782c2ea353f93d538787315123412b47ff198e5c4b6817a603649b34031c49",
+    "collect-live-ab.py": "900c06dc9e6688f6308a22fc50a6bc76d5da0811cd7996bc9563ed6146037f9f"
+  }
+}
