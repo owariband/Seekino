@@ -8,6 +8,9 @@ import type {
   AgentAttachmentUploadView,
   AgentConversationView,
   AgentGlobalSettings,
+  AgentMessageFeedback,
+  AgentMessageFeedbackReason,
+  AgentMessageFeedbackRating,
   AgentGlobalSettingsValues,
   AgentMessageEventView,
   AgentMessageOptions,
@@ -165,6 +168,11 @@ async function requestJson<T>(path: string, init?: RequestInit, context = busine
   const payload = (await response.json()) as T;
   signal?.throwIfAborted();
   return payload;
+}
+
+async function requestVoid(path: string, init?: RequestInit, context = businessContext()): Promise<void> {
+  const { signal } = await requestResponse(path, init, context);
+  signal?.throwIfAborted();
 }
 
 function scopedSignal(signal?: AbortSignal | null, scopeSignal?: AbortSignal): AbortSignal | undefined {
@@ -585,6 +593,45 @@ export function listAgentMessages(conversationId: string, afterSequenceNo = -1, 
 export function getAgentMessage(conversationId: string, identity: { messageId: string } | { idempotencyKey: string }): Promise<AgentMessageSendView> {
   const query = new URLSearchParams({ tenantId: TENANT_ID, conversationId, ...identity });
   return requestJson(`/api/agent/messages/get?${query}`);
+}
+
+export function setAgentMessageFeedback(
+  conversationId: string,
+  messageId: string,
+  input: {
+    rating: AgentMessageFeedbackRating;
+    reasons?: AgentMessageFeedbackReason[];
+    comment?: string | null;
+  },
+): Promise<AgentMessageFeedback> {
+  const query = new URLSearchParams({
+    tenantId: TENANT_ID,
+    conversationId,
+    messageId,
+  });
+  return requestJson(`/api/agent/messages/feedback?${query}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      rating: input.rating,
+      reasons: input.reasons ?? [],
+      comment: input.comment ?? null,
+    }),
+  });
+}
+
+export function clearAgentMessageFeedback(
+  conversationId: string,
+  messageId: string,
+): Promise<void> {
+  const query = new URLSearchParams({
+    tenantId: TENANT_ID,
+    conversationId,
+    messageId,
+  });
+  return requestVoid(`/api/agent/messages/feedback?${query}`, {
+    method: "DELETE",
+  });
 }
 
 export function getAgentMessageOptions(): Promise<AgentMessageOptions> {

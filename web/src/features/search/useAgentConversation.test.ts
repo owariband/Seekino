@@ -33,7 +33,7 @@ function message(conversationId: string, overrides: Partial<AgentMessageView> = 
   return {
     messageId: "assistant", conversationId, seriesIds: ["A"], sequenceNo: 1, role: "ASSISTANT", status: "PROCESSING", phase: "QUEUED", reference: null, content: null,
     modelName: null, searchResult: null,
-    renderBlocks: [], attachments: [], timing: null, lastError: null, createdAt: now, updatedAt: now,
+    renderBlocks: [], attachments: [], timing: null, lastError: null, feedback: null, createdAt: now, updatedAt: now,
     ...overrides, version: overrides.version ?? (overrides.status && overrides.status !== "PROCESSING" ? 2 : 1),
   };
 }

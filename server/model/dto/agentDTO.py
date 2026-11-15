@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, Literal, TypeVar
 
 from pydantic import Field, field_validator
 
@@ -48,7 +48,6 @@ class AgentMessageSendRequest(ContractModel):
     reference: EvidenceReference | None = None
     extra_context: dict[str, Any] | None = None
 
-
     @field_validator("extra_context")
     @classmethod
     def validate_extra_context_size(
@@ -71,6 +70,18 @@ class AgentMessageSendRequest(ContractModel):
                 f"extra_context must not exceed {_MAX_EXTRA_CONTEXT_BYTES} bytes"
             )
         return value
+
+
+AgentFeedbackReason = Literal[
+    "IRRELEVANT", "WRONG_EVIDENCE", "MISSING_RESULT", "INCOMPLETE",
+    "TOO_SLOW", "PLAYBACK_ISSUE", "OTHER", "FAILURE",
+]
+
+
+class AgentMessageFeedbackRequest(ContractModel):
+    rating: Literal["UP", "DOWN"]
+    reasons: list[AgentFeedbackReason] = Field(default_factory=list, max_length=3)
+    comment: str | None = Field(default=None, max_length=2000)
 
 
 class AgentGlobalSettingsPatchRequest(ContractModel):
@@ -152,6 +163,15 @@ class AgentConversationState:
 
 
 @dataclass(frozen=True, slots=True)
+class AgentMessageFeedbackState:
+    rating: str
+    reasons: tuple[str, ...]
+    comment: str | None
+    created_at: int
+    updated_at: int
+
+
+@dataclass(frozen=True, slots=True)
 class AgentMessageState:
     message_id: str
     conversation_id: str
@@ -174,6 +194,7 @@ class AgentMessageState:
     attachments: tuple[dict[str, str], ...] = ()
     render_blocks: tuple[dict[str, Any], ...] | None = None
     model_retry: dict[str, int] | None = None
+    feedback: AgentMessageFeedbackState | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -8,6 +8,7 @@ from ..model.vo.commonVO import Page
 from ..api.schema import (
     AgentConversationView,
     AgentGlobalSettingsView,
+    AgentMessageFeedbackView,
     AgentMessageOptionsView,
     AgentMessageSendView,
     AgentMessageView,
@@ -86,6 +87,18 @@ router.add_api_route(
     agent.get_agent_message,
     methods=["GET"],
     response_model=AgentMessageSendView,
+)
+router.add_api_route(
+    "/api/agent/messages/feedback",
+    agent.set_agent_message_feedback,
+    methods=["PUT"],
+    response_model=AgentMessageFeedbackView,
+)
+router.add_api_route(
+    "/api/agent/messages/feedback",
+    agent.clear_agent_message_feedback,
+    methods=["DELETE"],
+    status_code=204,
 )
 router.add_api_route(
     "/api/agent/messages/cancel",

@@ -491,6 +491,9 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
         "/api/videos/content",
         "/api/videos/clip",
         "/api/videos/text-timeline",
+        "/api/videos/visual-timeline",
+        "/api/videos/visual-search",
+        "/api/videos/find-query",
         "/api/video-chunks/get",
         "/api/media/images/content",
         "/api/search",
@@ -512,6 +515,7 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
         "/api/agent/model-connections/test",
         "/api/agent/messages/send",
         "/api/agent/messages/cancel",
+        "/api/agent/messages/feedback",
         "/api/agent/messages/events",
     } == paths
     assert {
@@ -576,6 +580,8 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
         ("/api/agent/messages/list", "get"): {"conversationId"},
         ("/api/agent/messages/send", "post"): {"conversationId"},
         ("/api/agent/messages/cancel", "post"): {"conversationId", "tenantId", "messageId"},
+        ("/api/agent/messages/feedback", "put"): {"conversationId", "tenantId", "messageId"},
+        ("/api/agent/messages/feedback", "delete"): {"conversationId", "tenantId", "messageId"},
         ("/api/agent/messages/events", "get"): {"conversationId"},
     }
     for (path, method), identifiers in query_identifiers.items():

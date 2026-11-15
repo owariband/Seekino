@@ -10,7 +10,7 @@ from agent.chat.video_search.state import RetrievalTraceEntry, ToolRenderBlock
 from ...constants.identity import LOCAL_USER_ID
 
 from ...schema import ContractModel
-from ..dto.agentDTO import EvidenceReference
+from ..dto.agentDTO import AgentFeedbackReason, EvidenceReference
 from .commonVO import Failure, UnixTimeMs
 from .searchVO import SearchEvidenceFieldsView
 
@@ -115,6 +115,14 @@ class AgentModelRetryView(ContractModel):
     maximum: int = Field(gt=0)
 
 
+class AgentMessageFeedbackView(ContractModel):
+    rating: Literal["UP", "DOWN"]
+    reasons: list[AgentFeedbackReason]
+    comment: str | None
+    created_at: UnixTimeMs
+    updated_at: UnixTimeMs
+
+
 class AgentMessageView(ContractModel):
     model_retry: AgentModelRetryView | None = None
     message_id: str
@@ -133,6 +141,7 @@ class AgentMessageView(ContractModel):
     render_blocks: list[AgentRenderBlockView] = Field(default_factory=list)
     timing: AgentMessageTimingView | None
     last_error: Failure | None
+    feedback: AgentMessageFeedbackView | None = None
     created_at: UnixTimeMs
     updated_at: UnixTimeMs
 

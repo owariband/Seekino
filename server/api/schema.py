@@ -12,12 +12,14 @@ from ..model.dto.searchDTO import VideoSearchRequest
 from ..model.dto.agentDTO import (
     AgentConversationCreateRequest,
     AgentGlobalSettingsPatchRequest,
+    AgentMessageFeedbackRequest,
     AgentMessageSendRequest,
     EvidenceReference,
 )
 from ..model.vo.agentVO import (
     AgentConversationView,
     AgentGlobalSettingsView,
+    AgentMessageFeedbackView,
     AgentMessageOptionsView,
     AgentMessageView,
     AgentMessageSendView,

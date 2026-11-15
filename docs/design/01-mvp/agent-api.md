@@ -86,6 +86,7 @@ canonical 三层范围或 fallback。
 | `GET` | `/api/agent/messages/list?conversationId=...` | 列出 Message |
 | `POST` | `/api/agent/messages/send?conversationId=...` | 发送用户消息 |
 | `GET` | `/api/agent/messages/events?conversationId=...` | 订阅 Message 状态快照 |
+| `PUT/DELETE` | `/api/agent/messages/feedback?conversationId=...&messageId=...&tenantId=...` | 记录/清除 terminal assistant 消息反馈 |
 
 Conversation 创建和消息发送均要求 `Idempotency-Key`。同一个 Key 配合相同字段会返回
 原资源或原消息；不同字段返回 `409 CONFLICT`。Conversation 创建 Key 的唯一范围是
@@ -350,6 +351,26 @@ Content-Type: application/json
 前端继续用 GET 快照等待真正终态。事件序号不是持久化重放游标；本阶段没有跨 Worker
 增量回放或进程崩溃后的 PROCESSING 执行恢复。
 
+### 5.5 消息反馈（2026-11-15 增补）
+
+只允许对 `COMPLETED` / `FAILED` 的 ASSISTANT 消息反馈；`PROCESSING` 返回
+`409 MESSAGE_IN_PROGRESS`。同一用户同一条消息只有一条记录，重复提交覆盖原值。
+
+```http
+PUT /api/agent/messages/feedback?conversationId=...&messageId=...&tenantId=...
+Content-Type: application/json
+
+{"rating": "DOWN", "reasons": ["WRONG_EVIDENCE"], "comment": "片段不对"}
+```
+
+响应为 `AgentMessageFeedbackView`，字段为 `rating`、`reasons`、`comment`、`createdAt`、
+`updatedAt`。清除使用同一路径的 `DELETE`，返回 `204`。`AgentMessageView` 新增
+`feedback` 字段；未评价时为 `null`，列表、GET 快照和 SSE 快照都返回当前用户的反馈。
+
+`reasons` 取值为 `IRRELEVANT`、`WRONG_EVIDENCE`、`MISSING_RESULT`、`INCOMPLETE`、
+`TOO_SLOW`、`PLAYBACK_ISSUE`、`OTHER`；`FAILURE` 只用于 `FAILED` 回答。`UP` 不允许携带
+问题原因。非会话所有者、非该会话消息返回 `404`，非 ASSISTANT 返回 `400`。
+
 ## 6. 状态与错误
 
 Message 状态：
@@ -411,8 +432,10 @@ Server 从 Evaluator 已批准的 `selected_video_ranges` 绑定时间；审批�
 
 ## 8. 已有数据库升级
 
-新数据库创建 `agent_conversation` 和 `agent_message` 两张 Agent 表，后者的 `detail.timing` 保存助手耗时，USER 的 `detail.request.idempotencyKey` 保存发送幂等键。消息对由同一 Conversation 的相邻序号和角色定位，不再有 `reply_to_message_id`；每次检索查询保留在结果轨迹中，不再有 `retrieval_query` 列。旧版 `agent_message_timing` 是历史结构，已有数据必须先回填到 `agent_message.detail` 再删表；有数据的库还需在删除原幂等键列前回填 USER 的 `detail.request.idempotencyKey`，检查新表达式唯一索引与消息配对。下文旧 Session / Scope 升级步骤不负责这些回填，不能直接套用在当前表上。已有数据库需要停写并
+新数据库创建 `agent_conversation`、`agent_message` 和 `agent_message_feedback` 三张 Agent 表；反馈表保存 terminal 回答的评分、原因和说明，后者的 `detail.timing` 保存助手耗时，USER 的 `detail.request.idempotencyKey` 保存发送幂等键。消息对由同一 Conversation 的相邻序号和角色定位，不再有 `reply_to_message_id`；每次检索查询保留在结果轨迹中，不再有 `retrieval_query` 列。旧版 `agent_message_timing` 是历史结构，已有数据必须先回填到 `agent_message.detail` 再删表；有数据的库还需在删除原幂等键列前回填 USER 的 `detail.request.idempotencyKey`，检查新表达式唯一索引与消息配对。下文旧 Session / Scope 升级步骤不负责这些回填，不能直接套用在当前表上。已有数据库需要停写并
 备份后受控升级，不能依赖 `create_all()` 自动删表或改列；MySQL DDL 也不能靠事务自动回滚。
+已有库新增反馈表时先应用 `docs/migrations/20261115_agent_message_feedback.sql`；新库由
+`init-db` 按当前 ORM 创建，不能把启动时建表当作生产迁移。
 `create_schema()` 检测到旧 `agent_session`、Conversation 的 `session_id` 或缺失的
 `workspace_id` 时拒绝初始化；Conversation 仍有 `series_ids`，或 Message 缺少 `series_ids`
 / `requested_series_ids` 时也拒绝初始化，要求受控 message-scope migration。
