@@ -99,3 +99,7 @@ FTT是HTTP发出至首条非空正文，可能只是确认。取证后正文FTT�
 旧Cloud T01另有两个Query共45次生成、旧64k／48k配置下9次本地压缩、5次INVALID_EVIDENCE_CURSOR和2次Event条件参数错误；反复读第一页、共享100次工具预算耗尽、子任务无可用partial报告、Supervisor再用耗尽预算恢复，最终196.567s失败。原始失败参数与cursor不全，不能声称知道每次模型内部推理，或证明压缩就是唯一原因。本轮各组Query与task实际调用0，不能以这9条完成轮验收该旧Query预算问题。
 
 详细可复核数字见[metrics.json](metrics.json)、[checks.json](checks.json)，决策见[devlog](../../../../dev/devlog.md#devlog-chat-frame-first-response-20261115)。当前任务状态只在工作台CHAT-FRAME-FIRST-01维护。
+
+集成补记：dev同时合入了[PR #179](https://github.com/owariband/Seekino/pull/179)的JEV连接复用和生命周期关闭。本分支保留双方修改；上述回放冻结于该变更之前，不把此前数字归因于keep-alive，也未在402后补造集成版本真实效果。
+
+集成后回归：在保留PR #179的完整工作树运行Chat、取帧、Server装配、Deep Agents、JEV Gateway和视频路由相关测试，**868 passed／1 skipped，39.51s**，同一条既有Starlette警告；该组包含上述808，不能累加。

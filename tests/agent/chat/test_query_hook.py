@@ -21,6 +21,7 @@ class Models:
         self.action = action
         self.calls = []
         self.route_error = None
+        self.closed = 0
 
     def route(self, state, question, *, timeout_seconds):
         self.calls.append(("route", deepcopy(state), timeout_seconds))
@@ -28,6 +29,9 @@ class Models:
             raise self.route_error
         with track_model_call(provider="fake", model="jev", operation="query_hook_route"):
             return self.action
+
+    def close(self):
+        self.closed += 1
 
 
 class RewriteModel:
@@ -450,6 +454,7 @@ def test_supervisor_receives_append_once_while_tools_history_and_inputs_keep_ori
     assert "[本轮处理说明｜应用生成]" not in supervisor.prompts[0]
     assert video.calls[0][0]["original_user_message"] == original["user_message"]
     runtime.close()
+    assert models.closed == 1
 
 def test_templates_keep_routing_simple_and_do_not_force_unavailable_tool_names():
     rendered = "\n".join((*TEMPLATES.values(), TURN_SCOPE))

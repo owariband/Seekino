@@ -18,5 +18,13 @@
   "native_tool_messages_counted": true,
   "completed_turns": 9,
   "final_code_blocked_by_provider_402": true,
-  "production_deployed": false
+  "production_deployed": false,
+  "dev_integration_regression": {
+    "upstream_pr": 179,
+    "passed": 868,
+    "skipped": 1,
+    "warnings": 1,
+    "seconds": 39.51,
+    "overlaps_frozen_808_tests": true
+  }
 }
