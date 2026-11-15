@@ -61,14 +61,15 @@ from .tool_loop import _copy_assistant_reasoning, _function_tool_spec
 
 _logger = logging.getLogger(__name__)
 _HARNESS_PROVIDER = "seekino_supervisor"
+_HARNESS_PROFILE = HarnessProfile(
+    general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False),
+)
 
 # The built-in Supervisor owns a virtual workspace. Business subagents retain
 # their existing review/commit contracts and are exposed as scoped tools.
 register_harness_profile(
     _HARNESS_PROVIDER,
-    HarnessProfile(
-        general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False),
-    ),
+    _HARNESS_PROFILE,
 )
 
 
@@ -448,6 +449,9 @@ class DeepAgentsSupervisorModel:
             if thread_id in self.session_store.pending:
                 raise RuntimeError("Supervisor previous turn has not been confirmed")
             model = _GatewayChatModel(model_name=f"{_HARNESS_PROVIDER}:{self.model_name}")
+            # The adapter reports the real provider for tracing. Match the exact
+            # qualified identifier before the SDK falls back to that provider.
+            register_harness_profile(model.model_name, _HARNESS_PROFILE)
             model._adapter = self._agent_model
             model._supports_vision_input = self.supports_vision_input
             model._delegate = self._chat_model

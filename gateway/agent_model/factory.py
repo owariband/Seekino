@@ -190,7 +190,7 @@ class AgentModelFactory:
             if self._owns_supervisor_sessions:
                 self._supervisor_sessions.close()
 
-    def _controls(self, *, request_timeout_seconds, max_output_tokens, max_input_chars, context_window_policy, mcp):
+    def _controls(self, *, model, request_timeout_seconds, max_output_tokens, max_input_chars, context_window_policy, mcp):
         if self._closed:
             raise RuntimeError("Agent model factory is closed")
         if not isinstance(mcp, bool):
@@ -218,6 +218,12 @@ class AgentModelFactory:
             # Native runtimes own compaction and their model's actual capacity.
             max_input_chars = None
             context_window_policy = None
+        else:
+            context_window_policy = self._dynamic_context_policy(
+                model=model,
+                context_window_policy=context_window_policy,
+                max_output_tokens=max_output_tokens,
+            )
         return dict(
             request_timeout_seconds=request_timeout_seconds, max_output_tokens=max_output_tokens,
             max_input_chars=max_input_chars, context_window_policy=context_window_policy,
@@ -273,10 +279,11 @@ class AgentModelFactory:
         return None, "unavailable"
 
     def _dynamic_context_policy(
-        self, *, model: str, controls: dict,
+        self, *, model: str, context_window_policy: ContextWindowPolicy,
+        max_output_tokens: int,
     ) -> ContextWindowPolicy:
         binding = self._binding
-        previous = controls["context_window_policy"]
+        previous = context_window_policy
         if binding is None or binding.auto_compact_ratio is None or previous is None:
             return previous
         primary_capacity, primary_source = self._context_capacity(
@@ -309,7 +316,7 @@ class AgentModelFactory:
         )
         policy = derive_auto_compact_policy(
             context_window_tokens=effective,
-            output_reserve_tokens=controls["max_output_tokens"],
+            output_reserve_tokens=max_output_tokens,
             safety_margin_tokens=previous.safety_margin_tokens,
             auto_compact_ratio=binding.auto_compact_ratio,
             previous=previous,
@@ -338,6 +345,7 @@ class AgentModelFactory:
     ) -> SupervisorAgentModel:
         """Bind the internal Supervisor harness to the configured API model."""
         controls = self._controls(
+            model=model,
             request_timeout_seconds=request_timeout_seconds, max_output_tokens=max_output_tokens,
             max_input_chars=max_input_chars, context_window_policy=context_window_policy,
             mcp=mcp,
@@ -353,9 +361,6 @@ class AgentModelFactory:
         with self._close_lock:
             if self._closed:
                 raise RuntimeError("Agent model factory is closed")
-            controls["context_window_policy"] = self._dynamic_context_policy(
-                model=model, controls=controls,
-            )
             adapter = self._build_loop(
                 model=model,
                 reasoning_effort=reasoning_effort,
@@ -400,6 +405,7 @@ class AgentModelFactory:
         if not isinstance(self._primary, CodexModelSourceConfig):
             raise ValueError("Codex Supervisor requires a codex_app_server source")
         controls = self._controls(
+            model=model,
             request_timeout_seconds=request_timeout_seconds, max_output_tokens=max_output_tokens,
             max_input_chars=max_input_chars, context_window_policy=context_window_policy,
             mcp=mcp,
@@ -422,6 +428,7 @@ class AgentModelFactory:
         mcp: bool = False,
     ) -> StructuredToolAgentModel:
         controls = self._controls(
+            model=model,
             request_timeout_seconds=request_timeout_seconds, max_output_tokens=max_output_tokens,
             max_input_chars=max_input_chars, context_window_policy=context_window_policy,
             mcp=mcp,
@@ -500,6 +507,7 @@ class AgentModelFactory:
         mcp: bool = False,
     ) -> AgentLoopModel:
         controls = self._controls(
+            model=model,
             request_timeout_seconds=request_timeout_seconds, max_output_tokens=max_output_tokens,
             max_input_chars=max_input_chars, context_window_policy=context_window_policy,
             mcp=mcp,

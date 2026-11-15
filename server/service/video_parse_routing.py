@@ -38,8 +38,9 @@ def classify_video(evidence: dict, *, gateway: GatewayClient, visual_model: Gene
             binding = config.resolve_model_binding("query_hook")
             kind = _ask_model(gateway, binding, inputs, check_active)
             return ContentRoute(kind, "transcript", binding.model)
+        models = QueryHookModels(config.query_hook)
         try:
-            choice = QueryHookModels(config.query_hook).route(
+            choice = models.route(
                 evidence, TYPE_QUESTION, timeout_seconds=config.query_hook.router_timeout_seconds,
                 choices=tuple(TYPE_QUESTION["criteria"]), operation="video_content_route",
             )
@@ -47,6 +48,8 @@ def classify_video(evidence: dict, *, gateway: GatewayClient, visual_model: Gene
             check_active()
         else:
             return ContentRoute(ContentDecision(content_kind=choice).content_kind, "transcript", config.query_hook.router_model)
+        finally:
+            models.close()
 
     binding = ModelBinding.model_validate(visual_model.model_dump(exclude_none=True))
     binding = binding.model_copy(update={"kind": "generative", "supports_vision_input": True})

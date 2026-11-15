@@ -9,8 +9,8 @@ from engine.rag.retrieval.contracts import EventSearchResult
 from ...common.state import ExecutionControl, RunInputs
 from agent.utils.tool import AgentTool
 from ..state import RetrievalCall, RetrievalChannelContract
-from ..frame_evidence import FrameInspectionSession, FrameReader
-from .frames import build_inspect_video_frames_tool
+from ..frame_evidence import FrameInspectionSession, FrameReader, PointFrameReader
+from .frames import build_get_video_frame_tool, build_inspect_video_frames_tool
 from .retrieval import build_retrieve_tool, build_read_retrieval_evidence_tool
 from .event_retrieval import build_search_video_events_tool
 from .video_outline import build_get_video_outline_tool
@@ -31,6 +31,7 @@ def build_retrieval_tools(
     maximum_read_chars: int = 16_384,
     retrieval_channel: RetrievalChannelContract = "transcript",
     frame_reader: FrameReader | None = None,
+    point_frame_reader: PointFrameReader | None = None,
     frame_session: FrameInspectionSession | None = None,
     frame_max_height: int | None = None,
     supports_vision_input: bool = False,
@@ -84,6 +85,12 @@ def build_retrieval_tools(
     if supports_vision_input and frame_reader is not None and frame_session is not None:
         tools.append(build_inspect_video_frames_tool(
             reader=frame_reader, session=frame_session, calls=calls, inputs=inputs,
+            control=control, role=role_label, max_height=frame_max_height,
+            maximum_result_bytes=maximum_result_bytes, budget=budget,
+        ))
+    if supports_vision_input and point_frame_reader is not None and frame_session is not None:
+        tools.append(build_get_video_frame_tool(
+            reader=point_frame_reader, session=frame_session, inputs=inputs,
             control=control, role=role_label, max_height=frame_max_height,
             maximum_result_bytes=maximum_result_bytes, budget=budget,
         ))
