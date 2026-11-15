@@ -8,8 +8,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from agent.video_parse_v2.content_route import ContentDecision, routing_evidence
-from gateway.config import load_config
+from agent.video_parse_v2.content_route import ContentDecision, TYPE_QUESTION, routing_evidence
+from gateway.config import QueryHookConfig, load_config
 from gateway.multimodal import ImageInput
 from server.database import DatabaseEnvironment, create_database_engine, create_schema, create_session_factory
 from server.mq.video_parse_queue import MySqlVideoParseQueue
@@ -130,3 +130,37 @@ def test_full_transcript_routes_using_bounded_evidence_without_frames():
                             prepare_frames=lambda: pytest.fail("unexpected frame decode"), check_active=lambda: None)
     assert result == ContentRoute("course", "transcript", "named-router")
     assert "secret" not in seen[0].text and "lecture.mp4" in seen[0].text
+
+
+def test_legacy_query_hook_route_closes_its_client(monkeypatch):
+    closed = []
+    hook_config = QueryHookConfig(enabled=True)
+
+    class FakeQueryHookModels:
+        def __init__(self, config):
+            assert config is hook_config
+
+        def route(self, state, question, *, timeout_seconds, choices, operation):
+            assert state["transcript"]
+            assert question is TYPE_QUESTION
+            assert timeout_seconds == hook_config.router_timeout_seconds
+            assert choices == tuple(TYPE_QUESTION["criteria"])
+            assert operation == "video_content_route"
+            return "course"
+
+        def close(self):
+            closed.append(True)
+
+    config = SimpleNamespace(query_hook=hook_config, normalized_models={})
+    monkeypatch.setattr(
+        "server.service.video_parse_routing.QueryHookModels", FakeQueryHookModels,
+    )
+    evidence = routing_evidence(
+        "/private/lecture.mp4", 20000, {"description": "d"}, [{"start_seconds": 0, "text": "x" * 500}],
+    )
+    result = classify_video(
+        evidence, gateway=SimpleNamespace(config=config), visual_model=None,
+        prepare_frames=lambda: pytest.fail("unexpected frame decode"), check_active=lambda: None,
+    )
+    assert result == ContentRoute("course", "transcript", config.query_hook.router_model)
+    assert closed == [True]

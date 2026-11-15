@@ -20,6 +20,21 @@ def config(monkeypatch):
     return QueryHookConfig(router_api_key_env="TEST_JEV_KEY")
 
 
+@pytest.fixture(autouse=True)
+def close_query_hook_models(monkeypatch):
+    created = []
+    original_init = QueryHookModels.__init__
+
+    def init(self, *args, **kwargs):
+        original_init(self, *args, **kwargs)
+        created.append(self)
+
+    monkeypatch.setattr(QueryHookModels, "__init__", init)
+    yield
+    for models in created:
+        models.close()
+
+
 def _decision(choice="retrieve"):
     return {
         "model": "typesafe/jev-1.14",
@@ -178,12 +193,16 @@ def test_route_rejects_missing_key_without_request(config, monkeypatch):
 @pytest.mark.parametrize("remaining", [1.25, 10])
 def test_requests_clamp_timeout_and_disable_environment_proxies(config, monkeypatch, remaining):
     client_type = httpx.Client
-    options = []
+    options, timeouts = [], []
 
     class client(client_type):
         def __init__(self, **kwargs):
             options.append(kwargs)
             super().__init__(**kwargs)
+
+        def post(self, url, **kwargs):
+            timeouts.append(kwargs.get("timeout"))
+            return super().post(url, **kwargs)
 
     monkeypatch.setattr("gateway.query_hook.httpx.Client", client)
     models = QueryHookModels(config, transport=httpx.MockTransport(
@@ -191,8 +210,32 @@ def test_requests_clamp_timeout_and_disable_environment_proxies(config, monkeypa
     ))
     _invoke(models, timeout=remaining)
     assert len(options) == 1
-    assert options[0]["timeout"] == min(remaining, 3)
+    assert options[0]["timeout"] == config.router_timeout_seconds
     assert options[0]["trust_env"] is False
+    assert options[0]["limits"].keepalive_expiry == 30.0
+    assert timeouts == [min(remaining, config.router_timeout_seconds)]
+
+
+def test_route_reuses_one_client_until_closed(config, monkeypatch):
+    options, clients = [], []
+    client_type = httpx.Client
+
+    class client(client_type):
+        def __init__(self, **kwargs):
+            options.append(kwargs)
+            super().__init__(**kwargs)
+            clients.append(self)
+
+    monkeypatch.setattr("gateway.query_hook.httpx.Client", client)
+    models = QueryHookModels(config, transport=httpx.MockTransport(
+        lambda request: httpx.Response(200, json=_decision()),
+    ))
+    _invoke(models)
+    _invoke(models)
+    assert len(options) == len(clients) == 1
+    assert clients[0].is_closed is False
+    models.close()
+    assert clients[0].is_closed is True
 
 
 @pytest.mark.parametrize("status", [429, 503])
