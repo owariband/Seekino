@@ -1,5 +1,7 @@
 # 恢复旧B0方法：原ASR ID建库与全量查询
 
+最新实模结果见[复用旧B0后的整集A/B](b0-live-report.md)：两组均24/24理解、22/22 Refine；B开头爽世正确，爱音后半仍被999ms的NO_VOICE门槛挡住。
+
 2026-11-15；[PR #176](https://github.com/owariband/Seekino/pull/176)，[主TRD](../../../../design/03-product-reassessment/audio-first-prefill-evaluation-trd.md)，[工作台](../../../../dev/workbench.html)。本次修复同一实验链路的接线，没有修改Engine算法、Server行为或已确认Prompt。原A/B输入偏离了复用既有方法的要求，其请求与返回保留作历史证据，不能作为所要求方案的验收。
 
 ## 问题与偏差

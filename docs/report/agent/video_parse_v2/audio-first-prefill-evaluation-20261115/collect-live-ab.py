@@ -161,6 +161,9 @@ for name in ('A_audio_only', 'B_two_thirds'):
     result['cases'][name] = record
 
 result['initial_understanding_request_multisets_equal'] = under_inputs['A_audio_only'] == under_inputs['B_two_thirds']
+result['unique_initial_understanding_requests_equal'] = set(under_inputs['A_audio_only']) == set(under_inputs['B_two_thirds'])
+result['initial_understanding_request_counts'] = {name:{'unique':len(values),'attempts':sum(values.values())}
+                                                for name,values in under_inputs.items()}
 result['primary_case_selection'] = load(run / 'evidence/primary-case-selection.json')
 asr = root / 'outputs/verification/voiceprint-early-preparation-20261115/private/asr.json'
 result['original_asr_unchanged'] = hashlib.sha256(asr.read_bytes()).hexdigest() == manifest['asr_sha256']

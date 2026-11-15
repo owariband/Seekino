@@ -222,6 +222,8 @@ CPU8本机整集离线准备完成，参考122条、6个原ID，null参考0；�
 
 本次优先检查原分组保留和旧方法复现，避免继续为错误输入消耗生成token。原始／错误／恢复输入的非空ID分别为130／17／133，原非空丢失115→0；原null参考被排除。首次本机音频准备7.706秒（编码6.633秒），同批再运行0次编码；不作为整集生成提速。313表达来自错误输入下的旧理解，仅验证接线，不能宣称新的Understanding或Refine人物质量达标。见[恢复报告](../report/agent/video_parse_v2/audio-first-prefill-evaluation-20261115/b0-restoration-report.md)，原A/B记录保留并更正验收口径。
 
+随后按旧B0实际新跑完整EP04：A／B各24份Understanding与22个Refine完成。A开头仍误归爱音，B经具名预填后正确归爽世；爱音后半两组仍错，B的999ms表达因旧1000ms门槛分为NO_VOICE，top1爱音未触发预填。首轮7个API失败区间仅补未完成，B最后一段同模型stream=false完成，原48份理解保留。两组各24种初始请求相同，含重试的次数不同；128个入口含29次历史错误，不作账单或速度估算。实际结果见[旧B0整集报告](../report/agent/video_parse_v2/audio-first-prefill-evaluation-20261115/b0-live-report.md)。
+
 <a id="devlog-prompt-baseline-sync-20261115"></a>
 ## 2026-11-15：运行副本补丁未进入后续提交链，完整Prompt回归失去基线
 

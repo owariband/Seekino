@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-15T15:24:50+08:00",
+ "updatedAt": "2026-11-15T17:13:50+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 77,
+ "revision": 78,
  "categories": [
   {
    "id": "parse",
@@ -5996,9 +5996,9 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "type": "requirement",
    "status": "progressing",
    "priority": "P2",
-   "description": "旧B0接线已恢复：原非空ID建参考、全166条查询，原非空丢失0；此前重聚类A/B偏离要求，不作验收。",
-   "next": "当前停止新增生成调用；新Understanding／Refine人物效果仍待验证，保持完整Prompt与旧B0方法，不再重聚类。",
-   "verification": "2026-11-15更正：原有130条非空ID经错误重聚类仅剩17条，115条变null，旧A/B不能作为复用方法验收。现直接复用旧_embed_voiceprint_sample／_score_voiceprint_sample和Canvas；参考122条、原6个ID，null参考0，166条查询含36条原null，最终133条非空，原非空丢失0。原v4的309行逐项完全复现，107测试通过；构造24份请求、重评分313表达、开头预填爽世，旧聚类产物被拒绝。首次本机准备7.706秒，同批再跑0编码；新增生成模型／ASR调用0，无GPU/CPU-prod/数据库访问。已有模型答案仅作接线回放，不能宣称身份质量通过。",
+   "description": "旧B0整集A／B均24/22完成；B开头爽世正确，A仍错；爱音后半被999ms门槛分NO_VOICE，仍未纠正。",
+   "next": "处理999ms表达被1000ms的NO_VOICE门槛阻断预填的问题；全片身份质量与Server接入仍未验收。",
+   "verification": "2026-11-15旧B0实跑：原非空ID建122条参考，null仅查询，原非空丢失0；A／B均24份新Understanding、22个Refine完成，各24种初始请求相同，原始重试次数不同。B第16块冻结169条有效具名表达，对313条评分，17/24发起Refine，比末块早95.332秒。A开头爱音错误，B正确爽世；爱音后半两组仍为睦。B该段999ms低于旧1000ms门槛，top1爱音0.737257仍分NO_VOICE而未预填。7个失败区间仅补未完成，B最后一段同模型非流式完成；128入口含29历史错误。Prompt与旧阈值未改，ASR复用，无GPU/CPU-prod/数据库访问，Server未部署。",
    "updatedAt": "2026-11-15",
    "tags": [
     "ASR复用",
@@ -6046,6 +6046,11 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
     {
      "label": "恢复旧B0方法与离线核验",
      "url": "https://github.com/owariband/Seekino/blob/perf/audio-first-prefill-evaluation/docs/report/agent/video_parse_v2/audio-first-prefill-evaluation-20261115/b0-restoration-report.md",
+     "kind": "source"
+    },
+    {
+     "label": "旧B0整集实际结果",
+     "url": "https://github.com/owariband/Seekino/blob/perf/audio-first-prefill-evaluation/docs/report/agent/video_parse_v2/audio-first-prefill-evaluation-20261115/b0-live-report.md",
      "kind": "source"
     }
    ],
