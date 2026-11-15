@@ -72,7 +72,7 @@ PYTHONPATH="$PWD" /Users/hypnos/workspace/agent/Seekino/.venv/bin/python -m pyte
 
 ## 2026-11-15：本地完整历史回放计划
 
-后续实验分支为 `perf/chat-local-history-replay`，目标 `dev`，PR 创建后回填。以已合入 dev 的父子配置继承修复为运行版本，独立启动本地 Server、MySQL 与 Elasticsearch；只读取得原 T01–T03 所需的素材、索引与历史快照后，装入本地隔离环境。不得让测试读写生产数据库，也不使用一轮模型生成或固定工具返回替代完整 Chat。
+后续实验分支为 `perf/chat-local-history-replay`，目标 `dev`，[PR #177](https://github.com/owariband/Seekino/pull/177)。以已合入 dev 的父子配置继承修复为运行版本，独立启动本地 Server、MySQL 与 Elasticsearch；只读取得原 T01–T03 所需的素材、索引与历史快照后，装入本地隔离环境。不得让测试读写生产数据库，也不使用一轮模型生成或固定工具返回替代完整 Chat。
 
 三条用例各自恢复原请求前的历史、原生 checkpoint、播放位置和检索范围，不把本轮 T01 的输出当成 T02 的输入。保持 DeepSeek Flash／high／8192、JEV only、改写器关闭和原请求的 100 次调用限制。首轮串行，每条最多观察 300 秒，不自动重试；失败、超时和业务错误均保留。私有快照、逐字 query、模型响应和素材不入 Git。
 

@@ -1,6 +1,6 @@
 # 2026-11-15 本地冻结环境下的三条历史 Chat 回放
 
-日期：2026-11-15（Asia/Singapore）。分支 `perf/chat-local-history-replay`，回放协议见[配置继承 TRD 的“2026-11-15：本地完整历史回放计划”](../../../../design/03-product-reassessment/chat-model-config-inheritance-trd.md)。本文只整理已有指标，不表示已经上线。
+日期：2026-11-15（Asia/Singapore）。分支 `perf/chat-local-history-replay`，[PR #177](https://github.com/owariband/Seekino/pull/177)，回放协议见[配置继承 TRD 的“2026-11-15：本地完整历史回放计划”](../../../../design/03-product-reassessment/chat-model-config-inheritance-trd.md)。本文只整理已有指标，不表示已经上线。
 
 ## 结论
 

@@ -27,7 +27,7 @@
 
 | 记录 | 原问题编号 |
 |---|---|
-| [2026-11-15：历史证据重取和取帧时间偏移，让动态窗口下的 Chat 仍迟答、答偏](#devlog-chat-local-history-replay-20261115) | CHAT-MODEL-INHERIT-01；CHAT-COMPACT-01；CHAT-QUERY-BUDGET-01 |
+| [2026-11-15：历史证据重取和取帧时间偏移，让动态窗口下的 Chat 仍迟答、答偏](#devlog-chat-local-history-replay-20261115) | CHAT-MODEL-INHERIT-01；CHAT-COMPACT-01；CHAT-QUERY-BUDGET-01；PR #177 |
 | [2026-11-15：Chat 子 Agent 另取全局模型，选定 Supervisor 后仍按旧窗口提前压缩](#devlog-chat-model-config-inheritance-20261115) | CHAT-MODEL-INHERIT-01；CHAT-COMPACT-01；PR #171 |
 | [2026-11-14：实时播放请求绕过 JEV，接入后完整回放仍因工具预算与时间锚定失败](#devlog-chat-history-replay-20261114) | CHAT-JEV-REALTIME-01；CHAT-QUERY-BUDGET-01；PR #162、PR #163 |
 | [2026-11-14：生产镜像未含 Event 查询内存修复，完整课程范围又因任务排序内存溢出](#devlog-event-query-cloud-memory-hotfix-20261114) | RAG-QUERY-MEM-01；PR #154、PR #159 |
