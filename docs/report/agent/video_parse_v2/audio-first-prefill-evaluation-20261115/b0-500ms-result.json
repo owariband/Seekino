@@ -1,0 +1,143 @@
+{
+  "source_revision": "80bec7387ddfddb85941b3af6193d7006138e33f",
+  "no_voice_duration_ms": 500,
+  "previous_no_voice_duration_ms": 1000,
+  "embedding_minimum_ms": 400,
+  "accept_duration_ms": 1500,
+  "understanding_reused": 24,
+  "new_understanding_calls": 0,
+  "asr_calls": 0,
+  "voice_encodings": 0,
+  "frozen_references_reused": 169,
+  "cached_score_lines": 313,
+  "retained_understanding_sha256_unchanged": true,
+  "refine_intervals": 22,
+  "generation_entries": 24,
+  "call_statuses": {
+    "returned": 24
+  },
+  "repair_entries": 2,
+  "all_actual_calls_prompt_verified": true,
+  "model_bindings": [
+    {
+      "source": "deepseek_api",
+      "model": "deepseek-flash",
+      "reasoning_effort": "low",
+      "temperature": 0.0,
+      "stream": false
+    }
+  ],
+  "voice_target": {
+    "start_ms": 294500,
+    "end_ms": 295499,
+    "duration_ms": 999,
+    "band": "CONFLICT",
+    "conflict": true,
+    "review_reason": "duration_below_accept_minimum",
+    "gap": 0.17151896666851463,
+    "understanding_speaker": "若葉睦"
+  },
+  "voice_target_candidates": [
+    {
+      "speaker": "千早愛音",
+      "similarity": 0.737257426646788
+    },
+    {
+      "speaker": "要楽奈",
+      "similarity": 0.5657384599782733
+    },
+    {
+      "speaker": "長崎そよ",
+      "similarity": 0.5425223394585335
+    },
+    {
+      "speaker": "若葉睦",
+      "similarity": 0.05965865653977526
+    }
+  ],
+  "targets": {
+    "opening_soyo": [
+      {
+        "start_seconds": 47500,
+        "end_seconds": 49000,
+        "speaker": "千早愛音",
+        "speaker_source": "refine_edit",
+        "description": "千早愛音补充说，小祥也没有错。"
+      }
+    ],
+    "anon_introduction": [
+      {
+        "start_seconds": 292500,
+        "end_seconds": 295499,
+        "speaker": "千早愛音",
+        "speaker_source": "refine_edit",
+        "description": "千早愛音迟疑地反复提到长崎素世的名字。"
+      }
+    ]
+  },
+  "band_changes": [
+    {
+      "start_ms": 6500,
+      "end_ms": 7400,
+      "old_band": "NO_VOICE",
+      "new_band": null,
+      "top1": "高松燈"
+    },
+    {
+      "start_ms": 591500,
+      "end_ms": 592278,
+      "old_band": "NO_VOICE",
+      "new_band": null,
+      "top1": "高松燈"
+    },
+    {
+      "start_ms": 958500,
+      "end_ms": 959194,
+      "old_band": "NO_VOICE",
+      "new_band": "CONFLICT",
+      "top1": "椎名立希"
+    },
+    {
+      "start_ms": 976414,
+      "end_ms": 977034,
+      "old_band": "NO_VOICE",
+      "new_band": null,
+      "top1": "椎名立希"
+    },
+    {
+      "start_ms": 1042500,
+      "end_ms": 1043442,
+      "old_band": "NO_VOICE",
+      "new_band": null,
+      "top1": "椎名立希"
+    },
+    {
+      "start_ms": 1199200,
+      "end_ms": 1200000,
+      "old_band": "NO_VOICE",
+      "new_band": "CONFLICT",
+      "top1": "千早愛音"
+    },
+    {
+      "start_ms": 294500,
+      "end_ms": 295499,
+      "old_band": "NO_VOICE",
+      "new_band": "CONFLICT",
+      "top1": "千早愛音"
+    }
+  ],
+  "gpu_access": false,
+  "cpu_prod_access": false,
+  "database_access": false,
+  "deployed_server_changes": false,
+  "both_confirmed_targets_correct": false,
+  "opening_prefill_override": {
+    "input_speaker": "長崎そよ",
+    "returned_speaker": "千早愛音",
+    "call_ids": [
+      "88bd90a3-a1b6-4672-8db7-11e603ff9f24",
+      "8b6e192a-144d-4ffe-aad5-3ab83f9b90a5"
+    ],
+    "voice_scores_and_band_unchanged_from_1000ms": true
+  }
+}

@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-15T17:13:50+08:00",
+ "updatedAt": "2026-11-15T23:54:13+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 78,
+ "revision": 79,
  "categories": [
   {
    "id": "parse",
@@ -5996,9 +5996,9 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "type": "requirement",
    "status": "progressing",
    "priority": "P2",
-   "description": "旧B0整集A／B均24/22完成；B开头爽世正确，A仍错；爱音后半被999ms门槛分NO_VOICE，仍未纠正。",
-   "next": "处理999ms表达被1000ms的NO_VOICE门槛阻断预填的问题；全片身份质量与Server接入仍未验收。",
-   "verification": "2026-11-15旧B0实跑：原非空ID建122条参考，null仅查询，原非空丢失0；A／B均24份新Understanding、22个Refine完成，各24种初始请求相同，原始重试次数不同。B第16块冻结169条有效具名表达，对313条评分，17/24发起Refine，比末块早95.332秒。A开头爱音错误，B正确爽世；爱音后半两组仍为睦。B该段999ms低于旧1000ms门槛，top1爱音0.737257仍分NO_VOICE而未预填。7个失败区间仅补未完成，B最后一段同模型非流式完成；128入口含29历史错误。Prompt与旧阈值未改，ASR复用，无GPU/CPU-prod/数据库访问，Server未部署。",
+   "description": "旧B0已改500ms NO_VOICE；缓存理解续跑22个Refine完成，爱音段已正确，但开头仍被Refine从爽世回改为爱音。",
+   "next": "999ms时长阻断已解除；继续处理Refine把正确爽世预填改回爱音的问题，整体身份质量与Server接入仍未验收。",
+   "verification": "2026-11-15 80bec738：仅将NO_VOICE时长门槛1000→500ms，编码400ms、ACCEPT1500ms、B0算法与Prompt不变。24份理解SHA不变，169条参考、313条评分复用；7条分档变化、3条进入CONFLICT。22个实际Refine完成，爱音段已正确，但开头仍被Refine从爽世回改为爱音，新增Understanding／ASR／声纹编码0；生成入口24次、修复2次，使用同模型Flash low非流式响应。未新增单元测试，无GPU/CPU-prod/数据库访问，Server未部署。",
    "updatedAt": "2026-11-15",
    "tags": [
     "ASR复用",
@@ -6051,6 +6051,11 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
     {
      "label": "旧B0整集实际结果",
      "url": "https://github.com/owariband/Seekino/blob/perf/audio-first-prefill-evaluation/docs/report/agent/video_parse_v2/audio-first-prefill-evaluation-20261115/b0-live-report.md",
+     "kind": "source"
+    },
+    {
+     "label": "500ms实际Refine结果",
+     "url": "https://github.com/owariband/Seekino/blob/perf/audio-first-prefill-evaluation/docs/report/agent/video_parse_v2/audio-first-prefill-evaluation-20261115/b0-500ms-report.md",
      "kind": "source"
     }
    ],

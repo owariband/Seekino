@@ -1,5 +1,7 @@
 # 复用旧B0方法后的EP04整集实际结果
 
+最新：[500ms阈值的整集Refine结果](b0-500ms-report.md)，复用本轮理解与声纹缓存。
+
 2026-11-15；[PR #176](https://github.com/owariband/Seekino/pull/176)，[TRD](../../../../design/03-product-reassessment/audio-first-prefill-evaluation-trd.md)。初次启动源码259be770，API恢复入口5868c43b，最后一个区间非流式恢复6c6d7818。[实际请求、返回与阶段结果](b0-live-comparison.json)，[恢复检查点](b0-live-recovery.json)，[此前接线修复](b0-restoration-report.md)。
 
 **A／B都已完成24个新的Understanding和22个Refine。B纠正了开头爽世台词，A仍错误；约294.5秒爱音台词的后半两组都仍错误，尚未达到两处身份都正确的目标。** 本报告依据实际模型返回，未用离线回放或单元测试代替人物效果。

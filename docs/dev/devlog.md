@@ -203,6 +203,25 @@
 
 </details>
 
+<a id="devlog-voice-500ms-20261115"></a>
+## 2026-11-15：NO_VOICE时长门槛挡住可评分短句，999ms声纹未进入预填
+
+### 问题与现状
+
+1000ms轮次的爱音后半仅999ms，尽管top1爱音0.737257、gap0.171519，仍被NO_VOICE门槛挡住，最终归为若葉睦。
+
+### 方案候选
+
+仅将NO_VOICE下限改为500ms，保留编码下限400ms、ACCEPT时长1500ms与全部旧B0／Prompt；复用同一理解和声纹缓存续跑Refine。
+
+### 方案验证
+
+实际22个Refine完成，24份Understanding SHA不变，169条参考及313条缓存评分复用，新增Understanding／ASR／声纹编码均0。999ms目标进入CONFLICT并预填爱音；爱音段已正确，但开头仍被Refine从爽世回改为爱音，生成入口24次，修复2次。
+
+### 指标对比
+
+全片7条分档改变，其中3条进入CONFLICT；999ms目标由NO_VOICE阻断改为可预填。本轮非流式，与1000ms轮次传输方式不同，只记录实际目标结果，不估全片准确率或稳定率。未新增单元测试，无GPU／CPU-prod／数据库访问，Server未部署。见[500ms实际报告](../report/agent/video_parse_v2/audio-first-prefill-evaluation-20261115/b0-500ms-report.md)。
+
 <a id="devlog-b0-restoration-20261115"></a>
 ## 2026-11-15：重聚类覆盖原ASR分组，整集对照偏离既有声纹方法
 
