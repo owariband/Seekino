@@ -25,6 +25,8 @@
 
 ## Agent / chat
 
+[2026-11-15 单点取帧、当前目标与较早回应对照](agent/chat/frame-target-first-response-20261115/README.md)：完整六次历史错误根因，冻结基线与各候选三条回放，分开记录确认FTT、有据正文、TT、token、工具错误与质量。
+
 [2026-11-15 动态窗口下的本地完整历史回放](agent/chat/local-history-replay-20261115/README.md)：原历史、native 状态与本地素材副本，稳定轮三条 TT／FTT／token 全量记录；复现旧 item 重取与取帧时间偏移，保留五条环境无效生成，区分完成率、核心验收与未覆盖的 Query 路径。
 
 [2026-11-14 实时 JEV 接线与三条历史 Chat 完整回放](agent/chat/history-latency-replay-20261114/README.md)：三条真实路由均进入 JEV 并返回 `retrieve`，但 T01 因 Query 耗尽共享工具预算失败，T02／T03 虽完成却分别漏掉目标播放位置、声称取到 17:36 而实际取帧为相邻秒；保留逐条 token、调用、部署与未验证边界。

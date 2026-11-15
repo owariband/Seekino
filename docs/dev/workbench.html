@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-15T10:52:02+08:00",
+ "updatedAt": "2026-11-15T13:10:00+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 72,
+ "revision": 74,
  "categories": [
   {
    "id": "parse",
@@ -6066,6 +6066,54 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "label": "线上聊天页",
      "url": "https://seekino.hypn0s.cloud/search",
      "kind": "source"
+    }
+   ]
+  },
+  {
+   "id": "CHAT-FRAME-FIRST-01",
+   "title": "Chat 单点取帧与较早回应：统一当前目标和工具合同",
+   "category": "chat",
+   "type": "requirement",
+   "status": "verifying",
+   "priority": "P1",
+   "description": "历史证据ID与本轮注册表、实时取帧时间及schema条件必填未对齐；补单点原帧、清理JEV/贪心工具提示，在同一循环先确认再取证，分别验收FTT、TT与质量。",
+   "next": "补齐DeepSeek余额后回放最终播放锚点修正；当前代码和离线回归完成，正式部署未执行。",
+   "verification": "最终组合808通过/1跳过；基线、首候选和提示收紧候选各完成3条真实历史。第二候选工具反馈0/11错误，T03按用户1056000ms取一帧；T02仍沿用历史时间。最终增加本轮播放锚点，真实补测首条被官方402挡住，2条未执行，不认定质量已全通过。",
+   "updatedAt": "2026-11-15",
+   "tags": [
+    "Chat",
+    "Prompt",
+    "取帧",
+    "FTT",
+    "待真实模型复验"
+   ],
+   "related": [
+    "MOD-CHAT",
+    "CHAT-INTENT-01",
+    "CHAT-MODEL-INHERIT-01",
+    "CHAT-QUERY-BUDGET-01"
+   ],
+   "branch": "fix/chat-frame-target-and-first-response",
+   "links": [
+    {
+     "label": "PR #178",
+     "kind": "pr",
+     "url": "https://github.com/owariband/Seekino/pull/178"
+    },
+    {
+     "label": "TRD",
+     "kind": "trd",
+     "url": "https://github.com/owariband/Seekino/blob/fix/chat-frame-target-and-first-response/docs/design/03-product-reassessment/chat-frame-target-and-first-response-trd.md"
+    },
+    {
+     "label": "失败映射与本地对照",
+     "kind": "source",
+     "url": "https://github.com/owariband/Seekino/blob/fix/chat-frame-target-and-first-response/docs/report/agent/chat/frame-target-first-response-20261115/README.md"
+    },
+    {
+     "label": "devlog",
+     "kind": "source",
+     "url": "https://github.com/owariband/Seekino/blob/fix/chat-frame-target-and-first-response/docs/dev/devlog.md#devlog-chat-frame-first-response-20261115"
     }
    ]
   }

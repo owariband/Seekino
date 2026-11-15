@@ -1,0 +1,536 @@
+{
+  "date": "2026-11-15",
+  "model_controls": {
+    "supervisor": "deepseek-flash",
+    "effort": "high",
+    "max_output_tokens": 8192,
+    "query_hook": "typesafe/jev-1.14-20261014",
+    "rewriter_enabled": false,
+    "context_window_tokens": 1048576,
+    "compaction_trigger_tokens": 891289,
+    "compaction_keep_tokens": 24000
+  },
+  "measurement_note": "First visible FTT includes a short acknowledgement when present. Post-evidence body FTT marks substantive body after tools; evidence correctness is assessed separately. Reasoning tokens are a subset of output, never added twice. Whole-stage tokens include JEV, generations and embeddings. Three turns per completed arm, one observation per case, no distribution claim.",
+  "cases": [
+    {
+      "arm": "baseline",
+      "code_commit": "a5084c26",
+      "case_id": "T01",
+      "status": "completed",
+      "first_visible_ftt_seconds": 28.602184041999863,
+      "ack_observed": false,
+      "post_evidence_body_ftt_seconds": 28.602184,
+      "body_annotation": {
+        "native_message_index": 40,
+        "start_offset": 0,
+        "text_sha256": "5b9501b26d12e571cf3ccfa6a90da1283accea553707d632b86754a15f9d62d7"
+      },
+      "server_tt_seconds": 34.531,
+      "client_tt_seconds": 34.99547283300126,
+      "tokens": {
+        "input_tokens": 498033,
+        "output_tokens": 3717,
+        "total_tokens": 501750,
+        "reasoning_tokens": 2161,
+        "cached_input_tokens": 472448
+      },
+      "calls": {
+        "jev": 1,
+        "generation": 9,
+        "embedding": 3
+      },
+      "tool_attempts": 9,
+      "tool_errors": [],
+      "tool_error_count": 0,
+      "tool_names": [
+        "search_video_events",
+        "get_series_overview",
+        "search_video_events",
+        "read_retrieval_evidence",
+        "read_retrieval_evidence",
+        "read_retrieval_evidence",
+        "search_video_events",
+        "submit_video_item",
+        "submit_video_item"
+      ],
+      "point_requests_ms": [],
+      "summary_unchanged": true,
+      "source_state_hashes": {
+        "messages": "f7af9ab8b74b9610295295022fdd1f32ca76ac8a2e1043d5d3deace539a24906",
+        "files": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "summary": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+      }
+    },
+    {
+      "arm": "baseline",
+      "code_commit": "a5084c26",
+      "case_id": "T02",
+      "status": "completed",
+      "first_visible_ftt_seconds": 17.853528832998563,
+      "ack_observed": false,
+      "post_evidence_body_ftt_seconds": 17.853529,
+      "body_annotation": {
+        "native_message_index": 58,
+        "start_offset": 0,
+        "text_sha256": "aed7b77033b87a0433f1b783f2e343b5f97710d6c3e9e3a6c3eac12a19a2de8a"
+      },
+      "server_tt_seconds": 20.344,
+      "client_tt_seconds": 21.277825125000163,
+      "tokens": {
+        "input_tokens": 204678,
+        "output_tokens": 1938,
+        "total_tokens": 206616,
+        "reasoning_tokens": 1119,
+        "cached_input_tokens": 193280
+      },
+      "calls": {
+        "jev": 1,
+        "generation": 5,
+        "embedding": 1
+      },
+      "tool_attempts": 5,
+      "tool_errors": [
+        {
+          "tool": "read_retrieval_evidence",
+          "code": "UNKNOWN_ITEM"
+        },
+        {
+          "tool": "inspect_video_frames",
+          "code": "UNKNOWN_ITEM"
+        }
+      ],
+      "tool_error_count": 2,
+      "tool_names": [
+        "read_retrieval_evidence",
+        "inspect_video_frames",
+        "search_video_events",
+        "inspect_video_frames",
+        "submit_video_item"
+      ],
+      "point_requests_ms": [],
+      "summary_unchanged": true,
+      "source_state_hashes": {
+        "messages": "6fa1b16360439b36d9157209b0d7b3194b43d364be21622fa7c41f1318fe1744",
+        "files": "f2a62364f725c07fa536deec4574d973a41d4a65d75d7ff524527f97c6739164",
+        "summary": "21cc3d75f65c743584ea486b2fcde2802f80e16ea657b8bb37d962522903f17d"
+      }
+    },
+    {
+      "arm": "baseline",
+      "code_commit": "a5084c26",
+      "case_id": "T03",
+      "status": "completed",
+      "first_visible_ftt_seconds": 25.361511584000255,
+      "ack_observed": false,
+      "post_evidence_body_ftt_seconds": 25.361512,
+      "body_annotation": {
+        "native_message_index": 75,
+        "start_offset": 0,
+        "text_sha256": "f6fe30f9b0aeb6a84aa25c9a72e9fb52416436a7437dc99eac8970f320d12ac1"
+      },
+      "server_tt_seconds": 28.092,
+      "client_tt_seconds": 28.710420375000467,
+      "tokens": {
+        "input_tokens": 328896,
+        "output_tokens": 3194,
+        "total_tokens": 332090,
+        "reasoning_tokens": 1881,
+        "cached_input_tokens": 309632
+      },
+      "calls": {
+        "jev": 1,
+        "generation": 8,
+        "embedding": 2
+      },
+      "tool_attempts": 8,
+      "tool_errors": [
+        {
+          "tool": "inspect_video_frames",
+          "code": "UNKNOWN_ITEM"
+        },
+        {
+          "tool": "read_retrieval_evidence",
+          "code": "INVALID_EVIDENCE_CURSOR"
+        }
+      ],
+      "tool_error_count": 2,
+      "tool_names": [
+        "inspect_video_frames",
+        "search_video_events",
+        "inspect_video_frames",
+        "read_retrieval_evidence",
+        "read_retrieval_evidence",
+        "read_retrieval_evidence",
+        "search_video_events",
+        "submit_video_item"
+      ],
+      "point_requests_ms": [],
+      "summary_unchanged": true,
+      "source_state_hashes": {
+        "messages": "82a026c3367042b036f67a37f6ccead654264356bf7a7ae92ade35fdfff41a28",
+        "files": "9ea45ce96c985023ad75a7ef0b68c9ca3a805165acf01c9743cdc1101f36040b",
+        "summary": "01778c8a6d1fafbf3aca4347be42a858902103dc360fa08a9494760e63fbaa44"
+      }
+    },
+    {
+      "arm": "candidate",
+      "code_commit": "cb1e7eb0",
+      "case_id": "T01",
+      "status": "completed",
+      "first_visible_ftt_seconds": 7.721589832999598,
+      "ack_observed": true,
+      "post_evidence_body_ftt_seconds": 26.600652,
+      "body_annotation": {
+        "native_message_index": 37,
+        "start_offset": 35,
+        "text_sha256": "42aae4969f059bc93418793f2f9d4a2efe107779db8557d73deed0d48d82024b"
+      },
+      "server_tt_seconds": 30.921,
+      "client_tt_seconds": 31.627053791000435,
+      "tokens": {
+        "input_tokens": 360066,
+        "output_tokens": 3824,
+        "total_tokens": 363890,
+        "reasoning_tokens": 2634,
+        "cached_input_tokens": 304896
+      },
+      "calls": {
+        "jev": 1,
+        "generation": 7,
+        "embedding": 1
+      },
+      "tool_attempts": 8,
+      "tool_errors": [],
+      "tool_error_count": 0,
+      "tool_names": [
+        "search_video_events",
+        "get_series_overview",
+        "read_retrieval_evidence",
+        "get_video_outline",
+        "read_retrieval_evidence",
+        "read_retrieval_evidence",
+        "submit_video_item",
+        "submit_video_item"
+      ],
+      "point_requests_ms": [],
+      "summary_unchanged": true,
+      "source_state_hashes": {
+        "messages": "f7af9ab8b74b9610295295022fdd1f32ca76ac8a2e1043d5d3deace539a24906",
+        "files": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "summary": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+      }
+    },
+    {
+      "arm": "candidate",
+      "code_commit": "cb1e7eb0",
+      "case_id": "T02",
+      "status": "completed",
+      "first_visible_ftt_seconds": 4.865835791999416,
+      "ack_observed": true,
+      "post_evidence_body_ftt_seconds": 14.655864,
+      "body_annotation": {
+        "native_message_index": 59,
+        "start_offset": 24,
+        "text_sha256": "d560615e9d5d05bb844fd1ad5b939be1aefb3f5cdfe01cb66a5413da89e59966"
+      },
+      "server_tt_seconds": 17.923,
+      "client_tt_seconds": 18.74944379199951,
+      "tokens": {
+        "input_tokens": 254144,
+        "output_tokens": 1647,
+        "total_tokens": 255791,
+        "reasoning_tokens": 747,
+        "cached_input_tokens": 209408
+      },
+      "calls": {
+        "jev": 1,
+        "generation": 6,
+        "embedding": 1
+      },
+      "tool_attempts": 5,
+      "tool_errors": [
+        {
+          "tool": "inspect_video_frames",
+          "code": "UNKNOWN_ITEM"
+        }
+      ],
+      "tool_error_count": 1,
+      "tool_names": [
+        "inspect_video_frames",
+        "search_video_events",
+        "inspect_video_frames",
+        "submit_video_item",
+        "submit_video_item"
+      ],
+      "point_requests_ms": [],
+      "summary_unchanged": true,
+      "source_state_hashes": {
+        "messages": "6fa1b16360439b36d9157209b0d7b3194b43d364be21622fa7c41f1318fe1744",
+        "files": "f2a62364f725c07fa536deec4574d973a41d4a65d75d7ff524527f97c6739164",
+        "summary": "21cc3d75f65c743584ea486b2fcde2802f80e16ea657b8bb37d962522903f17d"
+      }
+    },
+    {
+      "arm": "candidate",
+      "code_commit": "cb1e7eb0",
+      "case_id": "T03",
+      "status": "completed",
+      "first_visible_ftt_seconds": 3.7100060419998044,
+      "ack_observed": true,
+      "post_evidence_body_ftt_seconds": 13.410205,
+      "body_annotation": {
+        "native_message_index": 68,
+        "start_offset": 23,
+        "text_sha256": "5479010305e474360226edbb1a20434148bfd1fb3406c0d428d13ac8d44bc884"
+      },
+      "server_tt_seconds": 14.44,
+      "client_tt_seconds": 15.004539749999822,
+      "tokens": {
+        "input_tokens": 139807,
+        "output_tokens": 1193,
+        "total_tokens": 141000,
+        "reasoning_tokens": 708,
+        "cached_input_tokens": 101888
+      },
+      "calls": {
+        "jev": 1,
+        "generation": 4,
+        "embedding": 1
+      },
+      "tool_attempts": 3,
+      "tool_errors": [
+        {
+          "tool": "read_retrieval_evidence",
+          "code": "UNKNOWN_ITEM"
+        }
+      ],
+      "tool_error_count": 1,
+      "tool_names": [
+        "get_video_frame",
+        "read_retrieval_evidence",
+        "search_video_events"
+      ],
+      "point_requests_ms": [
+        1056000
+      ],
+      "summary_unchanged": true,
+      "source_state_hashes": {
+        "messages": "82a026c3367042b036f67a37f6ccead654264356bf7a7ae92ade35fdfff41a28",
+        "files": "9ea45ce96c985023ad75a7ef0b68c9ca3a805165acf01c9743cdc1101f36040b",
+        "summary": "01778c8a6d1fafbf3aca4347be42a858902103dc360fa08a9494760e63fbaa44"
+      }
+    },
+    {
+      "arm": "candidate-final",
+      "code_commit": "ab18d93d",
+      "case_id": "T01",
+      "status": "completed",
+      "first_visible_ftt_seconds": 6.448426999999356,
+      "ack_observed": true,
+      "post_evidence_body_ftt_seconds": 19.811507,
+      "body_annotation": {
+        "native_message_index": 36,
+        "start_offset": 67,
+        "text_sha256": "d04ee2f7eedfc4d3c7fc77b41739c91a01fb70e60ddec53680619cf64d23b840"
+      },
+      "server_tt_seconds": 23.405,
+      "client_tt_seconds": 24.133618791000117,
+      "tokens": {
+        "input_tokens": 302898,
+        "output_tokens": 2408,
+        "total_tokens": 305306,
+        "reasoning_tokens": 1250,
+        "cached_input_tokens": 248576
+      },
+      "calls": {
+        "jev": 1,
+        "generation": 6,
+        "embedding": 2
+      },
+      "tool_attempts": 6,
+      "tool_errors": [],
+      "tool_error_count": 0,
+      "tool_names": [
+        "search_video_events",
+        "search_video_events",
+        "read_retrieval_evidence",
+        "read_retrieval_evidence",
+        "read_retrieval_evidence",
+        "submit_video_item"
+      ],
+      "point_requests_ms": [],
+      "summary_unchanged": true,
+      "source_state_hashes": {
+        "messages": "f7af9ab8b74b9610295295022fdd1f32ca76ac8a2e1043d5d3deace539a24906",
+        "files": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "summary": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+      }
+    },
+    {
+      "arm": "candidate-final",
+      "code_commit": "ab18d93d",
+      "case_id": "T02",
+      "status": "completed",
+      "first_visible_ftt_seconds": 13.571475374999864,
+      "ack_observed": false,
+      "post_evidence_body_ftt_seconds": 13.571475,
+      "body_annotation": {
+        "native_message_index": 60,
+        "start_offset": 0,
+        "text_sha256": "afaa575a8db6835738a7c3f54e5a954f29bd897c450c75a667cf3874fc59ac71"
+      },
+      "server_tt_seconds": 14.552,
+      "client_tt_seconds": 15.090441041998929,
+      "tokens": {
+        "input_tokens": 119224,
+        "output_tokens": 1125,
+        "total_tokens": 120349,
+        "reasoning_tokens": 728,
+        "cached_input_tokens": 78592
+      },
+      "calls": {
+        "jev": 1,
+        "generation": 3
+      },
+      "tool_attempts": 4,
+      "tool_errors": [],
+      "tool_error_count": 0,
+      "tool_names": [
+        "get_video_frame",
+        "get_video_frame",
+        "get_video_frame",
+        "get_video_frame"
+      ],
+      "point_requests_ms": [
+        1034000,
+        1037256,
+        1036000,
+        1032000
+      ],
+      "summary_unchanged": true,
+      "source_state_hashes": {
+        "messages": "6fa1b16360439b36d9157209b0d7b3194b43d364be21622fa7c41f1318fe1744",
+        "files": "f2a62364f725c07fa536deec4574d973a41d4a65d75d7ff524527f97c6739164",
+        "summary": "21cc3d75f65c743584ea486b2fcde2802f80e16ea657b8bb37d962522903f17d"
+      }
+    },
+    {
+      "arm": "candidate-final",
+      "code_commit": "ab18d93d",
+      "case_id": "T03",
+      "status": "completed",
+      "first_visible_ftt_seconds": 3.498715124998853,
+      "ack_observed": true,
+      "post_evidence_body_ftt_seconds": 9.769313,
+      "body_annotation": {
+        "native_message_index": 64,
+        "start_offset": 19,
+        "text_sha256": "5e92edecb9364b24b50c4a9cafa68be7f38e8721275a29d5d802a4af4d51a114"
+      },
+      "server_tt_seconds": 10.929,
+      "client_tt_seconds": 11.519904374999896,
+      "tokens": {
+        "input_tokens": 67485,
+        "output_tokens": 1062,
+        "total_tokens": 68547,
+        "reasoning_tokens": 741,
+        "cached_input_tokens": 34944
+      },
+      "calls": {
+        "jev": 1,
+        "generation": 2
+      },
+      "tool_attempts": 1,
+      "tool_errors": [],
+      "tool_error_count": 0,
+      "tool_names": [
+        "get_video_frame"
+      ],
+      "point_requests_ms": [
+        1056000
+      ],
+      "summary_unchanged": true,
+      "source_state_hashes": {
+        "messages": "82a026c3367042b036f67a37f6ccead654264356bf7a7ae92ade35fdfff41a28",
+        "files": "9ea45ce96c985023ad75a7ef0b68c9ca3a805165acf01c9743cdc1101f36040b",
+        "summary": "01778c8a6d1fafbf3aca4347be42a858902103dc360fa08a9494760e63fbaa44"
+      }
+    }
+  ],
+  "aggregates": {
+    "baseline": {
+      "completed": 3,
+      "turns": 3,
+      "first_visible_ftt_mean": 23.939074819666228,
+      "post_evidence_body_ftt_mean": 23.939075000000003,
+      "server_tt_mean": 27.655666666666665,
+      "client_tt_mean": 28.32790611100063,
+      "tokens": {
+        "input_tokens": 1031607,
+        "output_tokens": 8849,
+        "total_tokens": 1040456,
+        "reasoning_tokens": 5161,
+        "cached_input_tokens": 975360
+      },
+      "tool_attempts": 22,
+      "tool_errors": 4,
+      "generation_calls": 22,
+      "ack_turns": 0
+    },
+    "candidate": {
+      "completed": 3,
+      "turns": 3,
+      "first_visible_ftt_mean": 5.432477222332939,
+      "post_evidence_body_ftt_mean": 18.222240333333332,
+      "server_tt_mean": 21.094666666666665,
+      "client_tt_mean": 21.79367911099992,
+      "tokens": {
+        "input_tokens": 754017,
+        "output_tokens": 6664,
+        "total_tokens": 760681,
+        "reasoning_tokens": 4089,
+        "cached_input_tokens": 616192
+      },
+      "tool_attempts": 16,
+      "tool_errors": 2,
+      "generation_calls": 17,
+      "ack_turns": 3
+    },
+    "candidate-final": {
+      "completed": 3,
+      "turns": 3,
+      "first_visible_ftt_mean": 7.839539166666024,
+      "post_evidence_body_ftt_mean": 14.384098333333332,
+      "server_tt_mean": 16.295333333333332,
+      "client_tt_mean": 16.914654735999648,
+      "tokens": {
+        "input_tokens": 489607,
+        "output_tokens": 4595,
+        "total_tokens": 494202,
+        "reasoning_tokens": 2719,
+        "cached_input_tokens": 362112
+      },
+      "tool_attempts": 11,
+      "tool_errors": 0,
+      "generation_calls": 11,
+      "ack_turns": 2
+    }
+  },
+  "final_code_attempt": {
+    "code_commit": "9b03b7ee",
+    "case_id": "T01",
+    "status": "failed",
+    "provider_http_status": 402,
+    "provider_status": "Payment Required",
+    "first_visible_ftt_seconds": null,
+    "server_tt_seconds": 2.387,
+    "jev_calls": 1,
+    "generation_attempts": 1,
+    "generation_usage": null,
+    "not_run": [
+      "T02",
+      "T03"
+    ],
+    "note": "No content or tools returned. Further replay stopped; no final-code real-model quality conclusion."
+  }
+}

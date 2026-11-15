@@ -1,0 +1,275 @@
+{
+  "recorded_date": "2026-11-15",
+  "scope": "All six tool errors and observed business-verification failures in three valid local historical replays. Prior cloud T01 is summarized separately. Environment-invalid attempts are excluded.",
+  "method": "High-level attribution from visible input, tool calls, feedback, state registration and source code; not a verbatim reconstruction of model deliberation.",
+  "chunk_alias": {
+    "C": "E10 canonical chunk [1020000,1080000) ms; same real existing chunk across T02/T03."
+  },
+  "tool_error_count": 6,
+  "tool_attempts": 25,
+  "roots": [
+    {
+      "id": "C1",
+      "kind": "state_contract_mismatch",
+      "cause": "Native conversation retains historical evidence IDs while Supervisor retrieval_calls is recreated for every kick and retrieval_hit accepts only current registered hits.",
+      "evidence": [
+        "agent/chat/supervisor.py:241",
+        "agent/chat/video_search/output.py:387",
+        "gateway/agent_model/deepagents.py:505"
+      ]
+    },
+    {
+      "id": "C2",
+      "kind": "cross_tool_contract_gap",
+      "cause": "Realtime result exposes the target chunk as available but does not register it for retrieval/read/frame tools; no direct authorized known-video/time rehydration path is exposed.",
+      "evidence": [
+        "agent/chat/supervisor.py:952",
+        "agent/chat/video_search/tools/frames.py:46"
+      ]
+    },
+    {
+      "id": "C3",
+      "kind": "schema_runtime_mismatch",
+      "cause": "Provider JSON schema has optional search/cursor fields without a root conditional requirement; Python validator requires query/top_k/channel_weights when cursor is absent.",
+      "evidence": [
+        "agent/chat/video_search/tools/retrieval.py:38",
+        "gateway/agent_model/tool_loop.py:161"
+      ]
+    },
+    {
+      "id": "C4",
+      "kind": "target_time_contract_gap",
+      "cause": "No shared executable target or precedence is defined across explicit user time, current playback and historical references. Realtime ignores query and always uses playback; generated alignment claim is not numerically checked.",
+      "evidence": [
+        "agent/chat/supervisor.py:952",
+        "agent/chat/realtime_understanding/runtime.py:92"
+      ]
+    },
+    {
+      "id": "C5",
+      "kind": "capability_gap",
+      "cause": "Frame tool exposes a range and count with uniform midpoints instead of explicit point timestamps; requested point and sampled point can differ.",
+      "evidence": [
+        "agent/chat/video_search/tools/frames.py:23",
+        "server/service/video_frame_reader.py:85"
+      ]
+    },
+    {
+      "id": "C6",
+      "kind": "evidence_scope_and_model_compliance",
+      "cause": "Interval event descriptions, historical events and sampled still images are combined into claims about an exact instant or continuous motion; existing still-image limitation was not followed.",
+      "evidence": [
+        "agent/chat/video_search/tools/frames.py:111",
+        "agent/chat/supervisor.py:1194",
+        "agent/chat/supervisor.py:882"
+      ]
+    }
+  ],
+  "tool_failures": [
+    {
+      "id": "T02-E1",
+      "assistant_message_index": 50,
+      "tool_result_index": 51,
+      "tool": "read_retrieval_evidence",
+      "arguments": {
+        "video_chunk_id": "C"
+      },
+      "visible_basis": "C exists in original native history; no current retrieval has returned C.",
+      "direct_cause": "retrieval_hit fails current-kick membership before evidence read.",
+      "result": "UNKNOWN_ITEM",
+      "root_ids": [
+        "C1"
+      ],
+      "inference_limit": "Why the model chose C is inferred from available history, not a literal deliberation record."
+    },
+    {
+      "id": "T02-E2",
+      "assistant_message_index": 50,
+      "tool_result_index": 52,
+      "tool": "inspect_video_frames",
+      "arguments": {
+        "video_chunk_id": "C",
+        "start_ms": 1031000,
+        "end_ms": 1040000,
+        "frame_count": 4
+      },
+      "visible_basis": "Same model response batch as T02-E1; uses historical C and a range covering the prior playback point.",
+      "direct_cause": "C is absent from current retrieval_calls; no frame extraction takes place.",
+      "result": "UNKNOWN_ITEM",
+      "root_ids": [
+        "C1"
+      ],
+      "inference_limit": "Not a retry after observing T02-E1; both calls were emitted together."
+    },
+    {
+      "id": "T03-E1",
+      "assistant_message_index": 61,
+      "tool_result_index": 62,
+      "tool": "inspect_video_frames",
+      "arguments": {
+        "video_chunk_id": "C",
+        "start_ms": 1055500,
+        "end_ms": 1056558,
+        "frame_count": 4
+      },
+      "visible_basis": "User explicitly asks for 17:36; C is retained from historical evidence, not registered this kick.",
+      "direct_cause": "Current-kick membership fails before range/media processing.",
+      "result": "UNKNOWN_ITEM",
+      "root_ids": [
+        "C1"
+      ]
+    },
+    {
+      "id": "T03-E2",
+      "assistant_message_index": 68,
+      "tool_result_index": 69,
+      "tool": "inspect_video_frames",
+      "arguments": {
+        "video_chunk_id": "C",
+        "start_ms": 1051000,
+        "end_ms": 1062000,
+        "frame_count": 4
+      },
+      "visible_basis": "Earlier event search returned 3 other chunks; realtime then returned C with available=true and an image.",
+      "direct_cause": "Realtime result does not append to current retrieval_calls; C remains unregistered.",
+      "result": "UNKNOWN_ITEM",
+      "root_ids": [
+        "C1",
+        "C2"
+      ]
+    },
+    {
+      "id": "T03-E3",
+      "assistant_message_index": 70,
+      "tool_result_index": 71,
+      "tool": "retrieve",
+      "checkpoint_normalized_arguments": {},
+      "original_provider_arguments": null,
+      "visible_basis": "After failed frame access, the visible call path switches to retrieval for recovery.",
+      "direct_cause": "At least one of query/top_k/channel_weights was missing or null while cursor was absent; model_validator rejected it.",
+      "result": "argument_validation_feedback",
+      "root_ids": [
+        "C3"
+      ],
+      "inference_limit": "Gateway replaces rejected arguments with {}; original arguments and the exact missing field cannot be reconstructed from this checkpoint."
+    },
+    {
+      "id": "T03-E4",
+      "assistant_message_index": 74,
+      "tool_result_index": 75,
+      "tool": "read_retrieval_evidence",
+      "arguments": {
+        "video_chunk_id": "C"
+      },
+      "visible_basis": "The valid retrieve immediately before this returned 4 other chunks, none C; model still requests C from history/realtime.",
+      "direct_cause": "The required current retrieval membership is still not met.",
+      "result": "UNKNOWN_ITEM",
+      "root_ids": [
+        "C1",
+        "C2"
+      ],
+      "model_compliance": "Call did not obey the retry condition that the ID must be returned by current retrieval; a successful unrelated retrieve does not register C."
+    }
+  ],
+  "quality_failures": [
+    {
+      "id": "T02-Q1",
+      "failure": "Successful inspection and final card cover an earlier scene, not current playback target.",
+      "target_ms": 1058310,
+      "sampled_ms": [
+        1029500,
+        1032500,
+        1035500,
+        1038500
+      ],
+      "card_ms": [
+        1028500,
+        1039833
+      ],
+      "root_ids": [
+        "C4",
+        "C6"
+      ],
+      "confidence": "Time mismatch proven; causal weight of historical anchoring not isolated."
+    },
+    {
+      "id": "T03-Q1",
+      "failure": "Realtime ignores explicit 17:36 request, uses playback 17:36.558, and visual_summary claims alignment.",
+      "user_target_ms": 1056000,
+      "realtime_anchor_ms": 1056558,
+      "root_ids": [
+        "C4"
+      ],
+      "confidence": "Exact tool query, returned anchor and alignment text confirmed from checkpoint."
+    },
+    {
+      "id": "T03-Q2",
+      "failure": "Successful range inspection samples near target but final answer claims precise target verified.",
+      "target_ms": 1056000,
+      "sampled_ms": [
+        1055062,
+        1056187,
+        1057312,
+        1058437
+      ],
+      "root_ids": [
+        "C5",
+        "C6"
+      ],
+      "confidence": "Requested sampling points and final claim proven; all visual details are not thereby classified false."
+    },
+    {
+      "id": "T03-Q3",
+      "failure": "Final answer combines interval emotion and later scene evidence into an exact-frame conclusion, plus continuous handholding since17:08.",
+      "root_ids": [
+        "C6"
+      ],
+      "confidence": "Evidence granularity exceeds what was actually checked; not an independent proof that the underlying story claim is false."
+    },
+    {
+      "id": "T03-Q4",
+      "failure": "Final answer suggests player/parse timeline offset despite no measurement establishing an offset.",
+      "root_ids": [
+        "C4",
+        "C6"
+      ],
+      "confidence": "Unsupported explanation observed; internal reason for generating it unknown."
+    }
+  ],
+  "additional_forensic_gap": {
+    "failed_arguments_replaced_by_empty_dict": true,
+    "raw_provider_failed_arguments_preserved_in_checkpoint": false,
+    "pre_execution_validation_skips_business_tool_logging": true,
+    "code": [
+      "gateway/agent_model/deepagents.py:293",
+      "gateway/agent_model/deepagents.py:337",
+      "gateway/agent_model/tool_loop.py:618"
+    ]
+  },
+  "not_observed_causes": [
+    "Query Skill ambiguity: not injected into Supervisor and Query calls=0",
+    "Native task availability: task calls=0",
+    "submit_video_item read-first retry hint: not triggered by these six failures",
+    "Wrong milliseconds conversion or missing source media: not the observed guard failure"
+  ],
+  "previous_cloud_T01": {
+    "status": "failed",
+    "server_tt_seconds": 196.567,
+    "direct_exit": "Shared100 tool cap exhausted; failed children do not return usable partial reports, Supervisor recovery shares the exhausted counter.",
+    "other_recorded_errors": {
+      "query_INVALID_EVIDENCE_CURSOR": 5,
+      "query_event_search_INVALID_ARGUMENTS": 2,
+      "query_budget_rejections": 3,
+      "supervisor_budget_rejections": 2
+    },
+    "context_mechanism_risk": "Query used old64k/48k context policy,9 local compactions; compact checkpoint kept known IDs but not per-chunk pagination cursors; re-read amplification is plausible, not causally proven.",
+    "limits": "Original cursor values and rejected event-search parameter values unavailable; cannot list their exact internal reasoning or assert each was caused by compaction.",
+    "source": "docs/report/agent/chat/history-latency-replay-20261114/diagnostics.json"
+  },
+  "verification_notes": {
+    "registration_trace": "All five UNKNOWN_ITEM calls occurred before C was present in current successful retrieve/event-search results; C became usable immediately after a later event search returned it.",
+    "T02_two_initial_calls_same_model_batch": true,
+    "validation_error_args_are_not_raw_model_args": true,
+    "reader_review": "Primary rejected the reader generic LangChain logging explanation for this observed call: Gateway prevalidation feedback bypasses handler and business trace."
+  }
+}
