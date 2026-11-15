@@ -2,8 +2,8 @@
 
 - 需求：Assistant Message 级用户反馈（message feedback）
 - 分支：`feat/message-feedback`
-- PR：待创建
-- 状态：实现完成，定向验证通过；未提交、未部署，真实试点待进行
+- PR：[#175](https://github.com/owariband/Seekino/pull/175)
+- 状态：已上线 CPU 服务器（2026-11-15），生产冒烟通过；真实流量试点与 main 正式发布待进行
 - 更新时间：2026-11-15（Asia/Shanghai）
 
 ## 1.1 背景与触发场景
@@ -346,22 +346,34 @@ list/get/SSE
 | 指标 | 基线实测 | 方案实测 | 变化量 | 验收标准 | 判断与证据 |
 | --- | --- | --- | --- | --- | --- |
 | 反馈覆盖率 | 0 | 未测（需真实流量） | 待计算 | 两周 ≥5% 且 ≥5 条 | 试点待测 |
-| 反馈写入成功率 | 无 | 定向 API 测试全部通过；生产未测 | 待计算 | ≥99% | 未验证 |
+| 反馈写入成功率 | 无 | 定向 API 测试通过；生产游客 PUT 200 / DELETE 204 各 1 次 | 待计算 | ≥99% | 生产冒烟通过，样本不足 |
 | 反馈写入 p95 | 无 | 未测 | 待计算 | <300 ms | 未验证 |
 | 失败反馈数 | 0 | 合成失败消息可报告；真实未测 | 待计算 | ≥1 条真实失败报告 | 部分验证 |
 | 聊天发送延迟 | 11-14 p50 451 ms / p90 41.5 s | 未测 | 待计算 | 无因本功能产生的可感知退化 | 未验证 |
-| 删除会话反馈残留 | 无 | SQLite 外键级联测试为 0 | 0 | 0 | 本地已验证 |
+| 删除会话反馈残留 | 无 | SQLite 外键级联测试为 0；生产删除游客对话后消息与反馈均为 0 | 0 | 0 | 本地与生产冒烟已验证 |
 
 本地定向验证记录（2026-11-15）：
 
 | 验证项 | 结果 | 证据/限制 |
 | --- | --- | --- |
 | 后端反馈 API/仓储 | 4 passed | `tests/server/test_agent_feedback.py`；含 upsert、清除、PROCESSING/非 assistant/外部 owner、失败方向、级联 |
-| Agent API 回归 | 139 passed | `tests/server/test_api.py`；新增反馈路径与 query 参数断言 |
-| 数据库 schema 回归 | 143 passed | `tests/server/test_database.py`；表数量与 BaseModel 审计列 |
-| 前端单测 | 682 passed | `npm --prefix web test -- --run` |
+| 后端定向回归 | 297 passed | `test_agent_feedback.py`、`test_api.py`、`test_database.py`、`test_base_model.py`；合并最新 dev 后复跑 |
+| 前端单测 | 684 passed | `npm --prefix web test -- --run` |
 | 前端类型检查/构建 | 通过 | `npm --prefix web run typecheck`、`npm --prefix web run build` |
-| 全量 server 套件 | 3041 passed / 141 skipped / 8 failed | 运行后修正 1 项本功能表数量断言；剩余 7 项为既有 Refine/VideoParse 失败，与反馈改动无关 |
+| 全量 server 套件 | 3041 passed / 141 skipped / 8 failed | 运行后修正本功能表数量断言；剩余为既有 Refine/VideoParse 失败，与反馈改动无关 |
+
+生产发布与冒烟记录（2026-11-15，CPU 服务器）：
+
+| 验证项 | 结果 | 证据/限制 |
+| --- | --- | --- |
+| 生产库迁移 | `agent_message_feedback` 16 列、0 行；执行前 398 MB 逻辑备份 | `SHOW CREATE TABLE`；备份 `gzip -t` 通过 |
+| 发布完整性 | API/Web 健康，其余 4 个容器未变，`/healthz` 200 | 发布脚本快照；10 分钟日志无错误 |
+| 公共入口 | 首页 200，新 `SearchPage-7CqMlbB0.js` 200 且包含反馈文案；未认证 PUT 返回 401 | 生产 HTTPS 请求 |
+| 游客真实反馈 | 回答 17.9 秒后出现控件；PUT 200；库内 `rating=UP`、`reasons=[]`、`comment=NULL`、`message_version=13`、`model=deepseek-flash` | 生产 MySQL 查询；一次正向冒烟 |
+| 致谢与回显 | 致谢出现，4.8 秒后消失；刷新后 `aria-pressed=true`；DELETE 204 后为 false 且库内 0 行 | 浏览器脚本与 MySQL |
+| 数据清理 | 两轮游客对话、消息和反馈均已删除 | 生产 MySQL 计数为 0 |
+
+完整发布记录见[CPU 服务器上线记录](../../report/web/message-feedback-20261115/README.md)。本次未点击生产负向原因和失败报告，也未测生产写入 p95；这些不能记为已验证。
 
 ## 4.3 结论与行动
 
@@ -380,6 +392,7 @@ list/get/SSE
 - 每日 SQL：反馈数、UP/DOWN、原因分布、失败反馈数、写入错误；
 - API 日志：`PUT/DELETE /api/agent/messages/feedback` 的状态码和耗时；
 - 回退：前端隐藏入口即可停止新增反馈；表和接口保留，已写入数据不删除；若表/事务异常，回退后端并保留迁移（新增表不影响旧代码）。
+- 本次生产回退脚本保存在 `/home/ubuntu/seekino-cloud-runtime/releases/message-feedback-74cb3c96-20261115/rollback`，只切回 API/Web 旧镜像，不动数据库与其余容器；发布快照见[上线记录](../../report/web/message-feedback-20261115/README.md)。
 
 ## 5.3 取舍
 
@@ -393,29 +406,27 @@ list/get/SSE
 
 - 设计：初稿完成，已按实现结果回填；
 - 实现：表、Repository、Service、API、前端组件和迁移已完成；
-- 验证：定向后端/前端测试、类型检查和生产构建通过；全量 server 仍有既有视频解析失败；
-- 部署：未部署，未对真实数据库执行迁移；
+- 验证：定向后端/前端测试、类型检查和生产构建通过；生产发布与游客正向反馈冒烟通过，生产写入 p95、覆盖率和失败报告未测；全量 server 仍有既有视频解析失败；
+- 部署：2026-11-15 已发布 CPU 服务器（API/Web 热发布镜像，生产 MySQL 已建表并备份）；`main` 尚未包含本功能；
 - 推广：未开始，真实反馈覆盖率和延迟待试点；
-- 提交：未 commit、未 push（当前任务未获得该授权），PR 待创建。
+- 提交：PR [#175](https://github.com/owariband/Seekino/pull/175)，已合并最新 `dev` 解决集成冲突；未合并 `main`。
 
 ## 6.2 验收清单
 
-- [x] 新表由 `create_schema` 在空库创建；迁移 SQL 已提供，真实已有库未执行；
+- [x] 新表由 `create_schema` 在空库创建；生产已有库已执行迁移 SQL（2026-11-15）；
 - [x] PUT 可新增、修改；DELETE 可清除；重复 PUT 只有一行；
 - [x] 列表/详情/发送响应/SSE 投影包含当前用户 feedback；
 - [x] 非所有者、非 assistant、PROCESSING、方向矛盾、FAILURE 误用均被拒绝；
-- [x] 删除 Conversation 后反馈级联删除（SQLite 外键测试）；
+- [x] 删除 Conversation 后反馈级联删除（SQLite 外键测试；生产游客对话删除后消息与反馈均为 0）；
 - [x] 前端 👍/👎、原因、comment、失败报告、回显、回滚可用；
 - [x] 后端定向测试、前端类型检查/组件测试、生产构建通过；
-- [ ] 真实库迁移与生产部署验证；
+- [x] 真实库迁移与生产部署验证（迁移、镜像、公共入口、游客正向反馈、刷新回显与清除）；
 - [ ] 试点达到覆盖率/成功率/延迟门槛，或明确记录未达标原因。
 
 ## 6.3 剩余事项
 
-- 按任务授权创建 commit / PR，并把 TRD 作为首个提交；
-- 在目标 MySQL 备份后执行 `docs/migrations/20261115_agent_message_feedback.sql`，再部署后端和前端；
-- 真实流量试点与数据回收；
+- 从 `main` 建发布分支补齐本功能并提交 release PR，由用户在 GitHub 合并；
+- 真实流量试点与数据回收（覆盖率、写入 p95、失败报告、原因分布）；
 - 管理侧 triage 查询/导出（待试点后决定）；
 - 是否镜像到 Langfuse/LangSmith（本次不引入）；
-- `/docs` 社区占位符替换（独立小修复，不阻塞本功能）；
-- PR 创建后回填链接与工作台状态。
+- `/docs` 社区占位符替换（独立小修复，不阻塞本功能）。

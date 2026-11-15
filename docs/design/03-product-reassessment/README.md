@@ -61,7 +61,7 @@ hypnos 于 **2026-04-27 入职实习**，到这次面试复盘时已接近半年
 | [series-background-ownership-trd.md](series-background-ownership-trd.md) | 2026-11-05，系列概览讨论中发现简介、背景资料与人物资料归属不清 | 系列只保留“简介 + 一份背景资料”由用户维护，`character_bible` 转为只读兼容，Agent 使用显示名称 | 初稿；实验待测 |
 | [chat-streaming-trd.md](chat-streaming-trd.md) | 2026-11-01，课程 QA 撤回错误 FTT 后独立承接 | 模型正文在生成过程中交付，首字计量能关联实际请求、增量和浏览器展示 | PR #25 直接合入 dev，不依赖 #18；隔离验证与真实试点、性能和部署分开判断 |
 | [Chat 模型重试提示](chat-model-retry-status-trd.md) | 2026-11-07，local 观看问答 | 等待期间显示模型重试次数 | [PR #71](https://github.com/owariband/Seekino/pull/71) |
-| [消息级用户反馈](message-feedback-trd.md) | 2026-11-15，失败回答无报告入口、正常回答无质量信号 | 对 terminal assistant 消息记录 👍/👎、原因与说明；独立表与 PUT/DELETE；不引入 Langfuse/LangSmith | 实现完成、定向验证通过；PR 与真实试点待进行 |
+| [消息级用户反馈](message-feedback-trd.md) | 2026-11-15，失败回答无报告入口、正常回答无质量信号 | 对 terminal assistant 消息记录 👍/👎、原因与说明；独立表与 PUT/DELETE；不引入 Langfuse/LangSmith | 已上线 CPU 服务器（2026-11-15），生产冒烟通过；真实试点与 main 发布待进行 |
 | [chat-text-delta-stream-trd.md](chat-text-delta-stream-trd.md) | 2026-11-05，已有检索结果后正文每秒约 9 字到达页面 | 正文以增量事件交付、按间隔持久化，正文速度回到供应商水平 | 已实现，演示环境验收通过（2026-11-05）；正文 228–311 字/秒，9 回合最长 112 秒 |
 | [chat-lazy-conversation-trd.md](chat-lazy-conversation-trd.md) | 2026-11-07，打开对话页即在服务端创建对话，空“新对话”在记录中堆积 | 草稿态，首次发送或首次附件时才创建 | 实现完成、本机验证通过；待合并 |
 | [chat-answer-shape-trd.md](chat-answer-shape-trd.md) | 2026-11-05，回答含过程播报、长段与完成后的工具行 | 回答先结论、短段列表，完成后只留正文与视频片段 | 初稿；九门禁对照待测 |
