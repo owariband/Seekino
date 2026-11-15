@@ -105,6 +105,7 @@ async def main(args):
         'retained_understanding':sequences,'pending_understanding':missing,
         'retained_understanding_sha256':{path.name:module.sha(path) for path in (directory/'understanding').glob('*.json')},
         'frozen_sixteen_unchanged':bool(frozen),'maximum_simultaneous_model_requests':4,
+        'stream_override':False if args.non_streaming else None,
         'source_revision':subprocess.check_output(['git','rev-parse','HEAD'],cwd=repo,text=True).strip(),
         'resume_source_sha256':module.sha(Path(__file__))})
     module.save(history_path,attempts)
@@ -119,6 +120,8 @@ async def main(args):
         nonlocal balance_exhausted
         if balance_exhausted:
             raise RuntimeError('Balance exhausted; no further provider requests in this attempt')
+        if args.non_streaming:
+            positional=(positional[0].model_copy(update={'stream':False}),*positional[1:])
         try:
             return await original_generate(*positional,**keywords)
         except Exception as error:
@@ -165,4 +168,5 @@ if __name__ == '__main__':
     parser.add_argument('--audio-run-name',default='audio-first-prefill-asr-id-b0-20261115')
     parser.add_argument('--case',choices=['A_audio_only','B_two_thirds'],default='B_two_thirds')
     parser.add_argument('--inspect-only',action='store_true')
+    parser.add_argument('--non-streaming',action='store_true')
     asyncio.run(main(parser.parse_args()))
