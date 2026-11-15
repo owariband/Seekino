@@ -1,0 +1,8 @@
+{
+  "selected_utc": "2026-11-15T03:49:17.604038+00:00",
+  "primary_A": "audio-first-prefill-live-ab-20261115/A_audio_only",
+  "primary_B": "audio-first-prefill-live-b-gate-20261115/B_two_thirds",
+  "reason": "Select the B run with the corrected host and actual16-commit named preparation before inspecting its outcomes; retain recovered B as evidence, not a latency substitute.",
+  "recovered_B_retained": "audio-first-prefill-live-ab-20261115/B_two_thirds",
+  "selection_based_on_target_outcome": false
+}

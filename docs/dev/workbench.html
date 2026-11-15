@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-15T01:29:39+08:00",
+ "updatedAt": "2026-11-15T23:54:13+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 72,
+ "revision": 79,
  "categories": [
   {
    "id": "parse",
@@ -2078,7 +2078,7 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "priority": "P1",
    "description": "EP04 v4 DS Flash low整集完成，两个固定姓名2/2且描述一致；其它人物、混人纯度和边界尚未认证。",
    "next": "扩大有真值的固定样本及重复验证，复核混人台词与边界；保留low已验证样例，辅助摘要失败另查，不将两句通过当全片准确。",
-   "verification": "2026-11-15 v4 df165ebc：1fps，Understanding/Refine/fallback均low，24/24 Under、22/22 Refine、24/24索引，24分27.473秒。434项组合回归；45次实际请求均有画外音新段且绑定low，无参考池，309条首次对白全覆盖、67条CONFLICT预填通过。爽世48.0–49.8s和爱音292.5–295.499s最终姓名正确，描述一致；首次理解均已正确，两个目标不触发自动预填，不作单因素因果结论。371源码与旧v3内容不变，旧任务保留，CPU/prod未访问；辅助摘要尚有失败记录。",
+   "verification": "2026-11-15 v4 df165ebc：1fps，Understanding/Refine/fallback均low，24/24 Under、22/22 Refine、24/24索引，24分27.473秒。434项组合回归；45次实际请求均有画外音新段且绑定low，无参考池，309条首次对白全覆盖、67条CONFLICT预填通过。爽世48.0–49.8s和爱音292.5–295.499s最终姓名正确，描述一致；首次理解均已正确，两个目标不触发自动预填，不作单因素因果结论。371源码与旧v3内容不变，旧任务保留，CPU/prod未访问；辅助摘要尚有失败记录；2026-11-15真实音频A/B各24/22完成，2/3提前触发通过，B正确爽世预填仍被low回改高松燈，B12未闭环。",
    "updatedAt": "2026-11-15",
    "tags": [
     "画外音",
@@ -5986,6 +5986,82 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "source": {
     "ref": "cb822ba07e6ae4cc0a152b3cb3e1a44c4b3e3796",
     "path": "docs/design/03-product-reassessment/voiceprint-early-preparation-trd.md",
+    "line": 1
+   }
+  },
+  {
+   "id": "PARSE-VOICE-TWOPASS-01",
+   "title": "音频先算与2/3理解后再次预填",
+   "category": "parse",
+   "type": "requirement",
+   "status": "progressing",
+   "priority": "P2",
+   "description": "旧B0已改500ms NO_VOICE；缓存理解续跑22个Refine完成，爱音段已正确，但开头仍被Refine从爽世回改为爱音。",
+   "next": "999ms时长阻断已解除；继续处理Refine把正确爽世预填改回爱音的问题，整体身份质量与Server接入仍未验收。",
+   "verification": "2026-11-15 80bec738：仅将NO_VOICE时长门槛1000→500ms，编码400ms、ACCEPT1500ms、B0算法与Prompt不变。24份理解SHA不变，169条参考、313条评分复用；7条分档变化、3条进入CONFLICT。22个实际Refine完成，爱音段已正确，但开头仍被Refine从爽世回改为爱音，新增Understanding／ASR／声纹编码0；生成入口24次、修复2次，使用同模型Flash low非流式响应。未新增单元测试，无GPU/CPU-prod/数据库访问，Server未部署。",
+   "updatedAt": "2026-11-15",
+   "tags": [
+    "ASR复用",
+    "真实A/B",
+    "2/3提前触发",
+    "Refine回改"
+   ],
+   "related": [
+    "MOD-PARSE",
+    "B12",
+    "PARSE-VOICE-EARLY-01"
+   ],
+   "branch": "perf/audio-first-prefill-evaluation",
+   "links": [
+    {
+     "label": "两轮预填TRD",
+     "url": "https://github.com/owariband/Seekino/blob/perf/audio-first-prefill-evaluation/docs/design/03-product-reassessment/audio-first-prefill-evaluation-trd.md",
+     "kind": "trd"
+    },
+    {
+     "label": "完整回放及编码证据",
+     "url": "https://github.com/owariband/Seekino/blob/perf/audio-first-prefill-evaluation/docs/report/agent/video_parse_v2/audio-first-prefill-evaluation-20261115/README.md",
+     "kind": "source"
+    },
+    {
+     "label": "依赖提前准备对照PR #174",
+     "url": "https://github.com/owariband/Seekino/pull/174",
+     "kind": "pr"
+    },
+    {
+     "label": "两轮预填实验PR #176",
+     "url": "https://github.com/owariband/Seekino/pull/176",
+     "kind": "pr"
+    },
+    {
+     "label": "真实A/B与同输入回改证据",
+     "url": "https://github.com/owariband/Seekino/blob/perf/audio-first-prefill-evaluation/docs/report/agent/video_parse_v2/audio-first-prefill-evaluation-20261115/live-ab-report.md",
+     "kind": "source"
+    },
+    {
+     "label": "完整Prompt同步复测与恢复结果",
+     "url": "https://github.com/owariband/Seekino/blob/perf/audio-first-prefill-evaluation/docs/report/agent/video_parse_v2/audio-first-prefill-evaluation-20261115/prompt-synced-report.md",
+     "kind": "source"
+    },
+    {
+     "label": "恢复旧B0方法与离线核验",
+     "url": "https://github.com/owariband/Seekino/blob/perf/audio-first-prefill-evaluation/docs/report/agent/video_parse_v2/audio-first-prefill-evaluation-20261115/b0-restoration-report.md",
+     "kind": "source"
+    },
+    {
+     "label": "旧B0整集实际结果",
+     "url": "https://github.com/owariband/Seekino/blob/perf/audio-first-prefill-evaluation/docs/report/agent/video_parse_v2/audio-first-prefill-evaluation-20261115/b0-live-report.md",
+     "kind": "source"
+    },
+    {
+     "label": "500ms实际Refine结果",
+     "url": "https://github.com/owariband/Seekino/blob/perf/audio-first-prefill-evaluation/docs/report/agent/video_parse_v2/audio-first-prefill-evaluation-20261115/b0-500ms-report.md",
+     "kind": "source"
+    }
+   ],
+   "source": {
+    "ref": "9869f39cc938d46f712bf45c70dff1e37b778caf",
+    "path": "docs/design/03-product-reassessment/audio-first-prefill-evaluation-trd.md",
     "line": 1
    }
   }

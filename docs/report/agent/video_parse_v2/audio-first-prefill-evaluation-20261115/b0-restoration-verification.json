@@ -1,0 +1,83 @@
+{
+  "method_version": "asr-id-b0-v1",
+  "asr_cues_scored": 166,
+  "script_sha256": {
+    "verify-results.py": "939ccf212ae15dcf1539ff67e80f410f54be55d6c698b098cb41ee5e0b168028",
+    "live-ab.py": "921b69ce74c80780b8c95e82da59645ee7f3de6a55aa3d59a38b895f129cb7ad",
+    "prepare-audio.py": "5863bf04acc6a474408b5c1c0f406f4c43c2aa6ac765a2d5fb0f17b46776bb75"
+  },
+  "previous_invalid_prefill": {
+    "before_non_null": 130,
+    "after_non_null": 17,
+    "non_null_to_null": 115
+  },
+  "reference_samples": 122,
+  "reference_ids": {
+    "SPEAKER_04": 38,
+    "SPEAKER_01": 19,
+    "SPEAKER_03": 25,
+    "SPEAKER_02": 9,
+    "SPEAKER_00": 26,
+    "SPEAKER_05": 5
+  },
+  "null_id_reference_samples": 0,
+  "null_id_queries": 36,
+  "non_null_to_null": 0,
+  "baseline_exact_reproduction_lines": 309,
+  "constructed_understanding_requests": 24,
+  "replayed_expression_scores": 313,
+  "named_reference_samples": 154,
+  "obsolete_clustering_artifact_rejected": true,
+  "targets": {
+    "opening_soyo": {
+      "prompt_chars": 51157,
+      "expressions": [
+        {
+          "start_ms": 47500,
+          "end_ms": 49500,
+          "understanding_speaker": "高松燈",
+          "band": "CONFLICT",
+          "gap": 0.08072537130623314,
+          "top1": "長崎そよ",
+          "canvas_speaker": "長崎そよ",
+          "speaker_source": "voice_default"
+        }
+      ]
+    },
+    "anon_introduction": {
+      "prompt_chars": 33567,
+      "expressions": [
+        {
+          "start_ms": 292500,
+          "end_ms": 293500,
+          "understanding_speaker": "千早愛音",
+          "band": "NO_VOICE",
+          "gap": 0.01685384104159776,
+          "top1": "長崎そよ",
+          "canvas_speaker": "千早愛音",
+          "speaker_source": "understanding"
+        },
+        {
+          "start_ms": 294500,
+          "end_ms": 296500,
+          "understanding_speaker": "若葉睦",
+          "band": "CONFLICT",
+          "gap": 0.10178116149375793,
+          "top1": "千早愛音",
+          "canvas_speaker": "千早愛音",
+          "speaker_source": "voice_default"
+        }
+      ]
+    }
+  },
+  "generative_model_calls": 0,
+  "new_asr_calls": 0,
+  "gpu_access": false,
+  "cpu_prod_access": false,
+  "database_access": false,
+  "source_asr_unchanged": true,
+  "limits": [
+    "Cached Understanding came from the superseded input; this is wiring and B0 replay only.",
+    "No fresh Understanding or Refine result, identity-quality or end-to-end speed claim."
+  ]
+}

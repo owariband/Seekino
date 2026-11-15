@@ -33,6 +33,7 @@
 
 ## Agent / video_parse_v2
 
+- [音频先算与2/3理解后再次预填（2026-11-15）](agent/video_parse_v2/audio-first-prefill-evaluation-20261115/README.md)：复用整集ASR、实际CPU编码1001窗，4组各309条Canvas检查；另见[真实两组A/B](agent/video_parse_v2/audio-first-prefill-evaluation-20261115/live-ab-report.md)：各24个新Understanding／22个Refine完成，18块时提前发起，但正确爽世预填仍被low回改，质量未通过。
 - [声纹提前准备、2/3参考与ASR ID对照（2026-11-15）](agent/video_parse_v2/voiceprint-early-preparation-20261115/README.md)：整集309行冻结评分及22窗口时序回放；提前收集有潜力，缩小参考池会改变候选与分档，固定ID不能直接绑定人物；无新整集解析或实测提速。
 - [画外音提示与 DS Flash low 整集验证（2026-11-15）](agent/video_parse_v2/refine-offscreen-voice-20261115/README.md)：完整EP04 v4主链完成，45次实际请求核实low和新提示送达，固定两句姓名2/2，434项组合回归；初次理解已正确，不能归为单一提示纠错。
 - [CONFLICT 先预填 top1 再审核（2026-11-14）](agent/video_parse_v2/voiceprint-conflict-prefill-20261114/README.md)：434 项组合回归；冻结回放后补完整 EP04 v3，69 条 CONFLICT 实际预填、主链完成，两个固定姓名仍1/2；保留正确预填被改错的实际反例。
