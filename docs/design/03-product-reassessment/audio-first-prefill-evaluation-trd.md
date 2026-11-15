@@ -86,3 +86,5 @@ ASR复用上轮166条缓存，GPU未启动，不访问GPU或CPU/prod。仅使用
 2026-11-15恢复旧方法验证：参考122条、原6个ID，null参考0；查询166条，含36条原null，最终133条非空、33条null，原非空变null为0。原v4的309行评分逐项完全复现，107项测试通过；24份构造请求与313条已有表达的B0／Canvas回放通过，旧聚类产物被拒绝。开头当前Canvas预填为長崎そよ；未新增任何生成模型调用，不能宣称新的Understanding／Refine身份效果达标。旧模型答案仅用于接线验证，原ASR、历史请求和结果均保留。
 
 2026-11-15旧B0实际整集闭环：[实跑报告](../../report/agent/video_parse_v2/audio-first-prefill-evaluation-20261115/b0-live-report.md)。A／B均24份新Understanding与22份Refine完成，各24种初始请求相同，原始重试次数不同；ASR复用。B冻结169条有效具名表达，对313表达评分，17/24时发起Refine，早于末块95.332秒。A开头误归爱音，B经CONFLICT预填后最终正确爽世；爱音段后半两组仍误归睦。B后半999ms低于既有1000ms门槛，声纹top1爱音仍分NO_VOICE，未触发预填；本轮保留旧规则未改。首次7个失败区间仅补未完成，B最后一段用同模型非流式响应完成。128个生成入口含历史错误，实际两组整集完成，人物质量只部分改善。GPU／CPU-prod／数据库未访问，Server未部署。
+
+2026-11-15 500ms模式：将唯一时长门槛VOICEPRINT_B0_NO_VOICE_DURATION_MS从1000改为500，保留400ms编码下限、1500ms ACCEPT时长、gap及全部旧B0算法／Prompt。复用已完成B组24份Understanding、169条冻结参考和313条缓存评分，只按新门槛重新分档并完整续跑22个Refine；旧1000ms结果保留，不重跑ASR或Understanding。999ms目标应从NO_VOICE转为CONFLICT并预填千早愛音，最终模型效果以本轮实际返回为准。修改仅在本机源码，未部署CPU/prod。
