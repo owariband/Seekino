@@ -8,7 +8,7 @@ from dataclasses import asdict
 from queue import Empty
 from typing import AsyncIterator
 
-from fastapi import Header, HTTPException, Query, Request
+from fastapi import Header, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
@@ -19,6 +19,7 @@ from ..model.dto.agentDTO import (
     AgentConversationCreateRequest,
     AgentConversationModelRequest,
     AgentGlobalSettingsPatchRequest,
+    AgentMessageFeedbackRequest,
     AgentMessageSendRequest,
     AgentMessageState,
 )
@@ -50,6 +51,7 @@ from ..model.vo.agentVO import (
     AgentAnswerProgressView,
     AgentAnswerInterruptedView,
     AgentMessageEventView,
+    AgentMessageFeedbackView,
     AgentMessageSendView,
     AgentMessageTimingView,
     AgentMessageView,
@@ -315,6 +317,44 @@ def get_agent_message(
         assistant_message=_agent_message_view(pair.assistant_message, media=services.media, tenant_id=tenant_id,
                                              identity=identity, attachment_service=getattr(services, "agent_attachments", None)),
     )
+
+
+def set_agent_message_feedback(
+    request: Request,
+    body: AgentMessageFeedbackRequest,
+    conversation_id: str = Query(alias="conversationId"),
+    message_id: str = Query(alias="messageId"),
+    tenant_id: str = Query(alias="tenantId", min_length=1, max_length=64),
+) -> AgentMessageFeedbackView:
+    identity = get_identity(request)
+    require_tenant_read(identity, tenant_id)
+    feedback = get_services(request).agent.set_message_feedback(
+        conversation_id,
+        tenant_id=tenant_id,
+        message_id=message_id,
+        rating=body.rating,
+        reasons=list(body.reasons),
+        comment=body.comment,
+        owner_user_id=identity.user_id,
+    )
+    return AgentMessageFeedbackView.model_validate(feedback)
+
+
+def clear_agent_message_feedback(
+    request: Request,
+    conversation_id: str = Query(alias="conversationId"),
+    message_id: str = Query(alias="messageId"),
+    tenant_id: str = Query(alias="tenantId", min_length=1, max_length=64),
+) -> Response:
+    identity = get_identity(request)
+    require_tenant_read(identity, tenant_id)
+    get_services(request).agent.clear_message_feedback(
+        conversation_id,
+        tenant_id=tenant_id,
+        message_id=message_id,
+        owner_user_id=identity.user_id,
+    )
+    return Response(status_code=204)
 
 
 def cancel_agent_message(
@@ -614,7 +654,12 @@ def _agent_message_view(
             AgentMessageTimingView.model_validate(state.timing)
             if state.timing is not None else None
         ),
-        last_error=_public_failure(state.last_error) if _managed_chat(identity) and state.last_error else state.last_error, created_at=state.created_at,
+        last_error=_public_failure(state.last_error) if _managed_chat(identity) and state.last_error else state.last_error,
+        feedback=(
+            AgentMessageFeedbackView.model_validate(state.feedback)
+            if state.feedback is not None else None
+        ),
+        created_at=state.created_at,
         updated_at=state.updated_at,
     )
 

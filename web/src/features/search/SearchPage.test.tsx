@@ -152,6 +152,7 @@ function assistantMessage(content: string, hits: VideoChunkSearchHit[] = []): Ag
     ],
     timing: null,
     lastError: null,
+    feedback: null,
     createdAt: now,
     updatedAt: now,
   };

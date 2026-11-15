@@ -629,6 +629,25 @@ export interface AgentAttachmentUploadView extends AgentAttachmentView {
   previewUrl: string;
 }
 
+export type AgentMessageFeedbackRating = "UP" | "DOWN";
+export type AgentMessageFeedbackReason =
+  | "IRRELEVANT"
+  | "WRONG_EVIDENCE"
+  | "MISSING_RESULT"
+  | "INCOMPLETE"
+  | "TOO_SLOW"
+  | "PLAYBACK_ISSUE"
+  | "OTHER"
+  | "FAILURE";
+
+export interface AgentMessageFeedback {
+  rating: AgentMessageFeedbackRating;
+  reasons: AgentMessageFeedbackReason[];
+  comment: string | null;
+  createdAt: UnixTimeMs;
+  updatedAt: UnixTimeMs;
+}
+
 export interface AgentMessageView {
   messageId: string;
   conversationId: string;
@@ -648,6 +667,7 @@ export interface AgentMessageView {
   renderBlocks: AgentRenderBlock[];
   timing: AgentMessageTiming | null;
   lastError: Failure | null;
+  feedback: AgentMessageFeedback | null;
   createdAt: UnixTimeMs;
   updatedAt: UnixTimeMs;
 }

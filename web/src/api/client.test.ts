@@ -6,6 +6,7 @@ import {
   errorMessage,
   exportParsedVideos,
   completeUpload,
+  clearAgentMessageFeedback,
   clearDataSource,
   configureAccountIdentity,
   configureApiIdentity,
@@ -43,6 +44,7 @@ import {
   searchVideos,
   shouldRetryApiRequest,
   sendAgentMessage,
+  setAgentMessageFeedback,
   sendEmailCode,
   streamAgentMessage,
   subscribeAgentMessages,
@@ -673,6 +675,48 @@ describe("Agent Chat routes", () => {
         playback: { seriesId: "series/id", videoId: "video/id", episodeOrder: 1, positionSeconds: 12 },
       },
     });
+  });
+
+  it("writes message feedback with the active tenant and CSRF token", async () => {
+    const member = { ...localIdentity, mode: "cloud" as const, csrfToken: "feedback-csrf" };
+    configureApiIdentity(member, "local-default");
+    const payload = {
+      rating: "DOWN",
+      reasons: ["WRONG_EVIDENCE"],
+      comment: "片段错了",
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      new Response(JSON.stringify(payload), { headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(setAgentMessageFeedback("conversation/id", "message/id", {
+      rating: "DOWN",
+      reasons: ["WRONG_EVIDENCE"],
+      comment: "片段错了",
+    })).resolves.toEqual(payload);
+
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(String(url)).toBe("/api/agent/messages/feedback?tenantId=local-default&conversationId=conversation%2Fid&messageId=message%2Fid");
+    expect(init?.method).toBe("PUT");
+    expect(new Headers(init?.headers).get("X-CSRF-Token")).toBe("feedback-csrf");
+    expect(JSON.parse(String(init?.body))).toEqual({
+      rating: "DOWN",
+      reasons: ["WRONG_EVIDENCE"],
+      comment: "片段错了",
+    });
+  });
+
+  it("clears message feedback without trying to parse a 204 body", async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(clearAgentMessageFeedback("conversation/id", "message/id")).resolves.toBeUndefined();
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(String(url)).toBe("/api/agent/messages/feedback?tenantId=local-default&conversationId=conversation%2Fid&messageId=message%2Fid");
+    expect(init?.method).toBe("DELETE");
   });
 
   it("keeps identifiers in queries and sends each message's scope", async () => {

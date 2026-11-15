@@ -1,0 +1,196 @@
+.feedback {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+  color: var(--ink-faint);
+  font-size: .7rem;
+}
+
+.actions {
+  display: flex;
+  min-height: 26px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.ratingButton,
+.reportButton,
+.reason,
+.textButton,
+.submitButton {
+  font: inherit;
+}
+
+.ratingButton {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  color: var(--ink-faint);
+  border: 0;
+  cursor: pointer;
+  background: transparent;
+}
+
+.ratingButton:hover:not(:disabled),
+.ratingButton.selected {
+  color: var(--teal-deep);
+  background: transparent;
+}
+
+.reportButton {
+  display: inline-flex;
+  min-height: 27px;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 9px;
+  color: var(--ink-soft);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  cursor: pointer;
+  background: transparent;
+  font-size: .7rem;
+}
+
+.reportButton:hover:not(:disabled) {
+  color: var(--red);
+  border-color: color-mix(in srgb, var(--red) 40%, var(--line));
+}
+
+.thanks {
+  margin: 0;
+  color: var(--teal-deep);
+  font-size: .72rem;
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+.panel {
+  display: grid;
+  width: min(100%, 520px);
+  gap: 9px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-small);
+}
+
+.panelTitle {
+  margin: 0;
+  color: var(--ink);
+  font-size: .73rem;
+  font-weight: 550;
+}
+
+.reasons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.reason {
+  padding: 5px 9px;
+  color: var(--ink-soft);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  cursor: pointer;
+  background: transparent;
+  font-size: .68rem;
+}
+
+.reason:hover:not(:disabled) {
+  color: var(--ink);
+  border-color: var(--line-strong);
+}
+
+.reasonSelected {
+  color: var(--teal-deep);
+  border-color: color-mix(in srgb, var(--teal) 48%, transparent);
+  background: color-mix(in srgb, var(--teal) 9%, transparent);
+}
+
+.comment {
+  width: 100%;
+  min-height: 58px;
+  padding: 8px 10px;
+  resize: vertical;
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  outline: 0;
+  background: var(--surface);
+  font: 400 .74rem/1.55 var(--sans);
+}
+
+.comment:focus {
+  border-color: var(--line-strong);
+}
+
+.panelActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.textButton {
+  padding: 3px 0;
+  color: var(--ink-soft);
+  cursor: pointer;
+  background: transparent;
+  font-size: .69rem;
+}
+
+.textButton:hover:not(:disabled) {
+  color: var(--ink);
+  text-decoration: underline;
+}
+
+.submitButton {
+  padding: 6px 12px;
+  color: var(--canvas);
+  border-radius: 999px;
+  cursor: pointer;
+  background: var(--teal-deep);
+  font-size: .7rem;
+}
+
+.submitButton:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+
+.ratingButton:disabled,
+.reportButton:disabled,
+.reason:disabled,
+.textButton:disabled,
+.submitButton:disabled {
+  opacity: .5;
+  cursor: not-allowed;
+}
+
+.ratingButton:focus-visible,
+.reportButton:focus-visible,
+.reason:focus-visible,
+.textButton:focus-visible,
+.submitButton:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 2px;
+}
+
+.error {
+  margin: 0;
+  color: var(--red);
+  font-size: .68rem;
+  line-height: 1.5;
+}
+
+@media (max-width: 640px) {
+  .panel {
+    width: 100%;
+  }
+}

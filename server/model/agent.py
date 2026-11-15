@@ -34,6 +34,17 @@ class AgentMessageStatus(StrEnum):
     FAILED = "FAILED"
 
 
+class AgentMessageFeedbackReason(StrEnum):
+    IRRELEVANT = "IRRELEVANT"
+    WRONG_EVIDENCE = "WRONG_EVIDENCE"
+    MISSING_RESULT = "MISSING_RESULT"
+    INCOMPLETE = "INCOMPLETE"
+    TOO_SLOW = "TOO_SLOW"
+    PLAYBACK_ISSUE = "PLAYBACK_ISSUE"
+    OTHER = "OTHER"
+    FAILURE = "FAILURE"
+
+
 class AgentConversation(BaseModel):
     __tablename__ = "agent_conversation"
     __table_args__ = (
@@ -149,3 +160,60 @@ Index(
     Grouping(AGENT_MESSAGE_IDEMPOTENCY_KEY),
     unique=True,
 )
+
+
+class AgentMessageFeedback(BaseModel):
+    """One user's latest reaction to one assistant message."""
+
+    __tablename__ = "agent_message_feedback"
+    __table_args__ = (
+        CheckConstraint(
+            "rating IN ('UP', 'DOWN')",
+            name="ck_agent_message_feedback_rating",
+        ),
+        CheckConstraint(
+            "message_status IN ('COMPLETED', 'FAILED')",
+            name="ck_agent_message_feedback_message_status",
+        ),
+        CheckConstraint(
+            "message_version > 0",
+            name="ck_agent_message_feedback_message_version",
+        ),
+        CheckConstraint(
+            "phase IS NULL OR phase IN ('QUEUED', 'RETRIEVING', 'EVALUATING', 'RESPONDING')",
+            name="ck_agent_message_feedback_phase",
+        ),
+        Index(
+            "ix_agent_message_feedback_conversation_time",
+            "conversation_id",
+            "create_time",
+        ),
+        Index(
+            "ix_agent_message_feedback_rating_time",
+            "rating",
+            "create_time",
+        ),
+        Index(
+            "ix_agent_message_feedback_user_time",
+            "user_id",
+            "create_time",
+        ),
+        MYSQL_TABLE_OPTIONS,
+    )
+
+    message_id: Mapped[str] = mapped_column(
+        String(ID_LENGTH),
+        ForeignKey("agent_message.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    user_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    conversation_id: Mapped[str] = mapped_column(String(ID_LENGTH), nullable=False)
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    rating: Mapped[str] = mapped_column(String(8), nullable=False)
+    reasons: Mapped[list[str] | None] = mapped_column(JSON(none_as_null=True))
+    comment: Mapped[str | None] = mapped_column(String(2000))
+    message_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    model: Mapped[str | None] = mapped_column(String(255))
+    message_status: Mapped[str] = mapped_column(String(16), nullable=False)
+    phase: Mapped[str | None] = mapped_column(String(16))
+    error_code: Mapped[str | None] = mapped_column(String(64))

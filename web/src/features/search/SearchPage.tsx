@@ -19,6 +19,7 @@ import { useAuth } from "../auth/AuthProvider";
 import { PlaybackFrame } from "../player/PlaybackFrame";
 import { AgentProgress } from "./AgentProgress";
 import { EvidencePlayer } from "./EvidencePlayer";
+import { MessageFeedback } from "./MessageFeedback";
 import { FOCUS_SEARCH_EVENT, loadConversations } from "./conversationNavigation";
 import { containsModel, preferredChatModel, rememberChatModel, savedChatModelId, usePersonalChatModels } from "../settings/usePersonalChatModels";
 import { PersonalModelSelect } from "../settings/PersonalModelSelect";
@@ -372,6 +373,7 @@ const MessageRow = memo(function MessageRow({
               <span>{t(emptyVideoMessage(message.searchResult))}</span>
             </p>
           ) : null}
+          <MessageFeedback message={message} />
         </div>
       )}
     </article>

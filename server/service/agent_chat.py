@@ -39,6 +39,7 @@ from ..model.dto.agentDTO import (
     AgentAttachmentReference,
     AgentConversationState,
     AgentIntegerOptionState,
+    AgentMessageFeedbackState,
     AgentMessageOptionsState,
     AgentModelOptionState,
     AgentMessageSendState,
@@ -826,6 +827,59 @@ class AgentChatService:
             owner_user_id=owner_user_id,
         )
         return AgentMessageSendState(pair.user_message, pair.assistant_message)
+
+    def set_message_feedback(
+        self,
+        conversation_id: str,
+        *,
+        tenant_id: str,
+        message_id: str,
+        rating: str,
+        reasons: list[str],
+        comment: str | None,
+        owner_user_id: str = LOCAL_USER_ID,
+    ) -> AgentMessageFeedbackState:
+        normalized_reasons = list(dict.fromkeys(reasons))
+        if rating not in {"UP", "DOWN"}:
+            raise ValueError("rating must be UP or DOWN")
+        if len(normalized_reasons) > 3:
+            raise ValueError("at most three feedback reasons are allowed")
+        if rating == "UP" and normalized_reasons:
+            raise ValueError("positive feedback cannot include problem reasons")
+        normalized_comment = comment.strip() if comment is not None else None
+        if normalized_comment == "":
+            normalized_comment = None
+        if normalized_comment is not None and len(normalized_comment) > 2000:
+            raise ValueError("feedback comment must not exceed 2000 characters")
+        return self._repository.upsert_message_feedback(
+            canonical_uuid(conversation_id, "conversation_id"),
+            require_nonempty_text(tenant_id, "tenant_id", maximum=64),
+            message_id=canonical_uuid(message_id, "message_id"),
+            owner_user_id=require_nonempty_text(
+                owner_user_id, "owner_user_id", maximum=64,
+            ),
+            rating=rating,
+            reasons=normalized_reasons,
+            comment=normalized_comment,
+            now=self._clock(),
+        )
+
+    def clear_message_feedback(
+        self,
+        conversation_id: str,
+        *,
+        tenant_id: str,
+        message_id: str,
+        owner_user_id: str = LOCAL_USER_ID,
+    ) -> None:
+        self._repository.clear_message_feedback(
+            canonical_uuid(conversation_id, "conversation_id"),
+            require_nonempty_text(tenant_id, "tenant_id", maximum=64),
+            message_id=canonical_uuid(message_id, "message_id"),
+            owner_user_id=require_nonempty_text(
+                owner_user_id, "owner_user_id", maximum=64,
+            ),
+        )
 
     def cancel_message(
         self, conversation_id: str, *, tenant_id: str, message_id: str,
