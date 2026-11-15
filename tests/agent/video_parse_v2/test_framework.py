@@ -281,6 +281,8 @@ def test_chunk_workflow_commits_before_notifying_and_cleans_media(offset_ms, con
             assert "speaker_id" in kwargs["prompt"]
             assert "Otherwise labels are scoped only to the current input clip" in kwargs["prompt"]
             assert "DIALOGUE.speaker MUST be JSON null" in kwargs["prompt"]
+            assert "Keep separate ASR cues and distinct utterances as separate DIALOGUE events" in kwargs["prompt"]
+            assert "Cross-segment consolidation belongs to Refine" in kwargs["prompt"]
             time_contract = kwargs["prompt"].lower()
             assert "already normalized" in time_contract
             assert "legacy" in time_contract
@@ -522,6 +524,10 @@ def test_refine_prompt_carries_scope_and_commit_receives_only_actual_fields(offs
     asyncio.run(IntervalRefine(runtime=runtime).InvokeRefine("interval-1"))
 
     prompt = runtime.generate_interval_refinement.await_args.kwargs["prompt"]
+    assert "Understanding preserves independent speech segments" in prompt
+    assert "Preserve boundaries between different speakers and unresolved turns" in prompt
+    assert "Allow off-screen speech and voices heard before the speaker appears" in prompt
+    assert "Both ACCEPT and CONFLICT may prefill the top candidate" in prompt
     data = json.loads(prompt.split("Input: ", 1)[1])
     assert data["members"][0]["sequence_no"] == sequence_no
     assert data["members"][0]["content"] == snapshot["member_contents"][task_id].model_dump(mode="json")

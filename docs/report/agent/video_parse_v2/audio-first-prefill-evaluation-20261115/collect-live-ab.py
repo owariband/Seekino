@@ -30,10 +30,11 @@ def merge(items):
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--data-root', type=Path, required=True)
-parser.add_argument('--b-run-name', default='audio-first-prefill-live-ab-20261115')
+parser.add_argument('--a-run-name', default='audio-first-prefill-live-ab-20261115')
+parser.add_argument('--b-run-name')
 args = parser.parse_args()
 root = args.data_root.resolve()
-run = root / 'outputs/verification/audio-first-prefill-live-ab-20261115'
+run = root / 'outputs/verification' / args.a_run_name
 private = run / 'private'
 manifest = load(private / 'manifest.json')
 result = {'manifest': manifest, 'cases': {},
@@ -43,11 +44,10 @@ result = {'manifest': manifest, 'cases': {},
                      'Only two target identities are human-confirmed; no full-episode accuracy claim.',
                      'Real Agent workflows and configured model calls; file-backed experimental host, no Server/DB/indexing verification.',
                      'Shared model concurrency and file-host member locking differ from independent Server task timing.',
-                     'Host argument-order and scope errors required recovery. All48 Understanding answers and the original16-chunk horizon were retained; final Refine was restarted. No early-release latency claim.',
                      'Call counts describe instrumented generation entries; provider tokens/fees were not collected.']}
 under_inputs = {}
 for name in ('A_audio_only', 'B_two_thirds'):
-    case_run = run if name == 'A_audio_only' else root / 'outputs/verification' / args.b_run_name
+    case_run = run if name == 'A_audio_only' else root / 'outputs/verification' / (args.b_run_name or args.a_run_name)
     directory = case_run / 'private' / name
     case_manifest = load(case_run / 'private/manifest.json')
     assert all(case_manifest[key] == manifest[key] for key in
@@ -60,6 +60,8 @@ for name in ('A_audio_only', 'B_two_thirds'):
               'final_targets': merge([near(row['content']) for row in final.values()]),
               'calls_by_schema': {}, 'refine_target_inputs': [], 'voice_targets': []}
     calls = []
+    prompt_contract_calls = 0
+    refine_prefixes = set()
     under_inputs[name] = Counter()
     for path in sorted((directory / 'calls').glob('*.input.json')):
         call = load(path)
@@ -70,6 +72,17 @@ for name in ('A_audio_only', 'B_two_thirds'):
                       'elapsed_seconds': outcome.get('elapsed_seconds')})
         assert call['model'] == 'deepseek-flash' and call['reasoning_effort'] == 'low'
         texts = [item['text'] for item in call['inputs'] if item['type'] == 'TextInput']
+        if case_manifest.get('prompt_source_sha256'):
+            assert call['prompt_source_sha256'] == case_manifest['prompt_source_sha256']
+            assert call['prompt_contract_verified'] is True
+            required = ('Keep separate ASR cues and distinct utterances as separate DIALOGUE events'
+                        if call['schema_name'].startswith('video_parse_v2_chunk') else
+                        'Understanding preserves independent speech segments')
+            assert required in texts[-1]
+            if call['schema_name'] == 'IntervalRefinementResult':
+                assert 'Allow off-screen speech and voices heard before the speaker appears' in texts[-1]
+                refine_prefixes.add(call['instruction_prefix_sha256'])
+            prompt_contract_calls += 1
         if call['schema_name'] == 'video_parse_v2_chunk':
             identity = [{'type': item['type'], **({'text': item['text']} if item['type'] == 'TextInput'
                         else {'sha256': item['sha256']})} for item in call['inputs']]
@@ -92,6 +105,8 @@ for name in ('A_audio_only', 'B_two_thirds'):
     record['calls_by_schema'] = dict(Counter(call['schema'] for call in calls))
     record['call_statuses'] = dict(Counter(call['status'] for call in calls))
     record['actual_calls'] = calls
+    record['prompt_contract_verified_calls'] = prompt_contract_calls
+    record['refine_instruction_prefix_sha256s'] = sorted(refine_prefixes)
     refine_starts = [load(path)['started_utc'] for path in (directory / 'calls').glob('*.input.json')
                      if load(path)['schema_name'] == 'IntervalRefinementResult']
     if refine_starts:

@@ -13,12 +13,14 @@ import hashlib
 import json
 import logging
 from pathlib import Path
+import subprocess
 import time
 from types import SimpleNamespace
 from uuid import uuid4
 import wave
 
 from agent.video_parse_v2.input import ParseConfig, ParseInput
+from agent.video_parse_v2 import prompts as parse_prompts
 from agent.video_parse_v2.refine.agent import IntervalRefine
 from agent.video_parse_v2.refine.response import RefineModelResponse
 from agent.video_parse_v2.state import ChunkExecution, LeaseToken
@@ -71,6 +73,7 @@ class Experiment:
         self.started = time.monotonic()
         self.host = object.__new__(VideoParseRuntimeService)
         self.host._gateway = gateway
+        self.prompt_source_sha256 = sha(Path(parse_prompts.__file__))
         self.output.mkdir(parents=True, exist_ok=True)
 
     def progress(self):
@@ -110,10 +113,23 @@ class Experiment:
                                    fallback_inputs=None, tools=(), **unused):
         assert not tools
         assert binding.model == 'deepseek-flash' and binding.reasoning_effort == 'low'
+        assert binding.temperature == 0
+        prompt = next(item.text for item in reversed(model_inputs) if isinstance(item, TextInput))
+        required = (('Keep separate ASR cues and distinct utterances as separate DIALOGUE events',
+                     'Cross-segment consolidation belongs to Refine')
+                    if schema_name.startswith('video_parse_v2_chunk') else
+                    ('Understanding preserves independent speech segments',
+                     'Allow off-screen speech and voices heard before the speaker appears',
+                     'Both ACCEPT and CONFLICT may prefill the top candidate'))
+        assert all(rule in prompt for rule in required), 'Approved prompt contract is incomplete'
+        assert sha(Path(parse_prompts.__file__)) == self.prompt_source_sha256
         call_id = str(uuid4())
         record = {'call_id': call_id, 'schema_name': schema_name,
                   'model': binding.model, 'reasoning_effort': binding.reasoning_effort,
-                  'started_utc': datetime.now(timezone.utc).isoformat(), 'status': 'running'}
+                  'started_utc': datetime.now(timezone.utc).isoformat(), 'status': 'running',
+                  'prompt_source_sha256': self.prompt_source_sha256,
+                  'prompt_contract_verified': True,
+                  'instruction_prefix_sha256': hashlib.sha256(prompt.split('Input: ', 1)[0].encode()).hexdigest()}
         self.calls.append(record)
         save(self.output / 'calls' / (call_id + '.input.json'), {
             **record, 'binding': binding.model_dump(mode='json'),
@@ -398,6 +414,11 @@ async def main(args):
     config = ParseConfig.model_validate(json.loads((baseline / 'frozen-parse-config.json').read_text()))
     assert config.visual_input.fps == 1 and config.models.understanding.reasoning_effort == 'low'
     config_path = baseline / 'model-config.yaml'
+    repo = Path(__file__).resolve().parents[5]
+    guarded = ['agent/video_parse_v2', str(Path(__file__).resolve().relative_to(repo))]
+    assert not subprocess.check_output(['git', 'diff', '--name-only', 'HEAD', '--', *guarded],
+                                       cwd=repo, text=True).strip(), 'Commit the complete prompt/runtime baseline before live calls'
+    revision = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=repo, text=True).strip()
     gateway = GatewayClient(load_config(config_path))
     original_call = json.loads(next((baseline / 'refine-calls').glob('*.input.json')).read_text())
     body, _ = json.JSONDecoder().raw_decode(original_call['prompt'].split('Input: ', 1)[1])
@@ -408,6 +429,7 @@ async def main(args):
     media_id = str(uuid4())
     save(private / 'manifest.json', {
         'started_utc': datetime.now(timezone.utc).isoformat(), 'script_sha256': sha(Path(__file__)),
+        'source_revision': revision, 'prompt_source_sha256': sha(Path(parse_prompts.__file__)),
         'source_sha256': sha(source), 'asr_sha256': sha(asr_path), 'audio_artifact_sha256': sha(audio_path),
         'parse_config': config.model_dump(mode='json'), 'model_config_sha256': sha(config_path),
         'cases': args.cases, 'gpu_access': False, 'cpu_prod_access': False,
