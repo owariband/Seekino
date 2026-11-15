@@ -1190,6 +1190,8 @@ class AgentChatService:
                         (item for item in series if item.series_id == video.series_id), None
                     )
                     current_video = {
+                        "videoId": video.video_id,
+                        "seriesId": video.series_id,
                         "series": current_series.name if current_series is not None else None,
                         "seriesDisplayName": (
                             (current_series.display_name or current_series.name)

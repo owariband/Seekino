@@ -18,7 +18,7 @@ from agent.utils.tool import AgentTool
 from ..common.errors import AgentContextBudgetError, AgentModelInvocationError
 from ..common.tool import as_langchain_tools, attach_agent_tool_logging
 from .errors import VideoRetrievalError, VideoSearchFailure, VideoSearchFailureCode, VideoSearchFailurePhase
-from .frame_evidence import FrameInspectionSession, FrameReader
+from .frame_evidence import FrameInspectionSession, FrameReader, PointFrameReader
 from .output import merge_retrieval_calls
 from .query import run_query
 from .state import (
@@ -54,6 +54,7 @@ class AgentRuntime:
         execution_timeout_seconds: float = 480,
         retrieval_channel: RetrievalChannelContract = "transcript",
         frame_reader: FrameReader | None = None,
+        point_frame_reader: PointFrameReader | None = None,
         frame_max_height: int | None = None,
         maximum_frame_inspections: int | None = None,
         event_retrieve: Callable[..., EventSearchResult] | None = None,
@@ -82,7 +83,7 @@ class AgentRuntime:
                             ("execution_timeout_seconds", execution_timeout_seconds)):
             if isinstance(value, bool) or not isfinite(value) or value <= 0:
                 raise ValueError(f"{name} must be positive and finite")
-        if frame_reader is not None:
+        if frame_reader is not None or point_frame_reader is not None:
             for name, value in (("frame_max_height", frame_max_height),
                                 ("maximum_frame_inspections", maximum_frame_inspections)):
                 _positive_run_limit(name, value)
@@ -104,6 +105,7 @@ class AgentRuntime:
         self._execution_timeout = execution_timeout_seconds
         self._retrieval_channel = retrieval_channel
         self._frame_reader = frame_reader
+        self._point_frame_reader = point_frame_reader
         self._frame_max_height = frame_max_height
         self._maximum_frame_inspections = maximum_frame_inspections
         self._retrieval_skill_prompt = (
@@ -131,7 +133,7 @@ class AgentRuntime:
             close_model()
 
     def new_frame_session(self) -> FrameInspectionSession | None:
-        if self._frame_reader is None:
+        if self._frame_reader is None and self._point_frame_reader is None:
             return None
         return FrameInspectionSession(
             self._maximum_frame_inspections if self._limits_enabled else None,
@@ -157,6 +159,7 @@ class AgentRuntime:
             maximum_catalog_items=self._max_catalog_items,
             maximum_read_chars=self._max_read_chars_per_call,
             retrieval_channel=self._retrieval_channel, frame_reader=self._frame_reader,
+            point_frame_reader=self._point_frame_reader,
             frame_session=frame_session, frame_max_height=self._frame_max_height,
             supports_vision_input=supports_vision_input, budget=budget,
         )
@@ -215,7 +218,8 @@ class AgentRuntime:
             maximum_result_bytes=self._max_tool_result_bytes,
             maximum_read_chars=self._max_read_chars_per_call,
             maximum_catalog_items=self._max_catalog_items, retrieval_channel=self._retrieval_channel,
-            frame_reader=self._frame_reader, frame_session=state["frame_inspections"],
+            frame_reader=self._frame_reader, point_frame_reader=self._point_frame_reader,
+            frame_session=state["frame_inspections"],
             frame_max_height=self._frame_max_height,
             supports_vision_input=getattr(self._query_model, "supports_vision_input", False),
             budget=state["tool_budget"],

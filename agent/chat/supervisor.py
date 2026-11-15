@@ -71,6 +71,10 @@ class SearchArguments(BaseModel):
     ]
 
 
+class UnderstandCurrentVideoArguments(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
 class VideoSearchArguments(SearchArguments):
     episode: int | None = Field(default=None, gt=0, le=2_147_483_647, strict=True)
     attachments: list[Annotated[str, StringConstraints(min_length=1)]] = Field(
@@ -205,6 +209,8 @@ class SupervisorRuntime:
 
     def close(self) -> None:
         self._video_runtime.close()
+        if self._query_hook is not None:
+            self._query_hook.close()
         close_model = getattr(self._model, "close", None)
         if callable(close_model):
             close_model()
@@ -949,7 +955,7 @@ class SupervisorRuntime:
                     "video_chunk_id": video_chunk_id, "video_item_count": len(submitted_items),
                 })
 
-        def understand_current_video(query: str) -> ToolResult:
+        def understand_current_video() -> ToolResult:
             nonlocal realtime_result
             with tool_lock:
                 consume_tool_call()
@@ -1087,7 +1093,7 @@ class SupervisorRuntime:
                 args_schema=ReadQueryReportArguments, maximum_result_bytes=self._max_tool_result_bytes,
             ),
         ]
-        if video_available:
+        if video_available or realtime_available:
             direct_tools = self._video_runtime.build_supervisor_tools(
                 inputs, control, retrieval_calls,
                 maximum_tool_calls=max_tool_calls_per_turn if self._limits_enabled else None,
@@ -1097,25 +1103,44 @@ class SupervisorRuntime:
                 outline_evidence_registry=outline_evidence_registry,
             )
             for direct in direct_tools:
+                if not video_available and direct.name != "get_video_frame":
+                    continue
                 def invoke_direct(*args, _tool=direct, **kwargs):
                     with tool_lock:
                         control.check()
-                        ensure_video_context()
+                        if _tool.name != "get_video_frame":
+                            ensure_video_context()
                         control.publish(inputs, {"type": "answer.progress", "phase": AnswerPhase.RETRIEVING})
                         return _tool.execute(*args, **kwargs)
                 tools.append(build_agent_tool(
                     func=invoke_direct, name=direct.name, description=direct.description,
                     args_schema=direct.args_schema, maximum_result_bytes=self._max_tool_result_bytes,
                 ))
+        frame_target_available = any(tool.name == "get_video_frame" for tool in tools)
+        playback = (inputs.get("extra_context") or {}).get("playback")
+        if frame_target_available and isinstance(playback, dict):
+            position = playback.get("positionSeconds")
+            if type(position) is int and position >= 0 and playback.get("videoId"):
+                model_user_message += (
+                    "\n\n[本轮播放锚点｜应用生成]\n"
+                    + context_json({"video_id": playback["videoId"], "timestamp_ms": position})
+                    + "\n这只是本轮播放数据，不表示已经看过。仅当当前问题要求核验「这里/这帧/现在」且未另指时间时，"
+                    "以此 timestamp_ms 调用 get_video_frame；不要从历史回答另选时间。用户明确指定时间则按其指定。"
+                    "需要取证时，先用一句简短的目标确认，再实际调用工具并完成回答；用户要求只给最终答案或严格限句时除外。"
+                    "\n[/本轮播放锚点]"
+                )
         if realtime_available:
             tools.append(build_agent_tool(
                 func=understand_current_video, name="understand_current_video",
                 description=(
                     "Understand the frozen current source-video position and adjacent fixed chunks. "
-                    "Use for questions about what the teacher is explaining now, the paused image, "
-                    "or what was just said. The full original question and playback position are retained. "
+                    "Use for current explanation or dialogue context, not just to inspect a single image. "
+                    "It cannot select another moment."
+                    + (" Use get_video_frame for a known absolute time."
+                       if frame_target_available else "")
+                    + " The full original question and playback position remain available in inputs. "
                     "Returns verified context and coverage, not a final answer; explain it to the user."
-                ), args_schema=SearchArguments, maximum_result_bytes=self._max_tool_result_bytes,
+                ), args_schema=UnderstandCurrentVideoArguments, maximum_result_bytes=self._max_tool_result_bytes,
             ))
         attach_agent_tool_logging(
             tools, role="Supervisor", inputs=inputs, on_activity=accept_tool_activity,
@@ -1138,6 +1163,9 @@ class SupervisorRuntime:
             )
             + "。视频工具仅可检索这些系列。"
             if scope else
+            "当前没有可检索的视频系列；当前播放视频可通过 understand_current_video 取得基础证据，"
+            "也可用 get_video_frame 取指定时刻的画面。"
+            if realtime_available and frame_target_available else
             "当前没有可检索的视频系列；当前播放视频可通过 understand_current_video 取得基础证据。"
             if realtime_available else
             "当前没有可检索的视频系列。用户询问本地视频内容时，请先告知目前"
@@ -1170,10 +1198,11 @@ class SupervisorRuntime:
             "原句在上下文中的含义与转述不同，必须指出不匹配，不能改译原句来迎合用户记忆。"
             "多个候选无法取舍或含义存在具体缺口时，可委派 Query 补查；仅有相近候选时说明差异与不确定性，"
             "没有充分证据不得声称就是该段、应当就是或唯一命中。说话人与回应对象也必须由证据支持。"
-            "用户明确表示记忆不准、而精读仍未找到与转述一致的原句时，必须委派一次聚焦的 Query，"
+            "用户明确表示记忆不准、而精读仍未找到与转述一致的原句时，可按需委派一次聚焦的 Query，"
             "要求核对候选在相邻问答中的实际含义、排除不匹配解释并寻找更贴近的候选；不要只让它确认你的猜测。"
-            "按需直接读取 evidence.transcript 核对对白、evidence.events 核对事件，section 不能简写为 transcript 或 events。"
-            "已知 section 不必先 overview，也不要求读完所有 section；省略 end 按预算读取，截断时按提示续读。"
+            "按需直接读取 evidence.transcript 核对对白、evidence.events 核对事件。"
+            "read_retrieval_evidence 只接受当前成功检索返回的 video_chunk_id 和可选 cursor，"
+            "不支持 section、end、时间或字符范围；内容截断时用同一 ID 和 next_cursor 续读。"
             "对白证据已足够回答出处、原话或说话人时无需抽帧；只有具体视觉主张或证据缺口才看图。"
             "用 submit_video_item 提交最终片段，video_chunk_id 只能是本轮检索工具返回的值；其 start_seconds/end_seconds 使用原视频绝对秒数，允许小数，"
             "例如 00:50–01:00 传 50 和 60。检索证据与 Query 草稿仍使用毫秒，提交前除以 1000；"
@@ -1187,11 +1216,30 @@ class SupervisorRuntime:
             "已提交为视频卡的片段，正文和小标题都不再写时间码或时间范围，视频卡会显示时间。"
             "claim 是视频卡标题，约 30 字以内，说明这段讲了什么，不写时间码。"
             "证据不足或矛盾时说明缺口，必要时澄清或只对具体缺口补查，不把候选自检当独立事实证明。"
+            "历史或实时工具中出现过的 Chunk ID 不自动属于本轮检索。read_retrieval_evidence、inspect_video_frames 和 submit_video_item 只接受"
+            "本轮成功检索实际返回的 ID，既有大纲读取路径除外；遇到 UNKNOWN 后不要重复同一个无效 ID。"
+            "已知绝对时间优先用可用的单点取帧工具，索引证据则重新检索直到目标 ID 实际返回。"
+            "检索返回的区间事件描述不是精确单帧观察；区间抽帧的均匀采样不保证包含指定时刻；"
+            "稀疏静帧不能证明连续动作。没有实际检查到目标时就说明未核验，不要猜播放器时间轴偏移。"
+        )
+        frame_target_guidance = (
+            "画面核验已知视频和时刻时，首个取证工具用 get_video_frame(timestamp_ms) 直接取该时刻的真实画面，"
+            "不必先做语义检索来注册历史 Chunk ID。时间码先换算为整数毫秒（如 01:00 为 60000）；"
+            "用户明确时间优先于 current_video.positionSeconds 或 extra_context.playback.positionSeconds（整数毫秒），"
+            "后者优先于历史位置。用户说「这里/这帧/现在/当前画面」且未另指时间时，"
+            "使用本轮冻结播放位置，即使历史回答讨论过其他时刻，也不沿用旧锚点。"
+            "用户只要求看一个时刻时，看完该图就直接回答；不为补充人物背景或剧情自动检索、读历史 Chunk 或委派。"
+            "只有该图不能解决当前具体问题、确实需要相邻动作或对白时才补查，并区分目标图与相邻证据。"
+            "单点取帧不会注册任何历史 Chunk ID，取到图不代表可以读取历史检索 ID。"
+            "understand_current_video 只用于理解当前讲解或对白上下文，位置固定为冻结播放点，不能选择其他时刻。"
+            if frame_target_available else
+            "用户明确指定不同于当前播放位置的时刻时，不要用当前视频理解工具冒充该时刻；"
+            "当前工具不能选择其他时刻时说明限制，或改用实际返回目标 ID 的检索。"
         )
         prompt = (
-            ("当前播放视频可通过 understand_current_video 核验，即使尚未完成全量解析。"
-             "问题指向当前或刚才讲解、暂停画面时优先调用该工具，再根据证据、用户问题和历史组织解释。"
-             "根据 chunks 中的原始事实、frames caption 和 visual_summary 组织最终回答；summary 只是证据说明。"
+            ("需要当前或刚才讲解、对白上下文时可用 understand_current_video，即使尚未完成全量解析。"
+             "仅核对画面时优先使用已注册的单点取帧工具；没有该工具时可用当前视频理解取得暂停点观察。"
+             "区分 chunks 中的区间事实与 frames caption、visual_summary 的模型观察；摘要不证明时间已对齐，也不替代原图。"
              "understand_current_video 返回的 chunks[].evidence[] 中 start_seconds/end_seconds 为源视频绝对毫秒；"
              "after_anchor 表示暂停位置之后的证据。"
              "partial 表示采集缺失，omitted_evidence 表示输出为预算省略；据此说明覆盖范围与不确定性。"
@@ -1207,7 +1255,8 @@ class SupervisorRuntime:
              if realtime_available else "")
             +
             "你是 seekino 对话助手，负责理解当前请求、按需取证并回应用户。\n"
-            "先理解当前用户消息，再决定是否需要工具。历史用于理解指代和已有信息，不自动延续上一轮的检索目标；"
+            "已有应用生成的本轮处理说明时沿用其路线；没有处理说明时，再按当前消息判断是否需要新证据。"
+            "历史用于理解指代和已有信息，不自动延续上一轮的检索目标；"
             "区分用户对你的反馈、处理已有文字的要求，以及查找视频证据的要求，这些事项可以同时存在。\n"
             "仅评价你的回答或纠正你的理解时，直接回应这项反馈即可。不要把反馈当作待查台词，"
             "也不要拿上一轮视频答案换一种说法来代替回应；本轮没有提出的剧情、出处和人物无需重说。"
@@ -1216,10 +1265,16 @@ class SupervisorRuntime:
             "按工具返回的覆盖范围标明哪些集已查、哪些还在处理。指定集未就绪或检索服务离线时，说明原因并继续对话，不能拿其他集作证。\n"
             "明确要求找台词、场景、出处或补证时，实际调用相应工具。查询参数保留台词原话、否定和限定，"
             "按历史补齐明确指代，不猜人物或剧情；无需先改写整条用户消息或输出意图标签。\n"
-            "同一消息包含回应与检索时，本轮必须完成两项。用户要求先解释、先改写或先回应，"
-            "就先输出该项实际内容，再继续调用工具；这段前置正文属于过程输出（commentary），"
-            "不能当最终回答结束本轮。只有完成检索并说明结果或实际失败后才结束，"
-            "说“接着我去找”不等于已经执行检索。\n"
+            "同一消息包含回应与检索时，按用户要求的先后顺序完成两项，不添加额外填充。\n"
+            "当前用户消息带有应用生成的「本轮处理说明」标记时，直接遵循其中的处理方式，不再重新分类，也不写完整计划。"
+            "纯 respond 直接回答。需要工具时，第一次模型回复先用自然中文简短确认具体目标"
+            "（例如「我先看看你指定的那一帧」），然后在同一轮调用能回答该问题的最小真实工具；"
+            "不得只以确认结束，也不为确认新增一次模型调用。确认是待执行目标，不得暗示已经核验，"
+            "不得泄露隐藏推理；后续工具调用前不重复进度播报。mixed 已先输出独立回应时无需另加确认。"
+            "用户要求只给最终结果或严格限定句数时省略确认。"
+            "简单任务不写计划；只有多个独立目标或具体证据缺口时，才用简短计划并按需委派 query_video，"
+            "不安排固定多 Agent 流水线。\n"
+            "说“接着我去找”不等于已经执行检索。只有完成检索并说明结果或实际失败后才结束本轮。\n"
             "结束前核对当前用户要求的每一项是否完成：纯反馈不夹带上一轮剧情复述，混合请求不遗漏实际检索。"
             "本轮的限制只适用于本轮，不自行扩展成长久禁止检索的偏好。\n"
             "以下视频检索和核验策略仅在当前任务需要新的视频证据时适用。\n"
@@ -1234,13 +1289,14 @@ class SupervisorRuntime:
             "需要具体事实或片段时，用章节的 video_chunk_ids 调用 search_video_events 精读，命中结果才可提交为视频片段；"
             "read_retrieval_evidence 可读取大纲 Chunk 的源证据，读取后即可作为视频片段提交；仅凭大纲摘要不能提交。"
             "没有大纲时回到下述检索策略。"
-            "具体台词、动作、情绪或局部事件优先直接调用 search_video_events，不先用 retrieve 粗搜 Chunk。"
+            "已确定视频和时刻的画面核验遵循单点取帧规则；其余具体台词、动作、情绪或局部事件"
+            "优先直接调用 search_video_events，不先用 retrieve 粗搜 Chunk。"
             "台词检索保留用户提供的原话或译文短语，不先扩写成带人物、剧情假设的长查询。"
             "命中结果包含真实证据；内容截断或缺少上下文时用 read_retrieval_evidence 续读。排名第一本身不等于证据充分。"
             "Event 工具不可用、索引未覆盖、候选不足或需要更广上下文时，再用 retrieve 扩大到 Chunk；"
             "未覆盖或部分覆盖不能解释成没有匹配。只缺局部上下文时先读取已命中 Chunk，不重新广搜。"
-            "视频有大纲时，路线、对比等跨章节问题由你用大纲和 search_video_events 直接核验，不委派 query_video；"
-            "没有大纲且有多个可独立调查的目标时，可直接交给 query_video，按需先取线索，无需逐级试遍工具；"
+            "视频有大纲时，路线、对比等跨章节问题优先用大纲和 search_video_events 直接核验；"
+            "没有大纲且存在多个可独立调查的目标或具体证据缺口时，可按需交给 query_video，无需逐级试遍工具；"
             "多个独立目标通过 queries 一次并行委派，有依赖的调查按顺序开展。"
             "Query 只调查自己的目标，你负责跨报告的时间顺序、冲突、不确定性与最终结论。"
             "attachments 从当前或 history_attachments 的 mediaUri 复制，只给子任务必要图片；"
@@ -1255,9 +1311,10 @@ class SupervisorRuntime:
             "范围内有多个系列、问题未指明系列且没有打开视频时，先问清是哪个系列或按系列分别回答，绝不把多个系列混为一谈。"
             "向用户称呼视频一律用「系列显示名 第 N 集《标题》」，不得写出任何内部 id。"
             + video_delivery
+            + frame_target_guidance
             + "已经输出的正文会保留，结束时只写尚未表达的内容或收尾，不要重复整篇回答。"
-            "正文只写给用户的回答：不写「我先看一下」「已经拿到了」「我再核对」之类的过程说明或进度播报，"
-            "直接调用工具即可，界面会根据真实调用显示查找状态；不要输出工具 JSON 或模拟进度，"
+            "首条确认之后，不写「我先看一下」「已经拿到了」「我再核对」之类的重复进度，"
+            "界面会根据真实调用显示查找状态；不要输出工具 JSON 或模拟进度，"
             "不泄露内部推理或未经核实的结论。"
             "回答结构：先用一两句话直接回答问题；要点和步骤用 Markdown 列表，"
             "不要用「→」把多个步骤串成一长句，单段不超过约 120 字；加粗小标题后空一行再写正文。"
