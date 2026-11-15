@@ -27,6 +27,7 @@
 
 | 记录 | 原问题编号 |
 |---|---|
+| [2026-11-15：运行副本补丁未进入后续提交链，完整Prompt回归失去基线](#devlog-prompt-baseline-sync-20261115) | PARSE-VOICE-TWOPASS-01；B12；PR #176 |
 | [2026-11-15：正确声纹预填被Refine回改，提前触发未能保证身份归属](#devlog-audio-prefill-live-ab-20261115) | PARSE-VOICE-TWOPASS-01；B12；PR #176 |
 | [2026-11-15：短音频分组过碎，提前预填仍需后续人名与精确区间](#devlog-audio-first-prefill-20261115) | PARSE-VOICE-TWOPASS-01；B12；PR #176 |
 | [2026-11-15：全片声纹门禁延后Refine，提前参考池又会改变身份候选](#devlog-voiceprint-early-preparation-20261115) | PARSE-VOICE-EARLY-01；B12；PR #174 |
@@ -200,6 +201,25 @@
 | [日期未明确（2026-10-23归档）：当前播放窗口的按需理解与复用](#devlog-history-60) | 独立实验/设计 |
 
 </details>
+
+<a id="devlog-prompt-baseline-sync-20261115"></a>
+## 2026-11-15：运行副本补丁未进入后续提交链，完整Prompt回归失去基线
+
+### 问题与现状
+
+旧通过执行副本在ceee38ea上以未提交修改带入45017773两句边界规则，后续分支只沿#165→#167→#170→#174→#176，没有带入#164。旧请求有画外音，却缺独立音频段和合并交Refine的要求；提交未消失，运行源码组合没有完整固化，旧结果不能当完整既有Prompt回归。
+
+### 方案候选
+
+在本PR原样回补，不另调措辞。完整prompts.py与旧通过执行树逐字相同，实际Refine前缀逐字核对；174项测试补充真实Workflow投递断言。宿主要求源码提交后启动，每次核对规则、源码SHA与指令前缀。两份实际缺规则请求被拦在模型调用前，负例新增模型调用0次。
+
+### 方案验证
+
+dbdf7579已推送。本轮整集1fps、Flash low、CPU8，ASR和初轮声学缓存复用。48份新Understanding全部完成且初始请求相等，98个生成入口（含修复和失败）均确认投递；A22个Refine完成，B8个完成，14个未提交，其中13个官方余额不足、第6区间max_output_tokens。冻结16块、成功提交及最新版本／scope都保留，续跑入口只读核对能跳过已完成；充值后模型续跑待执行。
+
+### 指标对比
+
+先恢复可复现基线，再区分投递、流程完成与身份质量。完整源码与Refine前缀均同旧通过轮相同；174测试、2个真实请求负例通过。A为24/22，B为24/8；13个余额402与1个输出上限分别记录，费用未完整采集。已完成开头仍把正确爽世预填改回灯，故Prompt同步已修复，人物质量仍未解决，B整集未完成。余额恢复后只继续14个未提交区间；不将本轮部分结果写成完整质量验收。见[完整Prompt同步报告](../report/agent/video_parse_v2/audio-first-prefill-evaluation-20261115/prompt-synced-report.md)。
 
 <a id="devlog-audio-prefill-live-ab-20261115"></a>
 ## 2026-11-15：正确声纹预填被Refine回改，提前触发未能保证身份归属

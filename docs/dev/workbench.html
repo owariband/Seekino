@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-15T12:09:32+08:00",
+ "updatedAt": "2026-11-15T13:19:29+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 74,
+ "revision": 75,
  "categories": [
   {
    "id": "parse",
@@ -5996,9 +5996,9 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "type": "requirement",
    "status": "progressing",
    "priority": "P2",
-   "description": "两组真实EP04各24个Understanding和22个Refine完成，2/3在18块时放行；正确声纹预填仍被low回改，质量未通过，Server未接入。",
-   "next": "处理Refine覆盖正确预填的条件并验证匿名分组质量；保留本次失败证据，标准Server接入与端到端时延仍待验。",
-   "verification": "2026-11-15：主对照各24/24新Understanding、22/22 Refine；初始24份请求相等，旧ASR复用，无GPU/CPU-prod/DB。B第16提交触发，12.188秒后18块时就绪，Refine在18/24发起，早于最后理解80.951秒。两组开头均高松燈错误、爱音段正确；B先预填爽世0.764492后又回改灯0.592243。恢复B同一文字prompt、同样low和temperature0曾分别返回爽世与灯。132测试与真实scope故障复验通过。原26次中断Refine入口和额外B完整运行均留证；匿名749组问题、全片身份真值及Server部署未通过。",
+   "description": "完整Prompt已同步提交并逐调用核对；A24/22完成，B24/8后有13个余额402、1个输出上限，开头仍回改错误。",
+   "next": "DeepSeek充值后仅续B未提交14个Refine，单独核对第6区间输出上限；保留48份理解、冻结16块和成功区间。",
+   "verification": "2026-11-15 dbdf7579：原样补齐45017773两句，完整Prompt文件及实际Refine指令前缀与旧通过轮逐字相同。174测试、2份真实缺规则请求负例通过；98个实际入口均核对投递，两组24份初始请求相等。A24/22完成；B24/8，剩14区间中13个余额402、第6区间max_output_tokens。开头正确爽世预填仍被low改灯，质量未解决。原ASR、48份新理解、冻结16块及成功区间版本保留；续跑只读检查可跳过已完成，模型续跑待充值。GPU/CPU-prod/数据库未访问。",
    "updatedAt": "2026-11-15",
    "tags": [
     "ASR复用",
@@ -6036,6 +6036,11 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
     {
      "label": "真实A/B与同输入回改证据",
      "url": "https://github.com/owariband/Seekino/blob/perf/audio-first-prefill-evaluation/docs/report/agent/video_parse_v2/audio-first-prefill-evaluation-20261115/live-ab-report.md",
+     "kind": "source"
+    },
+    {
+     "label": "完整Prompt同步与续跑检查点",
+     "url": "https://github.com/owariband/Seekino/blob/perf/audio-first-prefill-evaluation/docs/report/agent/video_parse_v2/audio-first-prefill-evaluation-20261115/prompt-synced-report.md",
      "kind": "source"
     }
    ],

@@ -2,6 +2,8 @@
 
 2026-11-15；[PR #176](https://github.com/owariband/Seekino/pull/176)、[TRD](../../../../design/03-product-reassessment/audio-first-prefill-evaluation-trd.md)、[工作台](../../../../dev/workbench.html)。原[离线回放](README.md)仅验证声学表示、评分和Canvas；本报告补充新模型实际消费输入的结果。证据：[主对照](live-comparison.json)、[核验摘要](live-verification.json)、[恢复执行的B组](recovered-live-comparison.json)、[同提示词不同返回](same-prompt-repeat.json)。
 
+**2026-11-15基线审计更正：**本报告执行分支遗漏了PR #164／45017773的“Understanding保留独立音频段、合并交给Refine”两句，而此前通过的执行副本以本地补丁包含它们。以下真实请求、回改和时刻仍是当时观察，但不能作为完整既有Prompt配置的回归结论。已在dbdf7579原样补齐，完整文件与此前通过版本逐字相同，新整集两组复测记录见[prompt-synced-report.md](prompt-synced-report.md)。
+
 **两组均完整完成24个Understanding和22个Refine，但两组开头均误归高松燈，爱音介绍段最终均为千早愛音。** B组确实在16/24时开始准备，18/24时发起Refine，提前约80.95秒与剩余Understanding重叠；正确声纹预填仍被low模型回改。执行通过、提前触发通过与人物归因达标分别判断。
 
 ## 比较对象与输入控制

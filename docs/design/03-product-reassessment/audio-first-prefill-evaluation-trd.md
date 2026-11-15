@@ -75,3 +75,6 @@ ASR复用上轮166条缓存，GPU未启动，不访问GPU或CPU/prod。仅使用
 2026-11-15提示词基线修正：上轮分支未带入PR #164的45017773两句已确认规则，而此前通过的执行副本在ceee38ea上以未提交修改包含它们。旧A/B仍保留实际输入输出，但不能作为完整既有Prompt基线的回归。本次在本PR原样回补Understanding不合并独立音频段、合并交给Refine的两句，保留CONFLICT预填、原人物评分和画外音规则；完整prompts.py须与此前通过的执行副本逐字相同。
 
 本轮复测使用outputs/verification/audio-first-prefill-prompt-synced-20261115，原ASR和初轮声学缓存不变，整集1fps、Flash low、CPU8；A仅匿名ID，B在真实16/24时冻结参考并更新，分别新跑24个Understanding与22个Refine。实跑前提交完整源码，运行入口拒绝未提交的Agent／实验宿主改动；逐次实际调用核对必需规则、源码SHA和Refine指令前缀。174项相关测试、完整源码SHA与此前通过的实际Refine前缀一致后启动，结果待本轮收据与最终人名核对。GPU及CPU/prod不访问。
+
+
+完整Prompt本轮证据：[同步复测报告](../../report/agent/video_parse_v2/audio-first-prefill-evaluation-20261115/prompt-synced-report.md)。174项测试及两份缺规则真实请求负例通过，源码SHA和实际Refine前缀与旧通过轮逐字相同；98个实际入口均核对投递。A24/22完成，B24/8后14区间未完成：13个官方余额402、第6区间max_output_tokens。已保存全部48份理解、冻结16块及成功提交，续跑入口仅恢复未完成区间，模型续跑待充值。已完成开头仍从正确爽世预填改回灯，不以旧规则补齐推断人物问题已解决。

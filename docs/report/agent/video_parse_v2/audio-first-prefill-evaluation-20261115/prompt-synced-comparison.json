@@ -1,0 +1,2303 @@
+{
+  "manifest": {
+    "started_utc": "2026-11-15T04:52:47.196025+00:00",
+    "script_sha256": "7d0b04da835ec8f4cb79b35f53a1d70a008398f5658adaf4f56d1062a4f43479",
+    "source_revision": "dbdf75794930fb04c0a304d86ee959a400c34b59",
+    "prompt_source_sha256": "68324f3aaf9b1245f1926e311a2746fb0068d19e4f530d989ad72747d6cda4d0",
+    "source_sha256": "50e981e49a3d74e8c0aca7571ffae8265b88f6388f1d34849876b61ad8bf5814",
+    "asr_sha256": "2543d152519b6452d7b0f227db328894127a12fe48990dc45643c88d2e5750e7",
+    "audio_artifact_sha256": "20bc803bcded65f0b091b6790f229cfb5a45712826b77cb9fdda5918de6d04c6",
+    "parse_config": {
+      "content_kind": "anime",
+      "chunk_duration": 60,
+      "interval_duration": 180,
+      "batch_max_size": 10,
+      "dispatch_interval_seconds": 0.0,
+      "models": {
+        "asr": {
+          "stream": true,
+          "temperature": 0.0,
+          "source": "voiceprint_validation_gpu_asr",
+          "model": "large-v3",
+          "request_timeout_seconds": 1200.0,
+          "max_output_tokens": null,
+          "reasoning_effort": null,
+          "fallback": null,
+          "mode": "lite",
+          "fps": 1.0,
+          "scope": "video"
+        },
+        "understanding": {
+          "stream": true,
+          "temperature": 0.0,
+          "context_window_tokens": 262144,
+          "context_safety_margin_tokens": 4096,
+          "auto_compact_tokens": 200000,
+          "compact_target_tokens": 150000,
+          "max_input_chars": 600000,
+          "supports_vision_input": true,
+          "source": "deepseek_api",
+          "model": "deepseek-flash",
+          "request_timeout_seconds": 600.0,
+          "max_output_tokens": 50000,
+          "reasoning_effort": "low",
+          "fallback": {
+            "stream": true,
+            "temperature": 0.0,
+            "context_window_tokens": 262144,
+            "context_safety_margin_tokens": 4096,
+            "auto_compact_tokens": 200000,
+            "compact_target_tokens": 150000,
+            "max_input_chars": 600000,
+            "supports_vision_input": true,
+            "source": "deepseek_api",
+            "model": "deepseek-flash",
+            "request_timeout_seconds": 1200.0,
+            "max_output_tokens": 50000,
+            "reasoning_effort": "low"
+          }
+        },
+        "refine": null,
+        "ocr": null,
+        "prefix_context": null,
+        "speaker_embedding": {
+          "source": "campplus_validation",
+          "model": "iic/speech_campplus_sv_zh-cn_16k-common",
+          "request_timeout_seconds": 60.0
+        },
+        "embedding": {
+          "input_mode": "text",
+          "query_instruction": "Given a question about a machine learning course, retrieve relevant lecture passages that answer the question.",
+          "source": "llama_embedding_local",
+          "model": "seekino-qwen3-embedding-0.6b",
+          "encoder_model": "seekino-qwen3-embedding-0.6b",
+          "dimensions": 1024,
+          "video_fps": 1.0,
+          "request_timeout_seconds": 120.0
+        }
+      },
+      "visual_input": {
+        "mode": "ordered_frames",
+        "fps": 1.0,
+        "max_height": 720,
+        "context_overlap_seconds": 3
+      },
+      "ocr_enabled": false,
+      "understanding_enabled": true,
+      "compact_enabled": false,
+      "prefix_context": null,
+      "voiceprint_mode": "prefill",
+      "execution": {
+        "parse_concurrency": 10,
+        "refine_concurrency": 10,
+        "index_concurrency": 4,
+        "parse_execution_timeout_seconds": 1800.0,
+        "refine_execution_timeout_seconds": 1800.0,
+        "index_execution_timeout_seconds": 1800.0,
+        "max_retry_count": 2,
+        "retry_initial_delay_seconds": 30.0,
+        "retry_max_delay_seconds": 900.0
+      },
+      "indexing": {
+        "index_generation": 1,
+        "sparse_enabled": false,
+        "contract_fingerprint": "ccfb1f53799e173efb25dd10823dcf58f25dbcaee4236b8f0539e205e212e419"
+      }
+    },
+    "model_config_sha256": "509c8121caa72941cffb932e29726bb24f7996c867e65308f69cb0b6b895b98d",
+    "cases": [
+      "A_audio_only",
+      "B_two_thirds"
+    ],
+    "gpu_access": false,
+    "cpu_prod_access": false,
+    "persistence": "isolated local files; no Server task, DB or indexing",
+    "understanding_source": "fresh configured model calls, never old Understanding content"
+  },
+  "cases": {
+    "A_audio_only": {
+      "run_name": "audio-first-prefill-prompt-synced-20261115",
+      "progress": {
+        "case": "A_audio_only",
+        "task_id": "1df6bf60-d2a5-43dd-ad42-3876d4df6b60",
+        "recorded_utc": "2026-11-15T05:03:02.503719+00:00",
+        "understanding_committed": 24,
+        "refine_complete": 22,
+        "named_ready": false,
+        "calls_started": 48,
+        "calls_returned": 48,
+        "errors": [],
+        "elapsed_seconds": 599.1190735829987
+      },
+      "initial_understanding_targets": {
+        "opening_soyo": [
+          {
+            "start_seconds": 47500,
+            "end_seconds": 49000,
+            "speaker": "高松燈",
+            "speaker_source": "understanding",
+            "description": "高松燈替豊川祥子辩解，认为她也没有错。",
+            "text_variants": [
+              {
+                "language": "ja",
+                "role": "ORIGINAL",
+                "text": "祥ちゃんも悪くない"
+              },
+              {
+                "language": "zh-Hans",
+                "role": "TRANSLATION",
+                "text": "也不是小祥的错"
+              }
+            ]
+          }
+        ],
+        "anon_introduction": [
+          {
+            "start_seconds": 289475,
+            "end_seconds": 295499,
+            "speaker": null,
+            "speaker_source": "understanding",
+            "description": "爱音低声说出「长崎」的名字，对方接口提到长崎素世，确认乐队成员的事。",
+            "text_variants": [
+              {
+                "language": "ja",
+                "role": "ORIGINAL",
+                "text": "うん…長崎…長崎そよちゃんと…そうです"
+              },
+              {
+                "language": "zh-Hans",
+                "role": "TRANSLATION",
+                "text": "嗯…长崎…和长崎素世…是的"
+              }
+            ]
+          }
+        ]
+      },
+      "final_targets": {
+        "opening_soyo": [
+          {
+            "start_seconds": 47500,
+            "end_seconds": 49000,
+            "speaker": "高松燈",
+            "speaker_source": "understanding",
+            "description": "高松燈替豊川祥子辩解，认为她也没有错。",
+            "text_variants": [
+              {
+                "language": "ja",
+                "role": "ORIGINAL",
+                "text": "祥ちゃんも悪くない"
+              },
+              {
+                "language": "zh-Hans",
+                "role": "TRANSLATION",
+                "text": "也不是小祥的错"
+              }
+            ]
+          }
+        ],
+        "anon_introduction": [
+          {
+            "start_seconds": 289475,
+            "end_seconds": 295499,
+            "speaker": "千早愛音",
+            "speaker_source": "refine_edit",
+            "description": "爱音低声说出「长崎…长崎素世」，随后确认乐队成员的事。",
+            "text_variants": [
+              {
+                "language": "ja",
+                "role": "ORIGINAL",
+                "text": "うん…長崎…長崎そよちゃんと…そうです"
+              },
+              {
+                "language": "zh-Hans",
+                "role": "TRANSLATION",
+                "text": "嗯…长崎…和长崎素世…是的"
+              }
+            ]
+          }
+        ]
+      },
+      "calls_by_schema": {
+        "video_parse_v2_chunk": 24,
+        "IntervalRefinementResult": 23,
+        "video_parse_v2_chunk_repair": 1
+      },
+      "refine_target_inputs": [
+        {
+          "call_id": "1ca3caa2-c0a3-4f26-b7c1-fe5d2ed8baae",
+          "status": "returned",
+          "members": [
+            {
+              "sequence_no": 4,
+              "targets": {
+                "opening_soyo": [],
+                "anon_introduction": [
+                  {
+                    "start_seconds": 289475,
+                    "end_seconds": 295499,
+                    "speaker": "千早愛音",
+                    "speaker_source": null,
+                    "description": "爱音低声说出「长崎…长崎素世」，随后确认乐队成员的事。",
+                    "text_variants": [
+                      {
+                        "language": "ja",
+                        "role": "ORIGINAL",
+                        "text": "うん…長崎…長崎そよちゃんと…そうです"
+                      },
+                      {
+                        "language": "zh-Hans",
+                        "role": "TRANSLATION",
+                        "text": "嗯…长崎…和长崎素世…是的"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          ],
+          "output_targets": {
+            "opening_soyo": [],
+            "anon_introduction": [
+              {
+                "start_seconds": 289475,
+                "end_seconds": 295499,
+                "speaker": "千早愛音",
+                "speaker_source": null,
+                "description": "爱音低声说出「长崎…长崎素世」，随后确认乐队成员的事。",
+                "text_variants": [
+                  {
+                    "language": "ja",
+                    "role": "ORIGINAL",
+                    "text": "うん…長崎…長崎そよちゃんと…そうです"
+                  },
+                  {
+                    "language": "zh-Hans",
+                    "role": "TRANSLATION",
+                    "text": "嗯…长崎…和长崎素世…是的"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "call_id": "35e9d95c-8557-4494-b6af-a2203e4ceea5",
+          "status": "returned",
+          "members": [
+            {
+              "sequence_no": 4,
+              "targets": {
+                "opening_soyo": [],
+                "anon_introduction": [
+                  {
+                    "start_seconds": 289475,
+                    "end_seconds": 295499,
+                    "speaker": null,
+                    "speaker_source": null,
+                    "description": "爱音低声说出「长崎」的名字，对方接口提到长崎素世，确认乐队成员的事。",
+                    "text_variants": [
+                      {
+                        "language": "ja",
+                        "role": "ORIGINAL",
+                        "text": "うん…長崎…長崎そよちゃんと…そうです"
+                      },
+                      {
+                        "language": "zh-Hans",
+                        "role": "TRANSLATION",
+                        "text": "嗯…长崎…和长崎素世…是的"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          ],
+          "output_targets": {
+            "opening_soyo": [],
+            "anon_introduction": [
+              {
+                "start_seconds": 289475,
+                "end_seconds": 295499,
+                "speaker": "千早愛音",
+                "speaker_source": null,
+                "description": "爱音低声说出「长崎…长崎素世」，随后确认乐队成员的事。",
+                "text_variants": [
+                  {
+                    "language": "ja",
+                    "role": "ORIGINAL",
+                    "text": "うん…長崎…長崎そよちゃんと…そうです"
+                  },
+                  {
+                    "language": "zh-Hans",
+                    "role": "TRANSLATION",
+                    "text": "嗯…长崎…和长崎素世…是的"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "call_id": "94f1f062-791f-40b3-a524-2ba068a3c4af",
+          "status": "returned",
+          "members": [
+            {
+              "sequence_no": 0,
+              "targets": {
+                "opening_soyo": [
+                  {
+                    "start_seconds": 47500,
+                    "end_seconds": 49000,
+                    "speaker": "高松燈",
+                    "speaker_source": null,
+                    "description": "高松燈替豊川祥子辩解，认为她也没有错。",
+                    "text_variants": [
+                      {
+                        "language": "ja",
+                        "role": "ORIGINAL",
+                        "text": "祥ちゃんも悪くない"
+                      },
+                      {
+                        "language": "zh-Hans",
+                        "role": "TRANSLATION",
+                        "text": "也不是小祥的错"
+                      }
+                    ]
+                  }
+                ],
+                "anon_introduction": []
+              }
+            }
+          ],
+          "output_targets": {
+            "opening_soyo": [
+              {
+                "start_seconds": 47500,
+                "end_seconds": 49000,
+                "speaker": "高松燈",
+                "speaker_source": null,
+                "description": "高松燈替豊川祥子辩解，认为她也没有错。",
+                "text_variants": [
+                  {
+                    "language": "ja",
+                    "role": "ORIGINAL",
+                    "text": "祥ちゃんも悪くない"
+                  },
+                  {
+                    "language": "zh-Hans",
+                    "role": "TRANSLATION",
+                    "text": "也不是小祥的错"
+                  }
+                ]
+              }
+            ],
+            "anon_introduction": []
+          }
+        },
+        {
+          "call_id": "e04eae69-0c15-4593-9e23-c1837ab0a524",
+          "status": "returned",
+          "members": [
+            {
+              "sequence_no": 4,
+              "targets": {
+                "opening_soyo": [],
+                "anon_introduction": [
+                  {
+                    "start_seconds": 289475,
+                    "end_seconds": 295499,
+                    "speaker": "千早愛音",
+                    "speaker_source": null,
+                    "description": "爱音低声说出「长崎…长崎素世」，随后确认乐队成员的事。",
+                    "text_variants": [
+                      {
+                        "language": "ja",
+                        "role": "ORIGINAL",
+                        "text": "うん…長崎…長崎そよちゃんと…そうです"
+                      },
+                      {
+                        "language": "zh-Hans",
+                        "role": "TRANSLATION",
+                        "text": "嗯…长崎…和长崎素世…是的"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          ],
+          "output_targets": {
+            "opening_soyo": [],
+            "anon_introduction": [
+              {
+                "start_seconds": 289475,
+                "end_seconds": 295499,
+                "speaker": "千早愛音",
+                "speaker_source": null,
+                "description": "爱音低声说出「长崎…长崎素世」，随后确认乐队成员的事。",
+                "text_variants": [
+                  {
+                    "language": "ja",
+                    "role": "ORIGINAL",
+                    "text": "うん…長崎…長崎そよちゃんと…そうです"
+                  },
+                  {
+                    "language": "zh-Hans",
+                    "role": "TRANSLATION",
+                    "text": "嗯…长崎…和长崎素世…是的"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "voice_targets": [],
+      "call_statuses": {
+        "returned": 48
+      },
+      "actual_calls": [
+        {
+          "call_id": "15e281ef-23de-40f2-b36a-b689e25b9329",
+          "schema": "video_parse_v2_chunk",
+          "status": "returned",
+          "elapsed_seconds": 64.33630654199987
+        },
+        {
+          "call_id": "1ca3caa2-c0a3-4f26-b7c1-fe5d2ed8baae",
+          "schema": "IntervalRefinementResult",
+          "status": "returned",
+          "elapsed_seconds": 64.12253362500087
+        },
+        {
+          "call_id": "242a50d5-b1de-4227-9f66-4f1c8b533e6d",
+          "schema": "video_parse_v2_chunk",
+          "status": "returned",
+          "elapsed_seconds": 107.25432704200102
+        },
+        {
+          "call_id": "2b80a784-fd57-4bdd-be05-ae30d568323f",
+          "schema": "IntervalRefinementResult",
+          "status": "returned",
+          "elapsed_seconds": 104.24566991600113
+        },
+        {
+          "call_id": "2c720094-97fc-49fe-a9fd-35c9947ab89f",
+          "schema": "IntervalRefinementResult",
+          "status": "returned",
+          "elapsed_seconds": 95.98697383399849
+        },
+        {
+          "call_id": "33557b6a-99cf-4e96-8b38-fda6abb8756a",
+          "schema": "video_parse_v2_chunk",
+          "status": "returned",
+          "elapsed_seconds": 121.78606454199871
+        },
+        {
+          "call_id": "354b53bc-0773-4396-adc1-1ae75d149846",
+          "schema": "video_parse_v2_chunk",
+          "status": "returned",
+          "elapsed_seconds": 87.3214174579989
+        },
+        {
+          "call_id": "359b7a80-aa4f-4a41-9e94-67ea3c6d411a",
+          "schema": "video_parse_v2_chunk",
+          "status": "returned",
+          "elapsed_seconds": 72.3189569999995
+        },
+        {
+          "call_id": "35e9d95c-8557-4494-b6af-a2203e4ceea5",
+          "schema": "IntervalRefinementResult",
+          "status": "returned",
+          "elapsed_seconds": 66.42917850000049
+        },
+        {
+          "call_id": "381ff79e-69eb-436b-ad3b-9eac8c58ac1b",
+          "schema": "IntervalRefinementResult",
+          "status": "returned",
+          "elapsed_seconds": 82.98763045799933
+        },
+        {
+          "call_id": "393f2098-8f62-44a0-86fc-b371d99df7a1",
+          "schema": "IntervalRefinementResult",
+          "status": "returned",
+          "elapsed_seconds": 122.8138026659999
+        },
+        {
+          "call_id": "3bdfa2a3-17d2-4954-a8b3-e5514c4325bc",
+          "schema": "video_parse_v2_chunk",
+          "status": "returned",
+          "elapsed_seconds": 88.80204524999863
+        },
+        {
+          "call_id": "46a09931-0f87-4ed7-a3fc-e286d842cb68",
+          "schema": "video_parse_v2_chunk",
+          "status": "returned",
+          "elapsed_seconds": 128.88500224999916
+        },
+        {
+          "call_id": "496faf3b-cac0-4d19-a111-41239003eed8",
+          "schema": "video_parse_v2_chunk",
+          "status": "returned",
+          "elapsed_seconds": 123.92658937499982
+        },
+        {
+          "call_id": "4d47d98b-e11d-4a47-ab0b-b1866cf91130",
+          "schema": "video_parse_v2_chunk",
+          "status": "returned",
+          "elapsed_seconds": 91.38446199999998
+        },
+        {
+          "call_id": "5874d96c-6e2f-4ff4-b13c-ef5b96af69f4",
+          "schema": "video_parse_v2_chunk",
+          "status": "returned",
+          "elapsed_seconds": 96.6600632919999
+        },
+        {
+          "call_id": "5afc1e15-f15f-4a72-bfae-c67155ac218b",
+          "schema": "IntervalRefinementResult",
+          "status": "returned",
+          "elapsed_seconds": 109.92803158400056
+        },
+        {
+          "call_id": "5fd272de-b1f1-4c75-9369-4fa92f408f60",
+          "schema": "IntervalRefinementResult",
+          "status": "returned",
+          "elapsed_seconds": 22.951605958000073
+        },
+        {
+          "call_id": "6265f0f9-a690-46d0-a669-a6e6fd281ae1",
+          "schema": "video_parse_v2_chunk",
+          "status": "returned",
+          "elapsed_seconds": 96.45724404199973
+        },
+        {
+          "call_id": "67dbb6eb-d1b0-4bdb-bbcd-8875c88e9bc2",
+          "schema": "IntervalRefinementResult",
+          "status": "returned",
+          "elapsed_seconds": 79.09402812500048
+        },
+        {
+          "call_id": "6d53e3e7-858a-49e5-8ab3-20e54a514547",
+          "schema": "video_parse_v2_chunk_repair",
+          "status": "returned",
+          "elapsed_seconds": 13.531684999999925
+        },
+        {
+          "call_id": "73e2a2a4-1685-4c0f-baef-317a36cd18b2",
+          "schema": "video_parse_v2_chunk",
+          "status": "returned",
+          "elapsed_seconds": 104.18641074999869
+        },
+        {
+          "call_id": "74dc1f2f-8f70-4c6b-aff6-3a4530155883",
+          "schema": "IntervalRefinementResult",
+          "status": "returned",
+          "elapsed_seconds": 47.04889870799889
+        },
+        {
+          "call_id": "7f22aad2-9989-4924-bb14-09e084c1b955",
+          "schema": "video_parse_v2_chunk",
+          "status": "returned",
+          "elapsed_seconds": 92.7317941250003
+        },
+        {
+          "call_id": "8858d8b9-3aa3-42d4-a2ca-4646e3824408",
+          "schema": "IntervalRefinementResult",
+          "status": "returned",
+          "elapsed_seconds": 75.07814099999996
+        },
+        {
+          "call_id": "94f1f062-791f-40b3-a524-2ba068a3c4af",
+          "schema": "IntervalRefinementResult",
+          "status": "returned",
+          "elapsed_seconds": 71.30903150000086
+        },
+        {
+          "call_id": "95115421-e46a-4931-b406-faf7ad83a3a7",
+          "schema": "IntervalRefinementResult",
+          "status": "returned",
+          "elapsed_seconds": 99.86653908299922
+        },
+        {
+          "call_id": "96b01be1-6781-455a-8f19-0979e7ee6d8a",
+          "schema": "video_parse_v2_chunk",
+          "status": "returned",
+          "elapsed_seconds": 74.56132754099963
+        },
+        {
+          "call_id": "99c735ac-1e0a-44f3-992f-0ee617afe386",
+          "schema": "video_parse_v2_chunk",
+          "status": "returned",
+          "elapsed_seconds": 77.9230356249991
+        },
+        {
+          "call_id": "a1e5b371-b1f7-4695-9c71-0c3c3666a5e4",
+          "schema": "video_parse_v2_chunk",
+          "status": "returned",
+          "elapsed_seconds": 138.3078198330004
+        },
+        {
+          "call_id": "a6dc31c6-2de2-4b8c-909f-09a805bd4a03",
+          "schema": "IntervalRefinementResult",
+          "status": "returned",
+          "elapsed_seconds": 101.52705545800018
+        },
+        {
+          "call_id": "aace20e5-1734-45ec-b128-af41af2eda3e",
+          "schema": "IntervalRefinementResult",
+          "status": "returned",
+          "elapsed_seconds": 131.71932704199935
+        },
+        {
+          "call_id": "af21c61a-5aa2-46bc-b3df-c5669e02c991",
+          "schema": "video_parse_v2_chunk",
+          "status": "returned",
+          "elapsed_seconds": 88.77466370799993
+        },
+        {
+          "call_id": "b2aa5624-1441-4698-9cfd-c4dc4e9cc679",
+          "schema": "video_parse_v2_chunk",
+          "status": "returned",
+          "elapsed_seconds": 57.13002879099986
+        },
+        {
+          "call_id": "b625228d-19b8-4cf9-8844-d13aca4ab3b8",
+          "schema": "video_parse_v2_chunk",
+          "status": "returned",
+          "elapsed_seconds": 100.00627645799977
+        },
+        {
+          "call_id": "c6342f76-1552-4912-aeb3-0cbd6f0e6935",
+          "schema": "IntervalRefinementResult",
+          "status": "returned",
+          "elapsed_seconds": 78.06083858400052
+        },
+        {
+          "call_id": "c6fa156a-4ef6-40c6-94f8-6f219afbdbd5",
+          "schema": "IntervalRefinementResult",
+          "status": "returned",
+          "elapsed_seconds": 61.55117362499914
+        },
+        {
+          "call_id": "c8befb36-98a1-48a8-890d-b98c8fc0619a",
+          "schema": "video_parse_v2_chunk",
+          "status": "returned",
+          "elapsed_seconds": 106.03865862500061
+        },
+        {
+          "call_id": "c9076d62-fed0-4edf-8d3e-bbe416d75a97",
+          "schema": "IntervalRefinementResult",
+          "status": "returned",
+          "elapsed_seconds": 61.06843391700022
+        },
+        {
+          "call_id": "d1a83dae-0e1f-4c70-9693-09f34715002f",
+          "schema": "IntervalRefinementResult",
+          "status": "returned",
+          "elapsed_seconds": 85.40582154200092
+        },
+        {
+          "call_id": "dbc6a225-bfd5-4be7-a021-8c6f48b91f74",
+          "schema": "IntervalRefinementResult",
+          "status": "returned",
+          "elapsed_seconds": 42.15358691700021
+        },
+        {
+          "call_id": "dc89c95a-5a00-42cc-b4e5-a949bb657e35",
+          "schema": "video_parse_v2_chunk",
+          "status": "returned",
+          "elapsed_seconds": 118.52818766599921
+        },
+        {
+          "call_id": "e04eae69-0c15-4593-9e23-c1837ab0a524",
+          "schema": "IntervalRefinementResult",
+          "status": "returned",
+          "elapsed_seconds": 42.84675937499924
+        },
+        {
+          "call_id": "e3ed170e-8bb9-4220-8f6e-b98a725264db",
+          "schema": "video_parse_v2_chunk",
+          "status": "returned",
+          "elapsed_seconds": 105.18977070799883
+        },
+        {
+          "call_id": "e4bce4bc-b900-4bd5-be9d-1e1625b891b5",
+          "schema": "IntervalRefinementResult",
+          "status": "returned",
+          "elapsed_seconds": 67.44229787499899
+        },
+        {
+          "call_id": "f3a4cc99-2fd0-4183-9458-d3b468af60c6",
+          "schema": "IntervalRefinementResult",
+          "status": "returned",
+          "elapsed_seconds": 68.49865116699948
+        },
+        {
+          "call_id": "fbfb5e6a-bf80-481b-88b5-98d6938f362c",
+          "schema": "video_parse_v2_chunk",
+          "status": "returned",
+          "elapsed_seconds": 106.0595298749995
+        },
+        {
+          "call_id": "fda86ee9-adab-4b2d-883a-9ac15391a5fa",
+          "schema": "video_parse_v2_chunk",
+          "status": "returned",
+          "elapsed_seconds": 82.97337791700011
+        }
+      ],
+      "prompt_contract_verified_calls": 48,
+      "refine_instruction_prefix_sha256s": [
+        "37a9c0634d3a20522e4c985531b485c7bed30ed40c60da103a789343bd95dc99"
+      ],
+      "understanding_committed_at_first_refine": 4,
+      "first_refine_started_utc": "2026-11-15T04:54:34.988236+00:00",
+      "last_understanding_committed_utc": "2026-11-15T04:58:21.467858+00:00",
+      "refine_start_before_last_understanding_seconds": 226.479622,
+      "archived_refine_attempt_entries": 0,
+      "recovery": null,
+      "complete": true,
+      "committed_interval_receipts": 22,
+      "completion": {
+        "case": "A_audio_only",
+        "understanding": 24,
+        "refine": 22,
+        "elapsed_seconds": 599.1207174579995,
+        "asr_calls": 0,
+        "gpu_calls": 0,
+        "database_calls": 0,
+        "calls": [
+          {
+            "call_id": "6265f0f9-a690-46d0-a669-a6e6fd281ae1",
+            "schema_name": "video_parse_v2_chunk",
+            "model": "deepseek-flash",
+            "reasoning_effort": "low",
+            "started_utc": "2026-11-15T04:53:03.445700+00:00",
+            "status": "returned",
+            "prompt_source_sha256": "68324f3aaf9b1245f1926e311a2746fb0068d19e4f530d989ad72747d6cda4d0",
+            "prompt_contract_verified": true,
+            "instruction_prefix_sha256": "182ff594620c1c33a3c8d0adc0c0f30d61c17cd86bf681171300ae4f2ba25406",
+            "elapsed_seconds": 96.45724404199973
+          },
+          {
+            "call_id": "242a50d5-b1de-4227-9f66-4f1c8b533e6d",
+            "schema_name": "video_parse_v2_chunk",
+            "model": "deepseek-flash",
+            "reasoning_effort": "low",
+            "started_utc": "2026-11-15T04:53:03.459582+00:00",
+            "status": "returned",
+            "prompt_source_sha256": "68324f3aaf9b1245f1926e311a2746fb0068d19e4f530d989ad72747d6cda4d0",
+            "prompt_contract_verified": true,
+            "instruction_prefix_sha256": "806645590382a4b4bf329fefc1c7a7ca7d974b14eab3f0865d69a002333ca8c5",
+            "elapsed_seconds": 107.25432704200102
+          },
+          {
+            "call_id": "7f22aad2-9989-4924-bb14-09e084c1b955",
+            "schema_name": "video_parse_v2_chunk",
+            "model": "deepseek-flash",
+            "reasoning_effort": "low",
+            "started_utc": "2026-11-15T04:53:03.476343+00:00",
+            "status": "returned",
+            "prompt_source_sha256": "68324f3aaf9b1245f1926e311a2746fb0068d19e4f530d989ad72747d6cda4d0",
+            "prompt_contract_verified": true,
+            "instruction_prefix_sha256": "4c6148576aa76619f2fcd0ca7a8a5c54b1007dc1b11d0f85ffe5449c5c2554d0",
+            "elapsed_seconds": 92.7317941250003
+          },
+          {
+            "call_id": "354b53bc-0773-4396-adc1-1ae75d149846",
+            "schema_name": "video_parse_v2_chunk",
+            "model": "deepseek-flash",
+            "reasoning_effort": "low",
+            "started_utc": "2026-11-15T04:53:03.488048+00:00",
+            "status": "returned",
+            "prompt_source_sha256": "68324f3aaf9b1245f1926e311a2746fb0068d19e4f530d989ad72747d6cda4d0",
+            "prompt_contract_verified": true,
+            "instruction_prefix_sha256": "970e05c59d4cb50706fbdcac7cafe20a37ef83b32b0e3789fd7cbd4700952103",
+            "elapsed_seconds": 87.3214174579989
+          },
+          {
+            "call_id": "96b01be1-6781-455a-8f19-0979e7ee6d8a",
+            "schema_name": "video_parse_v2_chunk",
+            "model": "deepseek-flash",
+            "reasoning_effort": "low",
+            "started_utc": "2026-11-15T04:53:03.513817+00:00",
+            "status": "returned",
+            "prompt_source_sha256": "68324f3aaf9b1245f1926e311a2746fb0068d19e4f530d989ad72747d6cda4d0",
+            "prompt_contract_verified": true,
+            "instruction_prefix_sha256": "71ba264577480698df18506c5a58ebe92e790b1a6c4dbf5e3b54122b45729e2b",
+            "elapsed_seconds": 74.56132754099963
+          },
+          {
+            "call_id": "4d47d98b-e11d-4a47-ab0b-b1866cf91130",
+            "schema_name": "video_parse_v2_chunk",
+            "model": "deepseek-flash",
+            "reasoning_effort": "low",
+            "started_utc": "2026-11-15T04:53:03.559121+00:00",
+            "status": "returned",
+            "prompt_source_sha256": "68324f3aaf9b1245f1926e311a2746fb0068d19e4f530d989ad72747d6cda4d0",
+            "prompt_contract_verified": true,
+            "instruction_prefix_sha256": "0cdf3cb5c1101c2de6ab43126368eef37f90d3376188c75d1b0c11604b11251e",
+            "elapsed_seconds": 91.38446199999998
+          },
+          {
+            "call_id": "496faf3b-cac0-4d19-a111-41239003eed8",
+            "schema_name": "video_parse_v2_chunk",
+            "model": "deepseek-flash",
+            "reasoning_effort": "low",
+            "started_utc": "2026-11-15T04:53:03.588100+00:00",
+            "status": "returned",
+            "prompt_source_sha256": "68324f3aaf9b1245f1926e311a2746fb0068d19e4f530d989ad72747d6cda4d0",
+            "prompt_contract_verified": true,
+            "instruction_prefix_sha256": "c5c577a4c4a312d4c83685f09d210300d18f6e56382c2d06b5a37f43e05934aa",
+            "elapsed_seconds": 123.92658937499982
+          },
+          {
+            "call_id": "b625228d-19b8-4cf9-8844-d13aca4ab3b8",
+            "schema_name": "video_parse_v2_chunk",
+            "model": "deepseek-flash",
+            "reasoning_effort": "low",
+            "started_utc": "2026-11-15T04:53:03.620289+00:00",
+            "status": "returned",
+            "prompt_source_sha256": "68324f3aaf9b1245f1926e311a2746fb0068d19e4f530d989ad72747d6cda4d0",
+            "prompt_contract_verified": true,
+            "instruction_prefix_sha256": "11723b2298dbb8b5d39b23e2375cc03ad97b71f12b1cf7df562b78f0f058d11b",
+            "elapsed_seconds": 100.00627645799977
+          },
+          {
+            "call_id": "e3ed170e-8bb9-4220-8f6e-b98a725264db",
+            "schema_name": "video_parse_v2_chunk",
+            "model": "deepseek-flash",
+            "reasoning_effort": "low",
+            "started_utc": "2026-11-15T04:53:03.659627+00:00",
+            "status": "returned",
+            "prompt_source_sha256": "68324f3aaf9b1245f1926e311a2746fb0068d19e4f530d989ad72747d6cda4d0",
+            "prompt_contract_verified": true,
+            "instruction_prefix_sha256": "49b7a8ad3bcb2fcb3233877961111368468043a1b431144965c1592045d11341",
+            "elapsed_seconds": 105.18977070799883
+          },
+          {
+            "call_id": "b2aa5624-1441-4698-9cfd-c4dc4e9cc679",
+            "schema_name": "video_parse_v2_chunk",
+            "model": "deepseek-flash",
+            "reasoning_effort": "low",
+            "started_utc": "2026-11-15T04:53:03.750414+00:00",
+            "status": "returned",
+            "prompt_source_sha256": "68324f3aaf9b1245f1926e311a2746fb0068d19e4f530d989ad72747d6cda4d0",
+            "prompt_contract_verified": true,
+            "instruction_prefix_sha256": "3e53407d3f9a11a1c04f0d19c6045d5b4f1e5936f4f9e1f253d2ec652a723c82",
+            "elapsed_seconds": 57.13002879099986
+          },
+          {
+            "call_id": "fbfb5e6a-bf80-481b-88b5-98d6938f362c",
+            "schema_name": "video_parse_v2_chunk",
+            "model": "deepseek-flash",
+            "reasoning_effort": "low",
+            "started_utc": "2026-11-15T04:54:00.919619+00:00",
+            "status": "returned",
+            "prompt_source_sha256": "68324f3aaf9b1245f1926e311a2746fb0068d19e4f530d989ad72747d6cda4d0",
+            "prompt_contract_verified": true,
+            "instruction_prefix_sha256": "ca5bac9d5b16ec7adfbbbeaaa54e934056255fadeda2426a656e73a6c6d894b7",
+            "elapsed_seconds": 106.0595298749995
+          },
+          {
+            "call_id": "af21c61a-5aa2-46bc-b3df-c5669e02c991",
+            "schema_name": "video_parse_v2_chunk",
+            "model": "deepseek-flash",
+            "reasoning_effort": "low",
+            "started_utc": "2026-11-15T04:54:18.152308+00:00",
+            "status": "returned",
+            "prompt_source_sha256": "68324f3aaf9b1245f1926e311a2746fb0068d19e4f530d989ad72747d6cda4d0",
+            "prompt_contract_verified": true,
+            "instruction_prefix_sha256": "db444f8161c6c2f0417ad3e89326d92c7167aed4c54d14b017603f0fa880dbf4",
+            "elapsed_seconds": 88.77466370799993
+          },
+          {
+            "call_id": "5874d96c-6e2f-4ff4-b13c-ef5b96af69f4",
+            "schema_name": "video_parse_v2_chunk",
+            "model": "deepseek-flash",
+            "reasoning_effort": "low",
+            "started_utc": "2026-11-15T04:54:30.866746+00:00",
+            "status": "returned",
+            "prompt_source_sha256": "68324f3aaf9b1245f1926e311a2746fb0068d19e4f530d989ad72747d6cda4d0",
+            "prompt_contract_verified": true,
+            "instruction_prefix_sha256": "c9c532911a84e1501fbf46fec66b569f868dbfb315c89407ac243bddd88ec446",
+            "elapsed_seconds": 96.6600632919999
+          },
+          {
+            "call_id": "35e9d95c-8557-4494-b6af-a2203e4ceea5",
+            "schema_name": "IntervalRefinementResult",
+            "model": "deepseek-flash",
+            "reasoning_effort": "low",
+            "started_utc": "2026-11-15T04:54:34.988236+00:00",
+            "status": "returned",
+            "prompt_source_sha256": "68324f3aaf9b1245f1926e311a2746fb0068d19e4f530d989ad72747d6cda4d0",
+            "prompt_contract_verified": true,
+            "instruction_prefix_sha256": "37a9c0634d3a20522e4c985531b485c7bed30ed40c60da103a789343bd95dc99",
+            "elapsed_seconds": 66.42917850000049
+          },
+          {
+            "call_id": "3bdfa2a3-17d2-4954-a8b3-e5514c4325bc",
+            "schema_name": "video_parse_v2_chunk",
+            "model": "deepseek-flash",
+            "reasoning_effort": "low",
+            "started_utc": "2026-11-15T04:54:34.998385+00:00",
+            "status": "returned",
+            "prompt_source_sha256": "68324f3aaf9b1245f1926e311a2746fb0068d19e4f530d989ad72747d6cda4d0",
+            "prompt_contract_verified": true,
+            "instruction_prefix_sha256": "e63fb84ce646b5257f71f9d2ba47c3b1876698cf9e0e956fca61ad88c4541190",
+            "elapsed_seconds": 88.80204524999863
+          },
+          {
+            "call_id": "33557b6a-99cf-4e96-8b38-fda6abb8756a",
+            "schema_name": "video_parse_v2_chunk",
+            "model": "deepseek-flash",
+            "reasoning_effort": "low",
+            "started_utc": "2026-11-15T04:54:36.233860+00:00",
+            "status": "returned",
+            "prompt_source_sha256": "68324f3aaf9b1245f1926e311a2746fb0068d19e4f530d989ad72747d6cda4d0",
+            "prompt_contract_verified": true,
+            "instruction_prefix_sha256": "8b6eab5601b9a88742b7414833616007f2c4e03a49c6a3b8f88c3dc9d711f2c0",
+            "elapsed_seconds": 121.78606454199871
+          },
+          {
+            "call_id": "15e281ef-23de-40f2-b36a-b689e25b9329",
+            "schema_name": "video_parse_v2_chunk",
+            "model": "deepseek-flash",
+            "reasoning_effort": "low",
+            "started_utc": "2026-11-15T04:54:39.942010+00:00",
+            "status": "returned",
+            "prompt_source_sha256": "68324f3aaf9b1245f1926e311a2746fb0068d19e4f530d989ad72747d6cda4d0",
+            "prompt_contract_verified": true,
+            "instruction_prefix_sha256": "0c0bd174f5e416cb7ee6e88de4741897894b12ea2ad787e7c2816f4c94bf7405",
+            "elapsed_seconds": 64.33630654199987
+          },
+          {
+            "call_id": "dc89c95a-5a00-42cc-b4e5-a949bb657e35",
+            "schema_name": "video_parse_v2_chunk",
+            "model": "deepseek-flash",
+            "reasoning_effort": "low",
+            "started_utc": "2026-11-15T04:54:43.689705+00:00",
+            "status": "returned",
+            "prompt_source_sha256": "68324f3aaf9b1245f1926e311a2746fb0068d19e4f530d989ad72747d6cda4d0",
+            "prompt_contract_verified": true,
+            "instruction_prefix_sha256": "69c0626db91c10cc45c89eb9158117086956821c365716c19827a1394526febb",
+            "elapsed_seconds": 118.52818766599921
+          },
+          {
+            "call_id": "c9076d62-fed0-4edf-8d3e-bbe416d75a97",
+            "schema_name": "IntervalRefinementResult",
+            "model": "deepseek-flash",
+            "reasoning_effort": "low",
+            "started_utc": "2026-11-15T04:54:48.969737+00:00",
+            "status": "returned",
+            "prompt_source_sha256": "68324f3aaf9b1245f1926e311a2746fb0068d19e4f530d989ad72747d6cda4d0",
+            "prompt_contract_verified": true,
+            "instruction_prefix_sha256": "37a9c0634d3a20522e4c985531b485c7bed30ed40c60da103a789343bd95dc99",
+            "elapsed_seconds": 61.06843391700022
+          },
+          {
+            "call_id": "46a09931-0f87-4ed7-a3fc-e286d842cb68",
+            "schema_name": "video_parse_v2_chunk",
+            "model": "deepseek-flash",
+            "reasoning_effort": "low",
+            "started_utc": "2026-11-15T04:54:48.984524+00:00",
+            "status": "returned",
+            "prompt_source_sha256": "68324f3aaf9b1245f1926e311a2746fb0068d19e4f530d989ad72747d6cda4d0",
+            "prompt_contract_verified": true,
+            "instruction_prefix_sha256": "5e751f687ea07e47404402fc32b9aedd56b72afe122d8825f1e0fae0504236f5",
+            "elapsed_seconds": 128.88500224999916
+          },
+          {
+            "call_id": "94f1f062-791f-40b3-a524-2ba068a3c4af",
+            "schema_name": "IntervalRefinementResult",
+            "model": "deepseek-flash",
+            "reasoning_effort": "low",
+            "started_utc": "2026-11-15T04:54:50.768340+00:00",
+            "status": "returned",
+            "prompt_source_sha256": "68324f3aaf9b1245f1926e311a2746fb0068d19e4f530d989ad72747d6cda4d0",
+            "prompt_contract_verified": true,
+            "instruction_prefix_sha256": "37a9c0634d3a20522e4c985531b485c7bed30ed40c60da103a789343bd95dc99",
+            "elapsed_seconds": 71.30903150000086
+          },
+          {
+            "call_id": "359b7a80-aa4f-4a41-9e94-67ea3c6d411a",
+            "schema_name": "video_parse_v2_chunk",
+            "model": "deepseek-flash",
+            "reasoning_effort": "low",
+            "started_utc": "2026-11-15T04:54:50.780532+00:00",
+            "status": "returned",
+            "prompt_source_sha256": "68324f3aaf9b1245f1926e311a2746fb0068d19e4f530d989ad72747d6cda4d0",
+            "prompt_contract_verified": true,
+            "instruction_prefix_sha256": "6086142ae2096903ef666b48c776e16697836b8108b176b77d25b2a2884d43bf",
+            "elapsed_seconds": 72.3189569999995
+          },
+          {
+            "call_id": "73e2a2a4-1685-4c0f-baef-317a36cd18b2",
+            "schema_name": "video_parse_v2_chunk",
+            "model": "deepseek-flash",
+            "reasoning_effort": "low",
+            "started_utc": "2026-11-15T04:55:07.565327+00:00",
+            "status": "returned",
+            "prompt_source_sha256": "68324f3aaf9b1245f1926e311a2746fb0068d19e4f530d989ad72747d6cda4d0",
+            "prompt_contract_verified": true,
+            "instruction_prefix_sha256": "672d1be21d80344c6d5a34607d9eddbb47f5915a4ed3694afd8e8daec0d1a8a2",
+            "elapsed_seconds": 104.18641074999869
+          },
+          {
+            "call_id": "e04eae69-0c15-4593-9e23-c1837ab0a524",
+            "schema_name": "IntervalRefinementResult",
+            "model": "deepseek-flash",
+            "reasoning_effort": "low",
+            "started_utc": "2026-11-15T04:55:41.445711+00:00",
+            "status": "returned",
+            "prompt_source_sha256": "68324f3aaf9b1245f1926e311a2746fb0068d19e4f530d989ad72747d6cda4d0",
+            "prompt_contract_verified": true,
+            "instruction_prefix_sha256": "37a9c0634d3a20522e4c985531b485c7bed30ed40c60da103a789343bd95dc99",
+            "elapsed_seconds": 42.84675937499924
+          },
+          {
+            "call_id": "c8befb36-98a1-48a8-890d-b98c8fc0619a",
+            "schema_name": "video_parse_v2_chunk",
+            "model": "deepseek-flash",
+            "reasoning_effort": "low",
+            "started_utc": "2026-11-15T04:55:44.316112+00:00",
+            "status": "returned",
+            "prompt_source_sha256": "68324f3aaf9b1245f1926e311a2746fb0068d19e4f530d989ad72747d6cda4d0",
+            "prompt_contract_verified": true,
+            "instruction_prefix_sha256": "d3479e8a3d7e5f9c618f3b815f9a798d2849e08829fdadc40f5c399975be2859",
+            "elapsed_seconds": 106.03865862500061
+          },
+          {
+            "call_id": "99c735ac-1e0a-44f3-992f-0ee617afe386",
+            "schema_name": "video_parse_v2_chunk",
+            "model": "deepseek-flash",
+            "reasoning_effort": "low",
+            "started_utc": "2026-11-15T04:55:46.961428+00:00",
+            "status": "returned",
+            "prompt_source_sha256": "68324f3aaf9b1245f1926e311a2746fb0068d19e4f530d989ad72747d6cda4d0",
+            "prompt_contract_verified": true,
+            "instruction_prefix_sha256": "add8be59249873d5580a2f3589d54a1885e6ae6d2b4ed929448b8fb58c15fd1c",
+            "elapsed_seconds": 77.9230356249991
+          },
+          {
+            "call_id": "fda86ee9-adab-4b2d-883a-9ac15391a5fa",
+            "schema_name": "video_parse_v2_chunk",
+            "model": "deepseek-flash",
+            "reasoning_effort": "low",
+            "started_utc": "2026-11-15T04:55:47.230847+00:00",
+            "status": "returned",
+            "prompt_source_sha256": "68324f3aaf9b1245f1926e311a2746fb0068d19e4f530d989ad72747d6cda4d0",
+            "prompt_contract_verified": true,
+            "instruction_prefix_sha256": "fec01978bc6e2beea6dc6903e74ce02aff009728807ad8016a2828e2d99b40a4",
+            "elapsed_seconds": 82.97337791700011
+          },
+          {
+            "call_id": "c6fa156a-4ef6-40c6-94f8-6f219afbdbd5",
+            "schema_name": "IntervalRefinementResult",
+            "model": "deepseek-flash",
+            "reasoning_effort": "low",
+            "started_utc": "2026-11-15T04:55:50.078340+00:00",
+            "status": "returned",
+            "prompt_source_sha256": "68324f3aaf9b1245f1926e311a2746fb0068d19e4f530d989ad72747d6cda4d0",
+            "prompt_contract_verified": true,
+            "instruction_prefix_sha256": "37a9c0634d3a20522e4c985531b485c7bed30ed40c60da103a789343bd95dc99",
+            "elapsed_seconds": 61.55117362499914
+          },
+          {
+            "call_id": "c6342f76-1552-4912-aeb3-0cbd6f0e6935",
+            "schema_name": "IntervalRefinementResult",
+            "model": "deepseek-flash",
+            "reasoning_effort": "low",
+            "started_utc": "2026-11-15T04:56:02.107351+00:00",
+            "status": "returned",
+            "prompt_source_sha256": "68324f3aaf9b1245f1926e311a2746fb0068d19e4f530d989ad72747d6cda4d0",
+            "prompt_contract_verified": true,
+            "instruction_prefix_sha256": "37a9c0634d3a20522e4c985531b485c7bed30ed40c60da103a789343bd95dc99",
+            "elapsed_seconds": 78.06083858400052
+          },
+          {
+            "call_id": "a1e5b371-b1f7-4695-9c71-0c3c3666a5e4",
+            "schema_name": "video_parse_v2_chunk",
+            "model": "deepseek-flash",
+            "reasoning_effort": "low",
+            "started_utc": "2026-11-15T04:56:03.138165+00:00",
+            "status": "returned",
+            "prompt_source_sha256": "68324f3aaf9b1245f1926e311a2746fb0068d19e4f530d989ad72747d6cda4d0",
+            "prompt_contract_verified": true,
+            "instruction_prefix_sha256": "6d7364ae2ef4140fd104ee7d0f703153e0a425d7186b41b337bb101c8c03f61c",
+            "elapsed_seconds": 138.3078198330004
+          },
+          {
+            "call_id": "f3a4cc99-2fd0-4183-9458-d3b468af60c6",
+            "schema_name": "IntervalRefinementResult",
+            "model": "deepseek-flash",
+            "reasoning_effort": "low",
+            "started_utc": "2026-11-15T04:56:07.590628+00:00",
+            "status": "returned",
+            "prompt_source_sha256": "68324f3aaf9b1245f1926e311a2746fb0068d19e4f530d989ad72747d6cda4d0",
+            "prompt_contract_verified": true,
+            "instruction_prefix_sha256": "37a9c0634d3a20522e4c985531b485c7bed30ed40c60da103a789343bd95dc99",
+            "elapsed_seconds": 68.49865116699948
+          },
+          {
+            "call_id": "e4bce4bc-b900-4bd5-be9d-1e1625b891b5",
+            "schema_name": "IntervalRefinementResult",
+            "model": "deepseek-flash",
+            "reasoning_effort": "low",
+            "started_utc": "2026-11-15T04:56:24.362671+00:00",
+            "status": "returned",
+            "prompt_source_sha256": "68324f3aaf9b1245f1926e311a2746fb0068d19e4f530d989ad72747d6cda4d0",
+            "prompt_contract_verified": true,
+            "instruction_prefix_sha256": "37a9c0634d3a20522e4c985531b485c7bed30ed40c60da103a789343bd95dc99",
+            "elapsed_seconds": 67.44229787499899
+          },
+          {
+            "call_id": "a6dc31c6-2de2-4b8c-909f-09a805bd4a03",
+            "schema_name": "IntervalRefinementResult",
+            "model": "deepseek-flash",
+            "reasoning_effort": "low",
+            "started_utc": "2026-11-15T04:56:42.263675+00:00",
+            "status": "returned",
+            "prompt_source_sha256": "68324f3aaf9b1245f1926e311a2746fb0068d19e4f530d989ad72747d6cda4d0",
+            "prompt_contract_verified": true,
+            "instruction_prefix_sha256": "37a9c0634d3a20522e4c985531b485c7bed30ed40c60da103a789343bd95dc99",
+            "elapsed_seconds": 101.52705545800018
+          },
+          {
+            "call_id": "393f2098-8f62-44a0-86fc-b371d99df7a1",
+            "schema_name": "IntervalRefinementResult",
+            "model": "deepseek-flash",
+            "reasoning_effort": "low",
+            "started_utc": "2026-11-15T04:56:57.913309+00:00",
+            "status": "returned",
+            "prompt_source_sha256": "68324f3aaf9b1245f1926e311a2746fb0068d19e4f530d989ad72747d6cda4d0",
+            "prompt_contract_verified": true,
+            "instruction_prefix_sha256": "37a9c0634d3a20522e4c985531b485c7bed30ed40c60da103a789343bd95dc99",
+            "elapsed_seconds": 122.8138026659999
+          },
+          {
+            "call_id": "6d53e3e7-858a-49e5-8ab3-20e54a514547",
+            "schema_name": "video_parse_v2_chunk_repair",
+            "model": "deepseek-flash",
+            "reasoning_effort": "low",
+            "started_utc": "2026-11-15T04:57:10.253470+00:00",
+            "status": "returned",
+            "prompt_source_sha256": "68324f3aaf9b1245f1926e311a2746fb0068d19e4f530d989ad72747d6cda4d0",
+            "prompt_contract_verified": true,
+            "instruction_prefix_sha256": "05d30a577d6a3587bc99ebb917f15989527500a3b4cef7a4e433668d3bba36b4",
+            "elapsed_seconds": 13.531684999999925
+          },
+          {
+            "call_id": "2b80a784-fd57-4bdd-be05-ae30d568323f",
+            "schema_name": "IntervalRefinementResult",
+            "model": "deepseek-flash",
+            "reasoning_effort": "low",
+            "started_utc": "2026-11-15T04:57:16.151072+00:00",
+            "status": "returned",
+            "prompt_source_sha256": "68324f3aaf9b1245f1926e311a2746fb0068d19e4f530d989ad72747d6cda4d0",
+            "prompt_contract_verified": true,
+            "instruction_prefix_sha256": "37a9c0634d3a20522e4c985531b485c7bed30ed40c60da103a789343bd95dc99",
+            "elapsed_seconds": 104.24566991600113
+          },
+          {
+            "call_id": "1ca3caa2-c0a3-4f26-b7c1-fe5d2ed8baae",
+            "schema_name": "IntervalRefinementResult",
+            "model": "deepseek-flash",
+            "reasoning_effort": "low",
+            "started_utc": "2026-11-15T04:57:20.214783+00:00",
+            "status": "returned",
+            "prompt_source_sha256": "68324f3aaf9b1245f1926e311a2746fb0068d19e4f530d989ad72747d6cda4d0",
+            "prompt_contract_verified": true,
+            "instruction_prefix_sha256": "37a9c0634d3a20522e4c985531b485c7bed30ed40c60da103a789343bd95dc99",
+            "elapsed_seconds": 64.12253362500087
+          },
+          {
+            "call_id": "67dbb6eb-d1b0-4bdb-bbcd-8875c88e9bc2",
+            "schema_name": "IntervalRefinementResult",
+            "model": "deepseek-flash",
+            "reasoning_effort": "low",
+            "started_utc": "2026-11-15T04:57:30.402741+00:00",
+            "status": "returned",
+            "prompt_source_sha256": "68324f3aaf9b1245f1926e311a2746fb0068d19e4f530d989ad72747d6cda4d0",
+            "prompt_contract_verified": true,
+            "instruction_prefix_sha256": "37a9c0634d3a20522e4c985531b485c7bed30ed40c60da103a789343bd95dc99",
+            "elapsed_seconds": 79.09402812500048
+          },
+          {
+            "call_id": "dbc6a225-bfd5-4be7-a021-8c6f48b91f74",
+            "schema_name": "IntervalRefinementResult",
+            "model": "deepseek-flash",
+            "reasoning_effort": "low",
+            "started_utc": "2026-11-15T04:57:31.837939+00:00",
+            "status": "returned",
+            "prompt_source_sha256": "68324f3aaf9b1245f1926e311a2746fb0068d19e4f530d989ad72747d6cda4d0",
+            "prompt_contract_verified": true,
+            "instruction_prefix_sha256": "37a9c0634d3a20522e4c985531b485c7bed30ed40c60da103a789343bd95dc99",
+            "elapsed_seconds": 42.15358691700021
+          },
+          {
+            "call_id": "d1a83dae-0e1f-4c70-9693-09f34715002f",
+            "schema_name": "IntervalRefinementResult",
+            "model": "deepseek-flash",
+            "reasoning_effort": "low",
+            "started_utc": "2026-11-15T04:58:23.837694+00:00",
+            "status": "returned",
+            "prompt_source_sha256": "68324f3aaf9b1245f1926e311a2746fb0068d19e4f530d989ad72747d6cda4d0",
+            "prompt_contract_verified": true,
+            "instruction_prefix_sha256": "37a9c0634d3a20522e4c985531b485c7bed30ed40c60da103a789343bd95dc99",
+            "elapsed_seconds": 85.40582154200092
+          },
+          {
+            "call_id": "2c720094-97fc-49fe-a9fd-35c9947ab89f",
+            "schema_name": "IntervalRefinementResult",
+            "model": "deepseek-flash",
+            "reasoning_effort": "low",
+            "started_utc": "2026-11-15T04:58:49.551513+00:00",
+            "status": "returned",
+            "prompt_source_sha256": "68324f3aaf9b1245f1926e311a2746fb0068d19e4f530d989ad72747d6cda4d0",
+            "prompt_contract_verified": true,
+            "instruction_prefix_sha256": "37a9c0634d3a20522e4c985531b485c7bed30ed40c60da103a789343bd95dc99",
+            "elapsed_seconds": 95.98697383399849
+          },
+          {
+            "call_id": "aace20e5-1734-45ec-b128-af41af2eda3e",
+            "schema_name": "IntervalRefinementResult",
+            "model": "deepseek-flash",
+            "reasoning_effort": "low",
+            "started_utc": "2026-11-15T04:59:00.768988+00:00",
+            "status": "returned",
+            "prompt_source_sha256": "68324f3aaf9b1245f1926e311a2746fb0068d19e4f530d989ad72747d6cda4d0",
+            "prompt_contract_verified": true,
+            "instruction_prefix_sha256": "37a9c0634d3a20522e4c985531b485c7bed30ed40c60da103a789343bd95dc99",
+            "elapsed_seconds": 131.71932704199935
+          },
+          {
+            "call_id": "8858d8b9-3aa3-42d4-a2ca-4646e3824408",
+            "schema_name": "IntervalRefinementResult",
+            "model": "deepseek-flash",
+            "reasoning_effort": "low",
+            "started_utc": "2026-11-15T04:59:00.782667+00:00",
+            "status": "returned",
+            "prompt_source_sha256": "68324f3aaf9b1245f1926e311a2746fb0068d19e4f530d989ad72747d6cda4d0",
+            "prompt_contract_verified": true,
+            "instruction_prefix_sha256": "37a9c0634d3a20522e4c985531b485c7bed30ed40c60da103a789343bd95dc99",
+            "elapsed_seconds": 75.07814099999996
+          },
+          {
+            "call_id": "95115421-e46a-4931-b406-faf7ad83a3a7",
+            "schema_name": "IntervalRefinementResult",
+            "model": "deepseek-flash",
+            "reasoning_effort": "low",
+            "started_utc": "2026-11-15T04:59:49.297307+00:00",
+            "status": "returned",
+            "prompt_source_sha256": "68324f3aaf9b1245f1926e311a2746fb0068d19e4f530d989ad72747d6cda4d0",
+            "prompt_contract_verified": true,
+            "instruction_prefix_sha256": "37a9c0634d3a20522e4c985531b485c7bed30ed40c60da103a789343bd95dc99",
+            "elapsed_seconds": 99.86653908299922
+          },
+          {
+            "call_id": "74dc1f2f-8f70-4c6b-aff6-3a4530155883",
+            "schema_name": "IntervalRefinementResult",
+            "model": "deepseek-flash",
+            "reasoning_effort": "low",
+            "started_utc": "2026-11-15T05:00:25.766546+00:00",
+            "status": "returned",
+            "prompt_source_sha256": "68324f3aaf9b1245f1926e311a2746fb0068d19e4f530d989ad72747d6cda4d0",
+            "prompt_contract_verified": true,
+            "instruction_prefix_sha256": "37a9c0634d3a20522e4c985531b485c7bed30ed40c60da103a789343bd95dc99",
+            "elapsed_seconds": 47.04889870799889
+          },
+          {
+            "call_id": "5afc1e15-f15f-4a72-bfae-c67155ac218b",
+            "schema_name": "IntervalRefinementResult",
+            "model": "deepseek-flash",
+            "reasoning_effort": "low",
+            "started_utc": "2026-11-15T05:01:12.543498+00:00",
+            "status": "returned",
+            "prompt_source_sha256": "68324f3aaf9b1245f1926e311a2746fb0068d19e4f530d989ad72747d6cda4d0",
+            "prompt_contract_verified": true,
+            "instruction_prefix_sha256": "37a9c0634d3a20522e4c985531b485c7bed30ed40c60da103a789343bd95dc99",
+            "elapsed_seconds": 109.92803158400056
+          },
+          {
+            "call_id": "381ff79e-69eb-436b-ad3b-9eac8c58ac1b",
+            "schema_name": "IntervalRefinementResult",
+            "model": "deepseek-flash",
+            "reasoning_effort": "low",
+            "started_utc": "2026-11-15T05:01:12.777951+00:00",
+            "status": "returned",
+            "prompt_source_sha256": "68324f3aaf9b1245f1926e311a2746fb0068d19e4f530d989ad72747d6cda4d0",
+            "prompt_contract_verified": true,
+            "instruction_prefix_sha256": "37a9c0634d3a20522e4c985531b485c7bed30ed40c60da103a789343bd95dc99",
+            "elapsed_seconds": 82.98763045799933
+          },
+          {
+            "call_id": "5fd272de-b1f1-4c75-9369-4fa92f408f60",
+            "schema_name": "IntervalRefinementResult",
+            "model": "deepseek-flash",
+            "reasoning_effort": "low",
+            "started_utc": "2026-11-15T05:01:12.818454+00:00",
+            "status": "returned",
+            "prompt_source_sha256": "68324f3aaf9b1245f1926e311a2746fb0068d19e4f530d989ad72747d6cda4d0",
+            "prompt_contract_verified": true,
+            "instruction_prefix_sha256": "37a9c0634d3a20522e4c985531b485c7bed30ed40c60da103a789343bd95dc99",
+            "elapsed_seconds": 22.951605958000073
+          }
+        ]
+      }
+    },
+    "B_two_thirds": {
+      "run_name": "audio-first-prefill-prompt-synced-20261115",
+      "progress": {
+        "case": "B_two_thirds",
+        "task_id": "c7a6af0a-4cc0-4e29-bad1-bec8b3a95b73",
+        "recorded_utc": "2026-11-15T05:04:39.404172+00:00",
+        "understanding_committed": 24,
+        "refine_complete": 8,
+        "named_ready": true,
+        "calls_started": 50,
+        "calls_returned": 36,
+        "errors": [
+          {
+            "stage": "refine",
+            "start_sequence_no": 10,
+            "error_type": "DeepSeekModelError",
+            "message": "DeepSeek request failed for model deepseek-flash: Error code: 402 - {'error': {'message': 'Insufficient Balance (request_id: e76004f5-5d2e-4a37-a67c-51ddc165d02c)', 'type': 'insufficient_balance_error', 'param': None, 'code': 'invalid_request_error'}}"
+          },
+          {
+            "stage": "refine",
+            "start_sequence_no": 11,
+            "error_type": "DeepSeekModelError",
+            "message": "DeepSeek request failed for model deepseek-flash: Error code: 402 - {'error': {'message': 'Insufficient Balance (request_id: d54a98fd-d6b4-445e-a558-6a680f5e2a19)', 'type': 'insufficient_balance_error', 'param': None, 'code': 'invalid_request_error'}}"
+          },
+          {
+            "stage": "refine",
+            "start_sequence_no": 13,
+            "error_type": "DeepSeekModelError",
+            "message": "DeepSeek request failed for model deepseek-flash: Error code: 402 - {'error': {'message': 'Insufficient Balance (request_id: 2ac306ad-79ae-422b-8d58-1374a0866821)', 'type': 'insufficient_balance_error', 'param': None, 'code': 'invalid_request_error'}}"
+          },
+          {
+            "stage": "refine",
+            "start_sequence_no": 14,
+            "error_type": "DeepSeekModelError",
+            "message": "DeepSeek request failed for model deepseek-flash: Error code: 402 - {'error': {'message': 'Insufficient Balance (request_id: abeb544c-8985-49f5-98e1-b3631f0f4135)', 'type': 'insufficient_balance_error', 'param': None, 'code': 'invalid_request_error'}}"
+          },
+          {
+            "stage": "refine",
+            "start_sequence_no": 2,
+            "error_type": "DeepSeekModelError",
+            "message": "DeepSeek request failed for model deepseek-flash: Error code: 402 - {'error': {'message': 'Insufficient Balance (request_id: 4cbaad63-925d-4ee7-a3ac-61814295a0fa)', 'type': 'insufficient_balance_error', 'param': None, 'code': 'invalid_request_error'}}"
+          },
+          {
+            "stage": "refine",
+            "start_sequence_no": 19,
+            "error_type": "DeepSeekModelError",
+            "message": "DeepSeek request failed for model deepseek-flash: Error code: 402 - {'error': {'message': 'Insufficient Balance (request_id: 6c1f5fd8-5363-4174-aa25-e64fc9bbe113)', 'type': 'insufficient_balance_error', 'param': None, 'code': 'invalid_request_error'}}"
+          },
+          {
+            "stage": "refine",
+            "start_sequence_no": 16,
+            "error_type": "DeepSeekModelError",
+            "message": "DeepSeek request failed for model deepseek-flash: Error code: 402 - {'error': {'message': 'Insufficient Balance (request_id: 165fb1a8-6eb3-4e9b-8544-88b1b8bae0a4)', 'type': 'insufficient_balance_error', 'param': None, 'code': 'invalid_request_error'}}"
+          },
+          {
+            "stage": "refine",
+            "start_sequence_no": 20,
+            "error_type": "DeepSeekModelError",
+            "message": "DeepSeek request failed for model deepseek-flash: Error code: 402 - {'error': {'message': 'Insufficient Balance (request_id: 6dea99e7-b96c-4409-9dd7-5ab4dd180e2a)', 'type': 'insufficient_balance_error', 'param': None, 'code': 'invalid_request_error'}}"
+          },
+          {
+            "stage": "refine",
+            "start_sequence_no": 17,
+            "error_type": "DeepSeekModelError",
+            "message": "DeepSeek request failed for model deepseek-flash: Error code: 402 - {'error': {'message': 'Insufficient Balance (request_id: fd9987d6-5a95-4a7c-9cba-42339df218d1)', 'type': 'insufficient_balance_error', 'param': None, 'code': 'invalid_request_error'}}"
+          },
+          {
+            "stage": "refine",
+            "start_sequence_no": 6,
+            "error_type": "DeepSeekModelError",
+            "message": "DeepSeek request failed for model deepseek-flash: max_output_tokens; code=max_output_tokens; response_id=c7d39bcc-32f1-4571-b5d5-9923d391f171; partial_output_chars=19488"
+          },
+          {
+            "stage": "refine",
+            "start_sequence_no": 4,
+            "error_type": "DeepSeekModelError",
+            "message": "DeepSeek request failed for model deepseek-flash: Error code: 402 - {'error': {'message': 'Insufficient Balance (request_id: 91ea3e9c-0af8-4b2c-89e9-88777e6a7ae0)', 'type': 'insufficient_balance_error', 'param': None, 'code': 'invalid_request_error'}}"
+          },
+          {
+            "stage": "refine",
+            "start_sequence_no": 7,
+            "error_type": "DeepSeekModelError",
+            "message": "DeepSeek request failed for model deepseek-flash: Error code: 402 - {'error': {'message': 'Insufficient Balance (request_id: eeffabda-ae09-45d1-9f27-95d85570d57f)', 'type': 'insufficient_balance_error', 'param': None, 'code': 'invalid_request_error'}}"
+          },
+          {
+            "stage": "refine",
+            "start_sequence_no": 5,
+            "error_type": "DeepSeekModelError",
+            "message": "DeepSeek request failed for model deepseek-flash: Error code: 402 - {'error': {'message': 'Insufficient Balance (request_id: d83adbd7-af0e-4551-b973-5e2371dbea7f)', 'type': 'insufficient_balance_error', 'param': None, 'code': 'invalid_request_error'}}"
+          },
+          {
+            "stage": "refine",
+            "start_sequence_no": 8,
+            "error_type": "DeepSeekModelError",
+            "message": "DeepSeek request failed for model deepseek-flash: Error code: 402 - {'error': {'message': 'Insufficient Balance (request_id: c40a311f-2100-4462-a378-1b63b9d97d37)', 'type': 'insufficient_balance_error', 'param': None, 'code': 'invalid_request_error'}}"
+          }
+        ],
+        "elapsed_seconds": 696.020029917001
+      },
+      "initial_understanding_targets": {
+        "opening_soyo": [
+          {
+            "start_seconds": 47500,
+            "end_seconds": 49500,
+            "speaker": "高松燈",
+            "speaker_source": "understanding",
+            "description": "高松燈抬起头，轻声说祥子也没有错。",
+            "text_variants": [
+              {
+                "language": "ja",
+                "role": "ORIGINAL",
+                "text": "祥ちゃんも悪くない"
+              },
+              {
+                "language": "zh-Hans",
+                "role": "TRANSLATION",
+                "text": "小祥也没有错"
+              }
+            ]
+          }
+        ],
+        "anon_introduction": [
+          {
+            "start_seconds": 292500,
+            "end_seconds": 293500,
+            "speaker": "千早愛音",
+            "speaker_source": "understanding",
+            "description": "千早愛音在樓梯上回頭，低聲念出「長崎…」，神情動搖。",
+            "text_variants": [
+              {
+                "language": "ja",
+                "role": "ORIGINAL",
+                "text": "長崎…"
+              },
+              {
+                "language": "zh-Hans",
+                "role": "TRANSLATION",
+                "text": "长崎…"
+              }
+            ]
+          },
+          {
+            "start_seconds": 294500,
+            "end_seconds": 296500,
+            "speaker": "若葉睦",
+            "speaker_source": "understanding",
+            "description": "若葉睦近景繼續平靜地說出長崎素世的名字，提到「長崎そよちゃんと…」。",
+            "text_variants": [
+              {
+                "language": "ja",
+                "role": "ORIGINAL",
+                "text": "長崎そよちゃんと…"
+              },
+              {
+                "language": "zh-Hans",
+                "role": "TRANSLATION",
+                "text": "长崎素世…"
+              }
+            ]
+          }
+        ]
+      },
+      "final_targets": {
+        "opening_soyo": [
+          {
+            "start_seconds": 47500,
+            "end_seconds": 49500,
+            "speaker": "高松燈",
+            "speaker_source": "refine_edit",
+            "description": "高松燈抬起头，轻声说祥子也没有错。",
+            "text_variants": [
+              {
+                "language": "ja",
+                "role": "ORIGINAL",
+                "text": "祥ちゃんも悪くない"
+              },
+              {
+                "language": "zh-Hans",
+                "role": "TRANSLATION",
+                "text": "小祥也没有错"
+              }
+            ]
+          }
+        ],
+        "anon_introduction": [
+          {
+            "start_seconds": 292500,
+            "end_seconds": 293500,
+            "speaker": "千早愛音",
+            "speaker_source": "refine_edit",
+            "description": "千早愛音在樓梯上回頭，低聲念出「長崎…」，神情動搖。",
+            "text_variants": [
+              {
+                "language": "ja",
+                "role": "ORIGINAL",
+                "text": "長崎…"
+              },
+              {
+                "language": "zh-Hans",
+                "role": "TRANSLATION",
+                "text": "长崎…"
+              }
+            ]
+          },
+          {
+            "start_seconds": 294500,
+            "end_seconds": 296500,
+            "speaker": "若葉睦",
+            "speaker_source": "refine_edit",
+            "description": "若葉睦近景繼續平靜地說出長崎素世的名字，提到「長崎そよちゃんと…」。",
+            "text_variants": [
+              {
+                "language": "ja",
+                "role": "ORIGINAL",
+                "text": "長崎そよちゃんと…"
+              },
+              {
+                "language": "zh-Hans",
+                "role": "TRANSLATION",
+                "text": "长崎素世…"
+              }
+            ]
+          }
+        ]
+      },
+      "calls_by_schema": {
+        "IntervalRefinementResult": 22,
+        "video_parse_v2_chunk": 24,
+        "video_parse_v2_chunk_repair": 4
+      },
+      "refine_target_inputs": [
+        {
+          "call_id": "093a7b86-5043-480e-b7f2-c028ddb38597",
+          "status": "returned",
+          "members": [
+            {
+              "sequence_no": 0,
+              "targets": {
+                "opening_soyo": [
+                  {
+                    "start_seconds": 47500,
+                    "end_seconds": 49500,
+                    "speaker": "長崎そよ",
+                    "speaker_source": null,
+                    "description": "高松燈抬起头，轻声说祥子也没有错。",
+                    "text_variants": [
+                      {
+                        "language": "ja",
+                        "role": "ORIGINAL",
+                        "text": "祥ちゃんも悪くない"
+                      },
+                      {
+                        "language": "zh-Hans",
+                        "role": "TRANSLATION",
+                        "text": "小祥也没有错"
+                      }
+                    ]
+                  }
+                ],
+                "anon_introduction": []
+              }
+            }
+          ],
+          "output_targets": {
+            "opening_soyo": [
+              {
+                "start_seconds": 47500,
+                "end_seconds": 49500,
+                "speaker": "高松燈",
+                "speaker_source": null,
+                "description": "高松燈抬起头，轻声说祥子也没有错。",
+                "text_variants": [
+                  {
+                    "language": "ja",
+                    "role": "ORIGINAL",
+                    "text": "祥ちゃんも悪くない"
+                  },
+                  {
+                    "language": "zh-Hans",
+                    "role": "TRANSLATION",
+                    "text": "小祥也没有错"
+                  }
+                ]
+              }
+            ],
+            "anon_introduction": []
+          }
+        },
+        {
+          "call_id": "52e9cc8c-100b-461c-ae46-6fdb000768de",
+          "status": "error",
+          "members": [
+            {
+              "sequence_no": 4,
+              "targets": {
+                "opening_soyo": [],
+                "anon_introduction": [
+                  {
+                    "start_seconds": 292500,
+                    "end_seconds": 293500,
+                    "speaker": "千早愛音",
+                    "speaker_source": null,
+                    "description": "千早愛音在樓梯上回頭，低聲念出「長崎…」，神情動搖。",
+                    "text_variants": [
+                      {
+                        "language": "ja",
+                        "role": "ORIGINAL",
+                        "text": "長崎…"
+                      },
+                      {
+                        "language": "zh-Hans",
+                        "role": "TRANSLATION",
+                        "text": "长崎…"
+                      }
+                    ]
+                  },
+                  {
+                    "start_seconds": 294500,
+                    "end_seconds": 296500,
+                    "speaker": "若葉睦",
+                    "speaker_source": null,
+                    "description": "若葉睦近景繼續平靜地說出長崎素世的名字，提到「長崎そよちゃんと…」。",
+                    "text_variants": [
+                      {
+                        "language": "ja",
+                        "role": "ORIGINAL",
+                        "text": "長崎そよちゃんと…"
+                      },
+                      {
+                        "language": "zh-Hans",
+                        "role": "TRANSLATION",
+                        "text": "长崎素世…"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          ],
+          "output_targets": {
+            "opening_soyo": [],
+            "anon_introduction": []
+          }
+        },
+        {
+          "call_id": "85578bfc-10f9-49a3-a378-48006afc7d6d",
+          "status": "error",
+          "members": [
+            {
+              "sequence_no": 4,
+              "targets": {
+                "opening_soyo": [],
+                "anon_introduction": [
+                  {
+                    "start_seconds": 292500,
+                    "end_seconds": 293500,
+                    "speaker": "千早愛音",
+                    "speaker_source": null,
+                    "description": "千早愛音在樓梯上回頭，低聲念出「長崎…」，神情動搖。",
+                    "text_variants": [
+                      {
+                        "language": "ja",
+                        "role": "ORIGINAL",
+                        "text": "長崎…"
+                      },
+                      {
+                        "language": "zh-Hans",
+                        "role": "TRANSLATION",
+                        "text": "长崎…"
+                      }
+                    ]
+                  },
+                  {
+                    "start_seconds": 294500,
+                    "end_seconds": 296500,
+                    "speaker": "若葉睦",
+                    "speaker_source": null,
+                    "description": "若葉睦近景繼續平靜地說出長崎素世的名字，提到「長崎そよちゃんと…」。",
+                    "text_variants": [
+                      {
+                        "language": "ja",
+                        "role": "ORIGINAL",
+                        "text": "長崎そよちゃんと…"
+                      },
+                      {
+                        "language": "zh-Hans",
+                        "role": "TRANSLATION",
+                        "text": "长崎素世…"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          ],
+          "output_targets": {
+            "opening_soyo": [],
+            "anon_introduction": []
+          }
+        },
+        {
+          "call_id": "a9a84239-e897-4070-9fc6-c8ceeedaff53",
+          "status": "returned",
+          "members": [
+            {
+              "sequence_no": 4,
+              "targets": {
+                "opening_soyo": [],
+                "anon_introduction": [
+                  {
+                    "start_seconds": 292500,
+                    "end_seconds": 293500,
+                    "speaker": "長崎そよ",
+                    "speaker_source": null,
+                    "description": "千早愛音在樓梯上回頭，低聲念出「長崎…」，神情動搖。",
+                    "text_variants": [
+                      {
+                        "language": "ja",
+                        "role": "ORIGINAL",
+                        "text": "長崎…"
+                      },
+                      {
+                        "language": "zh-Hans",
+                        "role": "TRANSLATION",
+                        "text": "长崎…"
+                      }
+                    ]
+                  },
+                  {
+                    "start_seconds": 294500,
+                    "end_seconds": 296500,
+                    "speaker": "千早愛音",
+                    "speaker_source": null,
+                    "description": "若葉睦近景繼續平靜地說出長崎素世的名字，提到「長崎そよちゃんと…」。",
+                    "text_variants": [
+                      {
+                        "language": "ja",
+                        "role": "ORIGINAL",
+                        "text": "長崎そよちゃんと…"
+                      },
+                      {
+                        "language": "zh-Hans",
+                        "role": "TRANSLATION",
+                        "text": "长崎素世…"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          ],
+          "output_targets": {
+            "opening_soyo": [],
+            "anon_introduction": [
+              {
+                "start_seconds": 292500,
+                "end_seconds": 293500,
+                "speaker": "千早愛音",
+                "speaker_source": null,
+                "description": "千早愛音在樓梯上回頭，低聲念出「長崎…」，神情動搖。",
+                "text_variants": [
+                  {
+                    "language": "ja",
+                    "role": "ORIGINAL",
+                    "text": "長崎…"
+                  },
+                  {
+                    "language": "zh-Hans",
+                    "role": "TRANSLATION",
+                    "text": "长崎…"
+                  }
+                ]
+              },
+              {
+                "start_seconds": 294500,
+                "end_seconds": 296500,
+                "speaker": "若葉睦",
+                "speaker_source": null,
+                "description": "若葉睦近景繼續平靜地說出長崎素世的名字，提到「長崎そよちゃんと…」。",
+                "text_variants": [
+                  {
+                    "language": "ja",
+                    "role": "ORIGINAL",
+                    "text": "長崎そよちゃんと…"
+                  },
+                  {
+                    "language": "zh-Hans",
+                    "role": "TRANSLATION",
+                    "text": "长崎素世…"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "voice_targets": [
+        {
+          "target": "opening_soyo",
+          "start_ms": 47500,
+          "end_ms": 49500,
+          "understanding_speaker": "高松燈",
+          "band": "CONFLICT",
+          "gap": 0.0963410574656205,
+          "candidates": [
+            {
+              "speaker": "長崎そよ",
+              "similarity": 0.7731616581433638
+            },
+            {
+              "speaker": "千早愛音",
+              "similarity": 0.6768206006777433
+            },
+            {
+              "speaker": "椎名立希",
+              "similarity": 0.654481188257644
+            },
+            {
+              "speaker": "高松燈",
+              "similarity": 0.5666284679575384
+            }
+          ]
+        },
+        {
+          "target": "anon_introduction",
+          "start_ms": 292500,
+          "end_ms": 293500,
+          "understanding_speaker": "千早愛音",
+          "band": "CONFLICT",
+          "gap": 0.08033665710082327,
+          "candidates": [
+            {
+              "speaker": "長崎そよ",
+              "similarity": 0.3138728066291956
+            },
+            {
+              "speaker": "千早愛音",
+              "similarity": 0.23353614952837232
+            },
+            {
+              "speaker": "高松燈",
+              "similarity": 0.22697677894569462
+            }
+          ]
+        },
+        {
+          "target": "anon_introduction",
+          "start_ms": 294500,
+          "end_ms": 296500,
+          "understanding_speaker": "若葉睦",
+          "band": "CONFLICT",
+          "gap": 0.08573283661727216,
+          "candidates": [
+            {
+              "speaker": "千早愛音",
+              "similarity": 0.7724431871734725
+            },
+            {
+              "speaker": "長崎そよ",
+              "similarity": 0.6867103505562003
+            },
+            {
+              "speaker": "椎名立希",
+              "similarity": 0.6850977106160558
+            },
+            {
+              "speaker": "若葉睦",
+              "similarity": 0.4871291365025796
+            }
+          ]
+        }
+      ],
+      "call_statuses": {
+        "error": 14,
+        "returned": 36
+      },
+      "actual_calls": [
+        {
+          "call_id": "01fb0bde-6e4c-41c9-b038-7fb73a6c5240",
+          "schema": "IntervalRefinementResult",
+          "status": "error",
+          "elapsed_seconds": 0.5858207080000284
+        },
+        {
+          "call_id": "024473d9-3d3e-449e-b113-f4708334b795",
+          "schema": "IntervalRefinementResult",
+          "status": "error",
+          "elapsed_seconds": 0.5602956250004354
+        },
+        {
+          "call_id": "036a1c70-c923-4937-8a9f-e4d2d1dc8526",
+          "schema": "IntervalRefinementResult",
+          "status": "error",
+          "elapsed_seconds": 0.6036561250002705
+        },
+        {
+          "call_id": "07c9a3fc-96ea-48ba-b47e-8632e5491218",
+          "schema": "video_parse_v2_chunk",
+          "status": "returned",
+          "elapsed_seconds": 118.28211033400112
+        },
+        {
+          "call_id": "093a7b86-5043-480e-b7f2-c028ddb38597",
+          "schema": "IntervalRefinementResult",
+          "status": "returned",
+          "elapsed_seconds": 104.9239951669988
+        },
+        {
+          "call_id": "0a798067-55e4-48ec-9fdd-29273406f8e2",
+          "schema": "IntervalRefinementResult",
+          "status": "error",
+          "elapsed_seconds": 0.5723828750014945
+        },
+        {
+          "call_id": "1498eef6-f83b-443c-9889-c07c81d1e089",
+          "schema": "video_parse_v2_chunk",
+          "status": "returned",
+          "elapsed_seconds": 57.36942212499889
+        },
+        {
+          "call_id": "22d737ae-38c0-4d58-b656-52d0a04c39ca",
+          "schema": "IntervalRefinementResult",
+          "status": "returned",
+          "elapsed_seconds": 37.42803316699974
+        },
+        {
+          "call_id": "27be0ef3-f344-418e-85e2-aa814a08dd31",
+          "schema": "video_parse_v2_chunk",
+          "status": "returned",
+          "elapsed_seconds": 75.82343616700018
+        },
+        {
+          "call_id": "35537517-beba-4995-8873-a382fdc477a0",
+          "schema": "video_parse_v2_chunk",
+          "status": "returned",
+          "elapsed_seconds": 70.25122725000074
+        },
+        {
+          "call_id": "3736a081-c8ee-4a07-b837-ee9b346069ee",
+          "schema": "video_parse_v2_chunk",
+          "status": "returned",
+          "elapsed_seconds": 61.26058316600029
+        },
+        {
+          "call_id": "3a2d0b90-7424-4c35-b3ac-84ad95c912a3",
+          "schema": "video_parse_v2_chunk",
+          "status": "returned",
+          "elapsed_seconds": 131.5024382090014
+        },
+        {
+          "call_id": "45160a09-4d24-4fda-8b78-08bcecc38d24",
+          "schema": "video_parse_v2_chunk",
+          "status": "returned",
+          "elapsed_seconds": 112.25286904200038
+        },
+        {
+          "call_id": "46eff991-2974-44dc-8b91-69696b7269e6",
+          "schema": "video_parse_v2_chunk",
+          "status": "returned",
+          "elapsed_seconds": 91.97731299999941
+        },
+        {
+          "call_id": "473cd3ad-8b8d-4603-970a-0cdf16661b9b",
+          "schema": "video_parse_v2_chunk",
+          "status": "returned",
+          "elapsed_seconds": 126.9983787910005
+        },
+        {
+          "call_id": "52483e93-ff17-4bd5-a8df-07b4d2b64fff",
+          "schema": "IntervalRefinementResult",
+          "status": "returned",
+          "elapsed_seconds": 98.93028587499975
+        },
+        {
+          "call_id": "52e9cc8c-100b-461c-ae46-6fdb000768de",
+          "schema": "IntervalRefinementResult",
+          "status": "error",
+          "elapsed_seconds": 0.6136012909992132
+        },
+        {
+          "call_id": "550b882b-6ae2-4d57-a4a3-ca3343a0f7eb",
+          "schema": "IntervalRefinementResult",
+          "status": "error",
+          "elapsed_seconds": 0.4608014159985032
+        },
+        {
+          "call_id": "59fab02d-3587-4cdc-8b3b-7e6e11dc306b",
+          "schema": "IntervalRefinementResult",
+          "status": "error",
+          "elapsed_seconds": 0.4919517079997604
+        },
+        {
+          "call_id": "662eaa81-e915-4bf1-9a4b-ce20c430c1ce",
+          "schema": "video_parse_v2_chunk",
+          "status": "returned",
+          "elapsed_seconds": 88.76917616600076
+        },
+        {
+          "call_id": "748aa11d-8e6c-4c10-9f2e-a80caa69ab0b",
+          "schema": "video_parse_v2_chunk",
+          "status": "returned",
+          "elapsed_seconds": 119.94331416700152
+        },
+        {
+          "call_id": "76dd2139-3fc3-47bf-b2d7-a803ee84c8cb",
+          "schema": "IntervalRefinementResult",
+          "status": "error",
+          "elapsed_seconds": 0.6027100419996714
+        },
+        {
+          "call_id": "7735d93d-b345-430a-8b97-ca81349958a7",
+          "schema": "video_parse_v2_chunk_repair",
+          "status": "returned",
+          "elapsed_seconds": 16.954473624999082
+        },
+        {
+          "call_id": "7953c3cc-989c-4b05-94aa-cc23fc2cfd3f",
+          "schema": "IntervalRefinementResult",
+          "status": "error",
+          "elapsed_seconds": 0.5801870830000553
+        },
+        {
+          "call_id": "7c878f17-4068-407a-9dea-3e47455bebd4",
+          "schema": "IntervalRefinementResult",
+          "status": "returned",
+          "elapsed_seconds": 122.41300583300108
+        },
+        {
+          "call_id": "85578bfc-10f9-49a3-a378-48006afc7d6d",
+          "schema": "IntervalRefinementResult",
+          "status": "error",
+          "elapsed_seconds": 0.5025544170002831
+        },
+        {
+          "call_id": "86764eef-91c7-4d4b-b1ac-8be73eb26491",
+          "schema": "IntervalRefinementResult",
+          "status": "error",
+          "elapsed_seconds": 220.83243787500032
+        },
+        {
+          "call_id": "876443a1-0504-4b2e-95e7-2bd6204cc63b",
+          "schema": "video_parse_v2_chunk",
+          "status": "returned",
+          "elapsed_seconds": 78.29015208399869
+        },
+        {
+          "call_id": "9478aade-3f32-4c4e-bdcd-934067541af3",
+          "schema": "IntervalRefinementResult",
+          "status": "returned",
+          "elapsed_seconds": 134.1899983330004
+        },
+        {
+          "call_id": "9bef5578-207d-40b2-90f8-3b711b7d433c",
+          "schema": "video_parse_v2_chunk",
+          "status": "returned",
+          "elapsed_seconds": 104.06872554199981
+        },
+        {
+          "call_id": "9cfc7b79-634b-4901-8895-95bc8418090b",
+          "schema": "video_parse_v2_chunk",
+          "status": "returned",
+          "elapsed_seconds": 90.42756166599975
+        },
+        {
+          "call_id": "a0dd42e8-ed0e-481e-88ce-55a73256f1bc",
+          "schema": "video_parse_v2_chunk",
+          "status": "returned",
+          "elapsed_seconds": 127.59504887500043
+        },
+        {
+          "call_id": "a149b4a5-35a3-46d6-8f54-ef3cc0f43ba3",
+          "schema": "IntervalRefinementResult",
+          "status": "returned",
+          "elapsed_seconds": 110.68580345800001
+        },
+        {
+          "call_id": "a3ce0aee-3a64-4820-ab9b-2c063015825c",
+          "schema": "video_parse_v2_chunk",
+          "status": "returned",
+          "elapsed_seconds": 75.50247662500078
+        },
+        {
+          "call_id": "a828d19c-85ca-4351-87b2-4656728c3550",
+          "schema": "IntervalRefinementResult",
+          "status": "error",
+          "elapsed_seconds": 0.5440276249992166
+        },
+        {
+          "call_id": "a9a84239-e897-4070-9fc6-c8ceeedaff53",
+          "schema": "IntervalRefinementResult",
+          "status": "returned",
+          "elapsed_seconds": 118.12857975000043
+        },
+        {
+          "call_id": "add482ef-e69f-4239-aa96-778bf1c2cccd",
+          "schema": "video_parse_v2_chunk",
+          "status": "returned",
+          "elapsed_seconds": 116.39527066699884
+        },
+        {
+          "call_id": "b0b967c0-1270-4806-ad2e-c9cb945f0a91",
+          "schema": "video_parse_v2_chunk",
+          "status": "returned",
+          "elapsed_seconds": 52.66993904100127
+        },
+        {
+          "call_id": "c6ae44a0-24fc-434d-b7b2-f84d05b4922a",
+          "schema": "video_parse_v2_chunk",
+          "status": "returned",
+          "elapsed_seconds": 148.88145737500054
+        },
+        {
+          "call_id": "c6cff40f-4a50-4ffd-9536-5d930dd03a31",
+          "schema": "IntervalRefinementResult",
+          "status": "returned",
+          "elapsed_seconds": 126.01479545800066
+        },
+        {
+          "call_id": "c847217c-032f-4e24-9995-73200f969cd6",
+          "schema": "IntervalRefinementResult",
+          "status": "error",
+          "elapsed_seconds": 0.4754775840010552
+        },
+        {
+          "call_id": "c8bbf768-2a0f-439c-83d6-ba23a5ee77af",
+          "schema": "video_parse_v2_chunk",
+          "status": "returned",
+          "elapsed_seconds": 70.45636145800017
+        },
+        {
+          "call_id": "c955dded-a7d9-4eb8-b9f9-8884c25c3a2b",
+          "schema": "video_parse_v2_chunk_repair",
+          "status": "returned",
+          "elapsed_seconds": 33.212562167000215
+        },
+        {
+          "call_id": "d4c861e3-fc4c-4cc4-9459-38ff437c5102",
+          "schema": "video_parse_v2_chunk",
+          "status": "returned",
+          "elapsed_seconds": 66.57622166700094
+        },
+        {
+          "call_id": "d8c240ce-3742-41ed-9e41-0aed2e7a5206",
+          "schema": "video_parse_v2_chunk",
+          "status": "returned",
+          "elapsed_seconds": 101.29997062499933
+        },
+        {
+          "call_id": "dd26fcf3-ecd4-4528-8d18-db97613073d5",
+          "schema": "video_parse_v2_chunk_repair",
+          "status": "returned",
+          "elapsed_seconds": 13.806759791999866
+        },
+        {
+          "call_id": "e5e77245-c18b-412c-b934-89175be088c2",
+          "schema": "video_parse_v2_chunk",
+          "status": "returned",
+          "elapsed_seconds": 130.2566160839997
+        },
+        {
+          "call_id": "e82f4ec8-ebef-4a43-b352-31621dbdf2c6",
+          "schema": "IntervalRefinementResult",
+          "status": "error",
+          "elapsed_seconds": 0.5017927080007212
+        },
+        {
+          "call_id": "f46f0dca-3bb0-448c-8fed-e27638741166",
+          "schema": "video_parse_v2_chunk_repair",
+          "status": "returned",
+          "elapsed_seconds": 10.143491750000976
+        },
+        {
+          "call_id": "f84707b0-0931-4d8c-bb10-b1d88f00c287",
+          "schema": "video_parse_v2_chunk",
+          "status": "returned",
+          "elapsed_seconds": 144.50925674999962
+        }
+      ],
+      "prompt_contract_verified_calls": 50,
+      "refine_instruction_prefix_sha256s": [
+        "37a9c0634d3a20522e4c985531b485c7bed30ed40c60da103a789343bd95dc99"
+      ],
+      "understanding_committed_at_first_refine": 19,
+      "first_refine_started_utc": "2026-11-15T05:00:53.517532+00:00",
+      "last_understanding_committed_utc": "2026-11-15T05:01:32.822194+00:00",
+      "refine_start_before_last_understanding_seconds": 39.304662,
+      "named_timing": {
+        "started_utc": "2026-11-15T05:00:43.713419+00:00",
+        "understanding_committed_at_start": 16,
+        "reference_chunk_count": 16,
+        "ready_utc": "2026-11-15T05:00:50.997750+00:00",
+        "understanding_committed_at_ready": 19
+      },
+      "archived_refine_attempt_entries": 0,
+      "recovery": null,
+      "frozen_sixteen_receipt_verified": true,
+      "frozen_sixteen_sequence_nos": [
+        0,
+        1,
+        5,
+        3,
+        2,
+        6,
+        4,
+        8,
+        9,
+        7,
+        10,
+        13,
+        12,
+        18,
+        11,
+        15
+      ],
+      "frozen_anchor_expressions": 175,
+      "frozen_named_anchor_expressions": 154,
+      "named_line_count": 313,
+      "named_bands": {
+        "NO_VOICE": 103,
+        "None": 114,
+        "ACCEPT": 22,
+        "CONFLICT": 74
+      },
+      "complete": false,
+      "committed_interval_receipts": 8
+    }
+  },
+  "expected_targets": {
+    "opening_soyo": {
+      "start_ms": 48000,
+      "end_ms": 49800,
+      "speaker": "長崎そよ"
+    },
+    "anon_introduction": {
+      "start_ms": 292500,
+      "end_ms": 295499,
+      "speaker": "千早愛音"
+    }
+  },
+  "limits": [
+    "One live run per variant; no identity-error probability estimate.",
+    "Only two target identities are human-confirmed; no full-episode accuracy claim.",
+    "Real Agent workflows and configured model calls; file-backed experimental host, no Server/DB/indexing verification.",
+    "Shared model concurrency and file-host member locking differ from independent Server task timing.",
+    "Call counts describe instrumented generation entries; provider tokens/fees were not collected."
+  ],
+  "initial_understanding_request_multisets_equal": true,
+  "primary_case_selection": {
+    "primary_A": "audio-first-prefill-prompt-synced-20261115/A_audio_only",
+    "primary_B": "audio-first-prefill-prompt-synced-20261115/B_two_thirds",
+    "reason": "Full EP04 A/B with all previously approved prompts restored; same ASR and phase1 acoustic cache, fresh Understanding and Refine.",
+    "selection_based_on_target_outcome": false
+  },
+  "original_asr_unchanged": true
+}

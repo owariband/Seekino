@@ -1,0 +1,15 @@
+{
+  "approved_prompt_source_sha256": "68324f3aaf9b1245f1926e311a2746fb0068d19e4f530d989ad72747d6cda4d0",
+  "previous_passing_prompt_source_equal": true,
+  "rendered_refine_instruction_prefix_sha256": "37a9c0634d3a20522e4c985531b485c7bed30ed40c60da103a789343bd95dc99",
+  "previous_passing_rendered_refine_prefix_equal": true,
+  "restored_from_commit": "4501777318a49438fdfe7be79d18678e4be38670",
+  "offscreen_commit_retained": "ceee38eab42dc29b667f7b988c0f7cc8042e073d",
+  "related_tests_passed": 174,
+  "related_tests_seconds": 0.77,
+  "known_incomplete_requests_rejected_before_model": [
+    "video_parse_v2_chunk",
+    "IntervalRefinementResult"
+  ],
+  "negative_probe_model_calls": 0
+}

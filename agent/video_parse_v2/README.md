@@ -148,6 +148,13 @@ Understanding subgraph nodes (`asr`, `visual`, `ocr`, `understanding`) own
 bounded retries for timeouts and transport failures, using the frozen execution
 retry configuration. Successful upstream observations stay in graph state;
 retrying Understanding does not rerun ASR. The execution deadline does not reset.
+Understanding is instructed to preserve independent ASR cues and distinct
+utterances as separate DIALOGUE events, with their own audio intervals. It may
+correct evidence-supported errors or split a mixed-speaker cue. Refine considers
+consolidation only for a supported continuous utterance by the same speaker;
+adjacency, matching labels or a shared topic alone do not justify merging, and
+different speakers or unresolved turns retain their boundaries.
+
 Understanding keeps the complete model candidate until the Agent validates the canonical
 `VideoParseResult`. A schema rejection supplies the original JSON and exact field paths
 for up to `max_retry_count` text-only repairs with the same frozen model; images and ASR
