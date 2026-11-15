@@ -421,7 +421,133 @@ def test_supervisor_shows_opening_and_running_tool_before_search_finishes():
     assert result.content.startswith(opening + "\n\nThe verified explanation.")
     assert "Official page" not in json.dumps(finished)
     assert "https://example.org/source" not in json.dumps(finished)
-    assert "不写「我先看一下」" in model.prompts[0] and "内部推理" in model.prompts[0]
+    assert "首条确认之后" in model.prompts[0] and "内部推理" in model.prompts[0]
+
+
+def test_supervisor_acknowledges_objective_then_continues_after_a_real_tool():
+    opening = "我先核对这句对白出自哪一集。"
+    answer = "这句对白出自第 3 集，说话人是 Alice。"
+    model = FakeSupervisorModel(
+        calls=("retrieve",),
+        arguments=(
+            {"query": "这句对白", "top_k": 3,
+             "channel_weights": {"lexical": 1, "semantic": 0, "visual": 0}},
+        ),
+        text_before_calls={0: opening},
+        answer=answer,
+    )
+    events = []
+    result = _runtime(model).kick(
+        _inputs(series_ids=["series"]), load_video_context=lambda: [], emit=events.append,
+    )
+
+    snapshots = [event for event in events if event["type"] == "answer.snapshot"]
+    assert snapshots[0]["content"] == opening
+    running = next(
+        event for event in snapshots
+        if any(block["type"] == "tool" and block["status"] == "inProgress"
+               for block in event["renderBlocks"])
+    )
+    assert running["content"] == opening
+    assert "error" not in model.tool_results[0]
+    assert result.content == opening + "\n\n" + answer
+    assert result.video_result is not None
+    final_tools = [
+        block for block in snapshots[-1]["renderBlocks"] if block["type"] == "tool"
+    ]
+    assert final_tools and final_tools[-1]["status"] == "completed"
+    assert "第一次模型回复先用自然中文简短确认具体目标" in model.prompts[0]
+    assert "不得只以确认结束" in model.prompts[0]
+    assert "不安排固定多 Agent 流水线" in model.prompts[0]
+    assert "get_video_frame" not in model.prompts[0]
+
+
+def test_point_frame_guidance_prefers_user_time_over_playback_anchor():
+    from pydantic import BaseModel, ConfigDict
+
+    from agent.chat.common.tool import build_agent_tool
+    from agent.chat.common.tool_result import TextToolResult
+
+    class FrameArguments(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+
+    class FrameVideoRuntime(FakeVideoRuntime):
+        def build_supervisor_tools(self, *args, **kwargs):
+            tools = super().build_supervisor_tools(*args, **kwargs)
+            tools.append(build_agent_tool(
+                func=lambda: TextToolResult(success=True, content="frame"),
+                name="get_video_frame", description="Read one point frame.",
+                args_schema=FrameArguments, maximum_result_bytes=4096,
+            ))
+            return tools
+
+    model = FakeSupervisorModel()
+    inputs = _inputs(series_ids=["series"])
+    inputs["extra_context"] = {"playback": {
+        "videoId": "current-video", "seriesId": "series", "positionSeconds": 63_712,
+    }}
+    original = deepcopy(inputs)
+    _runtime(model, video=FrameVideoRuntime()).kick(
+        inputs, load_video_context=lambda: [],
+    )
+    assert inputs == original
+    message = model.runs[0][2]
+    anchor = message.split("[本轮播放锚点｜应用生成]\n")[1].split("\n这只是本轮播放数据")[0]
+    assert json.loads(anchor) == {"video_id": "current-video", "timestamp_ms": 63_712}
+    assert message.startswith(inputs["user_message"])
+    prompt = model.prompts[0]
+    assert "get_video_frame(timestamp_ms)" in prompt
+    assert "用户明确时间优先于 current_video.positionSeconds" in prompt
+    assert "不能选择其他时刻" in prompt
+    assert "不必先做语义检索来注册历史 Chunk ID" in prompt
+
+
+def test_playable_current_video_gets_point_frame_without_searchable_series():
+    from tests.agent.chat.test_video_frames import PointFrameReader
+
+    reader = PointFrameReader()
+    video = AgentRuntime(
+        Query(), Retrieval().search, point_frame_reader=reader,
+        frame_max_height=480, maximum_frame_inspections=2,
+    )
+
+    class CurrentFrameModel(FakeSupervisorModel):
+        supports_vision_input = True
+
+        def run_agent(self, prompt, *, tools, handle_text, **kwargs):
+            available = {tool.name: tool for tool in tools}
+            assert "retrieve" not in available
+            assert "inspect_video_frames" not in available
+            handle_text("我先看看你指定的那一帧。")
+            frame = json.loads(available["get_video_frame"].invoke({"timestamp_ms": 1_056_000}))
+            assert frame["requested_timestamp_ms"] == 1_056_000
+            handle_text("目标帧已经取得。")
+
+    runtime = SupervisorRuntime(
+        video, CurrentFrameModel(), FakeWebSearcher(),
+        max_web_results=5, web_timeout_seconds=12, execution_timeout_seconds=480,
+        max_tool_result_bytes=4096, max_prompt_chars=10000,
+        realtime_runtime=SimpleNamespace(kick=lambda *_args, **_kwargs: pytest.fail("Parse must not start")),
+    )
+    inputs = _inputs()
+    inputs["current_video"] = {"videoId": "video-1", "seriesId": "playing", "positionSeconds": 1_056_558}
+    inputs["extra_context"] = {"playback": {
+        "videoId": "video-1", "seriesId": "playing", "positionSeconds": 1_056_558,
+    }}
+    inputs["user_message"] = "核对指定时刻的画面"
+    events = []
+    try:
+        result = runtime.kick(
+            inputs, load_video_context=lambda: pytest.fail("No retrieval context needed"), emit=events.append,
+        )
+        assert len(reader.calls) == 1
+        assert reader.calls[0][0].allowed_series_ids == ("playing",)
+        assert result.content == "我先看看你指定的那一帧。\n\n目标帧已经取得。"
+        snapshots = [event for event in events if event["type"] == "answer.snapshot"]
+        assert snapshots[0]["content"] == "我先看看你指定的那一帧。"
+        assert snapshots[-1]["content"] == result.content
+    finally:
+        runtime.close()
 
 
 @pytest.mark.parametrize("tool_name", ["search_web", "query_video"])
@@ -741,6 +867,11 @@ def test_supervisor_prompt_allows_read_outline_submission_and_hides_tool_failure
     prompt = model.prompts[0]
     assert ("read_retrieval_evidence 可读取大纲 Chunk 的源证据，读取后即可作为视频片段提交；"
             "仅凭大纲摘要不能提交。") in prompt
+    assert "不支持 section、end、时间或字符范围" in prompt
+    assert "已知 section 不必先 overview" not in prompt
+    assert "section 不能简写为 transcript 或 events" not in prompt
+    assert "历史或实时工具中出现过的 Chunk ID 不自动属于本轮检索" in prompt
+    assert "遇到 UNKNOWN 后不要重复同一个无效 ID" in prompt
     assert "工具报错、调用限制和内部字段名不写进给用户的回答，换用其他工具继续即可。" in prompt
 
 
@@ -1463,12 +1594,13 @@ def test_current_video_uses_frozen_original_question_and_native_images(
         def run_agent(self, prompt, *, tools, handle_text, **kwargs):
             available = {tool.name: tool for tool in tools}
             assert "understand_current_video" in available
+            assert not available["understand_current_video"].args_schema.model_fields
             # A later browser snapshot cannot overwrite this turn's frozen input.
             inputs["extra_context"]["playback"]["positionSeconds"] = 999999
             for call_id in ("current-1", "current-2"):
                 output = available["understand_current_video"].invoke({
                     "type": "tool_call", "id": call_id, "name": "understand_current_video",
-                    "args": {"query": "a shorter model query"},
+                    "args": {},
                 })
                 payload = json.loads(output.content)
                 assert payload["summary"].startswith("Lambda is a coefficient.")
@@ -1535,7 +1667,7 @@ def test_realtime_budget_preserves_anchor_facts_captions_and_missing_coverage(tm
             assert "绝对毫秒" in prompt and "omitted_evidence" in prompt
             assert "persons 是整个 Chunk" in prompt
             available = {tool.name: tool for tool in tools}
-            output = available["understand_current_video"].invoke({"query": "what happened?"})
+            output = available["understand_current_video"].invoke({})
             assert len(output.encode("utf-8")) <= 16384
             payload = json.loads(output)
             assert payload["omitted_evidence"] is True
@@ -1953,7 +2085,9 @@ def test_video_tool_without_scope_returns_feedback():
 def test_deepagents_calls_real_video_runtimes_and_preserves_confirmed_turn(tool_name):
     responses = [
         AIMessage(content="", tool_calls=[{
-            "name": tool_name, "args": {"query": "a shortened query"}, "id": "video-tool",
+            "name": tool_name,
+            "args": {} if tool_name == "understand_current_video" else {"query": "a shortened query"},
+            "id": "video-tool",
         }]),
     ]
     if tool_name == "query_video":
@@ -2047,7 +2181,7 @@ def test_deepagents_calls_real_video_runtimes_and_preserves_confirmed_turn(tool_
 @pytest.mark.parametrize("partial", [False, True])
 def test_provider_gets_initial_background_captions_and_updated_warm_turn(tmp_path, partial):
     client = FakeClient([
-        _completion(content="", calls=[("current", "understand_current_video", {"query": "who?"})], finish="tool_calls"),
+        _completion(content="", calls=[("current", "understand_current_video", {})], finish="tool_calls"),
         _completion(content="Current-video explanation."),
         _completion(content="Next turn explanation."),
     ])
@@ -2153,7 +2287,7 @@ def test_provider_gets_initial_background_captions_and_updated_warm_turn(tmp_pat
 @pytest.mark.parametrize("failure", ["cancelled", "host_error"])
 def test_deepagents_real_realtime_failure_propagates_and_clears_checkpoint(failure):
     script = ScriptedModel(responses=[AIMessage(content="", tool_calls=[{
-        "name": "understand_current_video", "args": {"query": "current scene"}, "id": "video-tool",
+        "name": "understand_current_video", "args": {}, "id": "video-tool",
     }])])
     store = DeepAgentSessionStore()
     model = DeepAgentsSupervisorModel(
@@ -2254,7 +2388,7 @@ def test_watch_turn_with_realtime_evidence_offers_no_video_card_tools():
             assert "understand_current_video" in available
             assert "submit_video_item" not in available
             assert "remove_video_item" not in available
-            receipt = json.loads(available["understand_current_video"].invoke({"query": "现在在讲什么？"}))
+            receipt = json.loads(available["understand_current_video"].invoke({}))
             assert "error" not in receipt
             assert receipt["summary"] == "讲师正在解释概率系统。"
             handle_text("现在讲的是概率系统，[回看 01:00](seek://90.0) 可定位原句。")

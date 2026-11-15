@@ -45,7 +45,7 @@ Catalog 中常用字段：
 
 ## read_retrieval_evidence
 
-只接受当前真实检索发现的 `video_chunk_id`。首次读取只传 ID，续读传相同 ID 和返回的 `next_cursor`；不填写 section、字符范围或 revision。只读取当前结论所需的上下文。搜索分页的 cursor 和证据续读的 cursor 分属各自工具，不可混用。
+只接受本轮成功检索实际返回的 `video_chunk_id`；历史或实时工具中出现过的 ID 不代表本轮检索成员。首次读取只传 ID，续读传相同 ID 和返回的 `next_cursor`；不接受 section、end、时间、字符范围或 revision。只读取当前结论所需的上下文。搜索分页的 cursor 和证据续读的 cursor 分属各自工具，不可混用。
 
 
 ## Transcript 语言
@@ -69,7 +69,7 @@ Transcript 通道不会翻译 Query。`inputs.series_context[].transcriptLanguag
 
 检索结果中的原始证据或后续读取的证据用于核验。需要形成播放候选时，应遵守：
 
-- `video_chunk_id` 必须来自本轮或此前真实召回；
+- `video_chunk_id` 必须来自本轮成功检索实际返回的候选；历史或实时工具出现过的 ID 不代表本轮检索成员；
 - `start_seconds`、`end_seconds` 必须位于精读证据的 canonical 范围内；
 - 范围要完整覆盖支撑结论的事件、动作或对白，同时去掉明显无关的前后内容；
 - 对该片段的事实描述必须准确说明 Evidence 实际支持什么，不得把推测写成事实。
@@ -85,4 +85,4 @@ Transcript 通道不会翻译 Query。`inputs.series_context[].transcriptLanguag
 - `top_k` 和 `result_count` 计数不同 Chunk 组；`event_count` 是命中 Event 数。每张卡包含一个 `matched_event`，同一 Chunk 可以出现多张卡；分页 `total` 是 Event 卡数量。存在 `next_cursor` 时继续调用同一 Event 工具且只传 cursor。
 - Event 卡提供原始 Timeline 下标、类型、绝对毫秒时间、说话人、字段/语言/原文或译文角色与通道排名。卡片的 `event_evidence` 是权威 Timeline 对应事件的原文，命中字段和排名是筛选线索；事件原文截断或需要更广上下文时，使用 `read_retrieval_evidence`。
 - `EVENT_INDEX_NOT_READY` 表示当前范围尚未覆盖索引，可改用 retrieve；不能把未覆盖当作没有匹配。
-- Event 视觉索引使用离线抽帧向量，不代表你已看图。视觉主张继续调用 `inspect_video_frames` 核验；稀疏帧也不证明连续动作或声音强度。
+- Event 视觉索引使用离线抽帧向量，不代表你已看图。视觉主张继续调用 `inspect_video_frames` 核验；Event 的区间描述不是精确帧观察，稀疏帧也不证明连续动作或声音强度。

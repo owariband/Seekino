@@ -9,8 +9,10 @@ from threading import Barrier
 from time import monotonic
 
 import pytest
+from jsonschema import Draft202012Validator
 from langchain_core.messages import ToolMessage
-from pydantic import BaseModel
+from langchain_core.tools import StructuredTool
+from pydantic import BaseModel, ValidationError
 
 from engine.rag.contracts import (
     AgentReply,
@@ -40,8 +42,10 @@ from agent.chat.video_search.tools import (
     build_retrieval_tools,
 )
 from agent.chat.video_search.tools.shared import _ToolCallBudget
+from agent.chat.video_search.tools.event_retrieval import SearchVideoEventsArguments
 from agent.utils.tool import AgentTool as SharedAgentTool
 from agent.utils.errors import AgentToolFeedbackError
+from gateway.agent_model.tool_loop import _function_tool_spec
 
 
 def _inputs() -> RunInputs:
@@ -646,6 +650,47 @@ def test_retrieve_quantity_must_be_a_positive_integer(schema, channel, top_k) ->
             "query": "broken cup", "top_k": top_k,
             "channel_weights": {channel: 1, "semantic": 0, "visual": 0},
         })
+
+
+@pytest.mark.parametrize("schema,channel", [
+    (RetrieveArguments, "transcript"), (LexicalRetrieveArguments, "lexical"),
+    (SearchVideoEventsArguments, "lexical"),
+])
+@pytest.mark.parametrize("case,valid", [
+    ("initial", True), ("cursor", True), ("cursor_nulls", True),
+    ("empty", False), ("missing_query", False), ("missing_weights", False),
+    ("cursor_query", False), ("cursor_episode", False),
+])
+def test_provider_retrieval_schema_matches_conditional_call_validation(schema, channel, case, valid):
+    initial = {"query": "broken cup", "top_k": 3,
+               "channel_weights": {channel: 1, "semantic": 0, "visual": 0}}
+    arguments = {
+        "initial": initial,
+        "cursor": {"cursor": "next-page"},
+        "cursor_nulls": {"cursor": "next-page", "query": None, "top_k": None, "channel_weights": None},
+        "empty": {},
+        "missing_query": {key: value for key, value in initial.items() if key != "query"},
+        "missing_weights": {key: value for key, value in initial.items() if key != "channel_weights"},
+        "cursor_query": {"cursor": "next-page", "query": "broken cup"},
+        "cursor_episode": {"cursor": "next-page", "episode": 1},
+    }[case]
+    tool = StructuredTool.from_function(
+        lambda **kwargs: kwargs, name="retrieve", description="Search evidence.", args_schema=schema,
+    )
+    parameters = _function_tool_spec(tool)["function"]["parameters"]
+    assert Draft202012Validator(parameters).is_valid(arguments) is valid
+    if valid:
+        schema.model_validate(arguments)
+    else:
+        with pytest.raises(ValidationError):
+            schema.model_validate(arguments)
+
+
+def test_event_cursor_schema_also_rejects_repeated_filters():
+    arguments = {"cursor": "next-page", "speaker": "speaker"}
+    assert not Draft202012Validator(SearchVideoEventsArguments.model_json_schema()).is_valid(arguments)
+    with pytest.raises(ValidationError):
+        SearchVideoEventsArguments.model_validate(arguments)
 
 
 def test_agent_tool_trace_records_safe_arguments_results_and_errors(caplog) -> None:

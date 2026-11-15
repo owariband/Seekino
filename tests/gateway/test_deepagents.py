@@ -541,12 +541,33 @@ def test_api_adapter_retains_profile_tokens_usage_and_never_calls_old_loop(monke
     assert request["max_tokens"] == 1234
     assert request["reasoning_effort"] == "high"
     assert request["extra_body"] == {"thinking": {"type": "enabled"}}
+    assert "task" not in {tool["function"]["name"] for tool in request["tools"]}
     assert 0 < request["timeout"] <= 17
     assert len(usage) == 1 and usage[0].usage.total_tokens == 20
     assert usage[0].model == "actual-provider-model"
     assert usage[0].context["user_id"] == "owner"
     message = model.session_store.pending["conversation"].values["messages"][-1]
     assert message.usage_metadata == {"input_tokens": 13, "output_tokens": 7, "total_tokens": 20}
+
+
+def test_real_provider_harness_keeps_business_query_and_disables_native_task():
+    client = FakeClient([_completion()])
+    adapter = OpenAIAgentModel(
+        "deepseek-flash", stream=False, base_url="https://unused.invalid", api_key="test",
+        max_output_tokens=100, request_timeout_seconds=20, provider_name="deepseek", client=client,
+    )
+    model = DeepAgentsSupervisorModel(
+        session_store=DeepAgentSessionStore(), model=adapter.model_name, provider_name=adapter.provider_name,
+        request_timeout_seconds=30, max_input_chars=120_000, context_window_policy=None, agent_model=adapter,
+    )
+    query = StructuredTool.from_function(lambda query: query, name="query_video", description="Investigate video evidence.")
+    try:
+        assert _run(model, tools=[query]) == ["Provider answer"]
+        names = {tool["function"]["name"] for tool in client.calls[0]["tools"]}
+        assert names == {"read_file", "query_video"}
+    finally:
+        model.close()
+        model.session_store.close()
 
 
 @pytest.mark.parametrize("bad_json", ["", '{"query":'])

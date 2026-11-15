@@ -1,0 +1,30 @@
+{
+  "offline_tests": {
+    "passed": 808,
+    "skipped": 1,
+    "warnings": 1,
+    "seconds": 37.23
+  },
+  "point_frame_preflight": {
+    "requested_ms": 1056000,
+    "images": 1,
+    "actual_pts": null,
+    "cross_scope_rejected": true,
+    "parse_tasks_unchanged": true,
+    "chat_generations": 0
+  },
+  "frozen_state_equal_across_completed_arms": true,
+  "summary_unchanged_all_completed_turns": true,
+  "native_tool_messages_counted": true,
+  "completed_turns": 9,
+  "final_code_blocked_by_provider_402": true,
+  "production_deployed": false,
+  "dev_integration_regression": {
+    "upstream_pr": 179,
+    "passed": 868,
+    "skipped": 1,
+    "warnings": 1,
+    "seconds": 39.51,
+    "overlaps_frozen_808_tests": true
+  }
+}
