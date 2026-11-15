@@ -118,6 +118,7 @@ Event / Sub-Chunk 的实施入口是 [sub-chunk-trd.md](02-agent-harness/sub-chu
 | Chat 正文流式与真实 FTT | [chat-streaming-trd.md](03-product-reassessment/chat-streaming-trd.md) | 承接课程 PRD：正文增量交付、调用来源、浏览器采证及非流式/缓冲反例；关联 #18 / #25。 |
 | 聊天页前端性能 | [chat-frontend-performance-trd.md](03-product-reassessment/chat-frontend-performance-trd.md) | 连接状态与传输收尾、历史 Markdown 渲染隔离、滚动及 Kino 的同条件对照；对应 #126，当前执行状态见工作台 CHAT-PERF-01。 |
 | Chat 模型重试提示 | [设计](03-product-reassessment/chat-model-retry-status-trd.md) | 首次响应超时后的重试次数与恢复反馈。 |
+| 消息级用户反馈 | [message-feedback-trd.md](03-product-reassessment/message-feedback-trd.md) | 对 terminal assistant 消息记录 👍/👎、原因与说明；消息列表/详情回显，失败回答可报告；独立反馈表与 PUT/DELETE 接口。 |
 | Chat 工具与证据交付 | [agent-chat-delivery-contract.md](01-mvp/agent-chat-delivery-contract.md) | 交付合同与演进记录：Query / Evaluator、业务工具、证据核准及答案交付；Event 工具结合 Sub-Chunk TRD 阅读。 |
 | 网页搜索供应商 | [deepseek-web-search-trd.md](03-product-reassessment/deepseek-web-search-trd.md) | 主 TRD：可选免 key DDGS / DeepSeek API、查询边界、错误处理与真实入口验证。 |
 | 外部 Agent MCP 接入 | [mcp-access-trd.md](03-product-reassessment/mcp-access-trd.md) | 主 TRD：localhost 工具发现、Event 召回、版本化证据与媒体取用；外部 Agent 承担制作。 |
