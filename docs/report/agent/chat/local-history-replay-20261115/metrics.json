@@ -1,0 +1,1350 @@
+{
+  "recorded_date": "2026-11-15",
+  "timezone": "Asia/Singapore",
+  "source_commit": "5182fa76712721f3d0caa53b2041b36630d14b63",
+  "runtime_source_base": "76d20fe68e096523aea4578a350da319b97eaf90",
+  "protocol": {
+    "cases": 3,
+    "serial": true,
+    "repetitions_per_valid_case": 1,
+    "observation_deadline_seconds": 300,
+    "model": "deepseek-flash",
+    "reasoning_effort": "high",
+    "max_output_tokens": 8192,
+    "auto_compact_ratio": 0.85,
+    "jev_only": true,
+    "rewriter_enabled": false,
+    "model_calls_limit": 100,
+    "tool_calls_limit": 100,
+    "isolated_sql_es": true,
+    "models_remote": true,
+    "current_cloud_frozen_dataset": true,
+    "same_original_sql_history_native_prestate": true,
+    "historical_provider_prompt_not_byte_frozen": true,
+    "private_queries_answers_frames_not_committed": true,
+    "local_http_ftt_is_not_public_cloud_ftt": true
+  },
+  "dataset": {
+    "series_with_search_data": 1,
+    "additional_history_authorization_series": 1,
+    "videos": 13,
+    "chunks": 312,
+    "events": 8172,
+    "media_sha256_checked": 13,
+    "production_database_used_during_tests": false
+  },
+  "actual_controls": {
+    "request_timeout_seconds": 1200,
+    "max_output_tokens": 8192,
+    "max_input_chars": 200000,
+    "context_window_policy": {
+      "context_window_tokens": 1048576,
+      "output_reserve_tokens": 8192,
+      "safety_margin_tokens": 4096,
+      "auto_compact_tokens": 891289,
+      "compact_target_tokens": 24000
+    },
+    "mcp": false,
+    "model": "deepseek-flash",
+    "binding_source": "deepseek_api"
+  },
+  "native_summary_events_unchanged": true,
+  "encoder_health": {
+    "checks": 19,
+    "failed": 0,
+    "interval_seconds": 5
+  },
+  "packages": {
+    "deepagents": "0.7.23",
+    "langgraph": "1.2.11",
+    "langchain-core": "1.6.9",
+    "httpx": "0.28.1",
+    "sqlalchemy": "2.0.52"
+  },
+  "valid_cases": [
+    {
+      "case_id": "T01",
+      "arm": "local_stable",
+      "status": "completed",
+      "error": null,
+      "server_tt_seconds": 30.485,
+      "client_tt_seconds": 31.045902250000154,
+      "ftt_seconds": 25.22982683300006,
+      "started_at_utc": "2026-11-15T02:24:27.267704Z",
+      "ended_at_utc": "2026-11-15T02:24:58.312100Z",
+      "event_counts": {
+        "answer.started": 1,
+        "answer.reasoning.delta": 324,
+        "answer.snapshot": 13,
+        "answer.progress": 8,
+        "answer.delta": 63,
+        "answer.model.completed": 3,
+        "answer.completed": 1
+      },
+      "provider_calls": 12,
+      "provider_calls_by_role": {
+        "jev": 1,
+        "supervisor": 7,
+        "embedding": 4
+      },
+      "provider_statuses": {
+        "completed": 12
+      },
+      "provider_tokens": {
+        "input_tokens": {
+          "reported_sum": 397681,
+          "reported_calls": 12,
+          "missing_calls": 0
+        },
+        "output_tokens": {
+          "reported_sum": 3339,
+          "reported_calls": 12,
+          "missing_calls": 0
+        },
+        "total_tokens": {
+          "reported_sum": 401020,
+          "reported_calls": 12,
+          "missing_calls": 0
+        },
+        "reasoning_tokens": {
+          "reported_sum": 2075,
+          "reported_calls": 7,
+          "missing_calls": 5
+        },
+        "cached_input_tokens": {
+          "reported_sum": 372608,
+          "reported_calls": 7,
+          "missing_calls": 5
+        },
+        "text_input_tokens": {
+          "reported_sum": 0,
+          "reported_calls": 0,
+          "missing_calls": 12
+        },
+        "audio_input_tokens": {
+          "reported_sum": 0,
+          "reported_calls": 0,
+          "missing_calls": 12
+        },
+        "image_input_tokens": {
+          "reported_sum": 0,
+          "reported_calls": 0,
+          "missing_calls": 12
+        },
+        "cache_write_input_tokens": {
+          "reported_sum": 0,
+          "reported_calls": 0,
+          "missing_calls": 12
+        },
+        "cached_audio_input_tokens": {
+          "reported_sum": 0,
+          "reported_calls": 0,
+          "missing_calls": 12
+        },
+        "cache_write_1h_input_tokens": {
+          "reported_sum": 0,
+          "reported_calls": 0,
+          "missing_calls": 12
+        },
+        "cache_write_5m_input_tokens": {
+          "reported_sum": 0,
+          "reported_calls": 0,
+          "missing_calls": 12
+        }
+      },
+      "standalone_rewriter_calls": 0,
+      "first_visible_supervisor_call": 5,
+      "tool_calls": {
+        "search_video_events": 4,
+        "get_video_outline": 1,
+        "read_retrieval_evidence": 2,
+        "submit_video_item": 2
+      },
+      "tool_duration_ms_sums": {
+        "submit_video_item": 143,
+        "search_video_events": 3857,
+        "read_retrieval_evidence": 17,
+        "get_video_outline": 15
+      },
+      "tool_error_codes": {},
+      "successful_frame_inspections": [],
+      "video_cards": [
+        {
+          "start_ms": 240000,
+          "end_ms": 254600
+        },
+        {
+          "start_ms": 726166,
+          "end_ms": 756166
+        }
+      ],
+      "prestate_hashes": {
+        "messages": "f7af9ab8b74b9610295295022fdd1f32ca76ac8a2e1043d5d3deace539a24906",
+        "files": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "summary": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+      },
+      "historical_server_tt_seconds": 75.659,
+      "previous_cloud": {
+        "status": "failed",
+        "server_terminal_seconds": 196.567,
+        "client_ftt_seconds": null,
+        "client_tt_seconds": 197.33124750700517,
+        "provider_calls": 101,
+        "provider_calls_by_role": {
+          "jev": 1,
+          "supervisor": 3,
+          "embedding": 52,
+          "query_subagent": 45
+        },
+        "provider_tokens": {
+          "input_tokens": {
+            "reported_sum": 1554624,
+            "missing_calls": 0
+          },
+          "output_tokens": {
+            "reported_sum": 46212,
+            "missing_calls": 0
+          },
+          "total_tokens": {
+            "reported_sum": 1600836,
+            "missing_calls": 0
+          },
+          "cached_input_tokens": {
+            "reported_sum": 1133056,
+            "missing_calls": 53
+          },
+          "reasoning_tokens": {
+            "reported_sum": 32086,
+            "missing_calls": 53
+          },
+          "text_input_tokens": {
+            "reported_sum": 0,
+            "missing_calls": 101
+          },
+          "image_input_tokens": {
+            "reported_sum": 0,
+            "missing_calls": 101
+          },
+          "audio_input_tokens": {
+            "reported_sum": 0,
+            "missing_calls": 101
+          },
+          "cached_audio_input_tokens": {
+            "reported_sum": 0,
+            "missing_calls": 101
+          },
+          "cache_write_input_tokens": {
+            "reported_sum": 0,
+            "missing_calls": 101
+          },
+          "cache_write_5m_input_tokens": {
+            "reported_sum": 0,
+            "missing_calls": 101
+          },
+          "cache_write_1h_input_tokens": {
+            "reported_sum": 0,
+            "missing_calls": 101
+          }
+        }
+      },
+      "native_summary_audit": {
+        "case_id": "T01",
+        "original_prestate_hashes_match": true,
+        "summary_event_unchanged": true,
+        "native_messages_before": 26,
+        "native_messages_after": 43,
+        "before_summary_hash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+        "after_summary_hash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+      },
+      "query_compaction_observation": "not_exercised: no Query generation in this run"
+    },
+    {
+      "case_id": "T02",
+      "arm": "local_stable",
+      "status": "completed",
+      "error": null,
+      "server_tt_seconds": 14.138,
+      "client_tt_seconds": 15.333230375000085,
+      "ftt_seconds": 12.931963375000123,
+      "started_at_utc": "2026-11-15T02:25:00.022779Z",
+      "ended_at_utc": "2026-11-15T02:25:15.355269Z",
+      "event_counts": {
+        "answer.started": 1,
+        "answer.reasoning.delta": 91,
+        "answer.progress": 5,
+        "answer.snapshot": 5,
+        "answer.delta": 29,
+        "answer.model.completed": 2,
+        "answer.completed": 1
+      },
+      "provider_calls": 7,
+      "provider_calls_by_role": {
+        "jev": 1,
+        "supervisor": 5,
+        "embedding": 1
+      },
+      "provider_statuses": {
+        "completed": 7
+      },
+      "provider_tokens": {
+        "input_tokens": {
+          "reported_sum": 204802,
+          "reported_calls": 7,
+          "missing_calls": 0
+        },
+        "output_tokens": {
+          "reported_sum": 1337,
+          "reported_calls": 7,
+          "missing_calls": 0
+        },
+        "total_tokens": {
+          "reported_sum": 206139,
+          "reported_calls": 7,
+          "missing_calls": 0
+        },
+        "reasoning_tokens": {
+          "reported_sum": 576,
+          "reported_calls": 5,
+          "missing_calls": 2
+        },
+        "cached_input_tokens": {
+          "reported_sum": 193024,
+          "reported_calls": 5,
+          "missing_calls": 2
+        },
+        "text_input_tokens": {
+          "reported_sum": 0,
+          "reported_calls": 0,
+          "missing_calls": 7
+        },
+        "audio_input_tokens": {
+          "reported_sum": 0,
+          "reported_calls": 0,
+          "missing_calls": 7
+        },
+        "image_input_tokens": {
+          "reported_sum": 0,
+          "reported_calls": 0,
+          "missing_calls": 7
+        },
+        "cache_write_input_tokens": {
+          "reported_sum": 0,
+          "reported_calls": 0,
+          "missing_calls": 7
+        },
+        "cached_audio_input_tokens": {
+          "reported_sum": 0,
+          "reported_calls": 0,
+          "missing_calls": 7
+        },
+        "cache_write_1h_input_tokens": {
+          "reported_sum": 0,
+          "reported_calls": 0,
+          "missing_calls": 7
+        },
+        "cache_write_5m_input_tokens": {
+          "reported_sum": 0,
+          "reported_calls": 0,
+          "missing_calls": 7
+        }
+      },
+      "standalone_rewriter_calls": 0,
+      "first_visible_supervisor_call": 4,
+      "tool_calls": {
+        "read_retrieval_evidence": 1,
+        "inspect_video_frames": 2,
+        "search_video_events": 1,
+        "submit_video_item": 1
+      },
+      "tool_duration_ms_sums": {
+        "submit_video_item": 33,
+        "search_video_events": 1364,
+        "read_retrieval_evidence": 6,
+        "inspect_video_frames": 371
+      },
+      "tool_error_codes": {
+        "UNKNOWN_ITEM": 2
+      },
+      "successful_frame_inspections": [
+        {
+          "requested_start_ms": 1028000,
+          "requested_end_ms": 1040000,
+          "sampled_timestamps_ms": [
+            1029500,
+            1032500,
+            1035500,
+            1038500
+          ]
+        }
+      ],
+      "video_cards": [
+        {
+          "start_ms": 1028500,
+          "end_ms": 1039833
+        }
+      ],
+      "prestate_hashes": {
+        "messages": "6fa1b16360439b36d9157209b0d7b3194b43d364be21622fa7c41f1318fe1744",
+        "files": "f2a62364f725c07fa536deec4574d973a41d4a65d75d7ff524527f97c6739164",
+        "summary": "21cc3d75f65c743584ea486b2fcde2802f80e16ea657b8bb37d962522903f17d"
+      },
+      "historical_server_tt_seconds": 47.88,
+      "previous_cloud": {
+        "status": "completed",
+        "server_terminal_seconds": 17.176,
+        "client_ftt_seconds": 14.81727300700004,
+        "client_tt_seconds": 19.011393139000575,
+        "provider_calls": 7,
+        "provider_calls_by_role": {
+          "jev": 1,
+          "supervisor": 5,
+          "embedding": 1
+        },
+        "provider_tokens": {
+          "input_tokens": {
+            "reported_sum": 204068,
+            "missing_calls": 0
+          },
+          "output_tokens": {
+            "reported_sum": 1510,
+            "missing_calls": 0
+          },
+          "total_tokens": {
+            "reported_sum": 205578,
+            "missing_calls": 0
+          },
+          "cached_input_tokens": {
+            "reported_sum": 167168,
+            "missing_calls": 2
+          },
+          "reasoning_tokens": {
+            "reported_sum": 743,
+            "missing_calls": 2
+          },
+          "text_input_tokens": {
+            "reported_sum": 0,
+            "missing_calls": 7
+          },
+          "image_input_tokens": {
+            "reported_sum": 0,
+            "missing_calls": 7
+          },
+          "audio_input_tokens": {
+            "reported_sum": 0,
+            "missing_calls": 7
+          },
+          "cached_audio_input_tokens": {
+            "reported_sum": 0,
+            "missing_calls": 7
+          },
+          "cache_write_input_tokens": {
+            "reported_sum": 0,
+            "missing_calls": 7
+          },
+          "cache_write_5m_input_tokens": {
+            "reported_sum": 0,
+            "missing_calls": 7
+          },
+          "cache_write_1h_input_tokens": {
+            "reported_sum": 0,
+            "missing_calls": 7
+          }
+        }
+      },
+      "native_summary_audit": {
+        "case_id": "T02",
+        "original_prestate_hashes_match": true,
+        "summary_event_unchanged": true,
+        "native_messages_before": 49,
+        "native_messages_after": 61,
+        "before_summary_hash": "21cc3d75f65c743584ea486b2fcde2802f80e16ea657b8bb37d962522903f17d",
+        "after_summary_hash": "21cc3d75f65c743584ea486b2fcde2802f80e16ea657b8bb37d962522903f17d"
+      },
+      "query_compaction_observation": "not_exercised: no Query generation in this run"
+    },
+    {
+      "case_id": "T03",
+      "arm": "local_stable",
+      "status": "completed",
+      "error": null,
+      "server_tt_seconds": 49.851,
+      "client_tt_seconds": 50.390036750000036,
+      "ftt_seconds": 47.111925375000055,
+      "started_at_utc": "2026-11-15T02:25:16.739818Z",
+      "ended_at_utc": "2026-11-15T02:26:07.127302Z",
+      "event_counts": {
+        "answer.started": 1,
+        "answer.reasoning.delta": 412,
+        "answer.progress": 10,
+        "answer.snapshot": 14,
+        "answer.delta": 38,
+        "answer.model.completed": 2,
+        "answer.completed": 1
+      },
+      "provider_calls": 18,
+      "provider_calls_by_role": {
+        "jev": 1,
+        "supervisor": 12,
+        "embedding": 4,
+        "realtime_visual_observation": 1
+      },
+      "provider_statuses": {
+        "completed": 18
+      },
+      "provider_tokens": {
+        "input_tokens": {
+          "reported_sum": 538894,
+          "reported_calls": 18,
+          "missing_calls": 0
+        },
+        "output_tokens": {
+          "reported_sum": 5369,
+          "reported_calls": 18,
+          "missing_calls": 0
+        },
+        "total_tokens": {
+          "reported_sum": 544263,
+          "reported_calls": 18,
+          "missing_calls": 0
+        },
+        "reasoning_tokens": {
+          "reported_sum": 3219,
+          "reported_calls": 13,
+          "missing_calls": 5
+        },
+        "cached_input_tokens": {
+          "reported_sum": 509696,
+          "reported_calls": 13,
+          "missing_calls": 5
+        },
+        "text_input_tokens": {
+          "reported_sum": 0,
+          "reported_calls": 0,
+          "missing_calls": 18
+        },
+        "audio_input_tokens": {
+          "reported_sum": 0,
+          "reported_calls": 0,
+          "missing_calls": 18
+        },
+        "image_input_tokens": {
+          "reported_sum": 0,
+          "reported_calls": 0,
+          "missing_calls": 18
+        },
+        "cache_write_input_tokens": {
+          "reported_sum": 0,
+          "reported_calls": 0,
+          "missing_calls": 18
+        },
+        "cached_audio_input_tokens": {
+          "reported_sum": 0,
+          "reported_calls": 0,
+          "missing_calls": 18
+        },
+        "cache_write_1h_input_tokens": {
+          "reported_sum": 0,
+          "reported_calls": 0,
+          "missing_calls": 18
+        },
+        "cache_write_5m_input_tokens": {
+          "reported_sum": 0,
+          "reported_calls": 0,
+          "missing_calls": 18
+        }
+      },
+      "standalone_rewriter_calls": 0,
+      "first_visible_supervisor_call": 11,
+      "tool_calls": {
+        "inspect_video_frames": 3,
+        "search_video_events": 3,
+        "understand_current_video": 1,
+        "retrieve": 1,
+        "read_retrieval_evidence": 1,
+        "submit_video_item": 1
+      },
+      "tool_duration_ms_sums": {
+        "search_video_events": 2819,
+        "read_retrieval_evidence": 8,
+        "submit_video_item": 57,
+        "understand_current_video": 9455,
+        "retrieve": 988,
+        "inspect_video_frames": 467
+      },
+      "tool_error_codes": {
+        "UNKNOWN_ITEM": 3
+      },
+      "successful_frame_inspections": [
+        {
+          "requested_start_ms": 1054500,
+          "requested_end_ms": 1059000,
+          "sampled_timestamps_ms": [
+            1055062,
+            1056187,
+            1057312,
+            1058437
+          ]
+        }
+      ],
+      "video_cards": [
+        {
+          "start_ms": 1055000,
+          "end_ms": 1059000
+        }
+      ],
+      "prestate_hashes": {
+        "messages": "82a026c3367042b036f67a37f6ccead654264356bf7a7ae92ade35fdfff41a28",
+        "files": "9ea45ce96c985023ad75a7ef0b68c9ca3a805165acf01c9743cdc1101f36040b",
+        "summary": "01778c8a6d1fafbf3aca4347be42a858902103dc360fa08a9494760e63fbaa44"
+      },
+      "historical_server_tt_seconds": 88.877,
+      "previous_cloud": {
+        "status": "completed",
+        "server_terminal_seconds": 19.562,
+        "client_ftt_seconds": 17.577218241000082,
+        "client_tt_seconds": 21.282713027998398,
+        "provider_calls": 7,
+        "provider_calls_by_role": {
+          "jev": 1,
+          "supervisor": 5,
+          "embedding": 1
+        },
+        "provider_tokens": {
+          "input_tokens": {
+            "reported_sum": 183464,
+            "missing_calls": 0
+          },
+          "output_tokens": {
+            "reported_sum": 1798,
+            "missing_calls": 0
+          },
+          "total_tokens": {
+            "reported_sum": 185262,
+            "missing_calls": 0
+          },
+          "cached_input_tokens": {
+            "reported_sum": 151296,
+            "missing_calls": 2
+          },
+          "reasoning_tokens": {
+            "reported_sum": 1049,
+            "missing_calls": 2
+          },
+          "text_input_tokens": {
+            "reported_sum": 0,
+            "missing_calls": 7
+          },
+          "image_input_tokens": {
+            "reported_sum": 0,
+            "missing_calls": 7
+          },
+          "audio_input_tokens": {
+            "reported_sum": 0,
+            "missing_calls": 7
+          },
+          "cached_audio_input_tokens": {
+            "reported_sum": 0,
+            "missing_calls": 7
+          },
+          "cache_write_input_tokens": {
+            "reported_sum": 0,
+            "missing_calls": 7
+          },
+          "cache_write_5m_input_tokens": {
+            "reported_sum": 0,
+            "missing_calls": 7
+          },
+          "cache_write_1h_input_tokens": {
+            "reported_sum": 0,
+            "missing_calls": 7
+          }
+        }
+      },
+      "native_summary_audit": {
+        "case_id": "T03",
+        "original_prestate_hashes_match": true,
+        "summary_event_unchanged": true,
+        "native_messages_before": 60,
+        "native_messages_after": 86,
+        "before_summary_hash": "01778c8a6d1fafbf3aca4347be42a858902103dc360fa08a9494760e63fbaa44",
+        "after_summary_hash": "01778c8a6d1fafbf3aca4347be42a858902103dc360fa08a9494760e63fbaa44"
+      },
+      "query_compaction_observation": "not_exercised: no Query generation in this run"
+    }
+  ],
+  "environment_invalid_cases": [
+    {
+      "case_id": "T01",
+      "arm": "setup_event_index_mismatch",
+      "status": "completed",
+      "error": null,
+      "server_tt_seconds": 25.76,
+      "client_tt_seconds": 26.221827792,
+      "ftt_seconds": 21.853705958999967,
+      "started_at_utc": "2026-11-15T01:49:21.898536Z",
+      "ended_at_utc": "2026-11-15T01:49:48.119000Z",
+      "event_counts": {
+        "answer.started": 1,
+        "answer.reasoning.delta": 215,
+        "answer.snapshot": 9,
+        "answer.progress": 7,
+        "answer.delta": 32,
+        "answer.model.completed": 3,
+        "answer.completed": 1
+      },
+      "provider_calls": 11,
+      "provider_calls_by_role": {
+        "jev": 1,
+        "supervisor": 9,
+        "embedding": 1
+      },
+      "provider_statuses": {
+        "completed": 11
+      },
+      "provider_tokens": {
+        "input_tokens": {
+          "reported_sum": 401174,
+          "reported_calls": 11,
+          "missing_calls": 0
+        },
+        "output_tokens": {
+          "reported_sum": 2808,
+          "reported_calls": 11,
+          "missing_calls": 0
+        },
+        "total_tokens": {
+          "reported_sum": 403982,
+          "reported_calls": 11,
+          "missing_calls": 0
+        },
+        "reasoning_tokens": {
+          "reported_sum": 1371,
+          "reported_calls": 9,
+          "missing_calls": 2
+        },
+        "cached_input_tokens": {
+          "reported_sum": 361728,
+          "reported_calls": 9,
+          "missing_calls": 2
+        },
+        "text_input_tokens": {
+          "reported_sum": 0,
+          "reported_calls": 0,
+          "missing_calls": 11
+        },
+        "audio_input_tokens": {
+          "reported_sum": 0,
+          "reported_calls": 0,
+          "missing_calls": 11
+        },
+        "image_input_tokens": {
+          "reported_sum": 0,
+          "reported_calls": 0,
+          "missing_calls": 11
+        },
+        "cache_write_input_tokens": {
+          "reported_sum": 0,
+          "reported_calls": 0,
+          "missing_calls": 11
+        },
+        "cached_audio_input_tokens": {
+          "reported_sum": 0,
+          "reported_calls": 0,
+          "missing_calls": 11
+        },
+        "cache_write_1h_input_tokens": {
+          "reported_sum": 0,
+          "reported_calls": 0,
+          "missing_calls": 11
+        },
+        "cache_write_5m_input_tokens": {
+          "reported_sum": 0,
+          "reported_calls": 0,
+          "missing_calls": 11
+        }
+      },
+      "standalone_rewriter_calls": 0,
+      "first_visible_supervisor_call": 7,
+      "tool_calls": {
+        "search_video_events": 2,
+        "retrieve": 1,
+        "read_retrieval_evidence": 3,
+        "submit_video_item": 2
+      },
+      "tool_duration_ms_sums": {
+        "submit_video_item": 70,
+        "search_video_events": 55,
+        "read_retrieval_evidence": 24,
+        "retrieve": 2910
+      },
+      "tool_error_codes": {
+        "EVENT_INDEX_NOT_READY": 2
+      },
+      "successful_frame_inspections": [],
+      "video_cards": [
+        {
+          "start_ms": 743833,
+          "end_ms": 756166
+        }
+      ],
+      "prestate_hashes": {
+        "messages": "f7af9ab8b74b9610295295022fdd1f32ca76ac8a2e1043d5d3deace539a24906",
+        "files": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "summary": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+      }
+    },
+    {
+      "case_id": "T02",
+      "arm": "setup_event_index_mismatch",
+      "status": "completed",
+      "error": null,
+      "server_tt_seconds": 16.403,
+      "client_tt_seconds": 16.95819420800001,
+      "ftt_seconds": 13.877216874999931,
+      "started_at_utc": "2026-11-15T01:50:08.049440Z",
+      "ended_at_utc": "2026-11-15T01:50:25.006893Z",
+      "event_counts": {
+        "answer.started": 1,
+        "answer.reasoning.delta": 100,
+        "answer.progress": 5,
+        "answer.snapshot": 7,
+        "answer.delta": 39,
+        "answer.model.completed": 2,
+        "answer.completed": 1
+      },
+      "provider_calls": 8,
+      "provider_calls_by_role": {
+        "jev": 1,
+        "supervisor": 6,
+        "embedding": 1
+      },
+      "provider_statuses": {
+        "completed": 8
+      },
+      "provider_tokens": {
+        "input_tokens": {
+          "reported_sum": 238397,
+          "reported_calls": 8,
+          "missing_calls": 0
+        },
+        "output_tokens": {
+          "reported_sum": 1612,
+          "reported_calls": 8,
+          "missing_calls": 0
+        },
+        "total_tokens": {
+          "reported_sum": 240009,
+          "reported_calls": 8,
+          "missing_calls": 0
+        },
+        "reasoning_tokens": {
+          "reported_sum": 730,
+          "reported_calls": 6,
+          "missing_calls": 2
+        },
+        "cached_input_tokens": {
+          "reported_sum": 202624,
+          "reported_calls": 6,
+          "missing_calls": 2
+        },
+        "text_input_tokens": {
+          "reported_sum": 0,
+          "reported_calls": 0,
+          "missing_calls": 8
+        },
+        "audio_input_tokens": {
+          "reported_sum": 0,
+          "reported_calls": 0,
+          "missing_calls": 8
+        },
+        "image_input_tokens": {
+          "reported_sum": 0,
+          "reported_calls": 0,
+          "missing_calls": 8
+        },
+        "cache_write_input_tokens": {
+          "reported_sum": 0,
+          "reported_calls": 0,
+          "missing_calls": 8
+        },
+        "cached_audio_input_tokens": {
+          "reported_sum": 0,
+          "reported_calls": 0,
+          "missing_calls": 8
+        },
+        "cache_write_1h_input_tokens": {
+          "reported_sum": 0,
+          "reported_calls": 0,
+          "missing_calls": 8
+        },
+        "cache_write_5m_input_tokens": {
+          "reported_sum": 0,
+          "reported_calls": 0,
+          "missing_calls": 8
+        }
+      },
+      "standalone_rewriter_calls": 0,
+      "first_visible_supervisor_call": 5,
+      "tool_calls": {
+        "inspect_video_frames": 2,
+        "search_video_events": 1,
+        "retrieve": 1,
+        "submit_video_item": 1
+      },
+      "tool_duration_ms_sums": {
+        "search_video_events": 22,
+        "submit_video_item": 39,
+        "retrieve": 1024,
+        "inspect_video_frames": 408
+      },
+      "tool_error_codes": {
+        "UNKNOWN_ITEM": 1,
+        "EVENT_INDEX_NOT_READY": 1
+      },
+      "successful_frame_inspections": [
+        {
+          "requested_start_ms": 1031600,
+          "requested_end_ms": 1037800,
+          "sampled_timestamps_ms": [
+            1032375,
+            1033925,
+            1035475,
+            1037025
+          ]
+        }
+      ],
+      "video_cards": [
+        {
+          "start_ms": 1028500,
+          "end_ms": 1041166
+        }
+      ],
+      "prestate_hashes": {
+        "messages": "6fa1b16360439b36d9157209b0d7b3194b43d364be21622fa7c41f1318fe1744",
+        "files": "f2a62364f725c07fa536deec4574d973a41d4a65d75d7ff524527f97c6739164",
+        "summary": "21cc3d75f65c743584ea486b2fcde2802f80e16ea657b8bb37d962522903f17d"
+      }
+    },
+    {
+      "case_id": "T03",
+      "arm": "setup_event_index_mismatch",
+      "status": "completed",
+      "error": null,
+      "server_tt_seconds": 39.701,
+      "client_tt_seconds": 40.18537300000014,
+      "ftt_seconds": 36.38051137500008,
+      "started_at_utc": "2026-11-15T01:51:24.526286Z",
+      "ended_at_utc": "2026-11-15T01:52:04.709685Z",
+      "event_counts": {
+        "answer.started": 1,
+        "answer.reasoning.delta": 113,
+        "answer.progress": 7,
+        "answer.snapshot": 9,
+        "answer.delta": 37,
+        "answer.model.completed": 2,
+        "answer.completed": 1
+      },
+      "provider_calls": 12,
+      "provider_calls_by_role": {
+        "jev": 1,
+        "supervisor": 9,
+        "realtime_visual_observation": 1,
+        "embedding": 1
+      },
+      "provider_statuses": {
+        "completed": 12
+      },
+      "provider_tokens": {
+        "input_tokens": {
+          "reported_sum": 332977,
+          "reported_calls": 12,
+          "missing_calls": 0
+        },
+        "output_tokens": {
+          "reported_sum": 3776,
+          "reported_calls": 12,
+          "missing_calls": 0
+        },
+        "total_tokens": {
+          "reported_sum": 336753,
+          "reported_calls": 12,
+          "missing_calls": 0
+        },
+        "reasoning_tokens": {
+          "reported_sum": 2322,
+          "reported_calls": 10,
+          "missing_calls": 2
+        },
+        "cached_input_tokens": {
+          "reported_sum": 290560,
+          "reported_calls": 10,
+          "missing_calls": 2
+        },
+        "text_input_tokens": {
+          "reported_sum": 0,
+          "reported_calls": 0,
+          "missing_calls": 12
+        },
+        "audio_input_tokens": {
+          "reported_sum": 0,
+          "reported_calls": 0,
+          "missing_calls": 12
+        },
+        "image_input_tokens": {
+          "reported_sum": 0,
+          "reported_calls": 0,
+          "missing_calls": 12
+        },
+        "cache_write_input_tokens": {
+          "reported_sum": 0,
+          "reported_calls": 0,
+          "missing_calls": 12
+        },
+        "cached_audio_input_tokens": {
+          "reported_sum": 0,
+          "reported_calls": 0,
+          "missing_calls": 12
+        },
+        "cache_write_1h_input_tokens": {
+          "reported_sum": 0,
+          "reported_calls": 0,
+          "missing_calls": 12
+        },
+        "cache_write_5m_input_tokens": {
+          "reported_sum": 0,
+          "reported_calls": 0,
+          "missing_calls": 12
+        }
+      },
+      "standalone_rewriter_calls": 0,
+      "first_visible_supervisor_call": 8,
+      "tool_calls": {
+        "inspect_video_frames": 3,
+        "understand_current_video": 1,
+        "search_video_events": 1,
+        "retrieve": 1,
+        "submit_video_item": 1
+      },
+      "tool_duration_ms_sums": {
+        "search_video_events": 29,
+        "submit_video_item": 35,
+        "understand_current_video": 16779,
+        "retrieve": 980,
+        "inspect_video_frames": 776
+      },
+      "tool_error_codes": {
+        "UNKNOWN_ITEM": 2,
+        "EVENT_INDEX_NOT_READY": 1
+      },
+      "successful_frame_inspections": [
+        {
+          "requested_start_ms": 1053000,
+          "requested_end_ms": 1061000,
+          "sampled_timestamps_ms": [
+            1054000,
+            1056000,
+            1058000,
+            1060000
+          ]
+        }
+      ],
+      "video_cards": [
+        {
+          "start_ms": 1053500,
+          "end_ms": 1063500
+        }
+      ],
+      "prestate_hashes": {
+        "messages": "82a026c3367042b036f67a37f6ccead654264356bf7a7ae92ade35fdfff41a28",
+        "files": "9ea45ce96c985023ad75a7ef0b68c9ca3a805165acf01c9743cdc1101f36040b",
+        "summary": "01778c8a6d1fafbf3aca4347be42a858902103dc360fa08a9494760e63fbaa44"
+      }
+    },
+    {
+      "case_id": "T01",
+      "arm": "setup_embedding_disconnect",
+      "status": "completed",
+      "error": null,
+      "server_tt_seconds": 98.035,
+      "client_tt_seconds": 98.49250899999993,
+      "ftt_seconds": 97.0843726669998,
+      "started_at_utc": "2026-11-15T01:54:55.869274Z",
+      "ended_at_utc": "2026-11-15T02:11:55.863525Z",
+      "event_counts": {
+        "answer.started": 1,
+        "answer.snapshot": 15,
+        "answer.reasoning.delta": 112,
+        "answer.progress": 7,
+        "answer.delta": 21,
+        "answer.model.completed": 1,
+        "answer.completed": 1
+      },
+      "provider_calls": 24,
+      "provider_calls_by_role": {
+        "jev": 1,
+        "supervisor": 5,
+        "embedding": 12,
+        "query": 6
+      },
+      "provider_statuses": {
+        "failed": 13,
+        "completed": 11
+      },
+      "provider_tokens": {
+        "input_tokens": {
+          "reported_sum": 319560,
+          "reported_calls": 11,
+          "missing_calls": 13
+        },
+        "output_tokens": {
+          "reported_sum": 4240,
+          "reported_calls": 11,
+          "missing_calls": 13
+        },
+        "total_tokens": {
+          "reported_sum": 323800,
+          "reported_calls": 11,
+          "missing_calls": 13
+        },
+        "reasoning_tokens": {
+          "reported_sum": 1720,
+          "reported_calls": 11,
+          "missing_calls": 13
+        },
+        "cached_input_tokens": {
+          "reported_sum": 302336,
+          "reported_calls": 11,
+          "missing_calls": 13
+        },
+        "text_input_tokens": {
+          "reported_sum": 0,
+          "reported_calls": 0,
+          "missing_calls": 24
+        },
+        "audio_input_tokens": {
+          "reported_sum": 0,
+          "reported_calls": 0,
+          "missing_calls": 24
+        },
+        "image_input_tokens": {
+          "reported_sum": 0,
+          "reported_calls": 0,
+          "missing_calls": 24
+        },
+        "cache_write_input_tokens": {
+          "reported_sum": 0,
+          "reported_calls": 0,
+          "missing_calls": 24
+        },
+        "cached_audio_input_tokens": {
+          "reported_sum": 0,
+          "reported_calls": 0,
+          "missing_calls": 24
+        },
+        "cache_write_1h_input_tokens": {
+          "reported_sum": 0,
+          "reported_calls": 0,
+          "missing_calls": 24
+        },
+        "cache_write_5m_input_tokens": {
+          "reported_sum": 0,
+          "reported_calls": 0,
+          "missing_calls": 24
+        }
+      },
+      "standalone_rewriter_calls": 0,
+      "first_visible_supervisor_call": null,
+      "tool_calls": {
+        "search_video_events": 7,
+        "retrieve": 5,
+        "query_video": 1,
+        "search_web": 1
+      },
+      "tool_duration_ms_sums": {
+        "search_video_events": 47489,
+        "retrieve": 152,
+        "search_web": 10476,
+        "query_video": 17759
+      },
+      "tool_error_codes": {
+        "RETRIEVAL_UNAVAILABLE": 13,
+        "WEB_SEARCH_FAILED": 1
+      },
+      "successful_frame_inspections": [],
+      "video_cards": [],
+      "prestate_hashes": {
+        "messages": "f7af9ab8b74b9610295295022fdd1f32ca76ac8a2e1043d5d3deace539a24906",
+        "files": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "summary": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+      }
+    },
+    {
+      "case_id": "T02",
+      "arm": "setup_embedding_disconnect",
+      "status": "completed",
+      "error": null,
+      "server_tt_seconds": 10.717,
+      "client_tt_seconds": 11.167206624999835,
+      "ftt_seconds": 9.858718999999837,
+      "started_at_utc": "2026-11-15T02:13:53.181057Z",
+      "ended_at_utc": "2026-11-15T02:14:04.347773Z",
+      "event_counts": {
+        "answer.started": 1,
+        "answer.reasoning.delta": 97,
+        "answer.progress": 4,
+        "answer.snapshot": 4,
+        "answer.delta": 33,
+        "answer.model.completed": 1,
+        "answer.completed": 1
+      },
+      "provider_calls": 5,
+      "provider_calls_by_role": {
+        "jev": 1,
+        "supervisor": 3,
+        "embedding": 1
+      },
+      "provider_statuses": {
+        "completed": 4,
+        "failed": 1
+      },
+      "provider_tokens": {
+        "input_tokens": {
+          "reported_sum": 108664,
+          "reported_calls": 4,
+          "missing_calls": 1
+        },
+        "output_tokens": {
+          "reported_sum": 1169,
+          "reported_calls": 4,
+          "missing_calls": 1
+        },
+        "total_tokens": {
+          "reported_sum": 109833,
+          "reported_calls": 4,
+          "missing_calls": 1
+        },
+        "reasoning_tokens": {
+          "reported_sum": 635,
+          "reported_calls": 3,
+          "missing_calls": 2
+        },
+        "cached_input_tokens": {
+          "reported_sum": 106112,
+          "reported_calls": 3,
+          "missing_calls": 2
+        },
+        "text_input_tokens": {
+          "reported_sum": 0,
+          "reported_calls": 0,
+          "missing_calls": 5
+        },
+        "audio_input_tokens": {
+          "reported_sum": 0,
+          "reported_calls": 0,
+          "missing_calls": 5
+        },
+        "image_input_tokens": {
+          "reported_sum": 0,
+          "reported_calls": 0,
+          "missing_calls": 5
+        },
+        "cache_write_input_tokens": {
+          "reported_sum": 0,
+          "reported_calls": 0,
+          "missing_calls": 5
+        },
+        "cached_audio_input_tokens": {
+          "reported_sum": 0,
+          "reported_calls": 0,
+          "missing_calls": 5
+        },
+        "cache_write_1h_input_tokens": {
+          "reported_sum": 0,
+          "reported_calls": 0,
+          "missing_calls": 5
+        },
+        "cache_write_5m_input_tokens": {
+          "reported_sum": 0,
+          "reported_calls": 0,
+          "missing_calls": 5
+        }
+      },
+      "standalone_rewriter_calls": 0,
+      "first_visible_supervisor_call": 3,
+      "tool_calls": {
+        "inspect_video_frames": 1,
+        "read_retrieval_evidence": 1,
+        "search_video_events": 1
+      },
+      "tool_duration_ms_sums": {
+        "search_video_events": 127,
+        "read_retrieval_evidence": 6,
+        "inspect_video_frames": 6
+      },
+      "tool_error_codes": {
+        "UNKNOWN_ITEM": 2,
+        "RETRIEVAL_UNAVAILABLE": 1
+      },
+      "successful_frame_inspections": [],
+      "video_cards": [],
+      "prestate_hashes": {
+        "messages": "6fa1b16360439b36d9157209b0d7b3194b43d364be21622fa7c41f1318fe1744",
+        "files": "f2a62364f725c07fa536deec4574d973a41d4a65d75d7ff524527f97c6739164",
+        "summary": "21cc3d75f65c743584ea486b2fcde2802f80e16ea657b8bb37d962522903f17d"
+      }
+    }
+  ],
+  "pre_generation_preparation_failures": [
+    {
+      "reason": "missing local checkpoint schema",
+      "generations": 0
+    },
+    {
+      "reason": "historical public Series authorization record missing, HTTP 404",
+      "generations": 0
+    }
+  ],
+  "valid_totals": {
+    "input_tokens": 1141377,
+    "output_tokens": 10045,
+    "total_tokens": 1151422,
+    "reasoning_tokens": 5870,
+    "cached_input_tokens": 1075328,
+    "text_input_tokens": 0,
+    "audio_input_tokens": 0,
+    "image_input_tokens": 0,
+    "cache_write_input_tokens": 0,
+    "cached_audio_input_tokens": 0,
+    "cache_write_1h_input_tokens": 0,
+    "cache_write_5m_input_tokens": 0
+  },
+  "all_round_totals": {
+    "input_tokens": 2542149,
+    "output_tokens": 23650,
+    "total_tokens": 2565799,
+    "reasoning_tokens": 12648,
+    "cached_input_tokens": 2338688,
+    "text_input_tokens": 0,
+    "audio_input_tokens": 0,
+    "image_input_tokens": 0,
+    "cache_write_input_tokens": 0,
+    "cached_audio_input_tokens": 0,
+    "cache_write_1h_input_tokens": 0,
+    "cache_write_5m_input_tokens": 0
+  },
+  "total_provider_calls": 97,
+  "ledger_scope": "Chat replay business provider calls only; excludes metadata GETs, health checks, and independent delegation workers.",
+  "data_export_preparation": {
+    "first_export_exit_code": 137,
+    "generation_calls": 0,
+    "recovered_with": "streamed gzip NDJSON; eight ES documents per page"
+  },
+  "quality": {
+    "core_passes": 1,
+    "tested_cases": 3,
+    "population_accuracy_not_measured": true,
+    "T01": "Core episode/bridge location supported; auxiliary episode claims not fully verified.",
+    "T02": "Fails playback anchoring: target 1058310 ms outside card and sampled frames.",
+    "T03": "Fails exact-moment verification: target 1056000 ms absent from sampled frames; nearest 1056187 ms; realtime frame 1056558 ms."
+  }
+}

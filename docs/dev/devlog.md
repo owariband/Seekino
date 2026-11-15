@@ -27,6 +27,7 @@
 
 | 记录 | 原问题编号 |
 |---|---|
+| [2026-11-15：历史证据重取和取帧时间偏移，让动态窗口下的 Chat 仍迟答、答偏](#devlog-chat-local-history-replay-20261115) | CHAT-MODEL-INHERIT-01；CHAT-COMPACT-01；CHAT-QUERY-BUDGET-01；PR #177 |
 | [2026-11-15：Chat 子 Agent 另取全局模型，选定 Supervisor 后仍按旧窗口提前压缩](#devlog-chat-model-config-inheritance-20261115) | CHAT-MODEL-INHERIT-01；CHAT-COMPACT-01；PR #171 |
 | [2026-11-14：实时播放请求绕过 JEV，接入后完整回放仍因工具预算与时间锚定失败](#devlog-chat-history-replay-20261114) | CHAT-JEV-REALTIME-01；CHAT-QUERY-BUDGET-01；PR #162、PR #163 |
 | [2026-11-14：生产镜像未含 Event 查询内存修复，完整课程范围又因任务排序内存溢出](#devlog-event-query-cloud-memory-hotfix-20261114) | RAG-QUERY-MEM-01；PR #154、PR #159 |
@@ -6510,3 +6511,38 @@ Gateway 只保留一个解析入口。`_controls` 对 DeepAgents、structured �
 | TT／FTT／token／准确率 | T01 失败 196.567 秒，9 次 Query 压缩 | 未测 | 没有修复后回放，不宣称 9 次变 0 或任何收益 |
 
 因此本轮只采用“配置继承实现＋回归＋当前 Cloud 配置预检”这一层结论。main PR #172 尚未合并，正式环境的完整装配、修复后原始回放、延迟与回答质量仍待验证；Query 的循环、分页进度、部分失败报告和共享预算继续由 `CHAT-QUERY-BUDGET-01` 跟踪，`CHAT-COMPACT-01` 保持 verifying。
+
+<a id="devlog-chat-local-history-replay-20261115"></a>
+## 2026-11-15：历史证据重取和取帧时间偏移，让动态窗口下的 Chat 仍迟答、答偏
+
+### 问题与现状
+
+父子模型配置继承已合入 dev，但配置一致不代表 Chat 已经够快、答对了问题。此前 Cloud 完整回放中，T01 在 196.567 秒后耗尽工具预算而失败，T02／T03 虽完成，却没有可靠地核对指定时刻。此次在本地实际运行修复后的 Server，用三条原请求各自的历史、native checkpoint、播放位置和范围，查看这些问题是否还会发生。
+
+### 方案候选
+
+采用完整 HTTP／SSE 回放：本地独立 MySQL、ES、原片和真实业务工具，DeepSeek／JEV API 与原 embedding 模型仍是远程服务。只运行 Chat，不启动解析任务消费。固定 Supervisor 为 Flash／high／8192，JEV only、改写关闭，保留原请求 100 次模型与工具限制，每条观察最多 300 秒，不自动生成重试。不用固定工具返回、一轮生成或省略历史来替代业务回放，也不调整 prompt、high 或工具停止规则。
+
+电脑重启后恢复已有数据。此前导出进程曾以 137 退出，改成每页 8 条 ES 文档、压缩流式落盘后完成，未作为 Chat 样本计时。准备中补齐了 checkpoint 表、原历史引用的另一公开 Series 授权事实；Event 索引必须沿用 SQL 发布凭据冻结的名称，改名会被判成未覆盖。SSH 转发还曾中断，随后由同一持续运行的测试进程持有保活连接和防休眠。两次零生成准备失败、索引名错误的三条生成结果、连接中断的两条生成结果均单独保留，未混入有效对照。
+
+### 方案验证
+
+有效轮为三条串行、各一次。13 集原片已按原哈希核对，312 个 Chunk、8172 条 Event 和对应 SQL 版本在本地；运行测试没有连接生产 SQL／ES。真实 Event 工具先通过功能预检，运行期间 19 次 embedding 健康检查全部通过。三个原 prestate 的 messages／files／summary 哈希均匹配，后一个 case 不使用这次前一个 case 的答案。详细账目见[完整报告](../report/agent/chat/local-history-replay-20261115/README.md)、[metrics.json](../report/agent/chat/local-history-replay-20261115/metrics.json) 与 [usage.jsonl](../report/agent/chat/local-history-replay-20261115/usage.jsonl)。原 query、回复、checkpoint 和截图只在本机私有目录。
+
+实际 Server 装配的父子策略均为 1048576／891289／24000，200000 字符保护保留。三个执行前后 native 摘要事件哈希均未改变，没有新增 Supervisor 摘要；不能从“没有日志”推断压缩为零，因为 structured 的本地压缩本身不打印普通日志。有效轮三条都由 Supervisor 直接调用工具，Query 生成数均为 0，因此原 Query 的循环和压缩路径没有被本轮覆盖。
+
+业务核验没有通过全部用例。T01 的第 3 集天桥核心定位和片段有支持，附带其他集数和每句台词尚未逐项验收。T02 回答有拉手，但目标是 17:38.310，返回卡片为 17:08.500–17:19.833，四张帧也都在更早的片段。T03 明确要求 17:36，最终四帧为 17:35.062／17:36.187／17:37.312／17:38.437，实时观察则取播放位置 17:36.558；虽然比上次更接近，仍把相邻画面与上下文合并写成精确时刻已核验。T02／T03 分别出现 2／3 次 `UNKNOWN_ITEM`，重取后恢复，旧 item 在本轮未注册的问题仍可复现。
+
+### 指标对比
+
+选择 TT、首条正文 FTT、token、实际角色与时间点核验，是为了同时观察等待、重复模型调用和是否回答原问题。FTT 排除 reasoning、progress 和工具事件；token 覆盖 JEV、Supervisor、视觉与 embedding，reasoning 已在 output 内，不重复加。Cloud 为 11-14 完整回放，本地为当前 dev 与当前 Cloud 素材快照；两者网络、缓存和执行路径不同，不能当作严格单变量 A/B。
+
+| 用例 | Cloud 服务端 TT（秒） | 本地服务端 TT（秒） | Cloud／本地 FTT（秒） | Cloud／本地总 token | 本地核验 |
+| --- | ---: | ---: | ---: | ---: | --- |
+| T01 | 196.567，失败 | 30.485 | 无正文／25.230 | 1600836／401020 | 核心定位有支持；没有进入原 Query 路径 |
+| T02 | 17.176 | 14.138 | 14.817／12.932 | 205578／206139 | 完成但时间点不符 |
+| T03 | 19.562 | 49.851 | 17.577／47.112 | 185262／544263 | 完成但精确时刻核验不符 |
+
+有效轮共 37 次 provider 请求、input 1141377、output 10045、总 token 1151422；其中 reasoning 5870，已经计入 output。三条 Supervisor 分别调用 7／5／12 次，第一次正文分别落在第 5／4／11 次；T03 另有一次实时视觉模型调用，`understand_current_video` 用了 9.455 秒。JEV 各一次、独立改写零次，Query 均零次。97 条全轮 provider 用量记录连同五条环境无效结果一并保存，总 reported token 2565799，避免只展示有效轮成本。
+
+这轮执行完成率为 3/3，按核心问题、时间锚定和证据支持检查为 1/3 达标；样本极小且 T01 全文未穷尽验收，不当作总体准确率。T03 仍接近 47 秒才给正文，不能称为时长已恢复正常。现有证据支持继续处理本轮证据注册与回源校验、把明确时刻绑定到取帧、以及较早交付有内容的回应；这些尚未修改。high 没有做 A/B，也没有足够证据把剩余等待归因于思考档位。main 和生产服务在本次实验中均未修改，Query 的同路径对照与正式环境验证继续保留。

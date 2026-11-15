@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-15T10:35:00+08:00",
+ "updatedAt": "2026-11-15T10:52:02+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 70,
+ "revision": 72,
  "categories": [
   {
    "id": "parse",
@@ -5733,8 +5733,8 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "status": "verifying",
    "priority": "P1",
    "description": "Query 使用全局 agent binding 与 structured 静态窗口，Supervisor 的独立选模和动态容量没有传给子 Agent；修复让两者复用当前 Supervisor 的模型来源、主备、effort、输出／超时／字符预算和容量策略，同时保留 Query prompt、工具、结构化结果与共享预算。",
-   "next": "正式发布候选 main PR #172 待合并与部署；随后核对完整 Server 装配与同一历史输入的 TT／FTT／token／质量。本卡保持 verifying，不以配置预检代替业务验收。",
-   "verification": "实现提交 30680fe4；Gateway 202 项（2.73 秒）与 Server／个人协议 136 项（32.76 秒）共 338 项唯一通过，1 条既有 Starlette 警告。修改前 7 项 Gateway 新回归失败、2 项静态控制通过，Bootstrap 捕获 configured-query-model 与 configured-chat-model 不一致。个人四种协议结构化工具循环均为 mock 并关闭客户端；API／native／legacy／alternate YAML 与父子配置覆盖来源、effort、fallback 和控制值。当前 Cloud 配置预检为 1048576／891289／24000、Flash／high／8192、metadata_requests=1、generation_calls=0，模型／运行哈希与容器未变、健康，未重启服务；只验证配置与 factory，未覆盖完整在线 Server 装配。没有修复后原 Chat 回放，TT／FTT／token／准确率未测；200000 字符上限仍可先于 891289 触发压缩。main 发布选取7个文件，同范围338项回归通过（不另计唯一用例），发布树810路径/10资产通过，沿用main忽略规则；候选未部署。dev PR #171 已以 dc9c86fa 合入；main PR #172 已 Ready，release-files 通过，6个源码/回归文件与集成后的dev逐字一致。",
+   "next": "main PR #172 的正式发布与部署仍需独立核验；本地三条未进入 Query，需补原子任务同路径对照。继续处理已复现的旧 item 重取、精确时刻和迟正文，本卡保持 verifying。",
+   "verification": "实现提交 30680fe4；Gateway 202 项（2.73 秒）与 Server／个人协议 136 项（32.76 秒）共 338 项唯一通过，1 条既有 Starlette 警告。修改前 7 项 Gateway 新回归失败、2 项静态控制通过，Bootstrap 捕获 configured-query-model 与 configured-chat-model 不一致。个人四种协议结构化工具循环均为 mock 并关闭客户端；API／native／legacy／alternate YAML 与父子配置覆盖来源、effort、fallback 和控制值。当前 Cloud 配置预检为 1048576／891289／24000、Flash／high／8192、metadata_requests=1、generation_calls=0，模型／运行哈希与容器未变、健康，未重启服务；只验证配置与 factory，未覆盖完整在线 Server 装配。11-15 本地完整回放 TT 30.485／14.138／49.851 秒，正文 FTT 25.230／12.932／47.112 秒，总 token 1151422；完成3/3、核心验收1/3，不作总体准确率。原 prestate 哈希一致、三个摘要事件前后未变，Query调用0，未覆盖原Query循环；父子装配均为1048576／891289／24000，200000字符保护保留。main 发布选取7个文件，同范围338项回归通过（不另计唯一用例），发布树810路径/10资产通过，沿用main忽略规则；候选未部署。dev PR #171 已以 dc9c86fa 合入；main PR #172 已 Ready，release-files 通过，6个源码/回归文件与集成后的dev逐字一致。",
    "updatedAt": "2026-11-15",
    "tags": [
     "Chat",
@@ -5773,6 +5773,16 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "label": "devlog",
      "kind": "source",
      "url": "https://github.com/owariband/Seekino/blob/dev/docs/dev/devlog.md#devlog-chat-model-config-inheritance-20261115"
+    },
+    {
+     "label": "本地完整回放 11-15",
+     "kind": "source",
+     "url": "https://github.com/owariband/Seekino/blob/dev/docs/report/agent/chat/local-history-replay-20261115/README.md"
+    },
+    {
+     "label": "本地回放 PR #177",
+     "kind": "pr",
+     "url": "https://github.com/owariband/Seekino/pull/177"
     }
    ]
   },
@@ -5975,8 +5985,8 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "priority": "P1",
    "description": "完整历史回放中 T01 的 query_video 占170.069秒（约86.5%整轮）；Query 反复检索和读取证据，耗尽共享100次工具预算，返回 VIDEO_LOOP_LIMIT_EXCEEDED，Supervisor 直接读取同预算也失败，终态 AGENT_MODEL_ERROR，无可见回答。已诊断，未修复。",
    "next": "调查 Query 的有界、去重与停止条件，明确循环终止；评估为 Supervisor 预留恢复预算或返回部分失败。不得静默调大100次限制、降低 high 或改写当前工具逻辑。",
-   "verification": "证据：43次 Query search_video_events、10次 retrieve、49次读取完成/尝试记录；101次 provider 调用中52次 embedding、45次 Query，均完成，不是 provider 超时。Cloud bootstrap 强制 limits_enabled=true，max_loop_turns=3 不是该 Query 循环停止条件。尚未实施代码或回归。后续确认T01为两个并行Query合计45次生成；同一Chunk读取22次、9次无cursor重读首页，另有5次分页游标错误。Query仍为旧64k/48k压缩、实际9次本地替换；失败child不交部分证据报告。分页进度恢复与压缩因果仍待验证，未改代码。",
-   "updatedAt": "2026-11-14",
+   "verification": "证据：43次 Query search_video_events、10次 retrieve、49次读取完成/尝试记录；101次 provider 调用中52次 embedding、45次 Query，均完成，不是 provider 超时。Cloud bootstrap 强制 limits_enabled=true，max_loop_turns=3 不是该 Query 循环停止条件。尚未实施代码或回归。后续确认T01为两个并行Query合计45次生成；同一Chunk读取22次、9次无cursor重读首页，另有5次分页游标错误。Query仍为旧64k/48k压缩、实际9次本地替换；失败child不交部分证据报告。分页进度恢复与压缩因果仍待验证，未改代码。 11-15 稳定本地三条回放都由 Supervisor 直接调用工具，Query生成0；因此没有复现原工具预算用尽，也没有验证其已修复，仍保留原问题。",
+   "updatedAt": "2026-11-15",
    "tags": [
     "Chat",
     "Query",
@@ -5999,6 +6009,16 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "label": "实时路由 TRD",
      "kind": "trd",
      "url": "https://github.com/owariband/Seekino/blob/dev/docs/design/03-product-reassessment/chat-realtime-intent-routing-trd.md"
+    },
+    {
+     "label": "本地完整回放 11-15",
+     "kind": "source",
+     "url": "https://github.com/owariband/Seekino/blob/dev/docs/report/agent/chat/local-history-replay-20261115/README.md"
+    },
+    {
+     "label": "本地回放 PR #177",
+     "kind": "pr",
+     "url": "https://github.com/owariband/Seekino/pull/177"
     }
    ]
   },

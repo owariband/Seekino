@@ -25,6 +25,8 @@
 
 ## Agent / chat
 
+[2026-11-15 动态窗口下的本地完整历史回放](agent/chat/local-history-replay-20261115/README.md)：原历史、native 状态与本地素材副本，稳定轮三条 TT／FTT／token 全量记录；复现旧 item 重取与取帧时间偏移，保留五条环境无效生成，区分完成率、核心验收与未覆盖的 Query 路径。
+
 [2026-11-14 实时 JEV 接线与三条历史 Chat 完整回放](agent/chat/history-latency-replay-20261114/README.md)：三条真实路由均进入 JEV 并返回 `retrieve`，但 T01 因 Query 耗尽共享工具预算失败，T02／T03 虽完成却分别漏掉目标播放位置、声称取到 17:36 而实际取帧为相邻秒；保留逐条 token、调用、部署与未验证边界。
 
 [2026-11-14 JEV-only 默认配置生产上线](agent/chat/query-intent-jev-only-20261113/production-rollout-20261114.md)：dev #155 / main #157 合并、兼容镜像、Cloud API 配置与真实 HTTP／检索 hook 探针；区分部署操作耗时与用户停机，保留未验证范围。

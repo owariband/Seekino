@@ -1,0 +1,22 @@
+{
+  "recorded_at": "2026-11-15T02:46:12.611053+00:00",
+  "tested_runtime_source": "76d20fe6",
+  "report_design_commit": "5182fa76",
+  "real_replays": 3,
+  "environment_invalid_replays_retained": 5,
+  "provider_rows_verified": 97,
+  "valid_provider_rows_verified": 37,
+  "numeric_totals_match_private_sources": true,
+  "native_prestate_and_summary_audit": true,
+  "encoder_healthy_during_valid_batch": true,
+  "no_raw_queries_answers_ids_credentials_or_absolute_paths_in_public_artifacts": true,
+  "runtime_source_unmodified_during_experiment": true,
+  "runtime_source_sha256": {
+    "server/bootstrap.py": "199875029a5c7c2882078d7aa22a432430f99e08b64227505fb76b59599eb94d",
+    "gateway/agent_model/factory.py": "e9431b4de1ca77f631b3597763c86d35912120be4c4ff11605e2040db0a54de4",
+    "gateway/personal_models.py": "46271d5d6197e99a18283b09a637e4f94b08362d138b953ee48cb76e5598c1a9",
+    "gateway/agent_model/deepagents.py": "f0610671fc00b74a96b50ae95099544c7dd5a13c9d8b9ce79a24a7b165ab0133",
+    "server/service/video_frame_reader.py": "35639903bc1c7cb7a248743df902ccd1aad4e9d219acdaf2c24d9d1377cbfa96"
+  },
+  "unit_tests_rerun_this_reporting_step": false
+}
