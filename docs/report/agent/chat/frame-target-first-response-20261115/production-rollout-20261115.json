@@ -1,0 +1,212 @@
+{
+  "date": "2026-11-15",
+  "main_pr": 180,
+  "main_commit": "f7823c8dd97b5b729faa5a24914a05e185541d80",
+  "release_source_commit": "50de814b",
+  "release_runtime_paths": [
+    "agent/chat/query_hook.py",
+    "agent/chat/query_hook_prompts.py",
+    "agent/chat/realtime_understanding/runtime.py",
+    "agent/chat/supervisor.py",
+    "agent/chat/video_search/frame_evidence.py",
+    "agent/chat/video_search/runtime.py",
+    "agent/chat/video_search/skills/query/SKILL.md",
+    "agent/chat/video_search/skills/retrieval/SKILL.md",
+    "agent/chat/video_search/skills/retrieval_transcript/SKILL.md",
+    "agent/chat/video_search/tools/frames.py",
+    "agent/chat/video_search/tools/registry.py",
+    "agent/chat/video_search/tools/retrieval.py",
+    "gateway/agent_model/deepagents.py",
+    "gateway/agent_model/factory.py",
+    "gateway/personal_models.py",
+    "gateway/query_hook.py",
+    "server/bootstrap.py",
+    "server/service/video_frame_reader.py",
+    "server/service/video_parse_routing.py",
+    "server/service/agent_chat.py"
+  ],
+  "release_file_count": 20,
+  "release_guard": {
+    "tracked_paths": 810,
+    "assets": 10,
+    "github_release_files": "passed",
+    "main_gitignore_preserved": true
+  },
+  "release_tests": {
+    "passed": 1088,
+    "skipped": 1,
+    "warning": 1,
+    "seconds": 42.72,
+    "tests_not_published": true
+  },
+  "deployment": {
+    "image": "seekino-api:chat-frame-f7823c8d-20261115",
+    "container_id": "5389ea4d40f6659e132d05da2c6c4be0825c2ad96c74879047e18f56095d4005",
+    "image_id": "sha256:118dae687799072e15258e1d268b00ef18f3411cc662312837b60b4eaee9f988",
+    "health": "healthy",
+    "deployment_operation_seconds": 17.135870764992433,
+    "other_five_containers_unchanged": true,
+    "main_commit": "f7823c8dd97b5b729faa5a24914a05e185541d80"
+  },
+  "active": {
+    "container_id": "5389ea4d40f6659e132d05da2c6c4be0825c2ad96c74879047e18f56095d4005",
+    "image": "seekino-api:chat-frame-f7823c8d-20261115",
+    "image_id": "sha256:118dae687799072e15258e1d268b00ef18f3411cc662312837b60b4eaee9f988",
+    "started_at": "2026-11-15T06:17:31.243694003Z",
+    "health": "healthy"
+  },
+  "configuration": {
+    "jev_only": true,
+    "rewriter_enabled": false,
+    "merged_decider_present": false,
+    "supervisor_model": "deepseek-flash",
+    "effort": "high",
+    "max_output_tokens": 8192,
+    "model_config_sha256": "547729bafeb922a0e1f0c25916996513f40b1f507a0e4373ce51943ce48067d2",
+    "runtime_config_sha256": "98c16c9e11e844b04f5da524594029dabc2cba41a7dbcd83aa0c37b7c8217990",
+    "parent_query_policy_equal": true,
+    "policy": {
+      "context_window_tokens": 1048576,
+      "output_reserve_tokens": 8192,
+      "safety_margin_tokens": 4096,
+      "auto_compact_tokens": 891289,
+      "compact_target_tokens": 24000
+    },
+    "builders": [
+      {
+        "role": "build_structured",
+        "model": "deepseek-flash",
+        "reasoning_effort": "high",
+        "max_output_tokens": 8192,
+        "max_input_chars": 200000
+      },
+      {
+        "role": "build_supervisor",
+        "model": "deepseek-flash",
+        "reasoning_effort": "high",
+        "max_output_tokens": 8192,
+        "max_input_chars": 200000
+      }
+    ]
+  },
+  "preflight": {
+    "requested_timestamp_ms": 1056000,
+    "actual_pts": null,
+    "images": 1,
+    "cross_scope_rejected": true,
+    "parse_tasks_unchanged": true,
+    "chat_generations": 0,
+    "feedback_preserved": true,
+    "runtime_19_files_exact_main": true,
+    "agent_chat_compatibility": "Production feedback methods preserved; only current videoId/seriesId added."
+  },
+  "activity_at_cutover": {
+    "recent_processing": 0,
+    "all_processing": 2,
+    "active_video_tasks": 0,
+    "running_chunks": 0,
+    "refining_intervals": 0
+  },
+  "public_probe": {
+    "url": "https://seekino.hypn0s.cloud",
+    "query": "请看看这部视频17:36这一帧，简单描述你实际看到的画面。",
+    "status": "completed",
+    "first_visible_ftt_seconds": 5.2813791670014325,
+    "server_tt_seconds": 7.725,
+    "client_tt_seconds": 8.806578458999866,
+    "actual_calls": [
+      {
+        "name": "get_video_frame",
+        "timestamp_ms": 1056000
+      }
+    ],
+    "tool_errors": 0,
+    "jev_calls": 1,
+    "supervisor_calls": 2,
+    "rewriter_calls": 0,
+    "native_task_in_request_tools": false,
+    "first_ack": "我先查看你指定的 17:36 这一帧画面。",
+    "tokens": {
+      "input_tokens": 34630,
+      "output_tokens": 386,
+      "total_tokens": 35016,
+      "reasoning_tokens": 144,
+      "cached_input_tokens": 19072
+    },
+    "usage": [
+      {
+        "operation": "query_hook_route",
+        "provider": "openrouter",
+        "model_name": "typesafe/jev-1.14-20261014",
+        "status": "completed",
+        "tokens": {
+          "input_tokens": 944,
+          "total_tokens": 982,
+          "output_tokens": 38,
+          "reasoning_tokens": null,
+          "text_input_tokens": null,
+          "audio_input_tokens": null,
+          "image_input_tokens": null,
+          "cached_input_tokens": null,
+          "cache_write_input_tokens": null,
+          "cached_audio_input_tokens": null,
+          "cache_write_1h_input_tokens": null,
+          "cache_write_5m_input_tokens": null
+        }
+      },
+      {
+        "operation": "read_file,submit_video_item,remove_video_item,search_web,query_video,read_query_report,retrieve,read_retrieval_evidence,search_video_events,get_video_outline,get_series_overview,inspect_video_frames,get_video_frame,understand_current_video",
+        "provider": "deepseek",
+        "model_name": "deepseek-flash",
+        "status": "completed",
+        "tokens": {
+          "input_tokens": 16090,
+          "total_tokens": 16195,
+          "output_tokens": 105,
+          "reasoning_tokens": 50,
+          "text_input_tokens": null,
+          "audio_input_tokens": null,
+          "image_input_tokens": null,
+          "cached_input_tokens": 2944,
+          "cache_write_input_tokens": null,
+          "cached_audio_input_tokens": null,
+          "cache_write_1h_input_tokens": null,
+          "cache_write_5m_input_tokens": null
+        }
+      },
+      {
+        "operation": "read_file,submit_video_item,remove_video_item,search_web,query_video,read_query_report,retrieve,read_retrieval_evidence,search_video_events,get_video_outline,get_series_overview,inspect_video_frames,get_video_frame,understand_current_video",
+        "provider": "deepseek",
+        "model_name": "deepseek-flash",
+        "status": "completed",
+        "tokens": {
+          "input_tokens": 17596,
+          "total_tokens": 17839,
+          "output_tokens": 243,
+          "reasoning_tokens": 94,
+          "text_input_tokens": null,
+          "audio_input_tokens": null,
+          "image_input_tokens": null,
+          "cached_input_tokens": 16128,
+          "cache_write_input_tokens": null,
+          "cached_audio_input_tokens": null,
+          "cache_write_1h_input_tokens": null,
+          "cache_write_5m_input_tokens": null
+        }
+      }
+    ]
+  },
+  "limits": [
+    "Single public probe, not a repeated full-history or p95 benchmark.",
+    "Original T02 long-history deictic target not replayed on the final code.",
+    "Closed-eye frame does not support the response eye-colour attribution.",
+    "Actual source frame PTS not measured."
+  ],
+  "preparation_failures": {
+    "build_permissions_fixed": true,
+    "preflight_stdin_fixed": true,
+    "host_bind_interpolation_fixed": true,
+    "old_api_remained_healthy_before_successful_cutover": true
+  },
+  "private_data_published": false
+}

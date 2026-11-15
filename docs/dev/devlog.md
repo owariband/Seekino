@@ -6691,3 +6691,8 @@ dev集成时另保留了PR #179的JEV连接复用及生命周期修复；本轮�
 
 
 采用JEV-only、动态模型容量85%触发和按需工具架构；本轮不改变推理档位或工具预算。结果只代表三条历史的各次观测，不给出全量准确率、p95或线上已提速的结论。原始聊天、checkpoint、图片和凭据留在本机私有目录；公开材料保留脱敏场景、哈希和数字。Query有界收敛、近满窗、并发及正式部署仍按各自验收边界处理。关联[TRD](../design/03-product-reassessment/chat-frame-target-and-first-response-trd.md)、[PR #178](https://github.com/owariband/Seekino/pull/178)，当前任务状态只在[工作台](workbench.html)的CHAT-FRAME-FIRST-01维护。
+
+
+2026-11-15 发布补记（延续本节的部署验收）：正式main通过[PR #180](https://github.com/owariband/Seekino/pull/180)合入`f7823c8d`，只选20个运行文件；agent_chat仅两行身份字段，不带无关反馈功能、数据库、前端、测试或内部材料。独立发布代码回归1088通过／1跳过，42.72s；本地与GitHub发布树检查通过。CPU/Cloud同一API已切为`seekino-api:chat-frame-f7823c8d-20261115`并healthy，其他五个容器未替换；切换操作17.136s。线上保留原反馈及配置兼容，因此为明确差异的runtime overlay，不冒充完整main镜像。
+
+候选同配置只读SQL装配确认父子Flash/high/8192及1048576／891289／24000一致；单点原片1056000ms成功、跨范围拒绝、Parse任务不变、生成0。准备中的权限／stdin及宿主bind路径错误已修正，首次切换被Docker拒绝时旧API仍健康。公网新游客真实探针完成，首确认5.281s、服务端TT7.725s、客户端8.807s；实际仅get_video_frame(1056000)，工具错误0，JEV1／Supervisor2／改写0，请求不含原生task。主要图像描述相符，但闭眼图不支持眼色描述，完整视觉质量不能据此通过；这一条新会话也不能替代T02原长历史、近满窗或并发验收。当前官方模型生成成功，不再把此前402写成当前不可用。配置哈希保持，详细收据见[上线报告](../report/agent/chat/frame-target-first-response-20261115/production-rollout-20261115.md)。
