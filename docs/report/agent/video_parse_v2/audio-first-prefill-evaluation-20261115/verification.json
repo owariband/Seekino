@@ -1,0 +1,32 @@
+{
+  "verified_query_rows_per_mode": 309,
+  "modes": 4,
+  "stage1_has_no_person_labels": true,
+  "query_cache_contains_no_person_labels": true,
+  "query_cache_rerun_encoder_calls": 0,
+  "source_asr_unchanged": true,
+  "source_scoring_artifact_unchanged": true,
+  "real_targets_retained_existing_names": true,
+  "two_thirds_synthetic_wrong_label_checks_pass": true,
+  "pairwise": {
+    "exact_expression_full__to__exact_expression_two_thirds": {
+      "queries": 309,
+      "top1_changes": 44,
+      "band_changes": 80
+    },
+    "exact_expression_two_thirds__to__audio_window_two_thirds": {
+      "queries": 309,
+      "top1_changes": 25,
+      "band_changes": 75
+    },
+    "audio_window_two_thirds__to__audio_window_full": {
+      "queries": 309,
+      "top1_changes": 43,
+      "band_changes": 68
+    }
+  },
+  "new_understanding_or_refine_model_run": false,
+  "production_server_changed": false,
+  "gpu_access": false,
+  "cpu_prod_access": false
+}

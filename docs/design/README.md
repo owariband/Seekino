@@ -75,6 +75,7 @@ TRD 必须以 `# 1. 问题与现状` 开头，清晰呈现问题识别、因素�
 | Parse XML v2 历史方案 | [parse-output-xml.md](03-product-reassessment/parse-output-xml.md) | 2026-10-26 协议原稿；新候选与验证口径见解析性能主 TRD，保留历史设计来源。 |
 | 声纹与台词归属 | [voiceprint-trd.md](02-agent-harness/voiceprint-trd.md) | 专项 TRD：声纹准备、比较、原子台词及说话人归属；保留历次实验的适用边界。 |
 | 声纹提前准备与匿名计算 | [voiceprint-early-preparation-trd.md](03-product-reassessment/voiceprint-early-preparation-trd.md) | 11-15 整集309行冻结对照：16块参考改变44条top1与77条分档；保留提前计算、后绑姓名方向，未接入或实测整集提速。 |
+| 音频先算与两轮预填 | [audio-first-prefill-evaluation-trd.md](03-product-reassessment/audio-first-prefill-evaluation-trd.md) | 11-15 复用ASR，实算1001音频窗，2/3姓名锚点映射全309行并检查Canvas；匿名分组过碎未通过稳定身份验收，Server未接入。 |
 | Refine 画外音与先声后像 | [refine-offscreen-voice-trd.md](03-product-reassessment/refine-offscreen-voice-trd.md) | 11-15 提醒反应镜头及旧描述中的身份推断；DS Flash low 整集主链完成，固定两句姓名2/2，未知目标之外未认证。 |
 | CONFLICT 声纹候选预填 | [voiceprint-conflict-prefill-trd.md](03-product-reassessment/voiceprint-conflict-prefill-trd.md) | 11-14 先填 top1 并保留原身份评分；434 项组合回归，整集 v3 主链完成、69 条 CONFLICT 实际预填，但两个固定姓名仍 1/2。 |
 | Refine 逐句声纹预填输入 | [refine-voiceprint-prefill-context-trd.md](03-product-reassessment/refine-voiceprint-prefill-context-trd.md) | 11-14 复用宿主已绑定的逐句摘要；全片参考池及引用明细不进入模型输入，预填、评分及原始留存不变。 |

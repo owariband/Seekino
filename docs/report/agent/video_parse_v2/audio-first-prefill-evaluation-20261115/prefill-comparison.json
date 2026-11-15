@@ -1,0 +1,475 @@
+{
+  "source_task_id": "df165ebc-540a-4a9d-bf84-b7469501564b",
+  "query_preparation": {
+    "exact_expression_queries": 308,
+    "phase1_exact_interval_hits": 6,
+    "prior_expression_interval_hits": 4,
+    "native_encoder_calls": 298,
+    "query_preparation_seconds": 8.320152374999907,
+    "same_pcm_as_original": 5,
+    "rerun_cache_hit": true,
+    "rerun_encoder_calls": 0
+  },
+  "source_artifact_sha256": "c3ca8d50c4e4f27ca4701cfc7557704d3ca9fd57e8431c9ef3e1fa9f409eb642",
+  "phase1_coverage": {
+    "short_cue_duration_ms": 4462,
+    "total_asr_duration_ms": 989710,
+    "groups_with_single_window": 626
+  },
+  "phase1_target_turns": {
+    "opening_soyo": [
+      {
+        "start_ms": 47251,
+        "end_ms": 48324,
+        "speaker_id": "VOICE_033"
+      },
+      {
+        "start_ms": 48324,
+        "end_ms": 49324,
+        "speaker_id": "VOICE_034"
+      },
+      {
+        "start_ms": 49324,
+        "end_ms": 50324,
+        "speaker_id": "VOICE_003"
+      }
+    ],
+    "anon_introduction": [
+      {
+        "start_ms": 292475,
+        "end_ms": 293475,
+        "speaker_id": "VOICE_145"
+      },
+      {
+        "start_ms": 293475,
+        "end_ms": 294475,
+        "speaker_id": "VOICE_012"
+      },
+      {
+        "start_ms": 294475,
+        "end_ms": 295499,
+        "speaker_id": "VOICE_006"
+      }
+    ]
+  },
+  "results": {
+    "exact_expression_full": {
+      "queries": 309,
+      "anchor_chunks": 24,
+      "anchor_expressions": 277,
+      "query_dependent_reference_count_min": 308,
+      "query_dependent_reference_count_max": 308,
+      "bands": {
+        "null": 116,
+        "NO_VOICE": 81,
+        "ACCEPT": 45,
+        "CONFLICT": 67
+      },
+      "actual_canvas_prefills": 112,
+      "actual_draft_speaker_changes": 78,
+      "top1_changes_vs_saved_baseline": 0,
+      "band_changes_vs_saved_baseline": 3,
+      "targets": {
+        "opening_soyo": {
+          "start_ms": 48000,
+          "end_ms": 49800,
+          "expected_speaker": "長崎そよ",
+          "understanding_speaker": "長崎そよ",
+          "top1": "長崎そよ",
+          "band": null,
+          "gap": 0.09229149892823851,
+          "prefill": {
+            "speaker": "長崎そよ",
+            "speaker_source": "understanding"
+          },
+          "candidates": [
+            {
+              "speaker": "長崎そよ",
+              "similarity": 0.7259959784491686,
+              "reference_count": 58,
+              "independent_cue_count": 47
+            },
+            {
+              "speaker": "千早愛音",
+              "similarity": 0.6337044795209301,
+              "reference_count": 72,
+              "independent_cue_count": 46
+            },
+            {
+              "speaker": "ういちゃん",
+              "similarity": 0.5340113727525764,
+              "reference_count": 2,
+              "independent_cue_count": 2
+            }
+          ]
+        },
+        "anon_introduction": {
+          "start_ms": 292500,
+          "end_ms": 295499,
+          "expected_speaker": "千早愛音",
+          "understanding_speaker": "千早愛音",
+          "top1": "千早愛音",
+          "band": "NO_VOICE",
+          "gap": 0.03703083459088896,
+          "prefill": {
+            "speaker": "千早愛音",
+            "speaker_source": "understanding"
+          },
+          "candidates": [
+            {
+              "speaker": "千早愛音",
+              "similarity": 0.8156936281189737,
+              "reference_count": 75,
+              "independent_cue_count": 44
+            },
+            {
+              "speaker": "長崎そよ",
+              "similarity": 0.7786627935280848,
+              "reference_count": 61,
+              "independent_cue_count": 49
+            },
+            {
+              "speaker": "椎名立希",
+              "similarity": 0.6819745699006186,
+              "reference_count": 36,
+              "independent_cue_count": 28
+            }
+          ]
+        }
+      },
+      "synthetic_wrong_label_prefill": {
+        "opening_soyo": {
+          "synthetic_understanding_speaker": "高松燈",
+          "band": "CONFLICT",
+          "prefill_speaker": "長崎そよ",
+          "speaker_source": "voice_default",
+          "corrected_by_prefill": true
+        },
+        "anon_introduction": {
+          "synthetic_understanding_speaker": "若葉睦",
+          "band": "NO_VOICE",
+          "prefill_speaker": "若葉睦",
+          "speaker_source": "understanding",
+          "corrected_by_prefill": false
+        }
+      },
+      "scoring_and_canvas_seconds": 1.91382550000003
+    },
+    "exact_expression_two_thirds": {
+      "queries": 309,
+      "anchor_chunks": 16,
+      "anchor_expressions": 200,
+      "query_dependent_reference_count_min": 216,
+      "query_dependent_reference_count_max": 216,
+      "bands": {
+        "null": 94,
+        "NO_VOICE": 68,
+        "ACCEPT": 75,
+        "CONFLICT": 72
+      },
+      "actual_canvas_prefills": 147,
+      "actual_draft_speaker_changes": 88,
+      "top1_changes_vs_saved_baseline": 44,
+      "band_changes_vs_saved_baseline": 77,
+      "targets": {
+        "opening_soyo": {
+          "start_ms": 48000,
+          "end_ms": 49800,
+          "expected_speaker": "長崎そよ",
+          "understanding_speaker": "長崎そよ",
+          "top1": "長崎そよ",
+          "band": null,
+          "gap": 0.10215931038989434,
+          "prefill": {
+            "speaker": "長崎そよ",
+            "speaker_source": "understanding"
+          },
+          "candidates": [
+            {
+              "speaker": "長崎そよ",
+              "similarity": 0.7267285091329716,
+              "reference_count": 37,
+              "independent_cue_count": 36
+            },
+            {
+              "speaker": "千早愛音",
+              "similarity": 0.6245691987430773,
+              "reference_count": 56,
+              "independent_cue_count": 38
+            },
+            {
+              "speaker": "椎名立希",
+              "similarity": 0.47412315630433366,
+              "reference_count": 30,
+              "independent_cue_count": 24
+            }
+          ]
+        },
+        "anon_introduction": {
+          "start_ms": 292500,
+          "end_ms": 295499,
+          "expected_speaker": "千早愛音",
+          "understanding_speaker": "千早愛音",
+          "top1": "千早愛音",
+          "band": null,
+          "gap": 0.07745116414772768,
+          "prefill": {
+            "speaker": "千早愛音",
+            "speaker_source": "understanding"
+          },
+          "candidates": [
+            {
+              "speaker": "千早愛音",
+              "similarity": 0.8146344771596636,
+              "reference_count": 59,
+              "independent_cue_count": 36
+            },
+            {
+              "speaker": "長崎そよ",
+              "similarity": 0.737183313011936,
+              "reference_count": 40,
+              "independent_cue_count": 38
+            },
+            {
+              "speaker": "椎名立希",
+              "similarity": 0.674425601845288,
+              "reference_count": 30,
+              "independent_cue_count": 24
+            }
+          ]
+        }
+      },
+      "synthetic_wrong_label_prefill": {
+        "opening_soyo": {
+          "synthetic_understanding_speaker": "高松燈",
+          "band": "CONFLICT",
+          "prefill_speaker": "長崎そよ",
+          "speaker_source": "voice_default",
+          "corrected_by_prefill": true
+        },
+        "anon_introduction": {
+          "synthetic_understanding_speaker": "若葉睦",
+          "band": "CONFLICT",
+          "prefill_speaker": "千早愛音",
+          "speaker_source": "voice_default",
+          "corrected_by_prefill": true
+        }
+      },
+      "scoring_and_canvas_seconds": 1.2858223339999313
+    },
+    "audio_window_two_thirds": {
+      "queries": 309,
+      "anchor_chunks": 16,
+      "anchor_expressions": 200,
+      "query_dependent_reference_count_min": 387,
+      "query_dependent_reference_count_max": 408,
+      "bands": {
+        "null": 102,
+        "ACCEPT": 54,
+        "NO_VOICE": 78,
+        "CONFLICT": 75
+      },
+      "actual_canvas_prefills": 129,
+      "actual_draft_speaker_changes": 84,
+      "top1_changes_vs_saved_baseline": 53,
+      "band_changes_vs_saved_baseline": 88,
+      "targets": {
+        "opening_soyo": {
+          "start_ms": 48000,
+          "end_ms": 49800,
+          "expected_speaker": "長崎そよ",
+          "understanding_speaker": "長崎そよ",
+          "top1": "長崎そよ",
+          "band": null,
+          "gap": 0.0649535683395791,
+          "prefill": {
+            "speaker": "長崎そよ",
+            "speaker_source": "understanding"
+          },
+          "candidates": [
+            {
+              "speaker": "長崎そよ",
+              "similarity": 0.6975480673623125,
+              "reference_count": 120,
+              "independent_cue_count": 28
+            },
+            {
+              "speaker": "千早愛音",
+              "similarity": 0.6325944990227333,
+              "reference_count": 122,
+              "independent_cue_count": 33
+            },
+            {
+              "speaker": "高松燈",
+              "similarity": 0.5048408633404042,
+              "reference_count": 40,
+              "independent_cue_count": 16
+            }
+          ]
+        },
+        "anon_introduction": {
+          "start_ms": 292500,
+          "end_ms": 295499,
+          "expected_speaker": "千早愛音",
+          "understanding_speaker": "千早愛音",
+          "top1": "千早愛音",
+          "band": null,
+          "gap": 0.08117232779862738,
+          "prefill": {
+            "speaker": "千早愛音",
+            "speaker_source": "understanding"
+          },
+          "candidates": [
+            {
+              "speaker": "千早愛音",
+              "similarity": 0.8059821776299059,
+              "reference_count": 124,
+              "independent_cue_count": 33
+            },
+            {
+              "speaker": "長崎そよ",
+              "similarity": 0.7248098498312785,
+              "reference_count": 122,
+              "independent_cue_count": 29
+            },
+            {
+              "speaker": "椎名立希",
+              "similarity": 0.6228558283251526,
+              "reference_count": 35,
+              "independent_cue_count": 16
+            }
+          ]
+        }
+      },
+      "synthetic_wrong_label_prefill": {
+        "opening_soyo": {
+          "synthetic_understanding_speaker": "高松燈",
+          "band": "CONFLICT",
+          "prefill_speaker": "長崎そよ",
+          "speaker_source": "voice_default",
+          "corrected_by_prefill": true
+        },
+        "anon_introduction": {
+          "synthetic_understanding_speaker": "若葉睦",
+          "band": "CONFLICT",
+          "prefill_speaker": "千早愛音",
+          "speaker_source": "voice_default",
+          "corrected_by_prefill": true
+        }
+      },
+      "scoring_and_canvas_seconds": 2.7608747090000634
+    },
+    "audio_window_full": {
+      "queries": 309,
+      "anchor_chunks": 24,
+      "anchor_expressions": 277,
+      "query_dependent_reference_count_min": 540,
+      "query_dependent_reference_count_max": 561,
+      "bands": {
+        "null": 123,
+        "NO_VOICE": 86,
+        "ACCEPT": 35,
+        "CONFLICT": 65
+      },
+      "actual_canvas_prefills": 100,
+      "actual_draft_speaker_changes": 73,
+      "top1_changes_vs_saved_baseline": 34,
+      "band_changes_vs_saved_baseline": 76,
+      "targets": {
+        "opening_soyo": {
+          "start_ms": 48000,
+          "end_ms": 49800,
+          "expected_speaker": "長崎そよ",
+          "understanding_speaker": "長崎そよ",
+          "top1": "長崎そよ",
+          "band": "NO_VOICE",
+          "gap": 0.049519469496216106,
+          "prefill": {
+            "speaker": "長崎そよ",
+            "speaker_source": "understanding"
+          },
+          "candidates": [
+            {
+              "speaker": "長崎そよ",
+              "similarity": 0.7077880669149778,
+              "reference_count": 160,
+              "independent_cue_count": 40
+            },
+            {
+              "speaker": "千早愛音",
+              "similarity": 0.6582685974187616,
+              "reference_count": 184,
+              "independent_cue_count": 41
+            },
+            {
+              "speaker": "マナちゃん",
+              "similarity": 0.5217910674770301,
+              "reference_count": 6,
+              "independent_cue_count": 1
+            }
+          ]
+        },
+        "anon_introduction": {
+          "start_ms": 292500,
+          "end_ms": 295499,
+          "expected_speaker": "千早愛音",
+          "understanding_speaker": "千早愛音",
+          "top1": "千早愛音",
+          "band": null,
+          "gap": 0.06338415997183489,
+          "prefill": {
+            "speaker": "千早愛音",
+            "speaker_source": "understanding"
+          },
+          "candidates": [
+            {
+              "speaker": "千早愛音",
+              "similarity": 0.8073272627586721,
+              "reference_count": 187,
+              "independent_cue_count": 41
+            },
+            {
+              "speaker": "長崎そよ",
+              "similarity": 0.7439431027868372,
+              "reference_count": 162,
+              "independent_cue_count": 41
+            },
+            {
+              "speaker": "椎名立希",
+              "similarity": 0.6217161714641907,
+              "reference_count": 36,
+              "independent_cue_count": 18
+            }
+          ]
+        }
+      },
+      "synthetic_wrong_label_prefill": {
+        "opening_soyo": {
+          "synthetic_understanding_speaker": "高松燈",
+          "band": "NO_VOICE",
+          "prefill_speaker": "高松燈",
+          "speaker_source": "understanding",
+          "corrected_by_prefill": false
+        },
+        "anon_introduction": {
+          "synthetic_understanding_speaker": "若葉睦",
+          "band": "CONFLICT",
+          "prefill_speaker": "千早愛音",
+          "speaker_source": "voice_default",
+          "corrected_by_prefill": true
+        }
+      },
+      "scoring_and_canvas_seconds": 3.70428820799998
+    }
+  },
+  "limits": [
+    "Real CPU encoding and actual Canvas construction; saved Understanding commits are replayed.",
+    "Anonymous phase 1 never reads Understanding; named phase 2 uses only the indicated anchor horizon.",
+    "Query encoding occurs after its Understanding interval exists; exact phase-1 cache hits are counted.",
+    "Full-episode song/overlap flags remain fixed: not an online unknown-future-flag validation.",
+    "No new Understanding/Refine model call, ASR call, GPU access or DB write.",
+    "Initial labels are proxies; only two target identities have human confirmation.",
+    "Wrong-label fault injection edits copied drafts only; it is not a newly observed model error.",
+    "Stage-1 groups are never assigned human names by fiat or used as B0 identity labels."
+  ]
+}

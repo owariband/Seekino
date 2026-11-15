@@ -1,0 +1,26 @@
+{
+  "baseline_commit": "d62d84f720cbc7b175bb7c852452fc6e7f3ffae6",
+  "trd_first_commit": "9869f39cc938d46f712bf45c70dff1e37b778caf",
+  "source_task_id": "df165ebc-540a-4a9d-bf84-b7469501564b",
+  "source_artifact_sha256": "c3ca8d50c4e4f27ca4701cfc7557704d3ca9fd57e8431c9ef3e1fa9f409eb642",
+  "production_code_changed": false,
+  "new_understanding_or_refine_model_run": false,
+  "asr_reused": true,
+  "gpu_access": false,
+  "cpu_prod_access": false,
+  "cpu_threads": 8,
+  "first_stage_inputs": [
+    "cached_asr",
+    "source_media",
+    "encoder"
+  ],
+  "second_stage_inputs": [
+    "stage1_audio_embeddings",
+    "saved_first_understanding_commits"
+  ],
+  "script_sha256": {
+    "prepare-audio.py": "affa5ebd2a115d7b87bb44e529baf49191be7244ebfd1455ae1aa957eefd5527",
+    "verify-results.py": "a085de48d36dc6a81a8a36b704d816a2ef13a1548799c0a39399cd35c830d193",
+    "evaluate-prefill.py": "f78f5428c7fc738d7806d22fec486460841d5a85adcf4db4d80a6490c54ff5cc"
+  }
+}

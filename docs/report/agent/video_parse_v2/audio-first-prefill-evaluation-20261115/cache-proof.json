@@ -1,0 +1,18 @@
+{
+  "cache_hit": true,
+  "encoder_calls": 0,
+  "cached_samples": 1001,
+  "identity": {
+    "media_sha256": "50e981e49a3d74e8c0aca7571ffae8265b88f6388f1d34849876b61ad8bf5814",
+    "asr_sha256": "2543d152519b6452d7b0f227db328894127a12fe48990dc45643c88d2e5750e7",
+    "model": "iic/speech_campplus_sv_zh-cn_16k-common",
+    "encoder_revision": "campplus-v1.0.0-sha256-3388cf5fd3493c9ac9c69851d8e7a8badcfb4f3dc631020c4961371646d5ada8-source-c59d534cbc3453fed97eddff9c958125417ad9a88963299c397ff3337bbd2c9d-fbank80-16k-mean-dither0-l2-v1",
+    "window_ms": 1000,
+    "minimum_ms": 400,
+    "cpu_threads": 8,
+    "clustering": {
+      "method": "agglomerative",
+      "threshold": 0.35
+    }
+  }
+}

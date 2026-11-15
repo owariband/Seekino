@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-15T01:29:39+08:00",
+ "updatedAt": "2026-11-15T10:31:29+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 72,
+ "revision": 73,
  "categories": [
   {
    "id": "parse",
@@ -5986,6 +5986,56 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "source": {
     "ref": "cb822ba07e6ae4cc0a152b3cb3e1a44c4b3e3796",
     "path": "docs/design/03-product-reassessment/voiceprint-early-preparation-trd.md",
+    "line": 1
+   }
+  },
+  {
+   "id": "PARSE-VOICE-TWOPASS-01",
+   "title": "音频先算与2/3理解后再次预填",
+   "category": "parse",
+   "type": "requirement",
+   "status": "progressing",
+   "priority": "P2",
+   "description": "两轮完整EP04原型及实际Canvas预填合同跑通；初轮短窗匿名分组过碎，稳定身份输入未通过，正式Server未接入。",
+   "next": "复用既有ASR，先验证可靠匿名声音分段；按窗口证据与评分版本接入2/3具名预填和晚到参考补映射，再跑新Under/Refine及实际时长。",
+   "verification": "2026-11-15：ASR166条复用，本机CPU8线程编码1001窗，总16.886秒；AHC默认距离0.35得到749组、626单窗组，仅17/166 cue单一ID。36短cue共4.462秒/989.710秒。308表达仅6个精确命中初轮窗，另4个重复命中，298次补算8.320秒；同批重跑两轮0编码。4组各309行真实Canvas检查；16块短窗参考129条预填、84条改名，精确表达参考147/88。两目标本来已正确且未预填；副本注入错名时两种16块方案2/2仅证明合同。短窗16→24块43条top1、68分档变；全片准确率、新Agent、标准链路提速未测，GPU/CPU/prod及旧任务未改。",
+   "updatedAt": "2026-11-15",
+   "tags": [
+    "ASR复用",
+    "两轮回放",
+    "匿名分组未过"
+   ],
+   "related": [
+    "MOD-PARSE",
+    "B12",
+    "PARSE-VOICE-EARLY-01"
+   ],
+   "branch": "perf/audio-first-prefill-evaluation",
+   "links": [
+    {
+     "label": "两轮预填TRD",
+     "url": "https://github.com/owariband/Seekino/blob/perf/audio-first-prefill-evaluation/docs/design/03-product-reassessment/audio-first-prefill-evaluation-trd.md",
+     "kind": "trd"
+    },
+    {
+     "label": "完整回放及编码证据",
+     "url": "https://github.com/owariband/Seekino/blob/perf/audio-first-prefill-evaluation/docs/report/agent/video_parse_v2/audio-first-prefill-evaluation-20261115/README.md",
+     "kind": "source"
+    },
+    {
+     "label": "依赖提前准备对照PR #174",
+     "url": "https://github.com/owariband/Seekino/pull/174",
+     "kind": "pr"
+    },
+    {
+     "label": "两轮预填实验PR #176",
+     "url": "https://github.com/owariband/Seekino/pull/176",
+     "kind": "pr"
+    }
+   ],
+   "source": {
+    "ref": "9869f39cc938d46f712bf45c70dff1e37b778caf",
+    "path": "docs/design/03-product-reassessment/audio-first-prefill-evaluation-trd.md",
     "line": 1
    }
   }
