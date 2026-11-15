@@ -46,6 +46,39 @@ class FrameReadRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class PointFrameReadRequest:
+    tenant_id: str
+    allowed_series_ids: tuple[str, ...]
+    video_id: str
+    timestamp_ms: int
+    inspection_id: str
+    role: str
+    conversation_id: str
+    message_id: str
+    max_height: int
+    timeout_seconds: float | None
+    check_control: Callable[[], None] = field(repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.video_id, str) or not self.video_id.strip():
+            raise ValueError("video_id must be a nonempty string")
+        if (not isinstance(self.allowed_series_ids, tuple) or not self.allowed_series_ids
+                or any(not isinstance(value, str) or not value.strip()
+                       for value in self.allowed_series_ids)):
+            raise ValueError("allowed_series_ids must be a nonempty tuple of strings")
+        if type(self.timestamp_ms) is not int or self.timestamp_ms < 0:
+            raise ValueError("timestamp_ms must be a nonnegative integer")
+        if type(self.max_height) is not int or self.max_height <= 0:
+            raise ValueError("max_height must be a positive integer")
+
+    def cache_key(self) -> tuple:
+        return (
+            self.tenant_id, self.video_id, tuple(sorted(set(self.allowed_series_ids))),
+            self.timestamp_ms, self.max_height,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class FrameInspection:
     payload: dict[str, Any]
     artifact: ToolImageArtifact
@@ -54,6 +87,12 @@ class FrameInspection:
 class FrameReader(Protocol):
     def __call__(
         self, request: FrameReadRequest, cached: FrameInspection | None = None,
+    ) -> FrameInspection: ...
+
+
+class PointFrameReader(Protocol):
+    def read_point(
+        self, request: PointFrameReadRequest, cached: FrameInspection | None = None,
     ) -> FrameInspection: ...
 
 

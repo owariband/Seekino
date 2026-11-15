@@ -35,8 +35,27 @@ from .shared import (
 )
 
 
+def _retrieval_call_schema(schema: dict[str, Any]) -> None:
+    schema["anyOf"] = [
+        {
+            "required": ["query", "top_k", "channel_weights"],
+            "properties": {
+                "query": {"type": "string"}, "top_k": {"type": "integer"},
+                "channel_weights": {"type": "object"}, "cursor": {"type": "null"},
+            },
+        },
+        {
+            "required": ["cursor"],
+            "properties": {
+                name: {"type": "string" if name == "cursor" else "null"}
+                for name in schema["properties"]
+            },
+        },
+    ]
+
+
 class _ScopedRetrievalArguments(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", json_schema_extra=_retrieval_call_schema)
 
     query: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=20_000)] | None = None
     top_k: int | None = Field(default=None, ge=1, strict=True)
@@ -251,6 +270,7 @@ def build_retrieve_tool(
         name="retrieve",
         description=(
             "Search the fixed Series scope and return source evidence with video_chunk_id and canonical times. "
+            "For a new search provide query, top_k and channel_weights together. "
             "Use the returned evidence to assess each claim; ranking alone is not proof. "
             "If evidence_truncated or more context is needed, use read_retrieval_evidence with that ID. "
             "When next_cursor is present, call retrieve with cursor only."

@@ -8,6 +8,7 @@ import pytest
 from agent.chat.common.errors import AgentExecutionTimeoutError, AgentModelInvocationError
 from agent.chat.common.state import ExecutionControl
 from agent.chat.query_hook import QueryHook, QueryHookDecision, RetrievalSlot
+from agent.chat.query_hook_prompts import TEMPLATES, TURN_SCOPE
 from agent.chat.supervisor import SupervisorRuntime
 from gateway.config import QueryHookConfig
 from gateway.query_hook import QueryHookModelError
@@ -449,3 +450,13 @@ def test_supervisor_receives_append_once_while_tools_history_and_inputs_keep_ori
     assert "[本轮处理说明｜应用生成]" not in supervisor.prompts[0]
     assert video.calls[0][0]["original_user_message"] == original["user_message"]
     runtime.close()
+
+def test_templates_keep_routing_simple_and_do_not_force_unavailable_tool_names():
+    rendered = "\n".join((*TEMPLATES.values(), TURN_SCOPE))
+    for tool_name in ("query_video", "get_video_frame", "understand_current_video", "retrieve"):
+        assert tool_name not in rendered
+    assert "最小工具" in TEMPLATES["retrieve"]
+    assert "简单目标不写计划" in TEMPLATES["retrieve"]
+    assert "先后顺序遵循当前原文" in TEMPLATES["mixed"]
+    assert "不为凑数" in TEMPLATES["mixed"]
+    assert "不再重新分类" in TURN_SCOPE

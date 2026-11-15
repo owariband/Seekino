@@ -13,7 +13,9 @@ from agent.chat.common.tool import attach_agent_tool_logging
 from agent.chat.video_search.frame_evidence import (
     FrameInspection, FrameInspectionSession, FrameReadError,
 )
-from agent.chat.video_search.tools.frames import build_inspect_video_frames_tool
+from agent.chat.video_search.tools.frames import (
+    build_get_video_frame_tool, build_inspect_video_frames_tool,
+)
 from agent.chat.video_search.tools.shared import _ToolCallBudget
 from agent.chat.video_search.state import RetrievalCall, LexicalRetrievalChannelWeights
 from engine.rag.contracts import AgentReply, VideoChunkSearchResult
@@ -375,3 +377,203 @@ def test_runtime_frame_inspections_follow_effective_count_limits(limits_enabled,
     assert first_ids.isdisjoint(
         request.inspection_id for request, _cached in reader.calls[first_call_count:]
     )
+
+
+class PointFrameReader:
+    def __init__(self):
+        self.calls = []
+
+    def read_point(self, request, cached=None):
+        self.calls.append((request, cached))
+        artifact = cached.artifact if cached else ToolImageArtifact((
+            ToolImage("data:image/png;base64,dGVzdA==", 4, "point frame"),
+        ))
+        return FrameInspection({
+            "inspection_id": request.inspection_id,
+            "source_kind": "source_video_frame",
+            "video_id": request.video_id,
+            "series_id": request.allowed_series_ids[0],
+            "requested_timestamp_ms": request.timestamp_ms,
+            "frame_count": 1,
+            "frames": [{
+                "requested_timestamp_ms": request.timestamp_ms,
+                "artifact_uri": "artifact://frames/point.png",
+                "sha256": "b" * 64,
+            }],
+            "cache_hit": cached is not None,
+            "images_supplied": True,
+            "manifest_uri": f"artifact://inspections/{request.inspection_id}.json",
+            "manifest_sha256": "c" * 64,
+        }, artifact)
+
+
+def _point_inputs():
+    inputs = _inputs()
+    inputs["current_video"] = {"videoId": "video-1", "seriesId": "series", "episode": 1}
+    inputs["extra_context"] = {"playback": {
+        "videoId": "video-1", "seriesId": "series", "positionSeconds": 1_056_000,
+    }}
+    return inputs
+
+
+def _point_tool(
+    reader, *, session=None, inputs=None, control=None,
+    role="Supervisor", maximum_result_bytes=16_384, **kwargs,
+):
+    return build_get_video_frame_tool(
+        reader=reader,
+        session=session if session is not None else FrameInspectionSession(10),
+        inputs=_point_inputs() if inputs is None else inputs,
+        control=control if control is not None else ExecutionControl(monotonic() + 60),
+        role=role, max_height=480, maximum_result_bytes=maximum_result_bytes, **kwargs,
+    )
+
+
+def test_get_video_frame_reads_absolute_1056000_without_retrieval():
+    reader = PointFrameReader()
+    result = _point_tool(reader).invoke({
+        "type": "tool_call", "name": "get_video_frame", "id": "point-1",
+        "args": {"timestamp_ms": 1_056_000},
+    })
+
+    assert result.status == "success"
+    request, cached = reader.calls[0]
+    assert request.timestamp_ms == 1_056_000
+    assert request.video_id == "video-1"
+    assert request.allowed_series_ids == ("series",)
+    assert request.max_height == 480 and request.role == "Supervisor"
+    assert request.conversation_id == "conversation"
+    assert request.message_id == "answer"
+    assert 0 < request.timeout_seconds <= 60
+    assert cached is None
+    payload = json.loads(result.content)
+    assert payload["source_kind"] == "source_video_frame"
+    assert payload["requested_timestamp_ms"] == 1_056_000
+    assert payload["video_id"] == "video-1"
+    assert len(result.artifact.images) == 1
+    assert result.artifact.openai_content()[1]["type"] == "image_url"
+
+
+@pytest.mark.parametrize("arguments", [
+    {}, {"timestamp_ms": -1}, {"timestamp_ms": True}, {"timestamp_ms": "1056000"},
+    {"timestamp_ms": 1_056_000.5}, {"timestamp_ms": 1_056_000, "video_id": ""},
+])
+def test_invalid_point_arguments_never_call_reader(arguments):
+    reader = PointFrameReader()
+    result = json.loads(_point_tool(reader).invoke(arguments))
+    assert result["error"]["code"]
+    assert reader.calls == []
+
+
+def test_point_tool_defaults_to_playback_video_and_validated_series():
+    inputs = _inputs()
+    inputs["series_ids"] = []
+    inputs["current_video"] = None
+    inputs["extra_context"] = {"playback": {
+        "videoId": "video-playback", "seriesId": "playback-series",
+        "positionSeconds": 1_056_000,
+    }}
+    reader = PointFrameReader()
+    result = _point_tool(reader, inputs=inputs).execute(timestamp_ms=1_056_000)
+
+    assert result.success is True
+    request, _cached = reader.calls[0]
+    assert request.video_id == "video-playback"
+    assert request.allowed_series_ids == ("playback-series",)
+
+
+def test_point_tool_does_not_inherit_playback_series_for_another_video():
+    inputs = _point_inputs()
+    reader = PointFrameReader()
+    result = _point_tool(reader, inputs=inputs).execute(
+        timestamp_ms=1_056_000, video_id="video-other",
+    )
+
+    request, _cached = reader.calls[0]
+    assert result.success is True
+    assert request.allowed_series_ids == ("series",)
+
+
+def test_point_and_range_tools_share_inspection_limit_and_cache_session():
+    reader, session = PointFrameReader(), FrameInspectionSession(1)
+    range_tool = _tool(FrameReader(), session=session)
+    point_tool = _point_tool(reader, session=session)
+
+    assert range_tool.execute(video_chunk_id="chunk-1").success is True
+    exhausted = point_tool.execute(timestamp_ms=1_056_000)
+    assert exhausted.success is False
+    assert exhausted.payload["error"]["code"] == "FRAME_INSPECTION_LIMIT"
+    assert reader.calls == []
+
+
+def test_point_cached_frames_are_reused_through_the_shared_session():
+    reader, session = PointFrameReader(), FrameInspectionSession(10)
+    first = _point_tool(reader, session=session).execute(timestamp_ms=1_056_000)
+    second = _point_tool(reader, session=session, role="Query").execute(timestamp_ms=1_056_000)
+
+    assert first.success is True and second.success is True
+    assert len(reader.calls) == 2
+    assert reader.calls[0][1] is None and reader.calls[1][1] is not None
+    assert second.payload["cache_hit"] is True
+    assert len(second.artifact.images) == 1
+    assert [item["role"] for item in session.summary()] == ["Supervisor", "Query"]
+
+
+class PointInspectingQuery:
+    model_name = "query-test"
+    provider_name = "fake"
+    supports_vision_input = True
+
+    def run_structured(self, _prompt, *, tools, result_type, **_options):
+        by_name = {tool.name: tool for tool in tools}
+        assert ("get_video_frame" in by_name) == self.supports_vision_input
+        by_name["retrieve"].invoke({
+            "query": "cup", "top_k": 1,
+            "channel_weights": {"lexical": 0, "semantic": 1, "visual": 0},
+        })
+        by_name["read_retrieval_evidence"].invoke({"video_chunk_id": "chunk-1"})
+        if self.supports_vision_input:
+            self.inspection = by_name["get_video_frame"].invoke({
+                "type": "tool_call", "name": "get_video_frame", "id": "point-frame",
+                "args": {"timestamp_ms": 1_056_000},
+            })
+            assert self.inspection.status == "success"
+            self.payload = json.loads(self.inspection.content)
+        return result_type.model_validate({
+            "plan_context": "Inspect one frame", "message": "Frame located.",
+        })
+
+
+@pytest.mark.parametrize("vision", [True, False])
+def test_runtime_point_frames_follow_vision_gating_and_own_sessions(vision):
+    from agent.chat.video_search.runtime import AgentRuntime
+
+    reader, query = PointFrameReader(), PointInspectingQuery()
+    query.supports_vision_input = vision
+    runtime = AgentRuntime(
+        query, Retrieval([_hit("chunk-1")]).search,
+        retrieval_channel="lexical", point_frame_reader=reader,
+        frame_max_height=480, maximum_frame_inspections=10,
+    )
+    assert runtime.new_frame_session() is not None
+
+    report = runtime.kick(_point_inputs())
+    receipts = list(report.frame_receipts)
+    if vision:
+        assert len(reader.calls) == 1
+        assert reader.calls[0][0].timestamp_ms == 1_056_000
+        assert reader.calls[0][1] is None
+        assert query.payload["requested_timestamp_ms"] == 1_056_000
+        assert receipts[0]["video_id"] == "video-1"
+        assert receipts[0]["role"] == "Query"
+    else:
+        assert reader.calls == [] and receipts == []
+
+    first_ids = {request.inspection_id for request, _cached in reader.calls}
+    runtime.kick(_point_inputs())
+    assert len(reader.calls) == (1 if vision else 0) * 2
+    if vision:
+        assert reader.calls[1][1] is None
+        assert first_ids.isdisjoint(
+            request.inspection_id for request, _cached in reader.calls[1:]
+        )

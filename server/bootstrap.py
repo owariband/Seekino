@@ -370,6 +370,7 @@ def _build_application_services(
     construction_cleanup.callback(realtime_service.close)
     chat_model_name = settings.agent_chat_model or agent_model_config.model
     def build_agent_runtime(agent_config: AgentServiceConfig, query_model) -> AgentRuntime:
+        frame_reader = VideoFrameReader(parse_persistence, artifact_store, get_video=library.get_video)
         return AgentRuntime(
             query_model,
             retrieval.search,
@@ -377,7 +378,8 @@ def _build_application_services(
             video_outline=library.get_video_outline,
             series_overview=library.get_series_overview,
             outline_evidence=parse_persistence.get_chunk_evidence,
-            frame_reader=VideoFrameReader(parse_persistence, artifact_store),
+            frame_reader=frame_reader,
+            point_frame_reader=frame_reader,
             frame_max_height=agent_config.frame_max_height,
             maximum_frame_inspections=agent_config.maximum_frame_inspections,
             max_model_calls_per_turn=agent_config.max_model_calls_per_turn,

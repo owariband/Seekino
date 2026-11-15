@@ -12,8 +12,13 @@ from uuid import uuid4
 import pytest
 
 from agent.chat.common.errors import AgentExecutionTimeoutError, AgentModelInvocationError
-from agent.chat.video_search.frame_evidence import FrameReadError, FrameReadRequest
+from agent.chat.video_search.frame_evidence import (
+    FrameReadError, FrameReadRequest, PointFrameReadRequest,
+)
 from engine.rag.contracts import VideoChunkEvidence
+from server.model.dto.libraryDTO import VideoSummaryState
+from server.model.video import VideoIndexStatus
+from server.repository.library import SeriesNotFoundError
 from server.service.video_parse_errors import VideoParseConflictError
 from server.service.video_frame_reader import VideoFrameReader
 from server.storage.artifact import LocalArtifactStore
@@ -47,14 +52,32 @@ def frames(tmp_path, monkeypatch):
     clock, extracted = [0.0], []
     monkeypatch.setattr("server.service.video_frame_reader.monotonic", lambda: clock[0])
 
+    video = VideoSummaryState(
+        video_id=video_id, tenant_id="mine", series_id=series_id, episode_order=1,
+        upload_sequence=1, original_filename="source.mp4", original_source_uri=original.uri,
+        inference_proxy_uri=None, content_hash=original.sha256, total_bytes=len(b"source-video"),
+        duration_seconds=2_000_000, upload_status="COMPLETED", parse_status="COMPLETED",
+        upload_progress=100, parse_progress=100, index_status=VideoIndexStatus.READY,
+        last_error=None,
+    )
+    video_lookup = SimpleNamespace(video=video, calls=[], error=None, after_extract=None)
+
+    def get_video(video_id, *, tenant_id):
+        video_lookup.calls.append((video_id, tenant_id))
+        if video_lookup.error:
+            raise video_lookup.error
+        return video_lookup.video
+
     def extract(path, timestamps, *, output_dir, max_height, timeout_seconds):
         assert path == artifacts.resolve(original.uri)
         assert max_height == 480
         extracted.append((list(timestamps), timeout_seconds))
         clock[0] += 1
-        Path(output_dir).mkdir(parents=True)
+        Path(output_dir).mkdir(parents=True, exist_ok=True)
         frame = Path(output_dir) / "frame.jpg"
         frame.write_bytes(b"\xff\xd8\xff" + str(timestamps[0]).encode())
+        if video_lookup.after_extract is not None:
+            video_lookup.after_extract()
         return [(timestamps[0], frame)]
 
     monkeypatch.setattr("server.service.video_frame_reader.extract_video_frames", extract)
@@ -63,8 +86,18 @@ def frames(tmp_path, monkeypatch):
         message_id="message", start_ms=80_000, end_ms=84_000, frame_count=4,
         max_height=480, timeout_seconds=10, check_control=lambda: None,
     )
-    return SimpleNamespace(reader=VideoFrameReader(repository, artifacts), artifacts=artifacts,
-                           repository=repository, request=request, extracted=extracted, clock=clock)
+    point_request = PointFrameReadRequest(
+        tenant_id="mine", allowed_series_ids=(series_id,), video_id=video_id,
+        timestamp_ms=1_056_000, inspection_id=uuid4().hex, role="Query",
+        conversation_id="conversation", message_id="message", max_height=480,
+        timeout_seconds=10, check_control=lambda: None,
+    )
+    return SimpleNamespace(
+        reader=VideoFrameReader(repository, artifacts, get_video=get_video),
+        artifacts=artifacts, repository=repository, request=request,
+        point_request=point_request, video_lookup=video_lookup,
+        extracted=extracted, clock=clock,
+    )
 
 
 def test_absolute_millisecond_frames_and_durable_manifest(frames):
@@ -233,3 +266,163 @@ def test_real_frames_use_absolute_source_times(tmp_path):
             rgb = image.convert("RGB").getpixel((32, 32))
         assert rgb[expected_channel] > 200
         assert all(channel < 40 for index, channel in enumerate(rgb) if index != expected_channel)
+
+
+def test_point_frame_extracts_absolute_1056000_without_chunk_hydration(frames):
+    result = frames.reader.read_point(frames.point_request)
+
+    assert frames.extracted == [([1_056_000], 10)]
+    assert frames.repository.calls == []
+    assert len(result.artifact.images) == 1
+    assert all(image.data_url.startswith("data:image/jpeg;base64,") for image in result.artifact.images)
+    payload = result.payload
+    assert payload["source_kind"] == "source_video_frame"
+    assert payload["video_id"] == frames.video_lookup.video.video_id
+    assert payload["series_id"] == frames.video_lookup.video.series_id
+    assert payload["requested_timestamp_ms"] == 1_056_000
+    assert payload["frame_count"] == 1 and payload["images_supplied"] is True
+    assert payload["source_identity"]["content_hash"] == frames.video_lookup.video.content_hash
+    frame = payload["frames"][0]
+    assert frame["requested_timestamp_ms"] == 1_056_000
+    assert frame["actual_timestamp_ms"] is None
+    assert payload["images_prepared"] is True and "actual_timestamp_ms" not in payload
+    manifest = frames.artifacts.resolve(payload["manifest_uri"]).read_bytes()
+    assert hashlib.sha256(manifest).hexdigest() == payload["manifest_sha256"]
+    saved = json.loads(manifest)
+    assert saved == {key: value for key, value in payload.items()
+                     if key not in {"manifest_uri", "manifest_sha256", "images_supplied"}}
+
+
+def test_point_frame_rejects_cross_series_and_cross_tenant(frames):
+    with pytest.raises(FrameReadError) as failure:
+        frames.reader.read_point(replace(
+            frames.point_request, allowed_series_ids=(str(uuid4()),),
+        ))
+    assert failure.value.code == "FRAME_SCOPE_MISMATCH" and not failure.value.retryable
+
+    frames.video_lookup.video = replace(frames.video_lookup.video, tenant_id="other")
+    with pytest.raises(FrameReadError) as failure:
+        frames.reader.read_point(frames.point_request)
+    assert failure.value.code == "FRAME_SCOPE_MISMATCH" and not failure.value.retryable
+
+    frames.video_lookup.error = SeriesNotFoundError("video does not exist in this workspace")
+    with pytest.raises(FrameReadError) as failure:
+        frames.reader.read_point(frames.point_request)
+    assert failure.value.code == "FRAME_SCOPE_MISMATCH"
+    assert frames.extracted == []
+
+
+def test_point_frame_reads_uploaded_but_non_ready_video(frames):
+    frames.video_lookup.video = replace(
+        frames.video_lookup.video,
+        upload_status="UPLOADED", parse_status="FAILED", index_status=VideoIndexStatus.FAILED,
+    )
+    result = frames.reader.read_point(frames.point_request)
+
+    assert result.payload["frame_count"] == 1
+    assert frames.video_lookup.video.parse_status == "FAILED"
+    assert frames.extracted == [([1_056_000], 10)]
+
+    frames.video_lookup.video = replace(frames.video_lookup.video, upload_status="UPLOADING")
+    with pytest.raises(FrameReadError) as failure:
+        frames.reader.read_point(replace(frames.point_request, inspection_id=uuid4().hex))
+    assert failure.value.code == "FRAME_MEDIA_UNAVAILABLE" and failure.value.retryable
+
+
+def test_point_frame_missing_uploaded_media_is_retryable_feedback(frames):
+    frames.artifacts.resolve(frames.video_lookup.video.original_source_uri).unlink()
+    with pytest.raises(FrameReadError) as failure:
+        frames.reader.read_point(frames.point_request)
+    assert failure.value.code == "FRAME_MEDIA_UNAVAILABLE" and failure.value.retryable
+    assert frames.extracted == []
+
+
+@pytest.mark.parametrize("timestamp_ms", [0, 1_999_999])
+def test_point_frame_accepts_times_inside_source_duration(frames, timestamp_ms):
+    result = frames.reader.read_point(replace(
+        frames.point_request, timestamp_ms=timestamp_ms,
+    ))
+    assert result.payload["requested_timestamp_ms"] == timestamp_ms
+    assert frames.extracted == [([timestamp_ms], 10)]
+
+
+@pytest.mark.parametrize("timestamp_ms", [2_000_000, 2_000_001])
+def test_point_frame_rejects_times_at_or_beyond_source_duration(frames, timestamp_ms):
+    with pytest.raises(FrameReadError) as failure:
+        frames.reader.read_point(replace(
+            frames.point_request, timestamp_ms=timestamp_ms,
+        ))
+    assert failure.value.code == "INVALID_FRAME_REQUEST"
+    assert frames.extracted == []
+
+
+@pytest.mark.parametrize("timestamp_ms", [-1, True, 1.5, "1056000"])
+def test_point_request_rejects_noninteger_or_negative_timestamps(frames, timestamp_ms):
+    with pytest.raises(ValueError):
+        replace(frames.point_request, timestamp_ms=timestamp_ms)
+    assert frames.extracted == []
+
+
+@pytest.mark.parametrize("field,value", [
+    ("content_hash", "changed"),
+    ("original_source_uri", "artifact://test/media/series/other/videos/other/chunks/source.mp4"),
+    ("duration_seconds", 2_000_001),
+])
+def test_point_frame_rejects_source_changes_during_extraction(frames, field, value):
+    def changed() -> None:
+        frames.video_lookup.video = replace(frames.video_lookup.video, **{field: value})
+
+    frames.video_lookup.after_extract = changed
+    with pytest.raises(FrameReadError) as failure:
+        frames.reader.read_point(frames.point_request)
+    assert failure.value.code == "FRAME_SOURCE_CHANGED" and not failure.value.retryable
+    assert len(frames.extracted) == 1
+
+
+def test_point_cached_frames_revalidate_source_and_image_fingerprint(frames):
+    first = frames.reader.read_point(frames.point_request)
+    second = frames.reader.read_point(
+        replace(frames.point_request, inspection_id=uuid4().hex, role="Evaluator"), first,
+    )
+    assert second.payload["cache_hit"] is True
+    assert second.payload["frames"] == first.payload["frames"]
+    assert len(frames.extracted) == 1
+    assert frames.video_lookup.calls == [
+        (frames.point_request.video_id, "mine"),
+        (frames.point_request.video_id, "mine"),
+        (frames.point_request.video_id, "mine"),
+        (frames.point_request.video_id, "mine"),
+    ]
+
+    frames.artifacts.resolve(second.payload["frames"][0]["artifact_uri"]).write_bytes(b"changed")
+    with pytest.raises(FrameReadError) as failure:
+        frames.reader.read_point(
+            replace(frames.point_request, inspection_id=uuid4().hex), second,
+        )
+    assert failure.value.code == "FRAME_SOURCE_UNAVAILABLE" and failure.value.retryable
+    assert len(frames.extracted) == 1
+
+
+def test_point_cached_frames_reject_changed_source(frames):
+    first = frames.reader.read_point(frames.point_request)
+    frames.video_lookup.video = replace(
+        frames.video_lookup.video, content_hash="changed",
+    )
+    with pytest.raises(FrameReadError) as failure:
+        frames.reader.read_point(
+            replace(frames.point_request, inspection_id=uuid4().hex), first,
+        )
+    assert failure.value.code == "FRAME_SOURCE_CHANGED" and not failure.value.retryable
+    assert len(frames.extracted) == 1
+
+
+def test_point_control_failure_after_extraction_is_not_wrapped(frames):
+    error = AgentModelInvocationError("cancelled")
+
+    def check() -> None:
+        if frames.extracted:
+            raise error
+
+    with pytest.raises(AgentModelInvocationError) as failure:
+        frames.reader.read_point(replace(frames.point_request, check_control=check))
+    assert failure.value is error and len(frames.extracted) == 1
