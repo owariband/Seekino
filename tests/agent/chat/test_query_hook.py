@@ -167,7 +167,7 @@ def test_rewrite_injects_slot_options_into_injected_model():
 
 
 @pytest.mark.parametrize(("action", "template"), [
-    ("respond", "简单回应"), ("retrieve", "简单检索"), ("mixed", "回应与检索混合"),
+    ("respond", "简单回应"), ("retrieve", "取证任务"), ("mixed", "回应与检索混合"),
 ])
 def test_playback_routes_once_with_current_video_and_preserves_input(action, template):
     models, rewrite = Models(action), RewriteModel()
@@ -276,7 +276,7 @@ def test_route_failure_uses_original_and_rewrite_failure_retains_template():
     rewrite = RewriteModel()
     rewrite.error = RuntimeError("unavailable")
     output = hook(models, rewrite)(inputs, ExecutionControl(None))
-    assert "简单检索" in output
+    assert "取证任务" in output
     assert "候选检索用语：" not in output
 
 
@@ -304,7 +304,7 @@ def test_disabled_rewriter_skips_model_call_and_logs_once(caplog, config):
         output = before(inputs, ExecutionControl(None))
     assert [call[0] for call in models.calls] == ["route"]
     assert not rewrite.calls
-    assert "简单检索" in output
+    assert "取证任务" in output
     assert "候选检索用语：" not in output
     assert caplog.text.count("event=query_hook_rewrite") == 1
     assert "status=skipped" in caplog.text
@@ -318,7 +318,7 @@ def test_missing_rewrite_model_skips_and_logs_once(caplog):
     with caplog.at_level(logging.INFO):
         output = before(inputs, ExecutionControl(None))
     assert [call[0] for call in models.calls] == ["route"]
-    assert "简单检索" in output
+    assert "取证任务" in output
     assert "候选检索用语：" not in output
     assert caplog.text.count("event=query_hook_rewrite") == 1
     assert "status=skipped" in caplog.text
@@ -409,7 +409,7 @@ def test_each_turn_is_independent_and_usage_keeps_parent_identity():
         first = before(inputs, ExecutionControl(None))
         models.action = "respond"
         second = before(inputs, ExecutionControl(None))
-    assert "简单检索" in first and "简单回应" in second
+    assert "取证任务" in first and "简单回应" in second
     assert "候选检索用语：" not in second
     assert [call.model for call in usage] == ["jev", "rewriter", "jev"]
     assert all(call.context["stage"] == "query_hook" for call in usage)

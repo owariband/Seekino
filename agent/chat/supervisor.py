@@ -1209,10 +1209,14 @@ class SupervisorRuntime:
             "稀疏静帧不能证明连续动作。没有实际检查到目标时就说明未核验，不要猜播放器时间轴偏移。"
         )
         frame_target_guidance = (
-            "已知用户指定的时刻（含明确时间码）时，优先用 get_video_frame(timestamp_ms) 直接取该时刻的真实画面，"
+            "画面核验已知视频和时刻时，首个取证工具用 get_video_frame(timestamp_ms) 直接取该时刻的真实画面，"
             "不必先做语义检索来注册历史 Chunk ID。时间码先换算为整数毫秒（如 01:00 为 60000）；"
             "用户明确时间优先于 current_video.positionSeconds 或 extra_context.playback.positionSeconds（整数毫秒），"
-            "后者优先于历史位置；用户说「现在/当前画面」时才用当前播放位置，不复用旧的播放锚点。"
+            "后者优先于历史位置。用户说「这里/这帧/现在/当前画面」且未另指时间时，"
+            "使用本轮冻结播放位置，即使历史回答讨论过其他时刻，也不沿用旧锚点。"
+            "用户只要求看一个时刻时，看完该图就直接回答；不为补充人物背景或剧情自动检索、读历史 Chunk 或委派。"
+            "只有该图不能解决当前具体问题、确实需要相邻动作或对白时才补查，并区分目标图与相邻证据。"
+            "单点取帧不会注册任何历史 Chunk ID，取到图不代表可以读取历史检索 ID。"
             "understand_current_video 只用于理解当前讲解或对白上下文，位置固定为冻结播放点，不能选择其他时刻。"
             if frame_target_available else
             "用户明确指定不同于当前播放位置的时刻时，不要用当前视频理解工具冒充该时刻；"
@@ -1271,7 +1275,8 @@ class SupervisorRuntime:
             "需要具体事实或片段时，用章节的 video_chunk_ids 调用 search_video_events 精读，命中结果才可提交为视频片段；"
             "read_retrieval_evidence 可读取大纲 Chunk 的源证据，读取后即可作为视频片段提交；仅凭大纲摘要不能提交。"
             "没有大纲时回到下述检索策略。"
-            "具体台词、动作、情绪或局部事件优先直接调用 search_video_events，不先用 retrieve 粗搜 Chunk。"
+            "已确定视频和时刻的画面核验遵循单点取帧规则；其余具体台词、动作、情绪或局部事件"
+            "优先直接调用 search_video_events，不先用 retrieve 粗搜 Chunk。"
             "台词检索保留用户提供的原话或译文短语，不先扩写成带人物、剧情假设的长查询。"
             "命中结果包含真实证据；内容截断或缺少上下文时用 read_retrieval_evidence 续读。排名第一本身不等于证据充分。"
             "Event 工具不可用、索引未覆盖、候选不足或需要更广上下文时，再用 retrieve 扩大到 Chunk；"
