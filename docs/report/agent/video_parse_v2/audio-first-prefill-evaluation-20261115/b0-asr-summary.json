@@ -1,0 +1,59 @@
+{
+  "identity": {
+    "method_version": "asr-id-b0-v1",
+    "media_sha256": "50e981e49a3d74e8c0aca7571ffae8265b88f6388f1d34849876b61ad8bf5814",
+    "asr_sha256": "2543d152519b6452d7b0f227db328894127a12fe48990dc45643c88d2e5750e7",
+    "model": "iic/speech_campplus_sv_zh-cn_16k-common",
+    "encoder_revision": "campplus-v1.0.0-sha256-3388cf5fd3493c9ac9c69851d8e7a8badcfb4f3dc631020c4961371646d5ada8-source-c59d534cbc3453fed97eddff9c958125417ad9a88963299c397ff3337bbd2c9d-fbank80-16k-mean-dither0-l2-v1",
+    "parameters": {
+      "dimensions": 192,
+      "min_duration_ms": 400,
+      "trim_fraction": 0.2,
+      "accept_gap": 0.15,
+      "accept_duration_ms": 1500,
+      "accept_min_cues": 3,
+      "conflict_gap": 0.05,
+      "no_voice_duration_ms": 1000
+    },
+    "cpu_threads": 8
+  },
+  "asr_cues": 166,
+  "reference_samples": 122,
+  "reference_ids": {
+    "SPEAKER_04": 38,
+    "SPEAKER_01": 19,
+    "SPEAKER_03": 25,
+    "SPEAKER_02": 9,
+    "SPEAKER_00": 26,
+    "SPEAKER_05": 5
+  },
+  "null_id_reference_samples": 0,
+  "null_id_queries": 36,
+  "embedded_null_id_queries": 8,
+  "before_non_null": 130,
+  "after_non_null": 133,
+  "non_null_to_null": 0,
+  "bands": {
+    "None": 43,
+    "NO_VOICE": 74,
+    "ACCEPT": 36,
+    "CONFLICT": 13
+  },
+  "embedding_queries": 130,
+  "source_asr_unchanged": true,
+  "clustering_calls": 0,
+  "generative_model_calls": 0,
+  "timing_seconds": {
+    "decode": 0.7374514160001127,
+    "encoding": 6.633226707999711,
+    "scoring_and_prefill": 0.3164390839992848,
+    "total": 7.705862499999057
+  },
+  "limits": [
+    "Reuses production B0 encoding, scoring, exclusions and thresholds; no clustering.",
+    "Original ASR IDs are anonymous reference labels, not certified character names.",
+    "Null-ID audio is query-only and never enters the reference pool.",
+    "Too-short or unsupported queries retain their original ID with explicit score reasons.",
+    "No new Understanding, Refine, ASR, GPU, CPU/prod or database access."
+  ]
+}

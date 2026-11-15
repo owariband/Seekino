@@ -1,5 +1,7 @@
 # 完整EP04真实Understanding／Refine两组对照
 
+> 2026-11-15验收更正：本轮共享ASR输入经过未经要求的重新聚类，115条原非空ID变null。以下生成记录保留历史事实，不能作为复用旧B0方案的验收。当前修复和离线证据见[恢复旧B0方法](b0-restoration-report.md)；本次没有新增生成模型调用。
+
 2026-11-15；[PR #176](https://github.com/owariband/Seekino/pull/176)、[TRD](../../../../design/03-product-reassessment/audio-first-prefill-evaluation-trd.md)、[工作台](../../../../dev/workbench.html)。原[离线回放](README.md)仅验证声学表示、评分和Canvas；本报告补充新模型实际消费输入的结果。证据：[主对照](live-comparison.json)、[核验摘要](live-verification.json)、[恢复执行的B组](recovered-live-comparison.json)、[同提示词不同返回](same-prompt-repeat.json)。
 
 **2026-11-15基线审计更正：**本报告执行分支遗漏了PR #164／45017773的“Understanding保留独立音频段、合并交给Refine”两句，而此前通过的执行副本以本地补丁包含它们。以下真实请求、回改和时刻仍是当时观察，但不能作为完整既有Prompt配置的回归结论。已在dbdf7579原样补齐，完整文件与此前通过版本逐字相同，新整集两组复测记录见[prompt-synced-report.md](prompt-synced-report.md)。

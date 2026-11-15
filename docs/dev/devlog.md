@@ -27,6 +27,7 @@
 
 | 记录 | 原问题编号 |
 |---|---|
+| [2026-11-15：重聚类覆盖原ASR分组，整集对照偏离既有声纹方法](#devlog-b0-restoration-20261115) | PARSE-VOICE-TWOPASS-01；B12；PR #176 |
 | [2026-11-15：运行副本补丁未进入后续提交链，完整Prompt回归失去基线](#devlog-prompt-baseline-sync-20261115) | PARSE-VOICE-TWOPASS-01；B12；PR #176 |
 | [2026-11-15：正确声纹预填被Refine回改，提前触发未能保证身份归属](#devlog-audio-prefill-live-ab-20261115) | PARSE-VOICE-TWOPASS-01；B12；PR #176 |
 | [2026-11-15：短音频分组过碎，提前预填仍需后续人名与精确区间](#devlog-audio-first-prefill-20261115) | PARSE-VOICE-TWOPASS-01；B12；PR #176 |
@@ -201,6 +202,25 @@
 | [日期未明确（2026-10-23归档）：当前播放窗口的按需理解与复用](#devlog-history-60) | 独立实验/设计 |
 
 </details>
+
+<a id="devlog-b0-restoration-20261115"></a>
+## 2026-11-15：重聚类覆盖原ASR分组，整集对照偏离既有声纹方法
+
+### 问题与现状
+
+需求是复用旧声纹方法，以已有speaker ID收集参考，再重判全部音频。实验却丢掉原ID，将全部1秒窗无监督重聚类：1001窗中57窗来自原null cue，聚为749组，再将碰到多组的长cue写null。原166条中130条有ID，前处理后仅17条，115条变空；细分turn没有进入Understanding。A/B均共享这一输入，完成生成不构成所要求方案的验收，先前将问题归到Prompt／low的结论需限定在错误输入下。
+
+### 方案候选
+
+恢复既有B0接线，直接调用原_embed_voiceprint_sample与_score_voiceprint_sample，原编码、排除、trim和阈值不改。原非空ID才作为参考标签，null仅作为查询；无证据保留原ID。2/3后直接用冻结的有效具名表达作为B0参考，不再将名字绑到新增短窗。保留已确认Prompt和所有历史证据，当前入口拒绝旧聚类产物。
+
+### 方案验证
+
+CPU8本机整集离线准备完成，参考122条、6个原ID，null参考0；全部166条查询，原36条null也保留查询记录，3条获预填，原非空变null为0。原v4基线309行候选、gap、band、conflict及reason逐项完全复现；107测试通过。复用已有24份答案和向量构造请求、重评分313表达并过Canvas，开头预填長崎そよ。生成模型调用0，ASR／GPU／CPU-prod／数据库未访问，Server未部署。
+
+### 指标对比
+
+本次优先检查原分组保留和旧方法复现，避免继续为错误输入消耗生成token。原始／错误／恢复输入的非空ID分别为130／17／133，原非空丢失115→0；原null参考被排除。首次本机音频准备7.706秒（编码6.633秒），同批再运行0次编码；不作为整集生成提速。313表达来自错误输入下的旧理解，仅验证接线，不能宣称新的Understanding或Refine人物质量达标。见[恢复报告](../report/agent/video_parse_v2/audio-first-prefill-evaluation-20261115/b0-restoration-report.md)，原A/B记录保留并更正验收口径。
 
 <a id="devlog-prompt-baseline-sync-20261115"></a>
 ## 2026-11-15：运行副本补丁未进入后续提交链，完整Prompt回归失去基线

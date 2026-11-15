@@ -1,5 +1,7 @@
 # 音频先算与2/3理解后具名预填：完整EP04回放
 
+**当前更正（2026-11-15）：此前新增的固定窗重聚类偏离了复用旧方法的要求，已移出执行链。参见[恢复旧B0方法与离线验证](b0-restoration-report.md)。旧A/B输入使115条原非空ID变null，不能作为所要求方案的验收；本次生成模型调用0。下文保留历史实验口径。**
+
 2026-11-15；分支 `perf/audio-first-prefill-evaluation`，[PR #176](https://github.com/owariband/Seekino/pull/176)。依赖[#174](https://github.com/owariband/Seekino/pull/174)，[TRD](../../../../design/03-product-reassessment/audio-first-prefill-evaluation-trd.md)，状态见[工作台](../../../../dev/workbench.html)。
 
 本文依据[第一轮统计](audio-first-summary.json)、[具名预填对照](prefill-comparison.json)与[验证及成对比较](verification.json)，均为离线测量；ASR复用已有结果，旧Understanding按提交顺序回放。

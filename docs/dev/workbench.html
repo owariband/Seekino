@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-15T14:06:53+08:00",
+ "updatedAt": "2026-11-15T15:24:50+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 76,
+ "revision": 77,
  "categories": [
   {
    "id": "parse",
@@ -5996,9 +5996,9 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "type": "requirement",
    "status": "progressing",
    "priority": "P2",
-   "description": "完整Prompt同步并逐调用核对，A／B均24/24理解、22/22 Refine完成；B仅续14区间，开头正确爽世预填仍被改灯。",
-   "next": "处理Refine覆盖正确声纹预填的条件，并验证匿名声音分组与人物命名；全片身份真值、Server接入和端到端提速仍待验收。",
-   "verification": "2026-11-15：dbdf7579原样补齐45017773两句，完整Prompt及实际Refine前缀与旧通过轮逐字相同；174测试、2份真实缺规则请求负例通过。113个入口含历史失败均核对投递，两组24份初始请求相等，现A／B均24/22。B此前13个余额402与第6区间输出上限中断，充值后f549b9c9仅续14区间，15个Refine入口全部返回，第6区间原配置通过，恢复耗时323.731秒；原48份理解、冻结16块及8份成功收据复用，B理解24份SHA未变。B在16块启动、19块声纹就绪，首个Refine比末块理解早39.305秒。两组开头均错误，B正确爽世预填被改灯；约292.5秒爱音台词均正确，质量未通过。GPU/CPU-prod/数据库未访问。",
+   "description": "旧B0接线已恢复：原非空ID建参考、全166条查询，原非空丢失0；此前重聚类A/B偏离要求，不作验收。",
+   "next": "当前停止新增生成调用；新Understanding／Refine人物效果仍待验证，保持完整Prompt与旧B0方法，不再重聚类。",
+   "verification": "2026-11-15更正：原有130条非空ID经错误重聚类仅剩17条，115条变null，旧A/B不能作为复用方法验收。现直接复用旧_embed_voiceprint_sample／_score_voiceprint_sample和Canvas；参考122条、原6个ID，null参考0，166条查询含36条原null，最终133条非空，原非空丢失0。原v4的309行逐项完全复现，107测试通过；构造24份请求、重评分313表达、开头预填爽世，旧聚类产物被拒绝。首次本机准备7.706秒，同批再跑0编码；新增生成模型／ASR调用0，无GPU/CPU-prod/数据库访问。已有模型答案仅作接线回放，不能宣称身份质量通过。",
    "updatedAt": "2026-11-15",
    "tags": [
     "ASR复用",
@@ -6041,6 +6041,11 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
     {
      "label": "完整Prompt同步复测与恢复结果",
      "url": "https://github.com/owariband/Seekino/blob/perf/audio-first-prefill-evaluation/docs/report/agent/video_parse_v2/audio-first-prefill-evaluation-20261115/prompt-synced-report.md",
+     "kind": "source"
+    },
+    {
+     "label": "恢复旧B0方法与离线核验",
+     "url": "https://github.com/owariband/Seekino/blob/perf/audio-first-prefill-evaluation/docs/report/agent/video_parse_v2/audio-first-prefill-evaluation-20261115/b0-restoration-report.md",
      "kind": "source"
     }
    ],

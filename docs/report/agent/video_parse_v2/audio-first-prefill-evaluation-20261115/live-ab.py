@@ -26,7 +26,6 @@ from agent.video_parse_v2.refine.response import RefineModelResponse
 from agent.video_parse_v2.state import ChunkExecution, LeaseToken
 from agent.video_parse_v2.understanding.workflow import ChunkUnderstandingWorkflow
 from engine.parsev2.schemas import VideoParseResult
-from engine.parsev2.voiceprint_matching import classify_voiceprint_result, score_voiceprint_line
 from gateway.config import load_config
 from gateway.local.campplus import CAMPPLUS_MODEL, CampPlusSpeakerEmbedder
 from gateway.model_factory import GatewayClient
@@ -55,6 +54,7 @@ class Experiment:
     _generate_text_structured = VideoParseRuntimeService._generate_text_structured
 
     def __init__(self, *, name, shared, inputs, background, media, gateway, audio, output, semaphores):
+        assert audio['identity'].get('method_version') == 'asr-id-b0-v1', 'Reject superseded clustering input'
         self.name, self.shared, self.inputs = name, shared, inputs
         self.background, self.media, self.gateway = background, media, gateway
         self.audio, self.output = audio, output
@@ -195,7 +195,7 @@ class Experiment:
             self.encoder = CampPlusSpeakerEmbedder(CAMPPLUS_MODEL,
                 checkpoint_path=self.shared / 'outputs/local-models/campplus/campplus_cn_common.bin',
                 request_timeout_seconds=120, cpu_threads=8)
-            with wave.open(str(self.shared / 'outputs/verification/audio-first-prefill-evaluation-20261115/private/source-16k.wav'), 'rb') as stream:
+            with wave.open(self.audio['pcm_path'], 'rb') as stream:
                 self.pcm = stream.readframes(stream.getnframes())
             outer = self
 
@@ -247,7 +247,8 @@ class Experiment:
     async def prepare_named(self, frozen):
         timing = {'started_utc': datetime.now(timezone.utc).isoformat(),
                   'understanding_committed_at_start': len(self.initial), 'reference_chunk_count': len(frozen)}
-        self.frozen_anchors = await asyncio.to_thread(self.collect_queries, frozen)
+        queries = await asyncio.to_thread(self.collect_queries, frozen)
+        self.frozen_anchors = [query for query in queries if query.get('label') and 'vector' in query]
         save(self.output / 'frozen-anchors.json', self.frozen_anchors)
         self.named_ready = True
         save(self.output / 'named-timing.json', {**timing,
@@ -257,27 +258,7 @@ class Experiment:
         self.schedule_refine()
 
     def named_evidence(self, queries):
-        parameters = self.host._voiceprint_parameters()
-        result = []
-        for query in queries:
-            references = []
-            for window in self.audio['samples']:
-                anchors = [anchor for anchor in self.frozen_anchors if anchor.get('label')
-                    and anchor['id'] != query['id']
-                    and not set(anchor['cue_ids']).intersection(query['cue_ids'])
-                    and not (query['start_ms'] < anchor['end_ms'] and anchor['start_ms'] < query['end_ms'])
-                    and anchor['start_ms'] <= window['start_ms'] and window['end_ms'] <= anchor['end_ms']]
-                labels = {anchor['label'] for anchor in anchors}
-                if len(labels) == 1:
-                    references.append({**window, 'label': next(iter(labels))})
-            scored = score_voiceprint_line(query, references, model=query['model'],
-                encoder_revision=query['encoder_revision'], **{key: parameters[key] for key in
-                    ('dimensions', 'trim_fraction', 'min_duration_ms')})
-            decision = classify_voiceprint_result(scored, current_label=query['understanding_speaker'],
-                song=query['song'], overlap=query['overlap'], **{key: parameters[key] for key in
-                    ('accept_gap', 'accept_duration_ms', 'accept_min_cues', 'conflict_gap', 'no_voice_duration_ms')})
-            result.append({**query, **scored, **decision})
-        return result
+        return [self.host._score_voiceprint_sample(query, self.frozen_anchors) for query in queries]
 
     def schedule_refine(self):
         if self.name == 'B_two_thirds' and not self.named_ready:
@@ -405,8 +386,9 @@ async def main(args):
     private = output / 'private'
     private.mkdir(parents=True, exist_ok=True)
     assert not (private / 'manifest.json').exists(), 'Use existing run evidence; do not silently rerun live calls'
-    audio_path = root / 'outputs/verification/audio-first-prefill-evaluation-20261115/private/audio-first-artifact.json'
+    audio_path = root / 'outputs/verification' / args.audio_run_name / 'private/audio-first-artifact.json'
     audio = json.loads(audio_path.read_text())
+    assert audio['identity'].get('method_version') == 'asr-id-b0-v1', 'Reject superseded clustering input'
     source = next((root / 'assets/library/verification/ep04-prefill-context-20261114').rglob('original/*.mp4'))
     assert sha(source) == audio['identity']['media_sha256']
     asr_path = root / 'outputs/verification/voiceprint-early-preparation-20261115/private/asr.json'
@@ -472,7 +454,8 @@ async def main(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--data-root', type=Path, required=True)
-    parser.add_argument('--run-name', default='audio-first-prefill-live-ab-20261115')
+    parser.add_argument('--run-name', default='audio-first-prefill-b0-live-ab-20261115')
+    parser.add_argument('--audio-run-name', default='audio-first-prefill-asr-id-b0-20261115')
     parser.add_argument('--cases', nargs='+', choices=('A_audio_only', 'B_two_thirds'),
                         default=['A_audio_only', 'B_two_thirds'])
     args = parser.parse_args()

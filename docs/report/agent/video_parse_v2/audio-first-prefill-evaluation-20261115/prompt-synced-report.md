@@ -1,5 +1,7 @@
 # 完整提示词同步后的EP04双组复测
 
+> 2026-11-15验收更正：本轮共享ASR输入经过未经要求的重新聚类，115条原非空ID变null。以下生成记录保留历史事实，不能作为复用旧B0方案的验收。当前修复和离线证据见[恢复旧B0方法](b0-restoration-report.md)；本次没有新增生成模型调用。
+
 2026-11-15；[PR #176](https://github.com/owariband/Seekino/pull/176)，[TRD](../../../../design/03-product-reassessment/audio-first-prefill-evaluation-trd.md)。初次启动提交`dbdf75794930fb04c0a304d86ee959a400c34b59`，充值后续跑提交`f549b9c99aca120e43458bcae4483af8d8ac525a`。证据为[逐调用与阶段结果](prompt-synced-comparison.json)、[提示词预检](prompt-synced-preflight.json)、[核验摘要](prompt-synced-verification.json)与[中断及恢复记录](prompt-synced-recovery.json)。
 
 **完整Prompt已同步、提交并核实实际投递；A／B均完成24/24 Understanding、22/22 Refine。充值后只继续B的14个未完成区间，新增15次Refine生成入口调用，全部返回并通过区间提交。两组开头仍误归高松燈，约292.5秒爱音台词最终均归千早愛音，人物质量尚未通过。** 本轮GPU未启动且未访问，CPU/prod与数据库未访问，没有部署Server。

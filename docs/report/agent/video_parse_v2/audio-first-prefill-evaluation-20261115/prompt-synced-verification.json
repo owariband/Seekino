@@ -1,5 +1,5 @@
 {
-  "status": "completed_execution_identity_target_failed",
+  "status": "completed_execution_with_invalid_asr_prefill_baseline",
   "source_revision": "dbdf75794930fb04c0a304d86ee959a400c34b59",
   "prompt_source_sha256": "68324f3aaf9b1245f1926e311a2746fb0068d19e4f530d989ad72747d6cda4d0",
   "prompt_matches_previous_pass": true,
@@ -93,5 +93,14 @@
       6
     ],
     "retained_in_call_ledger": true
+  },
+  "acceptance_correction": {
+    "date": "2026-11-15",
+    "original_non_null_asr_ids": 130,
+    "after_clustering_non_null_asr_ids": 17,
+    "non_null_to_null": 115,
+    "valid_evidence_for_requested_reused_b0_method": false,
+    "superseded_by": "b0-restoration-report.md",
+    "new_generative_calls_in_correction": 0
   }
 }
