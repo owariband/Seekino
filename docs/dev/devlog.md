@@ -215,11 +215,11 @@
 
 ### 方案验证
 
-dbdf7579已推送。本轮整集1fps、Flash low、CPU8，ASR和初轮声学缓存复用。48份新Understanding全部完成且初始请求相等，98个生成入口（含修复和失败）均确认投递；A22个Refine完成，B8个完成，14个未提交，其中13个官方余额不足、第6区间max_output_tokens。冻结16块、成功提交及最新版本／scope都保留，续跑入口只读核对能跳过已完成；充值后模型续跑待执行。
+dbdf7579已推送。本轮整集1fps、Flash low、CPU8，ASR和初轮声学缓存复用。48份新Understanding全部完成且初始请求相等。B首次完成8个Refine后，13个官方余额402与第6区间max_output_tokens使14区间未提交；充值后在f549b9c9上仅继续这14区间，新增15个Refine入口（含一次修复）全部返回，耗时323.731秒。第6区间保持原配置通过；原8份成功收据、冻结16块与48份理解复用，B的24份理解SHA逐一未变。现两组均完成24个Understanding和22个Refine，113个入口含历史失败全部核对完整Prompt投递。GPU／CPU-prod／数据库未访问。
 
 ### 指标对比
 
-先恢复可复现基线，再区分投递、流程完成与身份质量。完整源码与Refine前缀均同旧通过轮相同；174测试、2个真实请求负例通过。A为24/22，B为24/8；13个余额402与1个输出上限分别记录，费用未完整采集。已完成开头仍把正确爽世预填改回灯，故Prompt同步已修复，人物质量仍未解决，B整集未完成。余额恢复后只继续14个未提交区间；不将本轮部分结果写成完整质量验收。见[完整Prompt同步报告](../report/agent/video_parse_v2/audio-first-prefill-evaluation-20261115/prompt-synced-report.md)。
+本轮先确认可复现基线和流程完整，再检查两处已知人物目标。完整源码与Refine前缀均同旧通过轮相同；174测试、2个真实请求负例通过。A／B均为24/22，充值后新增Understanding与ASR均0次，旧14次失败保留，token和费用未完整采集。B在16块启动、19块声纹就绪，首个Refine比最后理解早39.305秒，准备耗时7.284秒；余额中断使整集速度不可直接比较。两组开头最终都误归高松燈，B正确爽世预填仍被回改，约292.5秒爱音台词最终均正确。因此Prompt同步和整集执行已完成，low人物归属仍未达标；两个目标不外推全片准确率。见[完整Prompt同步报告](../report/agent/video_parse_v2/audio-first-prefill-evaluation-20261115/prompt-synced-report.md)。
 
 <a id="devlog-audio-prefill-live-ab-20261115"></a>
 ## 2026-11-15：正确声纹预填被Refine回改，提前触发未能保证身份归属

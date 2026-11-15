@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-15T13:19:29+08:00",
+ "updatedAt": "2026-11-15T14:06:53+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 75,
+ "revision": 76,
  "categories": [
   {
    "id": "parse",
@@ -5996,9 +5996,9 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "type": "requirement",
    "status": "progressing",
    "priority": "P2",
-   "description": "完整Prompt已同步提交并逐调用核对；A24/22完成，B24/8后有13个余额402、1个输出上限，开头仍回改错误。",
-   "next": "DeepSeek充值后仅续B未提交14个Refine，单独核对第6区间输出上限；保留48份理解、冻结16块和成功区间。",
-   "verification": "2026-11-15 dbdf7579：原样补齐45017773两句，完整Prompt文件及实际Refine指令前缀与旧通过轮逐字相同。174测试、2份真实缺规则请求负例通过；98个实际入口均核对投递，两组24份初始请求相等。A24/22完成；B24/8，剩14区间中13个余额402、第6区间max_output_tokens。开头正确爽世预填仍被low改灯，质量未解决。原ASR、48份新理解、冻结16块及成功区间版本保留；续跑只读检查可跳过已完成，模型续跑待充值。GPU/CPU-prod/数据库未访问。",
+   "description": "完整Prompt同步并逐调用核对，A／B均24/24理解、22/22 Refine完成；B仅续14区间，开头正确爽世预填仍被改灯。",
+   "next": "处理Refine覆盖正确声纹预填的条件，并验证匿名声音分组与人物命名；全片身份真值、Server接入和端到端提速仍待验收。",
+   "verification": "2026-11-15：dbdf7579原样补齐45017773两句，完整Prompt及实际Refine前缀与旧通过轮逐字相同；174测试、2份真实缺规则请求负例通过。113个入口含历史失败均核对投递，两组24份初始请求相等，现A／B均24/22。B此前13个余额402与第6区间输出上限中断，充值后f549b9c9仅续14区间，15个Refine入口全部返回，第6区间原配置通过，恢复耗时323.731秒；原48份理解、冻结16块及8份成功收据复用，B理解24份SHA未变。B在16块启动、19块声纹就绪，首个Refine比末块理解早39.305秒。两组开头均错误，B正确爽世预填被改灯；约292.5秒爱音台词均正确，质量未通过。GPU/CPU-prod/数据库未访问。",
    "updatedAt": "2026-11-15",
    "tags": [
     "ASR复用",
@@ -6039,7 +6039,7 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "kind": "source"
     },
     {
-     "label": "完整Prompt同步与续跑检查点",
+     "label": "完整Prompt同步复测与恢复结果",
      "url": "https://github.com/owariband/Seekino/blob/perf/audio-first-prefill-evaluation/docs/report/agent/video_parse_v2/audio-first-prefill-evaluation-20261115/prompt-synced-report.md",
      "kind": "source"
     }

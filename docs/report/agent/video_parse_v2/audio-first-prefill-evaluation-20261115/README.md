@@ -4,7 +4,7 @@
 
 本文依据[第一轮统计](audio-first-summary.json)、[具名预填对照](prefill-comparison.json)与[验证及成对比较](verification.json)，均为离线测量；ASR复用已有结果，旧Understanding按提交顺序回放。
 
-2026-11-15追加的两组新Understanding／Refine实际调用，单独记录在[整集真实A/B对照](live-ab-report.md)。以下原离线数据和manifest保留原实验口径，不代替该次新模型结果。
+2026-11-15追加的两组新Understanding／Refine实际调用，单独记录在[整集真实A/B对照](live-ab-report.md)。以下原离线数据和manifest保留原实验口径，不代替该次新模型结果。 后续[完整Prompt同步复测与充值恢复](prompt-synced-report.md)中两组均完成24份Understanding和22个Refine，开头身份仍未通过；该报告为本需求最新实模证据。
 
 ## 1. 实际测试范围
 

@@ -1,0 +1,220 @@
+{
+  "attempts": [
+    {
+      "started_utc": "2026-11-15T05:46:26.747357+00:00",
+      "previous_progress": {
+        "case": "B_two_thirds",
+        "task_id": "c7a6af0a-4cc0-4e29-bad1-bec8b3a95b73",
+        "recorded_utc": "2026-11-15T05:04:39.404172+00:00",
+        "understanding_committed": 24,
+        "refine_complete": 8,
+        "named_ready": true,
+        "calls_started": 50,
+        "calls_returned": 36,
+        "errors": [
+          {
+            "stage": "refine",
+            "start_sequence_no": 10,
+            "error_type": "DeepSeekModelError",
+            "message": "DeepSeek request failed for model deepseek-flash: Error code: 402 - {'error': {'message': 'Insufficient Balance (request_id: e76004f5-5d2e-4a37-a67c-51ddc165d02c)', 'type': 'insufficient_balance_error', 'param': None, 'code': 'invalid_request_error'}}"
+          },
+          {
+            "stage": "refine",
+            "start_sequence_no": 11,
+            "error_type": "DeepSeekModelError",
+            "message": "DeepSeek request failed for model deepseek-flash: Error code: 402 - {'error': {'message': 'Insufficient Balance (request_id: d54a98fd-d6b4-445e-a558-6a680f5e2a19)', 'type': 'insufficient_balance_error', 'param': None, 'code': 'invalid_request_error'}}"
+          },
+          {
+            "stage": "refine",
+            "start_sequence_no": 13,
+            "error_type": "DeepSeekModelError",
+            "message": "DeepSeek request failed for model deepseek-flash: Error code: 402 - {'error': {'message': 'Insufficient Balance (request_id: 2ac306ad-79ae-422b-8d58-1374a0866821)', 'type': 'insufficient_balance_error', 'param': None, 'code': 'invalid_request_error'}}"
+          },
+          {
+            "stage": "refine",
+            "start_sequence_no": 14,
+            "error_type": "DeepSeekModelError",
+            "message": "DeepSeek request failed for model deepseek-flash: Error code: 402 - {'error': {'message': 'Insufficient Balance (request_id: abeb544c-8985-49f5-98e1-b3631f0f4135)', 'type': 'insufficient_balance_error', 'param': None, 'code': 'invalid_request_error'}}"
+          },
+          {
+            "stage": "refine",
+            "start_sequence_no": 2,
+            "error_type": "DeepSeekModelError",
+            "message": "DeepSeek request failed for model deepseek-flash: Error code: 402 - {'error': {'message': 'Insufficient Balance (request_id: 4cbaad63-925d-4ee7-a3ac-61814295a0fa)', 'type': 'insufficient_balance_error', 'param': None, 'code': 'invalid_request_error'}}"
+          },
+          {
+            "stage": "refine",
+            "start_sequence_no": 19,
+            "error_type": "DeepSeekModelError",
+            "message": "DeepSeek request failed for model deepseek-flash: Error code: 402 - {'error': {'message': 'Insufficient Balance (request_id: 6c1f5fd8-5363-4174-aa25-e64fc9bbe113)', 'type': 'insufficient_balance_error', 'param': None, 'code': 'invalid_request_error'}}"
+          },
+          {
+            "stage": "refine",
+            "start_sequence_no": 16,
+            "error_type": "DeepSeekModelError",
+            "message": "DeepSeek request failed for model deepseek-flash: Error code: 402 - {'error': {'message': 'Insufficient Balance (request_id: 165fb1a8-6eb3-4e9b-8544-88b1b8bae0a4)', 'type': 'insufficient_balance_error', 'param': None, 'code': 'invalid_request_error'}}"
+          },
+          {
+            "stage": "refine",
+            "start_sequence_no": 20,
+            "error_type": "DeepSeekModelError",
+            "message": "DeepSeek request failed for model deepseek-flash: Error code: 402 - {'error': {'message': 'Insufficient Balance (request_id: 6dea99e7-b96c-4409-9dd7-5ab4dd180e2a)', 'type': 'insufficient_balance_error', 'param': None, 'code': 'invalid_request_error'}}"
+          },
+          {
+            "stage": "refine",
+            "start_sequence_no": 17,
+            "error_type": "DeepSeekModelError",
+            "message": "DeepSeek request failed for model deepseek-flash: Error code: 402 - {'error': {'message': 'Insufficient Balance (request_id: fd9987d6-5a95-4a7c-9cba-42339df218d1)', 'type': 'insufficient_balance_error', 'param': None, 'code': 'invalid_request_error'}}"
+          },
+          {
+            "stage": "refine",
+            "start_sequence_no": 6,
+            "error_type": "DeepSeekModelError",
+            "message": "DeepSeek request failed for model deepseek-flash: max_output_tokens; code=max_output_tokens; response_id=c7d39bcc-32f1-4571-b5d5-9923d391f171; partial_output_chars=19488"
+          },
+          {
+            "stage": "refine",
+            "start_sequence_no": 4,
+            "error_type": "DeepSeekModelError",
+            "message": "DeepSeek request failed for model deepseek-flash: Error code: 402 - {'error': {'message': 'Insufficient Balance (request_id: 91ea3e9c-0af8-4b2c-89e9-88777e6a7ae0)', 'type': 'insufficient_balance_error', 'param': None, 'code': 'invalid_request_error'}}"
+          },
+          {
+            "stage": "refine",
+            "start_sequence_no": 7,
+            "error_type": "DeepSeekModelError",
+            "message": "DeepSeek request failed for model deepseek-flash: Error code: 402 - {'error': {'message': 'Insufficient Balance (request_id: eeffabda-ae09-45d1-9f27-95d85570d57f)', 'type': 'insufficient_balance_error', 'param': None, 'code': 'invalid_request_error'}}"
+          },
+          {
+            "stage": "refine",
+            "start_sequence_no": 5,
+            "error_type": "DeepSeekModelError",
+            "message": "DeepSeek request failed for model deepseek-flash: Error code: 402 - {'error': {'message': 'Insufficient Balance (request_id: d83adbd7-af0e-4551-b973-5e2371dbea7f)', 'type': 'insufficient_balance_error', 'param': None, 'code': 'invalid_request_error'}}"
+          },
+          {
+            "stage": "refine",
+            "start_sequence_no": 8,
+            "error_type": "DeepSeekModelError",
+            "message": "DeepSeek request failed for model deepseek-flash: Error code: 402 - {'error': {'message': 'Insufficient Balance (request_id: c40a311f-2100-4462-a378-1b63b9d97d37)', 'type': 'insufficient_balance_error', 'param': None, 'code': 'invalid_request_error'}}"
+          }
+        ],
+        "elapsed_seconds": 696.020029917001
+      },
+      "retained_intervals": [
+        0,
+        1,
+        3,
+        9,
+        12,
+        15,
+        18,
+        21
+      ],
+      "pending_intervals": [
+        2,
+        4,
+        5,
+        6,
+        7,
+        8,
+        10,
+        11,
+        13,
+        14,
+        16,
+        17,
+        19,
+        20
+      ],
+      "resume_source_sha256": "ff76b8fcc1f16f77e632c4d1297da846d31a1a6c4690490ca6673a640f265018",
+      "source_revision": "f549b9c99aca120e43458bcae4483af8d8ac525a",
+      "new_understanding_calls": 0,
+      "frozen_sixteen_unchanged": true
+    }
+  ],
+  "completion": {
+    "case": "B_two_thirds",
+    "understanding": 24,
+    "refine": 22,
+    "resume_elapsed_seconds": 323.7308640829997,
+    "asr_calls": 0,
+    "gpu_calls": 0,
+    "database_calls": 0,
+    "resumed_after_balance_error": true,
+    "retained_intervals": [
+      0,
+      1,
+      3,
+      9,
+      12,
+      15,
+      18,
+      21
+    ],
+    "resumed_intervals": [
+      2,
+      4,
+      5,
+      6,
+      7,
+      8,
+      10,
+      11,
+      13,
+      14,
+      16,
+      17,
+      19,
+      20
+    ]
+  },
+  "new_call_ids": [
+    "084415af-6fd6-4185-8886-6ca22d354e34",
+    "c809088a-b3a2-42e9-8856-225266239a67",
+    "b8079ec5-c289-48bf-abdf-ffd68d121fae",
+    "4c07d369-4915-47e9-9c21-082063657c2e",
+    "d99e5b28-370b-4011-bd05-3d58f0397f5c",
+    "268c7aba-08b4-4c26-8ee2-0296008a4554",
+    "272e02de-17c3-4141-9521-47da5f6211b3",
+    "68ad6836-f73d-4696-a248-d07f0d3b1361",
+    "4bbf0fe7-e161-40ad-9f96-ebc3920ccbcf",
+    "f8a3bbe8-9896-4f58-91e1-7f90f39dab9e",
+    "56478c1a-6c2d-4ed1-9940-f7246a21872b",
+    "c2f4c3bd-91cf-42f2-a059-5308e8d8ad31",
+    "a0d5b8b3-772c-4b3c-b201-236c019cd194",
+    "027681df-3a5e-4d7c-a47e-1d3c0293d333",
+    "ef5d4539-6b41-49a9-b43e-99dae3237b63"
+  ],
+  "new_call_count": 15,
+  "new_call_statuses": {
+    "returned": 15
+  },
+  "new_understanding_calls": 0,
+  "initial_B_understanding_sha256_unchanged": 24,
+  "initial_understanding_sha256": {
+    "20.json": "81a1069c5e1f3f660b5ccb5d109f6f97a23bac502785d5d6471f41a83f3d0b67",
+    "16.json": "8cac9fa41ee340c0e67124f1d1db58160fc9f9c15383fdc40cce240e759e4be4",
+    "00.json": "f39f95cbde11c363d20ba83115b30362b3eeea52be09561132eab861217e774e",
+    "01.json": "521acb247f4fa31f612ad906c152080b4e8e0eff962c2dca4dabeb9823a72207",
+    "17.json": "468a6e5994cf2171b1d4bf010163363efee287057f719c646cdbad12f5e702d4",
+    "21.json": "b5ca4455b793ba2039c0c84b6d08ae91c9f199e05310a20996e660405c81d600",
+    "10.json": "d8be7c8d501767f1fd178a3c95d93387e0300dda417978092900c8ee453d7b0a",
+    "06.json": "ced020bcd763aa386b8c6c8e9590db2fbf998fa12144f6513c330a7975f10858",
+    "07.json": "9b6808c3da2f654ced7241f58882299b2eacf7120f866851f104ac6d2ee50860",
+    "11.json": "1551b371fd6fee322a830721691e11137a8213795bc6e5425f708509fb92a5c4",
+    "04.json": "db2d86372e288454c46b760090744e5e5bfd448282fe8b16b8eca232c9042e98",
+    "12.json": "970f77afcc4a56e045616e3e01619f5317c3cd51a88537bc73533cf5071a9fd4",
+    "08.json": "af7260d8582c528eaa073ee73ba44b771639e0c6475e137342f1f512265bcbc7",
+    "09.json": "43afba800f245bb21431e6abc90668725154f6bf1e619c186a5d99662d51ef4b",
+    "13.json": "0038c99d62d334d957bce57ac1b82fa6d1f182cddcaed379084f5fcd8d8b371a",
+    "05.json": "d31c79011e42fc0a4bf9f4f8c890b30df2cd8ab74272a2da8d5a30f2e701b58c",
+    "22.json": "05d025141195574c9d5a55f52d51077e3784727bf6a0482d90514266e79fb39a",
+    "18.json": "0249eeb453d6315d708347ce89f9bb5bc65310cd83c138f726f1fcb7e9e072e3",
+    "02.json": "3b4e879370f202990db5c9e34a19b5bd554d73335ac9918fe6acfab296ad24e7",
+    "14.json": "87de8fa8c534046f8fe000bb8afda283122e339a2e765a19c946e50b6e043416",
+    "15.json": "065b13b467b32ba2716234190aad9db8b2af1e6dd05a62a6b22186e56c9e0111",
+    "03.json": "864ac89dcb9f785dc8a44ccfb695c62d435be2e470dc72c364faf8f93ca7934c",
+    "19.json": "e67ca0546c796a5035c658c74ff9f4e731974130f64d909e0c42932352b3a05e",
+    "23.json": "ee39062bad61e2ad0d9ea9d4241c6bc49d3a1442e9a0c74a5985f4f24d961625"
+  },
+  "frozen_sixteen_receipt_verified": true
+}
