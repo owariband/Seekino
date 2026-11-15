@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-15T10:39:24+08:00",
+ "updatedAt": "2026-11-15T10:49:00+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 70,
+ "revision": 71,
  "categories": [
   {
    "id": "parse",
@@ -5478,6 +5478,38 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "label": "实测报告",
      "kind": "source",
      "url": "https://github.com/owariband/Seekino/blob/perf/chat-frontend/docs/report/web/chat-frontend-performance-20261112.md"
+    }
+   ]
+  },
+  {
+   "id": "MSG-FEEDBACK-01",
+   "title": "消息级用户反馈与失败回答报告",
+   "category": "chat",
+   "type": "requirement",
+   "status": "verifying",
+   "priority": "P1",
+   "description": "为 terminal assistant 消息增加 👍/👎、原因和说明；消息列表/详情回显，失败回答可报告。独立反馈表与 PUT/DELETE，不引入 Langfuse/LangSmith。",
+   "next": "观察两周反馈覆盖率、写入延迟和失败报告；补 main 正式发布；按试点数据决定 triage 导出。",
+   "verification": "后端 297 项定向回归、前端 684 项测试、类型检查与构建通过；生产 MySQL 迁移、API/Web 发布和游客真实反馈链路已验证，刷新回显与清除正常；试点覆盖率仍待观察。",
+   "updatedAt": "2026-11-15",
+   "tags": [
+    "Chat",
+    "反馈"
+   ],
+   "related": [
+    "MOD-CHAT"
+   ],
+   "branch": "feat/message-feedback",
+   "links": [
+    {
+     "label": "TRD",
+     "kind": "trd",
+     "url": "https://github.com/owariband/Seekino/blob/feat/message-feedback/docs/design/03-product-reassessment/message-feedback-trd.md"
+    },
+    {
+     "label": "PR #175",
+     "kind": "pull",
+     "url": "https://github.com/owariband/Seekino/pull/175"
     }
    ]
   },

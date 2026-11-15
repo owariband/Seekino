@@ -144,7 +144,7 @@ function renderApp(
   const assistantMessage: AgentMessageView = {
     messageId: "assistant", conversationId: "conversation", seriesIds: [apiSeries.seriesId], sequenceNo: 1, role: "ASSISTANT", status: "PROCESSING", phase: "QUEUED", version: 1, reference: null, content: null,
     modelName: null, searchResult: null,
-    renderBlocks: [], attachments: [], timing: null, lastError: null, createdAt: now, updatedAt: now,
+    renderBlocks: [], attachments: [], timing: null, lastError: null, feedback: null, createdAt: now, updatedAt: now,
   };
   const userMessage = { ...assistantMessage, messageId: "user", sequenceNo: 0, role: "USER", status: "COMPLETED", content: "雨天门口" };
   const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {

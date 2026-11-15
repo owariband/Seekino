@@ -123,6 +123,7 @@ Event / Sub-Chunk 的实施入口是 [sub-chunk-trd.md](02-agent-harness/sub-chu
 | 实时播放的 JEV 路由 | [chat-realtime-intent-routing-trd.md](03-product-reassessment/chat-realtime-intent-routing-trd.md) | 带 playback 的请求不再跳过 JEV；三条真实路由均 retrieve，但完整回放 1 条失败、2 条完成且时间锚定有缺口，不能据此关闭整体 Chat 延迟与质量。 |
 | Chat 子 Agent 模型配置继承 | [chat-model-config-inheritance-trd.md](03-product-reassessment/chat-model-config-inheritance-trd.md) | 子 Agent 跟随当前 Supervisor 的模型来源、主备、effort、输出／超时／字符预算与动态容量；338 项测试和当前 Cloud 预检通过，关联 #171，尚未部署，延迟与质量待修复后回放。 |
 | Chat 模型重试提示 | [设计](03-product-reassessment/chat-model-retry-status-trd.md) | 首次响应超时后的重试次数与恢复反馈。 |
+| 消息级用户反馈 | [message-feedback-trd.md](03-product-reassessment/message-feedback-trd.md) | 对 terminal assistant 消息记录 👍/👎、原因与说明；消息列表/详情回显，失败回答可报告；独立反馈表与 PUT/DELETE 接口。 |
 | Chat 工具与证据交付 | [agent-chat-delivery-contract.md](01-mvp/agent-chat-delivery-contract.md) | 交付合同与演进记录：Query / Evaluator、业务工具、证据核准及答案交付；Event 工具结合 Sub-Chunk TRD 阅读。 |
 | 网页搜索供应商 | [deepseek-web-search-trd.md](03-product-reassessment/deepseek-web-search-trd.md) | 主 TRD：可选免 key DDGS / DeepSeek API、查询边界、错误处理与真实入口验证。 |
 | 外部 Agent MCP 接入 | [mcp-access-trd.md](03-product-reassessment/mcp-access-trd.md) | 主 TRD：localhost 工具发现、Event 召回、版本化证据与媒体取用；外部 Agent 承担制作。 |

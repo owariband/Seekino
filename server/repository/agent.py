@@ -5,8 +5,10 @@ from copy import deepcopy
 from collections.abc import Iterator
 from contextlib import contextmanager
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.dialects.mysql import insert as mysql_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -17,17 +19,21 @@ from ..model.agent import (
     AGENT_MESSAGE_IDEMPOTENCY_KEY,
     AgentConversation,
     AgentMessage,
+    AgentMessageFeedback,
+    AgentMessageFeedbackReason,
     AgentMessageRole,
     AgentMessageStatus,
 )
 from ..model.dto.agentDTO import (
     AgentConversationState,
     AgentFailure,
+    AgentMessageFeedbackState,
     AgentMessageState,
     AgentMessageTimingState,
     AgentStageTimingState,
     StartedAgentMessageState,
 )
+from ..utils.time import unix_time_ms_to_datetime
 
 
 class AgentConversationNotFoundError(LookupError):
@@ -332,7 +338,13 @@ class AgentRepository:
             records = session.scalars(select(AgentMessage).where(*filters)
                 .order_by(AgentMessage.sequence_no, AgentMessage.id)
                 .offset(offset).limit(limit)).all()
-            return [self._message_state(record) for record in records], total
+            feedback_by_id = self._feedback_map(
+                session, [record.id for record in records], owner_user_id,
+            )
+            return [
+                self._message_state(record, feedback=feedback_by_id.get(record.id))
+                for record in records
+            ], total
 
     def list_messages(
         self,
@@ -354,7 +366,13 @@ class AgentRepository:
                 .order_by(AgentMessage.sequence_no)
                 .limit(limit)
             ).all()
-            return [self._message_state(record) for record in records]
+            feedback_by_id = self._feedback_map(
+                session, [record.id for record in records], owner_user_id,
+            )
+            return [
+                self._message_state(record, feedback=feedback_by_id.get(record.id))
+                for record in records
+            ]
 
     def list_recent_completed_messages(
         self,
@@ -486,7 +504,184 @@ class AgentRepository:
             ))
             if assistant is None:
                 raise AgentMessageNotFoundError("this message has no assistant reply")
-            return StartedAgentMessageState(self._message_state(user), self._message_state(assistant), True)
+            feedback_by_id = self._feedback_map(
+                session, [user.id, assistant.id], owner_user_id,
+            )
+            return StartedAgentMessageState(
+                self._message_state(user, feedback=feedback_by_id.get(user.id)),
+                self._message_state(assistant, feedback=feedback_by_id.get(assistant.id)),
+                True,
+            )
+
+    def upsert_message_feedback(
+        self,
+        conversation_id: str,
+        tenant_id: str,
+        *,
+        message_id: str,
+        owner_user_id: str = LOCAL_USER_ID,
+        rating: str,
+        reasons: list[str],
+        comment: str | None,
+        now: int,
+    ) -> AgentMessageFeedbackState:
+        with self._session_factory.begin() as session:
+            self._require_conversation(
+                session, conversation_id, tenant_id,
+                for_update=True, owner_user_id=owner_user_id,
+            )
+            message = session.get(AgentMessage, message_id, with_for_update=True)
+            self._validate_feedback_message(
+                message, conversation_id=conversation_id,
+                rating=rating, reasons=reasons,
+            )
+            assert message is not None
+            values = {
+                "message_id": message.id,
+                "user_id": owner_user_id,
+                "conversation_id": conversation_id,
+                "tenant_id": tenant_id,
+                "rating": rating,
+                "reasons": reasons,
+                "comment": comment,
+                "message_version": message.version,
+                "model": message.model,
+                "message_status": message.status,
+                "phase": self._feedback_phase(message),
+                "error_code": message.last_error_code,
+                "create_time": now,
+                "create_date": unix_time_ms_to_datetime(now),
+                "update_time": now,
+                "update_date": unix_time_ms_to_datetime(now),
+            }
+            self._upsert_feedback_row(session, values)
+            session.flush()
+            record = session.get(
+                AgentMessageFeedback, (message.id, owner_user_id),
+            )
+            if record is None:
+                raise AgentMessageNotFoundError("feedback was not persisted")
+            return self._feedback_state(record)
+
+    def clear_message_feedback(
+        self,
+        conversation_id: str,
+        tenant_id: str,
+        *,
+        message_id: str,
+        owner_user_id: str = LOCAL_USER_ID,
+    ) -> None:
+        with self._session_factory.begin() as session:
+            self._require_conversation(
+                session, conversation_id, tenant_id,
+                for_update=True, owner_user_id=owner_user_id,
+            )
+            message = session.get(AgentMessage, message_id)
+            if message is None or message.conversation_id != conversation_id:
+                raise AgentMessageNotFoundError(
+                    "this message has not been accepted in this conversation"
+                )
+            session.execute(delete(AgentMessageFeedback).where(
+                AgentMessageFeedback.message_id == message_id,
+                AgentMessageFeedback.user_id == owner_user_id,
+            ))
+
+    @staticmethod
+    def _feedback_phase(message: AgentMessage) -> str | None:
+        if message.phase is not None:
+            return message.phase
+        timing = AgentRepository._timing_state(message.detail)
+        if timing is not None and timing.stages:
+            return timing.stages[-1].phase.value
+        return None
+
+    @staticmethod
+    def _validate_feedback_message(
+        message: AgentMessage | None,
+        *,
+        conversation_id: str,
+        rating: str,
+        reasons: list[str],
+    ) -> None:
+        if message is None or message.conversation_id != conversation_id:
+            raise AgentMessageNotFoundError(
+                "this message has not been accepted in this conversation"
+            )
+        if message.role != AgentMessageRole.ASSISTANT.value:
+            raise ValueError("only assistant messages can receive feedback")
+        if message.status not in {
+            AgentMessageStatus.COMPLETED.value,
+            AgentMessageStatus.FAILED.value,
+        }:
+            raise AgentConflictError("assistant message is not in a terminal state")
+        if message.status == AgentMessageStatus.FAILED.value and rating == "UP":
+            raise ValueError("failed answers cannot receive positive feedback")
+        if (
+            message.status == AgentMessageStatus.COMPLETED.value
+            and AgentMessageFeedbackReason.FAILURE.value in reasons
+        ):
+            raise ValueError("the failure reason is only available for failed answers")
+
+    @staticmethod
+    def _upsert_feedback_row(session: Session, values: dict) -> None:
+        update_names = (
+            "rating", "reasons", "comment", "message_version", "model",
+            "message_status", "error_code", "update_time", "update_date",
+        )
+        dialect = session.get_bind().dialect.name
+        if dialect == "mysql":
+            statement = mysql_insert(AgentMessageFeedback).values(**values)
+            statement = statement.on_duplicate_key_update(**{
+                name: statement.inserted[name] for name in update_names
+            })
+        elif dialect == "sqlite":
+            statement = sqlite_insert(AgentMessageFeedback).values(**values)
+            statement = statement.on_conflict_do_update(
+                index_elements=[
+                    AgentMessageFeedback.message_id,
+                    AgentMessageFeedback.user_id,
+                ],
+                set_={name: statement.excluded[name] for name in update_names},
+            )
+        else:
+            record = session.get(
+                AgentMessageFeedback,
+                (values["message_id"], values["user_id"]),
+            )
+            if record is None:
+                session.add(AgentMessageFeedback(**values))
+            else:
+                for name in update_names:
+                    setattr(record, name, values[name])
+            return
+        session.execute(statement)
+
+    def _feedback_map(
+        self,
+        session: Session,
+        message_ids: list[str],
+        owner_user_id: str,
+    ) -> dict[str, AgentMessageFeedbackState]:
+        if not message_ids:
+            return {}
+        records = session.scalars(select(AgentMessageFeedback).where(
+            AgentMessageFeedback.user_id == owner_user_id,
+            AgentMessageFeedback.message_id.in_(message_ids),
+        )).all()
+        return {
+            record.message_id: self._feedback_state(record)
+            for record in records
+        }
+
+    @staticmethod
+    def _feedback_state(record: AgentMessageFeedback) -> AgentMessageFeedbackState:
+        return AgentMessageFeedbackState(
+            rating=record.rating,
+            reasons=tuple(record.reasons or ()),
+            comment=record.comment,
+            created_at=record.create_time or 0,
+            updated_at=record.update_time or 0,
+        )
 
     def checkpoint_assistant_message(
         self, message_id: str, *, now: int, phase: str | None = None,
@@ -834,7 +1029,11 @@ class AgentRepository:
         )
 
     @staticmethod
-    def _message_state(record: AgentMessage) -> AgentMessageState:
+    def _message_state(
+        record: AgentMessage,
+        *,
+        feedback: AgentMessageFeedbackState | None = None,
+    ) -> AgentMessageState:
         return AgentMessageState(
             message_id=record.id,
             conversation_id=record.conversation_id,
@@ -864,6 +1063,7 @@ class AgentRepository:
                 tuple(deepcopy(record.detail["renderBlocks"]))
                 if record.detail is not None and "renderBlocks" in record.detail else None
             ),
+            feedback=feedback,
         )
 
     @staticmethod

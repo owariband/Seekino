@@ -130,13 +130,13 @@ def test_parse_output_draft_mysql_ddl_has_longtext_and_no_parent_foreign_key() -
     assert "FOREIGN KEY" not in ddl
 
 
-def test_create_schema_registers_twenty_four_tables_and_identity_is_repeatable() -> None:
+def test_create_schema_registers_twenty_seven_tables_and_identity_is_repeatable() -> None:
     engine = create_database_engine("sqlite+pysqlite:///:memory:", environment=DatabaseEnvironment.TEST)
     create_schema(engine)
     create_schema(engine)
     tables = inspect(engine).get_table_names()
-    assert len(tables) == 24
-    assert {"user", "tenant", "video_parse_content", "parse_model_output_draft", "personal_model_preferences"}.issubset(tables)
+    assert len(tables) == 27
+    assert {"user", "tenant", "video_parse_content", "parse_model_output_draft", "personal_model_preferences", "agent_message_feedback"}.issubset(tables)
 
 
 def test_conversation_detail_is_nullable_json() -> None:
