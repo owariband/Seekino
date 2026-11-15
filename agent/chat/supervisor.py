@@ -1115,6 +1115,18 @@ class SupervisorRuntime:
                     args_schema=direct.args_schema, maximum_result_bytes=self._max_tool_result_bytes,
                 ))
         frame_target_available = any(tool.name == "get_video_frame" for tool in tools)
+        playback = (inputs.get("extra_context") or {}).get("playback")
+        if frame_target_available and isinstance(playback, dict):
+            position = playback.get("positionSeconds")
+            if type(position) is int and position >= 0 and playback.get("videoId"):
+                model_user_message += (
+                    "\n\n[本轮播放锚点｜应用生成]\n"
+                    + context_json({"video_id": playback["videoId"], "timestamp_ms": position})
+                    + "\n这只是本轮播放数据，不表示已经看过。仅当当前问题要求核验「这里/这帧/现在」且未另指时间时，"
+                    "以此 timestamp_ms 调用 get_video_frame；不要从历史回答另选时间。用户明确指定时间则按其指定。"
+                    "需要取证时，先用一句简短的目标确认，再实际调用工具并完成回答；用户要求只给最终答案或严格限句时除外。"
+                    "\n[/本轮播放锚点]"
+                )
         if realtime_available:
             tools.append(build_agent_tool(
                 func=understand_current_video, name="understand_current_video",

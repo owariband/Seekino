@@ -482,9 +482,19 @@ def test_point_frame_guidance_prefers_user_time_over_playback_anchor():
             return tools
 
     model = FakeSupervisorModel()
+    inputs = _inputs(series_ids=["series"])
+    inputs["extra_context"] = {"playback": {
+        "videoId": "current-video", "seriesId": "series", "positionSeconds": 63_712,
+    }}
+    original = deepcopy(inputs)
     _runtime(model, video=FrameVideoRuntime()).kick(
-        _inputs(series_ids=["series"]), load_video_context=lambda: [],
+        inputs, load_video_context=lambda: [],
     )
+    assert inputs == original
+    message = model.runs[0][2]
+    anchor = message.split("[本轮播放锚点｜应用生成]\n")[1].split("\n这只是本轮播放数据")[0]
+    assert json.loads(anchor) == {"video_id": "current-video", "timestamp_ms": 63_712}
+    assert message.startswith(inputs["user_message"])
     prompt = model.prompts[0]
     assert "get_video_frame(timestamp_ms)" in prompt
     assert "用户明确时间优先于 current_video.positionSeconds" in prompt
