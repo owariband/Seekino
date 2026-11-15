@@ -87,6 +87,11 @@ class QueryHook:
         graph.add_edge("append", END)
         self._graph = graph.compile(checkpointer=False)
 
+    def close(self) -> None:
+        close_models = getattr(self._models, "close", None)
+        if callable(close_models):
+            close_models()
+
     def __call__(self, inputs: RunInputs, control: ExecutionControl) -> str:
         control.check()
         query = inputs["user_message"]

@@ -27,6 +27,7 @@
 
 | 记录 | 原问题编号 |
 |---|---|
+| [2026-11-15：JEV 路由每轮关闭连接，DNS/TCP/TLS 冷启动可多等 1–2 秒](#devlog-jev-cold-connection-20261115) | 观看问答 QUEUED／首字前 JEV 延迟；已改为 30 秒 keep-alive，未部署 |
 | [2026-11-15：历史证据重取和取帧时间偏移，让动态窗口下的 Chat 仍迟答、答偏](#devlog-chat-local-history-replay-20261115) | CHAT-MODEL-INHERIT-01；CHAT-COMPACT-01；CHAT-QUERY-BUDGET-01；PR #177 |
 | [2026-11-15：Chat 子 Agent 另取全局模型，选定 Supervisor 后仍按旧窗口提前压缩](#devlog-chat-model-config-inheritance-20261115) | CHAT-MODEL-INHERIT-01；CHAT-COMPACT-01；PR #171 |
 | [2026-11-14：实时播放请求绕过 JEV，接入后完整回放仍因工具预算与时间锚定失败](#devlog-chat-history-replay-20261114) | CHAT-JEV-REALTIME-01；CHAT-QUERY-BUDGET-01；PR #162、PR #163 |
@@ -197,6 +198,82 @@
 | [日期未明确（2026-10-23归档）：当前播放窗口的按需理解与复用](#devlog-history-60) | 独立实验/设计 |
 
 </details>
+
+<a id="devlog-jev-cold-connection-20261115"></a>
+## 2026-11-15：JEV 路由每轮关闭连接，DNS/TCP/TLS 冷启动可多等 1–2 秒
+
+### 问题与现状
+
+观看问答在模型开始回答前有一段 `QUEUED`，其中包含 Supervisor 之前的同步 JEV 意图路由。2026-11-15 的一次生产请求记录 `query_hook_route duration_ms=2202.8`，同一调用的 `model_usage` 从 16:55:41.159 到 16:55:43.313，耗时 2.154 秒；`answer.started` 到首个 reasoning 为 2.666 秒，`QUEUED` 为 3.526 秒。JEV 不是整轮 FTT 的主项，但它直接位于首字之前，会放大用户看到的“没有反应”阶段。
+
+修复前，[`gateway/query_hook.py`](../../gateway/query_hook.py#L29) 的每次 `route()` 都用 `with httpx.Client(...) as client`，请求结束就关闭连接池。生产镜像 `seekino-api:message-feedback-74cb3c96` 中的同一文件仍是这一写法，因此每轮都要重新 DNS、TCP 和 TLS，即使上一轮只过去几秒。10 月 24 日的实验里 20 次 JEV 平均 0.88 秒；此前线上统计的 31 次平均 1.76 秒、范围 1.24–3.17 秒。模型和输入 token 接近，差异不能再用 prompt 变大解释。
+
+为了把“建连”和“服务端处理”分开，在 API 容器内用同一 endpoint、模型和 3,071 字节请求做原始 socket 计时；返回 `typesafe/jev-1.14-20261014`，usage 836 input / 38 output，与线上 848/38 接近。三次冷连接的结果如下；`DNS+TCP` 是从调用 `socket.create_connection` 前到 TCP 建连完成的时间，包含 DNS；`TLS` 是随后完成 TLS 握手的时间；`服务端首字节` 是请求发出后到收到响应第一个字节的时间。
+
+| 冷连接 | DNS+TCP | TLS | 服务端首字节 | 总耗时 |
+| --- | ---: | ---: | ---: | ---: |
+| #1 | 208ms | 241ms | 1,319ms | 1,769ms |
+| #2 | 193ms | 235ms | 985ms | 1,421ms |
+| #3 | 1,210ms | 241ms | 1,883ms | 3,334ms |
+
+把 DNS、TCP、IPv6 和 keep-alive 再单独拆开测量：
+
+| 独立测量 | 结果 |
+| --- | --- |
+| DNS 缓存命中 | 0.7–29.3ms（6 次；首次 29.3ms，随后 0.7–0.9ms） |
+| IPv4 TCP connect | 160–190ms（6 次） |
+| IPv6 connect | 立即 `Network is unreachable`，0ms |
+| TLS | 235–241ms |
+| 立即复用第 2/3 次 | 826 / 829ms |
+| 6 秒空闲后复用 | 801ms |
+| 30 秒空闲后复用 | 808ms |
+| 立即复用第 1 次尾部 | 1,616ms |
+
+复用同一连接时，DNS+TCP 和 TLS 都为 0，服务端首字节 800–840ms。OpenRouter 在 6 秒和 30 秒空闲后仍返回 `Connection: keep-alive`；30 秒内可以复用，超过 30 秒仍会重新建连。
+
+从网络分层看，1–2 秒的建连不是“带宽慢”，而是多个往返和超时计时器叠加：
+
+1. **DNS**：`getaddrinfo` 要先得到可用地址。缓存命中时本次只有 0.7–29.3ms；缓存未命中或 UDP 查询丢失时，resolver 会按秒级超时重试，可能直接增加 1 秒以上。
+2. **TCP 三次握手**：SYN、SYN-ACK、ACK 至少一个 RTT。到 OpenRouter 的 Cloudflare IPv4 边缘，本次单独测得 TCP 160–190ms；如果 SYN 或 SYN-ACK 丢失，Linux 的初始重传超时（RTO）通常是 1 秒（[RFC 6298](https://www.rfc-editor.org/rfc/rfc6298)），一次丢包就多等约 1 秒，两次就按 1、2 秒退避。第 3 次冷连接的 1.21 秒尖刺最符合这种情况；后续 6 次单独测试 DNS 0.7–29.3ms、IPv4 TCP 160–190ms，没有复现 1 秒，说明它不是固定的 IPv6 回退或 DNS 慢，更像瞬时 SYN 重传或链路抖动。本次 IPv6 地址立即返回 `Network is unreachable`，没有产生 1 秒级 fallback。
+3. **TLS 握手**：TLS 1.3 在 TCP 之上还要 1 个 RTT，TLS 1.2 要 2 个 RTT；按 200ms RTT 估算，前者约 0.2 秒，后者约 0.4 秒，再加上证书和加密计算。本次 TLS 稳定在 235–241ms，和 TLS 1.3、约 200ms RTT 的量级一致；它不是 1 秒尖刺的来源。
+4. **HTTP 请求/响应**：连接建立后，请求到首字节还要 1 个 RTT 加服务端处理。JEV 服务端首字节本次为 985–1,883ms，复用后仍有 800–840ms。这部分不是建连，连接复用消不掉。
+
+按这些数据，2.2 秒那次可以拆成约 0.2–1.0 秒 DNS+TCP、0.24 秒 TLS、1.0–1.3 秒服务端；不是把 2.2 秒全部算成建连。正常 RTT 下 DNS+TCP+TLS 约 0.4–0.6 秒；一次 SYN 丢失把 TCP 推到 1 秒以上；如果 DNS 也重试，或 TCP 连续退避，就会接近 2 秒。JEV 请求只有 3KB、响应 38 token，带宽几乎不构成瓶颈，时间花在往返、丢包重传和等待服务端，而不是传数据。
+
+### 方案候选
+
+采用最小 persistent client：让 `QueryHookModels` 持有一个长期存活的 `httpx.Client`，请求仍按原 contract 发，只把连接池跨调用保留；`keepalive_expiry=30.0`，应用关闭时调用 `close()`。`httpx` 0.28.1 默认空闲 5 秒就关闭 keep-alive，聊天追问经常超过 5 秒，因此不能只共享 client 而不改 expiry；本次实测 OpenRouter 30 秒空闲后仍保持连接。多个 API worker 各自持有自己的 client，不能跨进程共享，但每个进程内可以复用。
+
+长连接的风险是服务端先关闭空闲连接，下一请求遇到 stale connection。当前 JEV 路由失败会 fail-open 回退到原始消息，不会阻塞回答；本次不额外增加 retry，先观察真实运行中的 `RemoteProtocolError` 和 fallback 日志。超过 30 秒的间隔仍会冷连接。后台定时 keepalive 能把间隔拉到任意长，但会引入额外请求、计时器、失败重试和持续打 OpenRouter 的成本，本次不选。跳过 JEV 或对当前视频问题走 fast path 能省掉整次调用，但会改变路由行为，需要单独验收，不能和连接复用混在一起。HTTP/2 多路复用、TCP Fast Open、TLS 1.3 0-RTT 也能减少握手，但分别受服务端支持、部署开关和重放风险限制；当前 httpx 客户端是 HTTP/1.1，本次不改协议。
+
+### 方案验证
+
+诊断阶段只做只读测量，没有重启或改写业务数据。测量在 `seekino-local-api-1` 内完成，镜像 `seekino-api:message-feedback-74cb3c96`，API 容器仍在服务。原始 socket 脚本只发 JEV 请求，不写数据库、不调用 Chat 模型。三次冷连接分别新建 socket；复用测试在同一 socket 上连续发第二次请求，并在 6 秒、30 秒空闲后再发一次。请求体、endpoint、模型与线上一致，usage 接近。
+
+随后在独立工作树实现并验证：
+
+1. [`QueryHookModels`](../../gateway/query_hook.py#L29) 持有 `httpx.Client`，设置 `trust_env=False`、`keepalive_expiry=30.0`，并提供 `close()`；每次请求仍按剩余预算传 `timeout`。
+2. [`QueryHook.close()`](../../agent/chat/query_hook.py#L90) 关闭底层 models；[`SupervisorRuntime.close()`](../../agent/chat/supervisor.py#L206) 在关闭视频运行时和模型时一并关闭 query hook，覆盖 API 正常 shutdown 和替换 runtime 的路径。
+3. [`classify_video`](../../server/service/video_parse_routing.py#L41) 的旧 JEV 分支改为在 `finally` 中关闭本次临时 `QueryHookModels`，避免这个非 Chat 调用点因为 persistent client 而泄漏连接池。
+
+测试结果：`tests/gateway/test_query_hook.py` 55 passed，`tests/agent/chat/test_query_hook.py` 41 passed，`tests/server/test_video_content_route.py` 5 passed，`tests/agent/chat/test_supervisor.py` 与 `tests/server/test_bootstrap.py` 合计 273 passed；合并去重共 **374 passed, 1 warning**。网关测试覆盖单 client 复用、30 秒 expiry、每请求 timeout、显式 close；Supervisor 测试覆盖 shutdown 时调用 query hook close；视频路由测试覆盖旧 JEV 分支的 finally close。
+
+验证边界：这是一次网络样本，不是 31 次线上调用的逐次抓包；没有在 API 进程内注入计时，也没有抓到 SYN 丢包或 DNS 查询报文。1.21 秒尖刺归因于 SYN 重传或链路抖动是推断，不是 pcap 证据。30 秒空闲复用只验证了一次；更长间隔、OpenRouter 侧主动关闭、多个 worker 并发、连接池上限和异常重试都未验证。代码尚未部署，也没有做真实 Chat 的首字回放，因此不能把 0.8 秒直接当成上线后的 FTT 下降值。
+
+### 指标对比
+
+问题影响的是首字前的 JEV 等待，所以比较冷连接与复用连接的 JEV 总耗时，并把 JEV 放回整轮 FTT 里看。下表是同一容器、同一 endpoint/model 的实测；冷连接取三次，复用取立即、6 秒、30 秒空闲的第二次请求。
+
+| 场景 | JEV 总耗时 | 说明 |
+| --- | ---: | --- |
+| 冷连接 #1/#2/#3 | 1,421–3,334ms | DNS+TCP 193–1,210ms，TLS 约 240ms，服务端 985–1,883ms |
+| 复用，立即/6s/30s | 801–840ms | DNS/TCP/TLS 为 0；另有一次 1.6s 尾部 |
+| 此前线上 31 次 | 平均 1,760ms，1,240–3,170ms | 每轮新建 client，和冷连接量级一致 |
+| 10 月 24 日实验 20 次 | 平均 880ms | 当时连接条件与现在不同，只作参照 |
+
+按这次样本，连接复用能把 JEV 从 1.4–3.3 秒降到约 0.8 秒，节省 0.6–2.5 秒；在 2.2 秒那次上，预计回到 0.8–1.3 秒。这个收益对 `QUEUED` 有意义：3.5 秒的 `QUEUED` 里 JEV 约 2.2 秒，复用后前段可少等 1–2 秒。但它不改变整轮 FTT 的主要矛盾：同一次 42.5 秒的回答里，`understand_current_video` 约 21.6 秒，JEV 只有 2.2 秒；即使 JEV 完全消失，FTT 仍是 40 秒量级。
+
+因此本次结论是：JEV 的连接建立是“首字前”的主要可避免成本，值得做长期 client；它不是整轮 FTT 的主要成本，不能拿它替代对 `understand_current_video` 和 Supervisor 工具循环的优化。代码级验证已完成，生产尚未部署；下一步是发布后用 30 秒内连续追问复测 JEV 总耗时、`QUEUED` 和 fallback/stale 连接日志。超过 30 秒的间隔仍会回到冷连接，是否值得后台预热另行评估。
 
 <a id="devlog-event-query-cloud-memory-hotfix-20261114"></a>
 ## 2026-11-14：生产镜像未含 Event 查询内存修复，完整课程范围又因任务排序内存溢出

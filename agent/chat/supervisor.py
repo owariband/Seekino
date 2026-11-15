@@ -205,6 +205,8 @@ class SupervisorRuntime:
 
     def close(self) -> None:
         self._video_runtime.close()
+        if self._query_hook is not None:
+            self._query_hook.close()
         close_model = getattr(self._model, "close", None)
         if callable(close_model):
             close_model()
