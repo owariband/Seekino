@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-15T14:26:51+08:00",
+ "updatedAt": "2026-11-15T15:17:02+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 75,
+ "revision": 76,
  "categories": [
   {
    "id": "parse",
@@ -6078,7 +6078,7 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "priority": "P1",
    "description": "历史证据ID与本轮注册表、实时取帧时间及schema条件必填未对齐；补单点原帧、清理JEV/贪心工具提示，在同一循环先确认再取证，分别验收FTT、TT与质量。",
    "next": "回放原T02长历史，验收“这里”的本轮时间与先确认；单条公网新会话不替代完整质量、近满窗和并发验证。",
-   "verification": "功能冻结808通过/1跳过，保留PR179后扩展回归868通过/1跳过（包含前组不累加）；基线、首候选和提示收紧候选各完成3条真实历史。第二候选工具反馈0/11错误，T03按用户1056000ms取一帧；T02仍沿用历史时间。最终增加本轮播放锚点，真实补测首条被官方402挡住，2条未执行，不认定质量已全通过。 2026-11-15：main PR180/f7823c8d最小20文件发布，候选1088通过/1跳过，CPU/Cloud同一API已上线且healthy，其他5容器不变；父子实际policy一致，公网真实探针完成，首确认5.281s、TT7.725s，仅单点1056000ms且0工具错误；当前生成可用，原T02长历史未复验。",
+   "verification": "功能冻结808通过/1跳过，保留PR179后扩展回归868通过/1跳过（包含前组不累加）；基线、首候选和提示收紧候选各完成3条真实历史。第二候选工具反馈0/11错误，T03按用户1056000ms取一帧；T02仍沿用历史时间。最终增加本轮播放锚点，真实补测首条被官方402挡住，2条未执行，不认定质量已全通过。 2026-11-15：main PR180/f7823c8d最小20文件发布，候选1088通过/1跳过，CPU/Cloud同一API已上线且healthy，其他5容器不变；父子实际policy一致，公网真实探针完成，首确认5.281s、TT7.725s，仅单点1056000ms且0工具错误；当前生成可用，原T02长历史未复验。 来源归因已分为实际成员/参数错误、目标与证据作用域、策略/配置/SDK潜在分歧；22→11次生成，但平均reasoning/次234.6→247.2，不将收益误记为每轮思考减少。",
    "updatedAt": "2026-11-15",
    "tags": [
     "Chat",
@@ -6125,6 +6125,11 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "label": "线上收据",
      "kind": "source",
      "url": "https://github.com/owariband/Seekino/blob/dev/docs/report/agent/chat/frame-target-first-response-20261115/production-rollout-20261115.md"
+    },
+    {
+     "label": "Context来源与因果矩阵",
+     "kind": "source",
+     "url": "https://github.com/owariband/Seekino/blob/dev/docs/report/agent/chat/frame-target-first-response-20261115/context-conflict-sources-20261115.md"
     }
    ]
   }
