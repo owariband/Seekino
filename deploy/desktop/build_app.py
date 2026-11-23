@@ -69,7 +69,7 @@ def _place_code(contents):
 
 
 def _icon(resources):
-    with Image.open(ROOT / "assets" / "seekino-logo.png") as source:
+    with Image.open(resources / "SeekinoLogo.png") as source:
         icon = source.convert("RGBA")
         icon.save(resources / "Seekino.icns")
 
@@ -104,9 +104,9 @@ def build(destination, wheel, version, identity):
             "LSMinimumSystemVersion": MINIMUM_MACOS,
             "NSHighResolutionCapable": True,
         }))
-        _icon(resources)
         libraries = _place_code(contents)
         copy_frontend(resources)
+        _icon(resources)
         qt_wheels = stage / "qt"
         install_qt(qt_wheels)
         libraries += collect(qt_wheels, resources / "site-packages", frameworks)
@@ -128,7 +128,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("destination", type=Path)
     parser.add_argument("--media-wheel", required=True, type=Path)
-    parser.add_argument("--version", default="0.2.0")
+    parser.add_argument("--version", default="0.2.1")
     parser.add_argument("--identity", default="-", help="Developer ID Application identity for release signing")
     options = parser.parse_args()
     build(options.destination, options.media_wheel, options.version, options.identity)

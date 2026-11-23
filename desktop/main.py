@@ -105,7 +105,7 @@ def main():
     app = QGuiApplication([sys.argv[0]])
     app.setApplicationName("Seekino")
     app.setOrganizationName("Seekino")
-    app.setApplicationVersion("0.2.0")
+    app.setApplicationVersion("0.2.1")
     app.setWindowIcon(QIcon(str(basedir.parent / "SeekinoLogo.png")))
     from .qt_player import register_player
     register_player()

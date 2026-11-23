@@ -4,21 +4,23 @@ import QtQuick.Controls.Basic
 AbstractButton {
     id: brand
     Accessible.name: "Seekino 首页"
-    implicitWidth: label.implicitWidth + 10; implicitHeight: 32
-    FontLoader { id: inter; source: "art/inter-wordmark-750.ttf" }
-    contentItem: Item {
-        Text {
-            id: label; anchors.centerIn: parent
-            text: "Seekino"; color: Studio.wordmark; font.family: inter.name
-            font.pixelSize: 22; font.letterSpacing: -1.1; font.weight: 750
-            // The web wordmark gives the i dot its own color.
-            Rectangle {
-                x: metrics.advanceWidth("Seek") - 4.4 + 1.15
-                y: 3; width: 3.5; height: 3.5; radius: 2
-                color: Studio.dark ? "#ffffff" : "#74c5ba"
-            }
-        }
+    implicitWidth: 96; implicitHeight: 28
+    leftPadding: 8; rightPadding: 8; topPadding: 4; bottomPadding: 4
+    hoverEnabled: true
+    background: Rectangle {
+        color: "white"
+        radius: 7
+        border.width: brand.visualFocus ? 2 : 1
+        border.color: brand.visualFocus ? Studio.accent : (brand.hovered ? Studio.strongLine : Studio.line)
+        Behavior on border.color { ColorAnimation { duration: Studio.hover } }
     }
-    FontMetrics { id: metrics; font.family: inter.name; font.pixelSize: 22; font.weight: 750 }
-    background: Rectangle { radius: 7; color: "transparent"; border.width: brand.visualFocus ? 2 : 0; border.color: Studio.accent }
+    contentItem: Image {
+        // The Finder/Dock and Windows icons show this same master in full.
+        source: "art/seekino-wordmark.png"
+        sourceClipRect: Qt.rect(74, 412, 876, 200)
+        fillMode: Image.PreserveAspectFit
+        mipmap: true
+    }
+    scale: down && !Studio.reduce ? 0.97 : 1
+    Behavior on scale { NumberAnimation { duration: Studio.quick; easing.type: Easing.OutCubic } }
 }
