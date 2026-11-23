@@ -24,7 +24,7 @@ def install_qt(stage, windows=False):
 def copy_frontend(resources):
     shutil.copytree(ROOT / "deploy/desktop/licenses", resources / "licenses/Qt")
     shutil.copytree(ROOT / "desktop", resources / "desktop", ignore=shutil.ignore_patterns("__pycache__"))
-    shutil.copy2(resources / "desktop/ui/art/seekino-wordmark.png", resources / "SeekinoLogo.png")
+    shutil.copy2(ROOT / "deploy/desktop/kino-app-icon.png", resources / "SeekinoLogo.png")
 
 
 def collect(wheels, packages, frameworks=None):

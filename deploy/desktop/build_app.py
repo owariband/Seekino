@@ -69,9 +69,14 @@ def _place_code(contents):
 
 
 def _icon(resources):
-    with Image.open(resources / "SeekinoLogo.png") as source:
-        icon = source.convert("RGBA")
-        icon.save(resources / "Seekino.icns")
+    runtime_icon = resources / "SeekinoLogo.png"
+    with Image.open(runtime_icon) as source:
+        # Match the optical inset of macOS system icons inside the ICNS canvas.
+        artwork = source.convert("RGBA").resize((896, 896), Image.Resampling.LANCZOS)
+    icon = Image.new("RGBA", (1024, 1024))
+    icon.alpha_composite(artwork, (64, 64))
+    icon.save(runtime_icon)
+    icon.save(resources / "Seekino.icns")
 
 
 def build(destination, wheel, version, identity):
@@ -128,7 +133,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("destination", type=Path)
     parser.add_argument("--media-wheel", required=True, type=Path)
-    parser.add_argument("--version", default="0.2.2")
+    parser.add_argument("--version", default="0.2.3")
     parser.add_argument("--identity", default="-", help="Developer ID Application identity for release signing")
     options = parser.parse_args()
     build(options.destination, options.media_wheel, options.version, options.identity)

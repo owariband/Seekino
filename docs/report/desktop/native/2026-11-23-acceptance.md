@@ -51,3 +51,23 @@ macOS 和 Windows 使用同一份白底 Seekino 字标。窗口工具栏截取�
 白底 Seekino 字标用于 macOS 和 Windows 的系统应用图标。窗口工具栏恢复了 0.2.0 的透明背景和随主题变化的文字颜色。Mac 包中的工具栏组件与 0.2.0 逐字节相同，ICNS 与 0.2.1 逐字节相同。Windows 包内工具栏也已核对，EXE 的七档图标经解码与 0.2.1 逐像素一致。Mac 最终 DMG 的固定响应回放走通导入、解析、两种搜索和命中回看，回看期间系统观察器记录到 0 次 fork/exec。Windows 实际运行仍待真机验收。 [Mac 实拍工具栏](web-style/toolbar-0.2.2.png)
 
 OpenCode 经这台 Mac 已有的 Clash Verge 代理，将 1080 × 700 的原生和 Web 实拍对照发给 OpenRouter。会话记录确认模型为 Claude Opus 5.5，推理级别为 high。评审指出主要差异在资料库首页：主标题和播放按钮的视觉分量偏小，资料树项目也显轻。对照上节的实测，主标题两端字重相同，字号约为 44 和 54；按钮高度分别为 40 和 48。资料树行高实为 28，名称与数量字号分别为 12 和 10。评审对中文字体回退的猜测尚无运行证据。搜索输入区的尺寸与前述实测吻合。字号与间距的调整未纳入这次图标修正。
+
+## 原生文件面板开启后的进程与内存
+
+2026-11-23 22:16:39（新加坡时间），在 Apple Silicon、macOS 26.5.1 的已安装 0.2.2 上，按进程的 responsible PID 和 launchd coalition 双重核对实际归属。下表是同一次采样的物理内存占用（libproc 的 `ri_phys_footprint`，十进制 MB）。这张现场快照未测量长视频解析或播放的峰值。
+
+| 活动监视器中的项目 | 占用 |
+| --- | ---: |
+| Seekino | 371.38 MB |
+| Open and Save Panel Service | 35.24 MB |
+| QuickLookUIService | 5.92 MB |
+| 自动填充（SafariPlatformSupport.Helper） | 12.21 MB |
+| 四项合计，按原始字节求和后取整至两位小数 | **424.74 MB** |
+
+同组另有 CSExattrCryptoService，占 2.88 MB，计入后共 427.63 MB。已排除归属其他应用的同名文件面板。Seekino 的导入文件对话框使用 macOS 原生面板，Apple 由单独的系统进程绘制它。该截图无法定位触发 Quick Look 和自动填充的具体操作。先前的回看验收监听应用 PID 的 fork/exec；系统按请求激活的辅助服务需要另外按归属统计。 [Apple 的 NSOpenPanel 说明](https://developer.apple.com/documentation/appkit/nsopenpanel)
+
+## 0.2.3 的白底 Kino 系统图标
+
+系统图标取自 Web 首选 favicon 对应的 [Kino 鲸鲨 SVG](../../../../assets/mascot/seekino-logo.svg)。通过 Clash Verge 调用 OpenRouter Claude Opus 5.5（high），在浅色和深色背景上比较旧文字图标和三种官方图形构图，展示尺寸为 256、128、64、32 和 16 px。旧图标在大尺寸下左右紧、上下空，小尺寸只剩一条字迹。最终选择 C，将 Kino 保持在白色底板宽度的 84%，保留青色背鳍、深色轮廓和米白肚皮。[Apple 的应用图标设计说明](https://developer.apple.com/design/human-interface-guidelines/app-icons/)
+
+用本机活动监视器、文本编辑和 Typora 的 ICNS 作外沿参照，三者 128 px 图像中的高不透明度区域均为 102 px 宽，0.2.2 为 117 px。0.2.3 Mac 图标同步调整 Qt 运行时图标和 ICNS 的外沿，在同一阈值下实测为 102 px。Windows 归档中七档 EXE 图标与候选 C 逐档像素一致。两端保留 0.2.0 的工具栏。Mac 固定模型验收使用独立测试资料库；Windows 真机显示尚待核对。

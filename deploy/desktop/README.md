@@ -53,6 +53,8 @@ python3 deploy/desktop/build_dmg.py /tmp/Seekino.app /tmp/Seekino-macos-arm64.dm
 
 双击 DMG，将 Seekino 拖进 Applications 后打开。用 `⌘O` 选择视频，或直接拖入窗口。首次解析可在设置填入火山方舟和 DeepSeek API Key。用工具栏打开解析任务，查看进度、暂停或重试。`⌘K` 查找台词或画面，点击结果从对应时间回看原片。`⌘⇧L` 收起或展开系列资料树，`⌘,` 打开设置。替换程序时资料库仍在 `~/Library/Application Support/Seekino/`。程序内的模型凭据由 macOS 钥匙串持有。
 
+在 macOS 活动监视器中按 Seekino 过滤也会显示系统为该应用提供的服务。使用系统文件选择框时可以看到 Open and Save Panel Service 和 QuickLookUIService，系统自动填充也可单列一行。Python、SQLite 与媒体解码库加载在 Seekino 主进程内；衡量整个操作的内存占用时，需同时核对归属于应用的系统服务。 [Apple 文件选择框说明](https://developer.apple.com/documentation/appkit/nsopenpanel)
+
 默认命令生成供本机验收的 ad-hoc 签名包。正式分发时，构建 App 增加 `--identity`，构建 DMG 增加同一 `--identity` 与 `--notary-profile`。以签名公证成功的实际 DMG 做干净机器安装验收。媒体 wheel 保留 FFmpeg 许可和构建清单，随正式发布提供该清单对应的 FFmpeg 源码。 [Apple 分发说明](https://developer.apple.com/documentation/xcode/packaging-mac-software-for-distribution) · [媒体构建记录](../../docs/report/server/desktop-backend/media-build.md)
 
 
