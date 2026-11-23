@@ -27,6 +27,7 @@
 
 | 记录 | 原问题编号 |
 |---|---|
+| [2026-11-23 · 服务端装配和媒体命令让桌面版需要额外进程](#devlog-macos-desktop-backend-20261123) | DESKTOP-BACKEND-01 · PR #183 |
 | [2026-11-15：历史时间锚点与工具合同冲突，使观看问答迟答并取错帧](#devlog-chat-frame-first-response-20261115) | CHAT-FRAME-FIRST-01；PR #178 |
 | [2026-11-15：JEV 路由每轮关闭连接，DNS/TCP/TLS 冷启动可多等 1–2 秒](#devlog-jev-cold-connection-20261115) | 观看问答 QUEUED／首字前 JEV 延迟；已改为 30 秒 keep-alive，未部署 |
 | [2026-11-15：历史证据重取和取帧时间偏移，让动态窗口下的 Chat 仍迟答、答偏](#devlog-chat-local-history-replay-20261115) | CHAT-MODEL-INHERIT-01；CHAT-COMPACT-01；CHAT-QUERY-BUDGET-01；PR #177 |
@@ -199,6 +200,25 @@
 | [日期未明确（2026-10-23归档）：当前播放窗口的按需理解与复用](#devlog-history-60) | 独立实验/设计 |
 
 </details>
+
+<a id="devlog-macos-desktop-backend-20261123"></a>
+## 2026-11-23 · 服务端装配和媒体命令让桌面版需要额外进程
+
+### 问题与现状
+
+现有运行时已经能统一启动和关闭业务服务。它在装配时打开 MySQL 和 Elasticsearch，视频探测与代理切片再启动媒体命令。要让用户安装应用后就能导入、解析和按证据回看，需要为这些执行路径提供包内实现。 [运行时入口](../../server/main.py#L45) · [媒体切片](../../server/service/video_parse_media.py#L562)
+
+### 方案候选
+
+桌面窗口加 Python 服务最容易复用 React。将 Python 嵌入 Web 视图宿主能省去后端进程，WebKit 的辅助进程仍需计入。原生 UI 直接调用 Python 可满足单进程目标，代价是重新实现桌面界面和媒体入口。因此先验收可嵌入后端，再由第二个 PR 交付桌面应用。 [设计与依赖](../design/03-product-reassessment/macos-desktop-backend-trd.md)
+
+### 方案验证
+
+本轮只核对源码和组件文档。第一项实测将用最小宿主加载包内 PyAV，并用同一带时间标记的短片对照 CLI。现有代理视频使用 `libx264`，首轮要实际生成模型可接受的代理，再定随包编解码构建。 [指标与实验计划](../design/03-product-reassessment/macos-desktop-backend-trd.md)
+
+### 指标对比
+
+子进程数决定是否达到桌面交付目标，源 PTS、音轨和搜索证据决定用户能否回到正确的画面。安装体积、冷启动、内存、解析用时和检索命中均待测。下一步按 TRD 用同源素材验证嵌入与媒体合同。 [PR #183](https://github.com/owariband/Seekino/pull/183)
 
 <a id="devlog-jev-cold-connection-20261115"></a>
 ## 2026-11-15：JEV 路由每轮关闭连接，DNS/TCP/TLS 冷启动可多等 1–2 秒

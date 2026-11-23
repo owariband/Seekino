@@ -4,7 +4,7 @@
 
 2026-11-23 · 源码基线 `2cc37cc0` · 分支 `feat/macos-desktop-backend` → `dev`
 
-**PR** 待创建后回填 · **需求** [DESKTOP-BACKEND-01](../../dev/workbench.html)
+**PR** [#183](https://github.com/owariband/Seekino/pull/183) · **需求** [DESKTOP-BACKEND-01](../../dev/workbench.html) · [问题记录](../../dev/problems.md#desktop-backend-01)
 
 用户安装 `Seekino.app` 后，可以导入视频、解析、搜索，点中一条结果就回到原片的对应时间。应用管理 SQLite、索引和媒体库。桌面界面、Python 后端、媒体解析和播放都在同一个 Seekino 应用进程中执行，FFmpeg 以库的形式随应用分发。
 
@@ -58,7 +58,7 @@ flowchart LR
 | --- | --- |
 | 打开/关闭资料库 | 宿主传入数据根、资源根及生效模型配置，初始化库和任务执行器。关闭先停止接新任务和领取，协作取消或完成在途提交，再关闭 Consumer 与存储。退出超时以持久租约回收恢复。 |
 | 导入与任务控制 | 本机文件由应用流式导入受管库，复用入库校验、去重、系列排序与 V2 任务接纳。返回 video/task ID。读进度、暂停、继续、重试、重解析使用现有状态及版本门禁。 |
-| 搜索和回看 | 以运行时本机身份校验资料范围，直接调用检索服务。返回可重校验的 source ref、video ID、整数起止毫秒。取用时核对版本并解析受管原片；支持将该毫秒位置交给包内 FFmpeg 解码。 |
+| 搜索和回看 | 以运行时本机身份校验资料范围，直接调用检索服务。返回可重校验的 source ref、video ID、整数起止毫秒。取用时核对版本并解析受管原片，将该毫秒位置交给包内 FFmpeg 解码。 |
 
 CPython 3.12 解释器的生命周期与宿主进程一致。UI 主线程只提交调用与接收结果，长任务由既有 Consumer 与线程执行，跨 ABI 边界转换错误。验收宿主用 CPython C API 验证一个普通原生可执行文件加载包内解释器，运行时资源由显式路径定位。模型连接复用现有配置解析，首条链选择进程内 Gateway SDK 组合。解析和向量查询依赖配置的模型服务，已入库原片播放和关键词查询只读取本地数据。外部 Agent CLI、启子进程的诊断及本地插件列入装配核对清单。 [CPython 嵌入文档](https://docs.python.org/3.12/extending/embedding.html) · [模型配置](../../model-config.md) · [ACP 调用](../../../gateway/bridge/client.py#L129) · [诊断进程](../../../gateway/tracing.py#L169)
 
@@ -78,9 +78,11 @@ CPython 3.12 解释器的生命周期与宿主进程一致。UI 主线程只提�
 
 ## 进程内媒体和包内运行时
 
-沿 Engine 媒体操作与 Server 的 Artifact/租约边界注入 PyAV，逐个替换桌面可达的调用。清单覆盖导入/转录探测、Prepare 的抽帧与代理切片、抽音频、Refine 与视觉索引抽帧、回看定位及首帧。现有抽样计划、原片时间区间、目标尺寸、音轨选择与模型输入规格继续作为合同。按流的 `pts × time_base`、起始偏移和现有舍入规则还原原片毫秒。seek 到前序关键帧后按 PTS 解码筛选，逐样本验证非零起始、B 帧、VFR、无音轨、多音轨及长音频尾巴。 [流时长规则](../../../engine/common/media_probe.py#L45) · [Engine 时间约定](../../../engine/README.md#媒体时间单位)
+沿 Engine 媒体操作与 Server 的 Artifact/租约边界注入 PyAV，逐个替换桌面可达的调用。清单覆盖导入/转录探测、Prepare 的抽帧与代理切片、抽音频、Refine 与视觉索引抽帧、回看定位及首帧。现有抽样计划、原片时间区间、目标尺寸、音轨选择与模型输入规格继续作为合同。按流的 `pts × time_base`、起始偏移和现有舍入规则还原原片毫秒。既有媒体字段 `*_seconds` 仍记录整数毫秒，配置项按各自单位解释。seek 到前序关键帧后按 PTS 解码筛选，逐样本验证非零起始、B 帧、VFR、无音轨、多音轨及长音频尾巴。 [流时长规则](../../../engine/common/media_probe.py#L45) · [Engine 时间约定](../../../engine/README.md#媒体时间单位)
 
-首次打包试验须强制走需要代理切片的路径。冻结 Python、PyAV、FFmpeg 和 SQLite/向量扩展的版本、目标架构与库布局，验证 `_sqlite3`、FTS5、加载扩展能力、实际编码器、TLS CA、Prompt/模板和模型配置的包内资源来源。FFmpeg 采用可审查的动态库构建试验。针对现有 `libx264` 用例，先核对包内 `h264_videotoolbox` 候选与 AAC、PCM 的实际输出。记录构建选项、依赖许可与通知/源码材料、实际模型接受的编码输出，交 PR 2 确认最终分发。试验同时核对扩展和所有 dylib 的架构、加载路径及签名兼容性。Python 或向量扩展仅从包内固定位置装载。 [FFmpeg VideoToolbox 编码器](https://ffmpeg.org/doxygen/trunk/videotoolboxenc_8c_source.html)
+桌面构建从锁定依赖中生成运行清单，并显式收集 CPython 标准库、扩展、TLS CA、Prompt 和配置模板。冻结 PyAV、FFmpeg 和 SQLite/向量扩展的版本、目标架构与库布局。移动运行目录后用 `otool -L` 和实际装载记录核对 Python 扩展与 dylib 的依赖、架构、实际路径及签名兼容性。运行时从包内固定位置装载 Python 和向量扩展，实际创建 FTS5 表并执行向量查询。
+
+首次打包试验须强制走需要代理切片的路径。FFmpeg 采用可审查的动态库构建试验。针对现有 `libx264` 用例，先核对包内 `h264_videotoolbox` 候选与 AAC、PCM 的实际输出。记录构建选项、依赖许可与通知/源码材料、实际模型接受的编码输出，交 PR 2 确认最终分发。 [FFmpeg VideoToolbox 编码器](https://ffmpeg.org/doxygen/trunk/videotoolboxenc_8c_source.html)
 
 ## 实施次序
 
@@ -89,7 +91,7 @@ CPython 3.12 解释器的生命周期与宿主进程一致。UI 主线程只提�
 | 1. 最小嵌入与媒体试验 | 先做 Apple Silicon 最小宿主，从包内加载 CPython、SQLite/FTS5、候选向量扩展和 PyAV。用带标记短片验证 probe、seek、切片及 PCM，触发一次真实编码。留出同条件 CLI 对照；包内加载、编码可用性或时间不合格时优先解决这一层。 |
 | 2. 运行时与 SQLite | 冻结桌面直接调用入口，接通受管导入、SQLite Schema、Consumer 与任务恢复。用固定模型响应运行正式 V2 Prepare/Understanding/Refine，先完成并发和强退校验。 |
 | 3. 发布、搜索、回看 | 接入本地投影、FTS5、向量召回和回源，使用固定模型响应跑完整主链。加入旧版本、索引重建、低覆盖与文件丢失用例，再做 ES 同数据对照。 |
-| 4. 安装前交接 | 交付最小宿主的可重复构建入口、运行时和资源清单、库路径与升级合同、媒体能力和实测记录。清理环境重跑全链，并补云端既有入口回归。PR 2 在此产物上接 UI、播放和安装包。 |
+| 4. 安装前交接 | 交付最小宿主的可重复构建入口、运行时和资源清单、库路径与升级合同、媒体能力和实测记录。清理环境重跑全链，并补云端既有入口回归。PR 2 在此产物上接 UI、播放和安装包，优先复用同一套已锁定 ABI 的 libav 库。 |
 
 # 4. 对照实验与结果分析
 

@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-15T15:17:02+08:00",
+ "updatedAt": "2026-11-23T13:42:23+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 76,
+ "revision": 77,
  "categories": [
   {
    "id": "parse",
@@ -6130,6 +6130,46 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "label": "Context来源与因果矩阵",
      "kind": "source",
      "url": "https://github.com/owariband/Seekino/blob/dev/docs/report/agent/chat/frame-target-first-response-20261115/context-conflict-sources-20261115.md"
+    }
+   ]
+  }
+,
+  {
+   "id": "DESKTOP-BACKEND-01",
+   "title": "macOS 原生桌面后端",
+   "category": "platform",
+   "type": "requirement",
+   "status": "progressing",
+   "priority": "unset",
+   "description": "让原生宿主直接调用 Python V2 后端，用应用管理的 SQLite、检索索引和媒体库完成导入、解析、搜索及按证据定位原片。媒体操作通过进程内 FFmpeg 库执行。",
+   "next": "在 Apple Silicon 最小宿主上加载包内 CPython、SQLite/FTS5、向量扩展和 PyAV。用带时间标记的短片对照现有 CLI，并实际生成一次供解析模型使用的代理切片。",
+   "verification": "已核对 dev 的启动、任务、索引和媒体源码，并创建 TRD 草稿 PR。嵌入宿主、PyAV 兼容性、SQLite 并发恢复和检索对照均待测。最终安装及播放验收由后续桌面 PR 完成。",
+   "updatedAt": "2026-11-23",
+   "tags": [
+    "macOS",
+    "SQLite",
+    "PyAV"
+   ],
+   "related": [
+    "B18",
+    "MOD-PLATFORM"
+   ],
+   "branch": "feat/macos-desktop-backend",
+   "links": [
+    {
+     "label": "PR #183",
+     "kind": "pr",
+     "url": "https://github.com/owariband/Seekino/pull/183"
+    },
+    {
+     "label": "TRD",
+     "kind": "trd",
+     "url": "https://github.com/owariband/Seekino/blob/feat/macos-desktop-backend/docs/design/03-product-reassessment/macos-desktop-backend-trd.md"
+    },
+    {
+     "label": "问题与验收",
+     "kind": "source",
+     "url": "https://github.com/owariband/Seekino/blob/feat/macos-desktop-backend/docs/dev/problems.md#desktop-backend-01"
     }
    ]
   }

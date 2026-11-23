@@ -220,6 +220,8 @@ Understanding。相关实现与未完成的真实并发验收见
 Elasticsearch 索引使用相同的物理隔离规则：测试以 `_test` 结尾，开发以 `_dev` 或
 `_development` 结尾，正式环境拒绝这两类后缀。
 
+原生桌面版拟采用的 SQLite 库、运行时和进程内媒体方案见 [macOS 桌面后端 TRD](../docs/design/03-product-reassessment/macos-desktop-backend-trd.md)。
+
 创建开发库后初始化表结构：
 
 ```sql
