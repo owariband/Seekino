@@ -42,11 +42,31 @@
 
 # 3. 改造方案与建模
 
+## MySQL 和 SQLite 在哪里配置
+
+数据库类型写在仓库的 `config/storage.yaml`。启动 HTTP 服务取 `server`，打开 `Seekino.app` 取 `desktop`。例如，同一台 Mac 上运行 `start.sh` 会用 MySQL，双击桌面应用会打开它自己的 SQLite 文件。`SEEKINO_ENVIRONMENT` 管开发、测试和生产数据的隔离。配置草案已提交，两个启动入口读取它的代码属于 PR 1 待实现的部分。 [两套配置](../../../config/storage.yaml) · [现有环境检查](../../../server/caller/mysql.py#L118)
+
+| 启动入口 | 数据库类型和地址分别在哪填 | 首版技术栈与理由 |
+| --- | --- | --- |
+| HTTP 服务 | `server.database.type: mysql`。地址、端口、库名和凭据来自 `server.database.url_env` 指向的 `SEEKINO_DATABASE_URL`。用 `start.sh` 开发时填项目根目录的 `.env.local`。生产部署时在 `deploy/cloud/.env.cloud` 填 `MYSQL_PASSWORD`，由 `deploy/cloud/compose.prod.yaml` 中的 `SEEKINO_DATABASE_URL` 指定最终的主机、端口和库名。 | 现有部署已经用 MySQL 8.4 管任务和并发写入，用 Elasticsearch 8.19 查文本和向量。Python 继续通过 SQLAlchemy 2.0 和 PyMySQL 访问 MySQL，媒体处理走现有 FFmpeg 命令。 [开发环境示例](../../../.env.example#L18) · [开发启动脚本](../../../start.sh#L54) · [生产连接](../../../deploy/cloud/compose.prod.yaml#L11) · [数据库镜像](../../../compose.yaml#L137) · [ES 镜像](../../../compose.yaml#L162) |
+| 原生 macOS 应用 | `desktop.database.type: sqlite`，`desktop.database.file: library.sqlite3`。原生宿主把当前用户的 Application Support 下的 `Seekino` 目录传给 `open_library`。默认文件是 `~/Library/Application Support/Seekino/library.sqlite3`。用户首次打开应用时由后端创建。 | 使用同一版本的 SQLAlchemy，通过随包 Python 的标准 `sqlite3` 驱动打开本地文件。SQLite、FTS5 和 PyAV 都在应用进程内工作。向量检索先试 `sqlite-vec`，用第 2 节的命中率、资料范围过滤和实际包内加载结果决定能否随首版发布。 [项目依赖](../../../pyproject.toml#L33) · [SQLAlchemy 的 SQLite 驱动](https://docs.sqlalchemy.org/en/20/dialects/sqlite.html#module-sqlalchemy.dialects.sqlite.pysqlite) · [SQLite 在桌面应用中的用途](https://www.sqlite.org/whentouse.html) |
+
+两个地址的写法如下。第一行是开发环境示例，第二行是桌面在拿到实际绝对路径后构造的 SQLAlchemy URL 示例，`demo` 代表示例用户。
+
+```text
+mysql+pymysql://root@127.0.0.1:3306/seekino_development?charset=utf8mb4
+sqlite+pysqlite:////Users/demo/Library/Application Support/Seekino/library.sqlite3
+```
+
+**代码在哪做选择。** PR 1 拟在 `server/config/storage.py` 用现有的 PyYAML 读取上面的文件，用 Pydantic 按 `database.type` 校验字段。HTTP 入口让 `ServerSettings` 解析 MySQL 地址，交给现有 MySQL 连接工厂。桌面入口只传资料库目录，按 `desktop.database.file` 拼出库文件的绝对路径，用 `URL.create("sqlite+pysqlite", database=str(db_path))` 打开。两种连接都交给现有的 `create_session_factory(engine)`，导入和任务服务拿到相同类型的 SQLAlchemy 会话。任务锁和索引的不同写法分别见下文。 [现有 MySQL 地址读取](../../../server/config/settings.py#L261) · [连接工厂](../../../server/caller/mysql.py#L46) · [会话工厂](../../../server/database.py#L296) · [SQLAlchemy URL 构造](https://docs.sqlalchemy.org/en/20/core/engines.html#sqlalchemy.engine.URL.create)
+
+服务器从部署资源读取 `config/storage.yaml`，桌面从 `Seekino.app/Contents/Resources/config/storage.yaml` 读取同一份配置。业务代码收到的是选好的实现。服务端缺少 MySQL 地址或正式环境的地址类型不匹配时，在创建连接前报错。桌面只读 `desktop`，即使启动环境里有 `SEEKINO_DATABASE_URL`，也只打开宿主指定目录里的文件。现有 HTTP 隔离测试继续允许显式的测试 SQLite 配置。 [容器复制配置目录](../../../deploy/docker/Dockerfile#L30) · [数据库隔离用例](../../../tests/server/test_database.py#L49)
+
 ## 可被宿主直接调用的入口
 
 今天的 `init_application` 一次创建数据库连接、检索、视频任务和 Chat。PR 1 会从 `server/bootstrap.py` 提出创建视频服务的代码，放进拟新增的 `server/video_services.py`。云端仍由 HTTP 入口打开 MySQL 和 ES，再创建视频服务、Chat 和路由。桌面由拟新增的 `server/desktop/runtime.py::open_library` 打开本机资料库，直接创建同一组视频服务并启动 V2 任务执行器。桌面首次创建自己的新库，已有 MySQL 数据的迁移另行设计。 [现在的启动顺序](../../../server/main.py#L45) · [创建视频服务的代码](../../../server/bootstrap.py#L250) · [启动任务执行器](../../../server/bootstrap.py#L585)
 
-两个启动入口的区别可以用下面几行表示。函数名和参数名是拟定设计，省略了文件目录、模型连接、并发配置和索引代数等参数。索引代数也由入口传入，公共代码可以直接用它校验版本。 [现有解析配置](../../../server/bootstrap.py#L138)
+下面的 `mysql_sessions` 和 `sqlite_sessions` 分别由上一节选中的数据库连接创建。函数名和参数名是拟定设计，省略了文件目录、模型连接、并发配置和索引代数等参数。索引代数也由入口传入，公共代码可以直接用它校验版本。 [现有解析配置](../../../server/bootstrap.py#L138)
 
 ```python
 # 云端启动
@@ -151,7 +171,7 @@ PyAV 指定流时，`seek` 的偏移要先将原片毫秒和时间原点换算�
 | 顺序 | 改哪一步 | 怎样知道可以做下一步 |
 | --- | --- | --- |
 | 1. 先试包内媒体库 | 在 Apple Silicon 最小宿主中加载包内 CPython、PyAV、SQLite/FTS5 和候选向量扩展。用带时间标记的短片读时长、抽帧、切片和提取 PCM。 | 与同机 CLI 对比时间和音轨，实际编码一次代理视频。动态库加载或时间不对，先在这里处理。 |
-| 2. 提取两端共用的视频服务 | 从现有启动代码提取 `build_video_services`，给任务队列传入写事务，把索引发布、候选查询和媒体调用改为接收实现。先把现有 MySQL、ES 和 CLI 接回这些位置。 | 从现有 HTTP 入口跑导入、任务、索引和搜索回归，确认拆分后云端仍走通。 |
+| 2. 提取两端共用的视频服务 | 接入 `config/storage.yaml` 的配置读取，从现有启动代码提取 `build_video_services`，给任务队列传入写事务，把索引发布、候选查询和媒体调用改为接收实现。先把现有 MySQL、ES 和 CLI 接回这些位置。 | 从现有 HTTP 入口跑导入、任务、索引和搜索回归，确认拆分后云端仍走通。 |
 | 3. 接 SQLite 和 PyAV | 桌面直接导入原片并建立任务，在 SQLite 写事务中领取和提交，解析时使用包内 PyAV。用固定模型响应走 Prepare、Understanding 和 Refine。 | 同一任务由两个连接争抢时只有一方领到。强退出再开能恢复，旧任务不能覆盖新结果。抽帧和音频仍对得上原片。 |
 | 4. 用同一搜索服务接本地索引 | 在 SQLite 一次提交片段、FTS5、向量和任务状态。把本地候选交回现有搜索代码，让命中可以定位原片。 | 两端用同一批解析结果对照命中。模拟提交中断、旧版本、索引重建、覆盖不足和原片缺失，逐项核对结果。 |
 | 5. 交给原生桌面 | 移动最小宿主目录，在清理过的环境跑完整流程。交付可重复构建入口、锁定的媒体库、资源清单、库路径和升级办法。 | 记录宿主从启动到退出的进程事件及实际加载的库。PR 2 用这套后端接窗口和播放器，在干净 Mac 上安装验收。 |
@@ -181,6 +201,7 @@ python -m pytest -q -s docs/report/server/desktop-backend/test_import_probe.py
 
 | 实验 | 固定条件和故障点 | 当前证据 |
 | --- | --- | --- |
+| 配置是否选对库 | 在同一台 Mac 启动 HTTP 和桌面两个入口。HTTP 使用隔离的 MySQL 测试库，桌面进程也故意带上该 URL，但只传入一个新的资料库目录。再试缺少服务端 URL、正式服务端误填 SQLite 地址、桌面库目录不可写 | 待接入后验证。分别核对实际数据库驱动和目标库、桌面数据库文件的绝对路径，以及配置错误能否在启动时报告 |
 | 媒体 CLI vs PyAV | 同机和同源文件。样本覆盖常用 MP4/H.264、HEVC、WebM、VFR、非零起点、旋转信息、长 GOP、无/多音轨、长音频尾及损坏文件。保存源 PTS、选帧/切片起止、音轨和落盘格式。比较编码器差异时保留产物供模型输入验收 | 上述 MP4 已完成导入时长对照。包内构建、跨格式、抽帧、切片和音轨待测 |
 | 本地索引 vs ES | 固定 V2 产物、embedding 和查询范围，将两端候选输入相同评测。先标注 `video_id + [start_ms, end_ms)`，正确命中要求视频匹配、区间交并比 ≥ 0.5。对短关键词和文本/视觉查询分别记录首个正确命中的名次及 top-k 内的正例覆盖。复查失效版本和跨库干扰 | 待测 |
 | 恢复、并发与云端回归 | 在独立文件库同时领取同一任务，注入上传落位后、索引激活前后和业务提交前的进程退出。核对索引可见性、租约、库状态和额外模型计费。云端在隔离 MySQL/ES 运行现有 bootstrap、V2 队列、索引及检索用例 | 待测 |

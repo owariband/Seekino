@@ -1,0 +1,18 @@
+# PR 1 的配置草案。服务端和桌面启动入口接入后生效。
+server:
+  database:
+    type: mysql
+    url_env: SEEKINO_DATABASE_URL
+  search:
+    type: elasticsearch
+  media: ffmpeg_cli
+
+desktop:
+  database:
+    type: sqlite
+    file: library.sqlite3
+  search:
+    type: sqlite
+    text: fts5
+    vector: sqlite-vec  # 首轮验证候选
+  media: pyav
