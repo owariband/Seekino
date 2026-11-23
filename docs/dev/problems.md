@@ -2976,3 +2976,5 @@ micrograd v5 共 146 块，整集 90 分 04.884 秒。调度反复锁取候选�
 ### DESKTOP-BACKEND-01 · 服务端装配和媒体命令阻挡原生应用单进程交付
 
 2026-11-23。用户安装 `Seekino.app` 后需要直接使用私有素材库。现有 V2 启动依赖 MySQL 和 Elasticsearch，任务依赖数据库锁，媒体处理依赖 FFmpeg 命令。后端验收覆盖宿主直接导入、解析、搜索并定位原片，正常退出和崩溃后的任务恢复，以及云端同链路回归。最终单进程播放及无开发环境安装由后续原生桌面 PR 验收。 [TRD](../design/03-product-reassessment/macos-desktop-backend-trd.md) · [决策记录](devlog.md#devlog-macos-desktop-backend-20261123) · [工作台](workbench.html) · [PR #183](https://github.com/owariband/Seekino/pull/183)
+
+**2026-11-23 补充验证。** 独立原生宿主在本机资料库完成实际解析和索引，固定模型响应下两种搜索均定位至原片 [300, 1200) 毫秒。macOS 记录到 0 次 fork/exec。空 MySQL 和 ES 上的 HTTP 上传、搜索和片段下载也已回归。真实素材命中率和商业桌面包验收仍待完成。[后端证据](../report/server/desktop-backend/embedded-host.md)

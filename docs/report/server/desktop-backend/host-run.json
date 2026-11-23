@@ -1,0 +1,28 @@
+{
+  "date": "2026-11-23",
+  "macos": "26.5.1",
+  "architecture": "arm64",
+  "python": "3.12.16",
+  "media_wheel": "av-19.0.2-cp312-abi3-macosx_11_0_arm64.whl",
+  "media_sha256": "c6c00e76740c716e82f909d6f511834ab63b015b1f2e4f822561db2fb18dcb04",
+  "positive_control_fork_or_exec": true,
+  "host_fork_or_exec": false,
+  "suite_elapsed_seconds": 20.935,
+  "suite_peak_rss_bytes": 247808000,
+  "model": "fixed SDK responses",
+  "inputs": [
+    "single clip with AAC",
+    "two windows with pause and resume"
+  ],
+  "pid": 6745,
+  "process_events": [],
+  "loaded": {
+    "libpython3.12": "Frameworks/libpython3.12.dylib",
+    "libavformat": "Resources/site-packages/av/.dylibs/libavformat.63.1.102.dylib",
+    "libavcodec": "Resources/site-packages/av/.dylibs/libavcodec.63.1.102.dylib",
+    "libavutil": "Resources/site-packages/av/.dylibs/libavutil.61.1.102.dylib",
+    "libswscale": "Resources/site-packages/av/.dylibs/libswscale.10.1.102.dylib",
+    "libswresample": "Resources/site-packages/av/.dylibs/libswresample.7.1.102.dylib",
+    "vec0": "Resources/site-packages/sqlite_vec/vec0.dylib"
+  }
+}
