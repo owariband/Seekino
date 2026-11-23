@@ -210,7 +210,7 @@
 
 ### 方案候选
 
-桌面窗口加 Python 服务最容易复用 React。将 Python 嵌入 Web 视图宿主能省去后端进程，WebKit 的辅助进程仍需计入。原生 UI 直接调用 Python 可满足单进程目标，代价是重新实现桌面界面和媒体入口。因此先验收可嵌入后端，再由第二个 PR 交付桌面应用。拟由 HTTP 和桌面入口各选 `config/storage.yaml` 的一项。服务端地址沿用 `SEEKINO_DATABASE_URL`，桌面在应用资料库目录打开 `library.sqlite3`。 [设计与依赖](../design/03-product-reassessment/macos-desktop-backend-trd.md)
+桌面窗口加 Python 服务最容易复用 React。将 Python 嵌入 Web 视图宿主能省去后端进程，WebKit 的辅助进程仍需计入。原生 UI 直接调用 Python 可满足单进程目标，代价是重新实现桌面界面和媒体入口。因此先验收可嵌入后端，再由第二个 PR 交付桌面应用。拟从 `config/storage.yaml` 取 `desktop` 段生成桌面包的存储配置。Docker 的 HTTP 入口使用 `server` 配置。服务端地址沿用 `SEEKINO_DATABASE_URL`，桌面在应用资料库目录打开 `library.sqlite3`。 [设计与依赖](../design/03-product-reassessment/macos-desktop-backend-trd.md)
 
 ### 方案验证
 

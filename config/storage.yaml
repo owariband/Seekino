@@ -1,4 +1,4 @@
-# PR 1 的配置草案。服务端和桌面启动入口接入后生效。
+# PR 1 配置草案。Docker 使用 server，桌面构建时只将 desktop 段写入应用包。
 server:
   database:
     type: mysql

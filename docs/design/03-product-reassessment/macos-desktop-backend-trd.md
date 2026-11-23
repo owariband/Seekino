@@ -58,9 +58,35 @@ mysql+pymysql://root@127.0.0.1:3306/seekino_development?charset=utf8mb4
 sqlite+pysqlite:////Users/demo/Library/Application Support/Seekino/library.sqlite3
 ```
 
-**代码在哪做选择。** PR 1 拟在 `server/config/storage.py` 用现有的 PyYAML 读取上面的文件，用 Pydantic 按 `database.type` 校验字段。HTTP 入口让 `ServerSettings` 解析 MySQL 地址，交给现有 MySQL 连接工厂。桌面入口只传资料库目录，按 `desktop.database.file` 拼出库文件的绝对路径，用 `URL.create("sqlite+pysqlite", database=str(db_path))` 打开。两种连接都交给现有的 `create_session_factory(engine)`，导入和任务服务拿到相同类型的 SQLAlchemy 会话。任务锁和索引的不同写法分别见下文。 [现有 MySQL 地址读取](../../../server/config/settings.py#L261) · [连接工厂](../../../server/caller/mysql.py#L46) · [会话工厂](../../../server/database.py#L296) · [SQLAlchemy URL 构造](https://docs.sqlalchemy.org/en/20/core/engines.html#sqlalchemy.engine.URL.create)
+### 桌面版怎样固定使用 SQLite
 
-桌面入口从 `Seekino.app/Contents/Resources/config/storage.yaml` 取 `desktop`，只打开应用管理的资料库文件。MySQL 和 ES 的连接地址只由服务端入口读取。服务端缺少 MySQL 地址或正式环境的地址类型不匹配时，在创建连接前报错。现有 HTTP 隔离测试继续允许显式的测试 SQLite 配置。 [容器复制配置目录](../../../deploy/docker/Dockerfile#L30) · [数据库隔离用例](../../../tests/server/test_database.py#L49)
+PR 1 的最小宿主和 PR 2 的 `Seekino.app` 共用一份打包清单。构建时从仓库的 `config/storage.yaml` 只取 `desktop` 段，写入包内的 `Contents/Resources/config/storage.yaml`。桌面运行时只装入 SQLite 数据库驱动和本地索引实现。PyMySQL、Elasticsearch 客户端及创建这两个客户端的服务端模块留给服务器。
+
+PR 1 拟在 `server/config/storage.py` 用 PyYAML 读配置，由 Pydantic 按入口校验所需字段。桌面入口拟定为 `open_library(library_root)`。它只接受资料库目录，校验包内 `desktop.database.type` 为 `sqlite`、`desktop.search.type` 为 `sqlite`，然后用 `URL.create("sqlite+pysqlite", database=str(db_path))` 打开目录里的 `library.sqlite3`。类型不符或文件打不开，直接报错。公共视频服务接收已经创建的数据库会话和本地索引。现有 `server.caller` 在导入时就会加载 ES 客户端，实施时要把这条依赖留在 HTTP 入口。 [当前 Caller 导入](../../../server/caller/__init__.py#L3) · [ES 客户端导入](../../../server/caller/base.py#L7) · [SQLAlchemy 会话工厂](../../../server/database.py#L296)
+
+### Docker 用户怎样配置云端版
+
+Docker 的 API 镜像运行 `python -m server.main`。生产 Compose 设置 `SEEKINO_AUTH_MODE=cloud`，开启云端鉴权，并设置 `SEEKINO_ENVIRONMENT=production`，启用生产库的隔离检查。数据库由服务端入口按 MySQL 地址创建，检索由 ES 地址和索引名确定。缺少必要配置会在启动时报错，HTTP 的隔离测试仍可显式使用测试 SQLite 库。 [镜像入口](../../../deploy/docker/Dockerfile#L36) · [生产设置](../../../deploy/cloud/compose.prod.yaml#L5) · [服务端读数据库地址](../../../server/config/settings.py#L261) · [数据库隔离测试](../../../tests/server/test_database.py#L49)
+
+部署者从 `deploy/cloud/env.cloud.example` 创建私有的 `deploy/cloud/.env.cloud`，填写密码、公开域名、证书路径和模型配置等，再按生产 Compose 启动。默认由 Compose 提供 MySQL 和 Elasticsearch，主机名分别是 `mysql` 和 `elasticsearch`。 [环境模板](../../../deploy/cloud/env.cloud.example) · [部署说明](../../../deploy/cloud/README.md) · [生产启动命令](../../../deploy/cloud/compose.prod.yaml#L2)
+
+```bash
+docker compose --env-file deploy/cloud/.env.cloud \
+  -f compose.yaml -f deploy/cloud/compose.prod.yaml up -d --build
+```
+
+若部署者已有 MySQL 或 ES，现有 Compose 的 `environment` 对地址有显式赋值。要让私有环境文件中的地址生效，可以再加一份 `compose.user.yaml`，用下面的内容同时覆盖 `initialize` 和 `api`。前者建表、建索引，后者运行 HTTP 服务，两者必须指向同一套库。把 `-f compose.user.yaml` 加在生产文件之后。基础 Compose 仍声明了内置数据库的健康依赖，完全采用外部数据库的部署也要相应调整这些依赖。 [默认地址](../../../compose.yaml#L17) · [初始化及依赖](../../../compose.yaml#L43) · [Compose 合并规则](https://docs.docker.com/compose/how-tos/multiple-compose-files/merge/)
+
+```yaml
+x-store: &store
+  SEEKINO_DATABASE_URL: ${SEEKINO_DATABASE_URL:?}
+  SEEKINO_ELASTICSEARCH_URL: ${SEEKINO_ELASTICSEARCH_URL:?}
+services:
+  initialize:
+    environment: *store
+  api:
+    environment: *store
+```
 
 ## 可被宿主直接调用的入口
 
@@ -201,7 +227,7 @@ python -m pytest -q -s docs/report/server/desktop-backend/test_import_probe.py
 
 | 实验 | 固定条件和故障点 | 当前证据 |
 | --- | --- | --- |
-| 桌面资料库与服务端存储 | 桌面测试只提供一个空的资料库目录，导入样片并搜索。另测目录不可写。服务端单独连接隔离的 MySQL 和 ES，另测缺少 MySQL 地址及正式服务端误填 SQLite 地址。 | 待接入后验证。桌面须在指定目录创建 SQLite 文件并从本地索引返回命中，全程对 MySQL 和 ES 的连接尝试均为 0。服务端须连到指定的测试库。错误配置须在对应入口报错。 |
+| 桌面资料库与服务端存储 | 查看桌面包的配置和依赖，确认其中只有 desktop 存储配置且不含 PyMySQL、ES 客户端。只传资料库目录走完导入和检索，再用错误类型和不可写目录验证启动报错。服务端另测独立 MySQL / ES，以及地址缺失或类型错误。 | Compose 5.6.1 已用占位值渲染生产配置和上面的地址覆盖示例，两次都核对了 initialize 和 api 最终收到的目标地址。未启动云服务。桌面实测待接入，须在指定目录建 SQLite、查到本地命中，全程对 MySQL 和 ES 的连接尝试均为 0。 |
 | 媒体 CLI vs PyAV | 同机和同源文件。样本覆盖常用 MP4/H.264、HEVC、WebM、VFR、非零起点、旋转信息、长 GOP、无/多音轨、长音频尾及损坏文件。保存源 PTS、选帧/切片起止、音轨和落盘格式。比较编码器差异时保留产物供模型输入验收 | 上述 MP4 已完成导入时长对照。包内构建、跨格式、抽帧、切片和音轨待测 |
 | 本地索引 vs ES | 固定 V2 产物、embedding 和查询范围，将两端候选输入相同评测。先标注 `video_id + [start_ms, end_ms)`，正确命中要求视频匹配、区间交并比 ≥ 0.5。对短关键词和文本/视觉查询分别记录首个正确命中的名次及 top-k 内的正例覆盖。复查失效版本和跨库干扰 | 待测 |
 | 恢复、并发与云端回归 | 在独立文件库同时领取同一任务，注入上传落位后、索引激活前后和业务提交前的进程退出。核对索引可见性、租约、库状态和额外模型计费。云端在隔离 MySQL/ES 运行现有 bootstrap、V2 队列、索引及检索用例 | 待测 |
