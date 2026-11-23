@@ -6,6 +6,7 @@ from enum import StrEnum
 from sqlalchemy import (
     BigInteger,
     CheckConstraint,
+    Connection,
     DateTime,
     Engine,
     JSON,
@@ -297,7 +298,7 @@ def create_session_factory(engine: Engine) -> sessionmaker[Session]:
     return sessionmaker(engine, expire_on_commit=False)
 
 
-def create_schema(engine: Engine) -> None:
+def create_schema(engine: Engine | Connection) -> None:
     from .model import editing_template as _editing_template_models  # noqa: F401
     # Importing registers every table on Base.metadata without making the
     # connection module depend on concrete repositories.

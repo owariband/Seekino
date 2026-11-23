@@ -2,16 +2,16 @@ from __future__ import annotations
 
 from contextlib import contextmanager, suppress
 import time
-from typing import Iterator, Literal
+from typing import TYPE_CHECKING, Iterator, Literal
 from uuid import uuid4
 
-from redis.exceptions import RedisError
 
 from ..model.dto.authDTO import AuthIdentity
 from ..model.dto.libraryDTO import SeriesState
 from ..model.video import SeriesVisibility
 from ..error.auth import AuthError
-from .auth import AuthService
+if TYPE_CHECKING:
+    from .auth import AuthService
 
 
 def require_tenant_read(identity: AuthIdentity, tenant_id: str) -> None:
@@ -90,6 +90,7 @@ def model_query(service: AuthService | None, identity: AuthIdentity, ip: str,
         return
     if service is None or service.redis is None:
         raise AuthError("服务暂时不可用", status_code=503, code="AUTH_UNAVAILABLE")
+    from redis.exceptions import RedisError
     config = service.config
     kind = "guest" if identity.is_guest else "user"
     budget_identity = ip if identity.is_guest else identity.user_id

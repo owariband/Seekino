@@ -25,7 +25,7 @@ from agent.video_parse_v2.input import (
 )
 from gateway.config import GatewayConfig
 from gateway.embedding import describe_embedding_model
-from engine.rag import VIDEO_CLIP_PREPROCESS_REVISION
+from engine.common.media_contract import FFMPEG_PREPROCESSING, MediaPreprocessing
 from engine.rag.encoding import DEFAULT_ENCODER_OUTPUT_CONTRACT, EncoderContract
 from engine.rag.indexing.events import EventIndexingContract
 from engine.rag.vision.event_frames import EventFrameContract
@@ -86,14 +86,15 @@ def validate_video_parse_schedule(config: VideoParseV2Config) -> VideoParseV2Con
     return config
 
 
-def index_contract_fingerprint(embedding, *, provider: str, encoder_revision: str, max_height: int) -> str:
+def index_contract_fingerprint(embedding, *, provider: str, encoder_revision: str, max_height: int,
+                               preprocessing: MediaPreprocessing = FFMPEG_PREPROCESSING) -> str:
     """Freeze encoding rules without credentials or request-only timeouts."""
     identity = {
         "retrieval": PARSE_RETRIEVAL_CONTRACT,
         "source": INDEX_SOURCE_VERSION,
         "projection": INDEX_PROJECTION_VERSION,
         "output": DEFAULT_ENCODER_OUTPUT_CONTRACT,
-        "preprocess": VIDEO_CLIP_PREPROCESS_REVISION,
+        "preprocess": preprocessing.clip if embedding.input_mode == "multimodal" else FFMPEG_PREPROCESSING.clip,
         "provider": provider,
         "source_name": embedding.source,
         "encoder_model": embedding.encoder_model or embedding.model,
@@ -102,6 +103,9 @@ def index_contract_fingerprint(embedding, *, provider: str, encoder_revision: st
         "fps": float(embedding.video_fps),
         "max_height": max_height,
     }
+    if embedding.input_mode == "multimodal" and preprocessing.jpeg != FFMPEG_PREPROCESSING.jpeg:
+        # Preserve the hashes of existing server tasks while freezing the desktop capture pipeline.
+        identity["event_frame_preprocess"] = preprocessing.jpeg
     if embedding.input_mode != "multimodal":
         identity["input_mode"] = embedding.input_mode
     if embedding.query_instruction is not None:
@@ -111,13 +115,13 @@ def index_contract_fingerprint(embedding, *, provider: str, encoder_revision: st
 
 def resolve_event_indexing_contract(
     encoder: EncoderContract, *, max_height: int, vision_enabled: bool = True,
-    environ: Mapping[str, str] | None = None,
+    environ: Mapping[str, str] | None = None, preprocessing: MediaPreprocessing = FFMPEG_PREPROCESSING,
 ) -> EventIndexingContract:
     """Resolve Event sampling once; tasks freeze the returned effective contract."""
     if not vision_enabled:
         return EventIndexingContract(semantic_encoder=encoder, vision_encoder=None, capture=None)
     environment = os.environ if environ is None else environ
-    options: dict[str, Any] = {"max_height": max_height}
+    options: dict[str, Any] = {"max_height": max_height, "preprocess_revision": preprocessing.jpeg}
     for key, name, convert in (
         ("SEEKINO_EVENT_FRAME_FPS", "fps", float),
         ("SEEKINO_EVENT_MAX_FRAMES", "max_frames", int),
@@ -489,6 +493,7 @@ class ParseConfig(ContractModel):
         mq: MQConsumerConfig | None = None,
         sparse_enabled: bool = False,
         index_generation: int = DEFAULT_INDEX_GENERATION,
+        preprocessing: MediaPreprocessing = FFMPEG_PREPROCESSING,
     ) -> "ParseConfig":
         mq = mq if mq is not None else MQConsumerConfig(consumer_id="parse-config-defaults")
         parser = gateway.video_parser
@@ -611,6 +616,7 @@ class ParseConfig(ContractModel):
                 contract_fingerprint=index_contract_fingerprint(
                     effective_embedding, provider=embedding_info.provider_name,
                     encoder_revision=embedding_info.encoder_revision, max_height=runtime.max_height,
+                    preprocessing=preprocessing,
                 ),
             ),
             execution=ParseExecutionConfig(

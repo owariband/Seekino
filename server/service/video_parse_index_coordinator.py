@@ -8,10 +8,13 @@ import json
 import time
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
+
+from sqlalchemy.orm import Session
 
 from engine.common.usage import parse_chunk_scope
 from engine.parsev2.schemas import VideoParseResult
+from engine.common.media_contract import FFMPEG_PREPROCESSING, MediaPreprocessing
 from engine.rag import (
     ChunkIndexSource,
     ChunkIndexReceipt,
@@ -21,7 +24,6 @@ from engine.rag import (
     OrderedFramesInputContract,
     SparseEmbeddingArtifact,
     SparseEmbeddingRequest,
-    VIDEO_CLIP_PREPROCESS_REVISION,
     VideoChunkIndexDocument,
     VideoClipInputContract,
     VideoClipManifest,
@@ -31,7 +33,7 @@ from engine.rag import (
     plan_chunk_index,
 )
 from engine.rag.indexing.events import (
-    EventIndexDocument, EventIndexingContract, EventSemanticSource, build_event_index_receipt,
+    EventIndexDocument, EventIndexReceipt, EventIndexingContract, EventSemanticSource, build_event_index_receipt,
     finalize_event_index, plan_event_index,
 )
 from engine.rag.vision.event_frames import (
@@ -47,13 +49,13 @@ from ..model.dto.parseContentDTO import (
 )
 from ..model.dto.taskDTO import ChunkParseLease
 from .video_parse_persistence import INDEX_EMBEDDINGS_DETAIL_KEY
-from ..storage.elasticsearch import (
-    ElasticsearchIndexSchemaError,
-    ElasticsearchVideoChunkStore,
-    StoredDocumentState,
-    document_id,
-)
-from ..storage.elasticsearch_events import ElasticsearchVideoEventStore
+from ..storage.index_contract import IndexSchemaError, StoredDocumentState, document_id
+
+if TYPE_CHECKING:
+    from ..storage.elasticsearch import ElasticsearchVideoChunkStore
+    from ..storage.elasticsearch_events import ElasticsearchVideoEventStore
+    from ..storage.sqlite_index import SQLiteSearchIndex
+
 from .video_parse_media import MediaLeaseIdentity, VideoParseMediaService
 
 # Every cache save rewrites the Chunk's whole Event cache row, so per-step saves
@@ -87,6 +89,8 @@ class VideoParseIndexCoordinatorPersistence(Protocol):
         index_generation: int,
         *,
         event_target: Mapping[str, Any] | None = None,
+        publish_projection: Callable[[Session], None] | None = None,
+        receipt: Mapping[str, Any] | None = None,
         now=None,
     ) -> object: ...
 
@@ -106,12 +110,12 @@ class VideoParseIndexCoordinationError(RuntimeError):
 
 
 class VideoParseIndexCoordinator:
-    """Execute one Engine index plan against media, Gateway, MySQL, and ES."""
+    """Build Chunk and Event projections from one frozen INDEX lease."""
 
     def __init__(
         self,
         persistence: VideoParseIndexCoordinatorPersistence,
-        store: ElasticsearchVideoChunkStore,
+        store: ElasticsearchVideoChunkStore | SQLiteSearchIndex,
         embedder: MultimodalChunkEmbedder,
         *,
         media_resolver: Callable[[str], Path],
@@ -119,8 +123,10 @@ class VideoParseIndexCoordinator:
         contract: ChunkIndexingContract,
         check_active: Callable[[], None] | None = None,
         check_cancelled: Callable[[], None] | None = None,
-        event_store: ElasticsearchVideoEventStore | None = None,
+        event_store: ElasticsearchVideoEventStore | SQLiteSearchIndex | None = None,
         event_target: Mapping[str, Any] | None = None,
+        local_publisher: SQLiteSearchIndex | None = None,
+        preprocessing: MediaPreprocessing = FFMPEG_PREPROCESSING,
     ) -> None:
         if store.semantic_dimensions != contract.semantic_encoder.dimensions:
             raise ValueError("semantic dimensions differ between contract and store")
@@ -137,8 +143,7 @@ class VideoParseIndexCoordinator:
         visual_contract = contract.visual_input_contract
         if visual_contract is not None and (
             visual_contract.mime_type != "video/mp4"
-            or visual_contract.preprocess_revision
-            != VIDEO_CLIP_PREPROCESS_REVISION
+            or visual_contract.preprocess_revision != preprocessing.clip
         ):
             raise ValueError(
                 "the current Server adapter requires its MP4 preprocessing contract"
@@ -153,6 +158,9 @@ class VideoParseIndexCoordinator:
         self.contract = contract
         if (event_store is None) != (event_target is None):
             raise ValueError("Event store and frozen target must be provided together")
+        self._local_publisher = local_publisher
+        if local_publisher is not None and event_store is not local_publisher:
+            raise ValueError("local publication and Event search must use the same library")
         self._event_store = event_store
         self._event_target = dict(event_target) if event_target is not None else None
         self._event_contract = (EventIndexingContract.model_validate(event_target["contract"])
@@ -174,6 +182,26 @@ class VideoParseIndexCoordinator:
                 or lease.video_chunk_id != chunk.video_chunk_id):
             raise VideoParseIndexCoordinationError("index snapshot differs from the Chunk execution")
         self._check_active()
+        if self._local_publisher is not None:
+            # Model work can be retried from the durable embedding cache and
+            # must finish before the library takes its write lock.
+            document = self._build_document(lease, snapshot, chunk, StoredDocumentState(present=False))
+            events, event_receipt = self._prepare_events(lease, snapshot)
+            receipt = {**document.receipt.as_dict(), "events": event_receipt.as_dict()}
+            self._check_active()
+            return self._persistence.complete_chunk_indexing(
+                lease, chunk.content_version, snapshot.target_index_generation,
+                receipt=receipt, event_target=self._event_target,
+                publish_projection=lambda session: self._local_publisher.publish(
+                    session, document, events, event_receipt,
+                ),
+            )
+        return self._publish_cloud(lease, snapshot, event_options)
+
+    def _publish_cloud(
+        self, lease: ChunkParseLease, snapshot: ChunkIndexingSnapshot, event_options: dict[str, Any],
+    ) -> object:
+        chunk = snapshot.chunk
         key = (snapshot.video_parse_task_id, chunk.video_chunk_id)
         stored = self._store.inspect([key])
         if set(stored) != {key}:
@@ -228,7 +256,7 @@ class VideoParseIndexCoordinator:
                 self._check_active()
                 try:
                     self._store.bulk_upsert([document], refresh="wait_for")
-                except (ValueError, ElasticsearchIndexSchemaError):
+                except (ValueError, IndexSchemaError):
                     raise
                 except Exception:
                     self._check_active()
@@ -247,7 +275,36 @@ class VideoParseIndexCoordinator:
         )
 
     def _index_events(self, lease: ChunkParseLease, snapshot: ChunkIndexingSnapshot) -> None:
-        """Restore per-Event work, then prove the complete searchable source set."""
+        """Publish prepared Events to the external index and verify visibility."""
+        documents, receipt = self._prepare_events(lease, snapshot)
+        store, chunk = self._event_store, snapshot.chunk
+        assert store is not None
+        if not store.verify_ready(documents):
+            try:
+                store.bulk_upsert(documents, write_version=lease.lease_version, refresh="wait_for")
+            except (ValueError, IndexSchemaError):
+                raise
+            except Exception:
+                self._check_active()
+                if not store.verify_ready(documents):
+                    raise
+        if not store.verify_ready(documents):
+            raise VideoParseIndexCoordinationError("Event documents are not query-visible at the expected source")
+        self._check_active()
+        store.delete_older(snapshot.video_parse_task_id, chunk.video_chunk_id, chunk.content_version)
+        if not store.verify_set(snapshot.video_parse_task_id, chunk.video_chunk_id,
+                                chunk.content_version, receipt.event_ids):
+            raise VideoParseIndexCoordinationError("Event publication differs from the complete expected set")
+        base_receipt = ChunkIndexReceipt(
+            parse_task_id=snapshot.video_parse_task_id, video_chunk_id=chunk.video_chunk_id,
+            content_version=chunk.content_version, index_generation=snapshot.target_index_generation,
+        ).as_dict()
+        self._save_representations(lease, chunk, {}, receipt={**base_receipt, "events": receipt.as_dict()})
+
+    def _prepare_events(
+        self, lease: ChunkParseLease, snapshot: ChunkIndexingSnapshot,
+    ) -> tuple[list[EventIndexDocument], EventIndexReceipt]:
+        """Restore or compute Event representations before publication."""
         store, contract = self._event_store, self._event_contract
         assert store is not None and contract is not None and self._event_target is not None
         store.ensure_index(contract)
@@ -388,24 +445,7 @@ class VideoParseIndexCoordinator:
             raise
         flush()
         self._check_active()
-        if not store.verify_ready(documents):
-            try:
-                store.bulk_upsert(documents, write_version=lease.lease_version, refresh="wait_for")
-            except (ValueError, ElasticsearchIndexSchemaError):
-                raise
-            except Exception:
-                self._check_active()
-                if not store.verify_ready(documents):
-                    raise
-        if not store.verify_ready(documents):
-            raise VideoParseIndexCoordinationError("Event documents are not query-visible at the expected source")
-        self._check_active()
-        store.delete_older(snapshot.video_parse_task_id, chunk.video_chunk_id, chunk.content_version)
-        receipt = build_event_index_receipt(store.index_name, contract, plans)
-        if not store.verify_set(snapshot.video_parse_task_id, chunk.video_chunk_id,
-                                chunk.content_version, receipt.event_ids):
-            raise VideoParseIndexCoordinationError("Event publication differs from the complete expected set")
-        self._save_representations(lease, chunk, {}, receipt={**base_receipt, "events": receipt.as_dict()})
+        return documents, build_event_index_receipt(store.index_name, contract, plans)
 
     def _build_document(
         self,

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
@@ -231,3 +233,8 @@ class ReferenceRefinement(_Model):
                 observations.append(update)
             host_members.append(RefinedMember(sequence_no=seq, observations=observations))
         return self.model_copy(update={"members": host_members})
+
+
+def observation_fingerprint(observation):
+    return hashlib.sha256(json.dumps(observation.model_dump(mode="json"), sort_keys=True, ensure_ascii=False,
+                                     separators=(",", ":")).encode()).hexdigest()

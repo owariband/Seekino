@@ -9,6 +9,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from engine.common.media_contract import FFMPEG_PREPROCESSING, JpegPreprocessRevision
 from engine.rag._validation import _sha256_json
 from engine.rag.encoding import EncoderContract, validate_embedding_vector
 from engine.rag.vision.inputs import OrderedFrameSamplingContract, plan_ordered_frame_timestamps
@@ -21,7 +22,7 @@ class EventFrameContract(BaseModel):
     fps: float = Field(default=1.0, gt=0, allow_inf_nan=False, strict=True)
     max_frames: int = Field(default=3, gt=0, strict=True)
     mime_type: Literal["image/jpeg"] = "image/jpeg"
-    preprocess_revision: Literal["ffmpeg-jpeg-q3-scale-cap-v1"] = "ffmpeg-jpeg-q3-scale-cap-v1"
+    preprocess_revision: JpegPreprocessRevision = FFMPEG_PREPROCESSING.jpeg
     strategy: Literal["uniform_midpoint_v1"] = "uniform_midpoint_v1"
     pooling: Literal["l2-mean-v1"] = "l2-mean-v1"
 

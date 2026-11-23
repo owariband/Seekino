@@ -16,8 +16,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
 
-from engine.common.frame_sampler import plan_frame_timestamps, extract_video_frames_batch
-from engine.common.media_probe import probe_video_duration_seconds
+from engine.common.ffmpeg_media import FFmpegMedia, MediaOperations
+from engine.common.frame_sampler import plan_frame_timestamps
 from engine.parsev2.planning import plan_chunks
 from engine.parsev2.edit_reference import ReferenceSegment
 from engine.parsev2.reference_scan import scan_reference
@@ -73,6 +73,7 @@ class VideoParseMediaService:
         ffmpeg_bin: str = "ffmpeg",
         command_runner: Callable[[Sequence[str]], None] | None = None,
         probe_duration: Callable[[Path], int] | None = None,
+        media: MediaOperations | None = None,
         clock: Callable[[], float] = time.time,
     ) -> None:
         base = Path(base_directory).expanduser().resolve()
@@ -81,8 +82,9 @@ class VideoParseMediaService:
             raise ValueError("ffmpeg_bin must not be empty")
         self.base_directory = base
         self._ffmpeg_bin = ffmpeg_bin
-        self._command_runner = command_runner or self._run_subprocess
-        self._probe_duration = probe_duration or probe_video_duration_seconds
+        self._command_runner = command_runner or self._run_reference_command
+        self._media = FFmpegMedia(ffmpeg_bin, command_runner, probe_duration) if media is None else media
+        self.preprocessing = self._media.preprocessing
         self._clock = clock
 
     @contextmanager
@@ -104,12 +106,12 @@ class VideoParseMediaService:
                                frame_fps=frame_fps, max_height=max_height)
         with self._workspace(identity) as directory:
             chunks, all_times = [], set()
-            video_duration = self._probe_duration(source)
+            video_duration = self._media.probe_duration(source, check_active=check_active)
             if not chunk_video_required:
                 if visual_mode == "video":
                     raise ValueError("Native-video Understanding requires chunk video")
                 check_active()
-                self._materialize_audio(source, directory / "episode.wav")
+                self._media.audio(source, directory / "episode.wav", check_active=check_active)
             for plan in plan_chunks(duration_seconds=duration_ms, chunk_duration=chunk_duration):
                 check_active()
                 start, end = plan.start_seconds, plan.end_seconds
@@ -117,9 +119,9 @@ class VideoParseMediaService:
                 core = directory / f"{plan.sequence_no:04d}.mp4"
                 audio = directory / f"{plan.sequence_no:04d}.wav"
                 if chunk_video_required:
-                    self._materialize_video(source, core, start_seconds=start, end_seconds=end, max_height=max_height)
+                    self._media.clip(source, core, start_ms=start, end_ms=end, max_height=max_height, check_active=check_active)
                     check_active()
-                    self._materialize_audio(core, audio)
+                    self._media.audio(core, audio, check_active=check_active)
                 else:
                     with wave.open(str(directory / "episode.wav"), "rb") as pcm:
                         first = min(start * pcm.getframerate() // 1000, pcm.getnframes())
@@ -131,8 +133,8 @@ class VideoParseMediaService:
                 if chunk_video_required and (visual_start, visual_end) != (start, end):
                     check_active()
                     visual = directory / f"{plan.sequence_no:04d}-visual.mp4"
-                    self._materialize_video(source, visual, start_seconds=visual_start,
-                                            end_seconds=visual_end, max_height=max_height)
+                    self._media.clip(source, visual, start_ms=visual_start, end_ms=visual_end,
+                                     max_height=max_height, check_active=check_active)
                 scopes = {}
                 if visual_mode == "ordered_frames" or visual_fallback_enabled or camera_frames_required:
                     scopes["frames"] = (visual, visual_start, visual_end)
@@ -143,7 +145,9 @@ class VideoParseMediaService:
                        "audio_path": audio.name, "visual_video_path": visual.name if chunk_video_required else None,
                        "frames": [], "ocr_frames": None}
                 for key, (clip, left, right) in scopes.items():
-                    duration = min(right - left, self._probe_duration(clip) if chunk_video_required else video_duration - left)
+                    clip_duration = (self._media.probe_duration(clip, check_active=check_active)
+                                     if chunk_video_required else video_duration - left)
+                    duration = min(right - left, clip_duration)
                     stamps = [left + t for t in plan_frame_timestamps(
                         duration, frame_fps=frame_fps, max_frames=math.ceil(duration / 1000 * frame_fps))]
                     core_end = min(end, left + duration)
@@ -154,9 +158,9 @@ class VideoParseMediaService:
                     all_times.update(stamps)
                 chunks.append(row)
             check_active()
-            frames = dict(extract_video_frames_batch(
+            frames = dict(self._media.frames(
                 source, sorted(all_times), output_dir=directory / "frames", max_height=max_height,
-                ffmpeg_bin=self._ffmpeg_bin, command_runner=self._command_runner,
+                check_active=check_active,
             )) if all_times else {}
             check_active()
             for row in chunks:
@@ -169,9 +173,15 @@ class VideoParseMediaService:
             pending.replace(manifest)
             yield manifest
 
+    @staticmethod
+    def _run_reference_command(command: Sequence[str]) -> None:
+        subprocess.run(command, check=True, capture_output=True)
+
     @contextmanager
     def prepare_reference_episode(self, identity, *, source_video, duration_ms, chunk_duration, max_height, check_active):
         """Select and extract by presentation frame number, including silent source videos."""
+        if not isinstance(self._media, FFmpegMedia):
+            raise ValueError("Edit reference scanning requires the server FFmpeg backend")
         source = Path(source_video)
         with self._workspace(identity) as directory:
             check_active()
@@ -257,12 +267,8 @@ class VideoParseMediaService:
         with self._workspace(identity) as directory:
             check_active()
             audio = directory / "speaker.wav"
-            self._execute([
-                self._ffmpeg_bin, "-v", "error", "-ss", f"{start_ms / 1000:.3f}",
-                "-i", str(source), "-t", f"{(end_ms - start_ms) / 1000:.3f}",
-                "-map", "0:a:0", "-vn", "-ac", "1", "-ar", "16000",
-                "-c:a", "pcm_s16le", "-y", str(audio),
-            ], audio)
+            self._media.audio(source, audio, start_ms=start_ms, end_ms=end_ms,
+                              first_track=True, check_active=check_active)
             check_active()
             yield audio
 
@@ -293,12 +299,9 @@ class VideoParseMediaService:
         with self._workspace(identity) as directory:
             ensure_active()
             video = directory / "visual.mp4"
-            self._materialize_video(
-                source,
-                video,
-                start_seconds=start_seconds,
-                end_seconds=end_seconds,
-                max_height=max_height,
+            self._media.clip(
+                source, video, start_ms=start_seconds, end_ms=end_seconds,
+                max_height=max_height, check_active=ensure_active,
             )
             ensure_active()
             yield video
@@ -330,7 +333,7 @@ class VideoParseMediaService:
             for ordinal, timestamp in enumerate(times):
                 ensure_active()
                 path = directory / f"event-frame-{ordinal:04d}.jpg"
-                self._materialize_frame(source, path, at_seconds=timestamp, max_height=max_height)
+                self._media.frame_at(source, path, at_ms=timestamp, max_height=max_height, check_active=ensure_active)
                 ensure_active()
                 frames.append((timestamp, path))
             yield tuple(frames)
@@ -375,23 +378,20 @@ class VideoParseMediaService:
         with self._workspace(identity) as directory:
             ensure_active()
             video = directory / "visual.mp4"
-            self._materialize_video(
-                source,
-                video,
-                start_seconds=start_seconds,
-                end_seconds=end_seconds,
-                max_height=max_height,
+            self._media.clip(
+                source, video, start_ms=start_seconds, end_ms=end_seconds,
+                max_height=max_height, check_active=ensure_active,
             )
             ensure_active()
             audio = directory / "audio.wav"
-            self._materialize_audio(video, audio)
+            self._media.audio(video, audio, check_active=ensure_active)
             ensure_active()
             visual_video = video
             if (visual_start_ms, visual_end_ms) != (start_seconds, end_seconds):
                 visual_video = directory / "understanding.mp4"
-                self._materialize_video(
-                    source, visual_video, start_seconds=visual_start_ms,
-                    end_seconds=visual_end_ms, max_height=max_height,
+                self._media.clip(
+                    source, visual_video, start_ms=visual_start_ms, end_ms=visual_end_ms,
+                    max_height=max_height, check_active=ensure_active,
                 )
                 ensure_active()
 
@@ -408,7 +408,7 @@ class VideoParseMediaService:
                 frame_directory.mkdir()
                 # Media bounds are milliseconds. Audio can extend beyond the last
                 # video frame, so sample only inside the prepared video stream.
-                duration = min(frame_end - frame_start, self._probe_duration(frame_video))
+                duration = min(frame_end - frame_start, self._media.probe_duration(frame_video, check_active=ensure_active))
                 timestamps = plan_frame_timestamps(
                     duration,
                     frame_fps=frame_fps,
@@ -425,11 +425,9 @@ class VideoParseMediaService:
                 for index, relative_seconds in enumerate(timestamps):
                     ensure_active()
                     output = frame_directory / f"frame-{index:03d}.jpg"
-                    self._materialize_frame(
-                        frame_video,
-                        output,
-                        at_seconds=relative_seconds,
-                        max_height=max_height,
+                    self._media.frame_at(
+                        frame_video, output, at_ms=relative_seconds,
+                        max_height=max_height, check_active=ensure_active,
                     )
                     sampled_frames.append((frame_start + relative_seconds, output))
                 frame_batches[name] = tuple(sampled_frames)
@@ -558,95 +556,6 @@ class VideoParseMediaService:
         )
         temporary_marker.replace(marker_path)
         return directory
-
-    def _materialize_video(
-        self,
-        source: Path,
-        output: Path,
-        *,
-        start_seconds: int,
-        end_seconds: int,
-        max_height: int,
-    ) -> None:
-        self._execute(
-            [
-                self._ffmpeg_bin,
-                "-v", "error",
-                "-ss", f"{start_seconds / 1000:.3f}",
-                "-i", str(source),
-                "-t", f"{(end_seconds - start_seconds) / 1000:.3f}",
-                "-map", "0:v:0",
-                "-map", "0:a:0?",
-                "-vf", f"scale=-2:min({max_height}\\,ih)",
-                "-c:v", "libx264",
-                "-preset", "fast",
-                "-crf", "23",
-                "-c:a", "aac",
-                "-movflags", "+faststart",
-                "-y", str(output),
-            ],
-            output,
-        )
-
-    def _materialize_audio(self, video: Path, output: Path) -> None:
-        self._execute(
-            [
-                self._ffmpeg_bin,
-                "-v", "error",
-                "-i", str(video),
-                "-vn",
-                "-ac", "1",
-                "-ar", "16000",
-                "-c:a", "pcm_s16le",
-                "-y", str(output),
-            ],
-            output,
-        )
-
-    def _materialize_frame(
-        self,
-        video: Path,
-        output: Path,
-        *,
-        at_seconds: int,
-        max_height: int,
-    ) -> None:
-        self._execute(
-            [
-                self._ffmpeg_bin,
-                "-v", "error",
-                "-ss", f"{at_seconds / 1000:.6f}",
-                "-i", str(video),
-                "-frames:v", "1",
-                "-vf", f"scale=-2:min({max_height}\\,ih)",
-                "-q:v", "3",
-                "-y", str(output),
-            ],
-            output,
-        )
-
-    def _execute(self, command: Sequence[str], output: Path) -> None:
-        try:
-            self._command_runner(command)
-        except FileNotFoundError as error:
-            raise RuntimeError("ffmpeg is required for Parse V2 media") from error
-        except subprocess.CalledProcessError as error:
-            stderr = error.stderr
-            detail = (
-                stderr.decode("utf-8", errors="replace").strip()
-                if isinstance(stderr, bytes)
-                else str(stderr or "").strip()
-            )
-            raise RuntimeError(
-                "ffmpeg could not prepare Parse V2 media"
-                + (f": {detail}" if detail else "")
-            ) from error
-        if not output.is_file() or output.stat().st_size == 0:
-            raise RuntimeError("ffmpeg produced no Parse V2 media output")
-
-    @staticmethod
-    def _run_subprocess(command: Sequence[str]) -> None:
-        subprocess.run(command, check=True, capture_output=True)
 
     @staticmethod
     def _validate_options(

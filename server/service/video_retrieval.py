@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ..storage.elasticsearch import ElasticsearchVideoChunkStore
+
 from collections.abc import Sequence
 from contextlib import nullcontext
 from hashlib import sha256
@@ -40,10 +45,7 @@ from ..schema import (
     VideoChunkSearchHit,
     VideoChunkSearchResult,
 )
-from ..storage.elasticsearch import (
-    ElasticsearchDocumentConsistencyError,
-    ElasticsearchVideoChunkStore,
-)
+from ..storage.index_contract import IndexDocumentConsistencyError
 from .retrieval_rerank import StructuredTextReranker
 
 _DEFAULT_RETRIEVAL_CONFIG = RetrievalConfig()
@@ -231,7 +233,7 @@ class VideoParseRetrievalService:
                 scorer=self._reranker.contract if self._reranker is not None else None,
                 contexts={item.facts.video_chunk_id: item.contexts for item in hydrated},
             )
-        except (VideoParseConflictError, ElasticsearchDocumentConsistencyError, ValueError) as error:
+        except (VideoParseConflictError, IndexDocumentConsistencyError, ValueError) as error:
             raise RetrievalIndexConsistencyError(str(error)) from error
         scores = None
         if rerank_plan.request is not None:

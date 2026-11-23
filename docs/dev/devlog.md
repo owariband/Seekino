@@ -27,6 +27,7 @@
 
 | 记录 | 原问题编号 |
 |---|---|
+| [2026-11-23 · 服务端装配和媒体命令让桌面版需要额外进程](#devlog-macos-desktop-backend-20261123) | DESKTOP-BACKEND-01 · PR #183 |
 | [2026-11-15：历史时间锚点与工具合同冲突，使观看问答迟答并取错帧](#devlog-chat-frame-first-response-20261115) | CHAT-FRAME-FIRST-01；PR #178 |
 | [2026-11-15：JEV 路由每轮关闭连接，DNS/TCP/TLS 冷启动可多等 1–2 秒](#devlog-jev-cold-connection-20261115) | 观看问答 QUEUED／首字前 JEV 延迟；已改为 30 秒 keep-alive，未部署 |
 | [2026-11-15：历史证据重取和取帧时间偏移，让动态窗口下的 Chat 仍迟答、答偏](#devlog-chat-local-history-replay-20261115) | CHAT-MODEL-INHERIT-01；CHAT-COMPACT-01；CHAT-QUERY-BUDGET-01；PR #177 |
@@ -199,6 +200,25 @@
 | [日期未明确（2026-10-23归档）：当前播放窗口的按需理解与复用](#devlog-history-60) | 独立实验/设计 |
 
 </details>
+
+<a id="devlog-macos-desktop-backend-20261123"></a>
+## 2026-11-23 · 服务端装配和媒体命令让桌面版需要额外进程
+
+### 问题与现状
+
+现有运行时已经能统一启动和关闭业务服务。它在装配时打开 MySQL 和 Elasticsearch，视频探测与代理切片再启动媒体命令。要让用户安装应用后就能导入、解析和按证据回看，需要为这些执行路径提供包内实现。 [运行时入口](../../server/main.py#L45) · [媒体切片](../../server/service/video_parse_media.py#L562)
+
+### 方案候选
+
+桌面窗口加 Python 服务最容易复用 React。将 Python 嵌入 Web 视图宿主能省去后端进程，WebKit 的辅助进程仍需计入。原生 UI 直接调用 Python 可满足单进程目标，代价是重新实现桌面界面和媒体入口。因此先验收可嵌入后端，再由第二个 PR 交付桌面应用。拟从 `config/storage.yaml` 取 `desktop` 段生成桌面包的存储配置。Docker 的 HTTP 入口使用 `server` 配置。服务端地址沿用 `SEEKINO_DATABASE_URL`，桌面在应用资料库目录打开 `library.sqlite3`。 [设计与依赖](../design/03-product-reassessment/macos-desktop-backend-trd.md)
+
+### 方案验证
+
+2026-11-23，在 Apple Silicon 开发机上把同一段 MP4 交给现有导入服务两次，只更换读取时长的函数。原片画面长 8.008 秒，音轨长 9 秒。两次都写入 8008 毫秒，原片逐字节一致，各生成一个待解析任务。Python 在现有读法下启动了 1 次 `ffprobe`，换 PyAV 并将 `PATH` 指向空目录后，导入期间记录到 0 次 `subprocess.Popen`。下一步在最小宿主中验证包内库、切片、抽帧和音轨。现有代理视频使用 `libx264`，首轮要实际生成模型可接受的代理，再定随包编解码构建。 [复现实验](../report/server/desktop-backend/test_import_probe.py) · [指标与实验计划](../design/03-product-reassessment/macos-desktop-backend-trd.md)
+
+### 指标对比
+
+子进程数决定是否达到桌面交付目标，源 PTS、音轨和搜索证据决定用户能否回到正确的画面。安装体积、冷启动、内存、解析用时和检索命中均待测。下一步按 TRD 用同源素材验证嵌入与媒体合同。 [PR #183](https://github.com/owariband/Seekino/pull/183)
 
 <a id="devlog-jev-cold-connection-20261115"></a>
 ## 2026-11-15：JEV 路由每轮关闭连接，DNS/TCP/TLS 冷启动可多等 1–2 秒
@@ -6703,3 +6723,13 @@ dev集成时另保留了PR #179的JEV连接复用及生命周期修复；本轮�
 核对也纠正了两项归因：a5084c26本身已有贪心原则，JEV输出respond／retrieve／mixed而非任务复杂度，不能把本轮组合提速写成首次去掉实际运行的固定多Agent流水线。旧Supervisor的必须Query与有大纲不委派存在条件重叠风险，但有效三条Query0；task、旧section／end和submit恢复提示同样不能计作这六次已发生错误的原因。旧不写过程说明与后来新增短确认属于不同版本，不倒拼为曾同时生效的矛盾。
 
 同环境基线到收紧提示候选，生成22→11次、reasoning总量5161→2719（降47.3%），但每次生成平均reasoning为234.6→247.2（升5.4%）；high／8192保持。可观察的改善主要是往返轮数和总工作量下降，不能声称每次都思考更少，也没有逐项或high／low因果对照。该组平均TT27.656→16.295s，属于多项修复合并的结果。旧9次上下文替换与游标错误是否存在直接因果仍未证明；网络、供应商402、日志漏记和不透明cursor未逐字复用也单列。本次只整理既有源码与证据，未新增产品Chat回放或线上操作；原T02长历史仍待验收。
+
+## 2026-11-23 桌面导入视频时被服务端数据库和 FFmpeg 命令阻塞
+
+**问题与现状**　原生窗口想复用 V2，但调用服务端入口会先打开 MySQL 和 ES。即便把 Python 嵌进窗口进程，原有媒体处理也会启动 ffmpeg 和 ffprobe。
+
+**方案候选**　保留 V2 服务、任务和版本校验。HTTP 继续传入 MySQL 会话、ES 和 CLI 媒体实现；桌面传入 SQLite 会话、本地搜索索引与 PyAV。SQLite 的写事务先取得写锁再读任务，发布时把 Event、向量和回执放进同一事务。
+
+**方案验证**　用相同的合成素材对照 CLI 和 PyAV，再由移动后的原生宿主从零建库、导入、解析、搜索和定位原片。模型固定回复，数据库、编码和解码都使用正式实现。HTTP 另在独立的真实 MySQL 与 ES 上走上传到片段回看的入口。[桌面报告](../report/server/desktop-backend/embedded-host.md) · [服务端报告](../report/server/desktop-backend/cloud-regression.md)
+
+**指标对比**　安装端关心需要启动几个进程，以及命中后是否回到正确的时间。宿主运行时，macOS 记录到 0 次 fork 或 exec；原片 [300, 1200) 毫秒的区间解出 14,400 个 16 kHz 样本。关键词查询没有模型调用。固定回复无法衡量真实素材的召回和费用，这两项保留到有标注和模型预算的验证中。

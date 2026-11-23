@@ -7,6 +7,7 @@ from copy import deepcopy
 from typing import Any
 
 from agent.video_parse_v2.input import ParseConfig
+from engine.parsev2.edit_reference import observation_fingerprint
 from engine.parsev2.edit_reference import ReferenceChunk
 from engine.parsev2.schemas import DialogueEvent, VideoParseResult
 from engine.parsev2.validation import validate_result_time_range
@@ -25,7 +26,6 @@ from ..model.dto.parseContentDTO import (
     PublishedReference,
     ReferenceKey,
 )
-from ..storage.elasticsearch_references import observation_fingerprint
 from ..model.dto.taskDTO import (
     ChunkParseTaskData,
     VideoParseTaskData,

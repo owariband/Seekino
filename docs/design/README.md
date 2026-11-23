@@ -163,6 +163,7 @@ Event / Sub-Chunk 的实施入口是 [sub-chunk-trd.md](02-agent-harness/sub-chu
 | 青瓷配色、深色候选与 Hero 衔接 | [restore-celadon-palette-trd.md](03-product-reassessment/restore-celadon-palette-trd.md) | 保留恢复后的浅色，夜间使用已选候选；两页 Hero 与画布共用夜间颜色来源。 |
 | SMTP 决定登录入口 | [smtp-login-availability-trd.md](03-product-reassessment/smtp-login-availability-trd.md) | 身份接口传递邮件能力；未配置时提前说明登录注册尚未开放，保留游客体验。 |
 | Local / Cloud | [local-cloud-trd.md](02-agent-harness/local-cloud-trd.md) | 运行形态设计：身份、配置归属、本地接入和云端部署边界。 |
+| macOS 原生桌面后端 | [macos-desktop-backend-trd.md](03-product-reassessment/macos-desktop-backend-trd.md) | 进程内 Python 与 FFmpeg、SQLite 任务和检索，以及原生界面打包的后端验收合同。 |
 | 项目管理工作台 | [management-workbench-trd.md](03-product-reassessment/management-workbench-trd.md) | 单文件离线管理工作台：里程碑概览、课程闭环地图、验收门槛与四列看板，统一模块、需求、任务，关联 PR/TRD 和历史证据；2026-11-02 看板版本保留在同一 TRD。 |
 
 ## 模型接入、用量与训练

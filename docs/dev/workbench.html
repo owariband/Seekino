@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-15T15:17:02+08:00",
+ "updatedAt": "2026-11-23T13:42:23+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 76,
+ "revision": 77,
  "categories": [
   {
    "id": "parse",
@@ -6130,6 +6130,46 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "label": "Context来源与因果矩阵",
      "kind": "source",
      "url": "https://github.com/owariband/Seekino/blob/dev/docs/report/agent/chat/frame-target-first-response-20261115/context-conflict-sources-20261115.md"
+    }
+   ]
+  }
+,
+  {
+   "id": "DESKTOP-BACKEND-01",
+   "title": "macOS 原生桌面后端",
+   "category": "platform",
+   "type": "requirement",
+   "status": "verifying",
+   "priority": "unset",
+   "description": "让原生宿主直接调用 Python V2 后端，用应用管理的 SQLite、检索索引和媒体库完成导入、解析、搜索及按证据定位原片。媒体操作通过进程内 FFmpeg 库执行。",
+   "next": "对照真实模型的媒体输入、按组标注检索质量与成本。PR 2 接原生窗口并在干净 Mac 验收安装和连续播放。",
+   "verification": "原生验证宿主完成导入、V2、双路搜索、按命中解出画面和音轨，macOS 观察到 0 个子进程。SQLite 并发恢复与原子发布已验证。真实 MySQL/ES 相关 65 项回归通过，模型回复固定。",
+   "updatedAt": "2026-11-23",
+   "tags": [
+    "macOS",
+    "SQLite",
+    "PyAV"
+   ],
+   "related": [
+    "B18",
+    "MOD-PLATFORM"
+   ],
+   "branch": "feat/macos-desktop-backend",
+   "links": [
+    {
+     "label": "PR #183",
+     "kind": "pr",
+     "url": "https://github.com/owariband/Seekino/pull/183"
+    },
+    {
+     "label": "TRD",
+     "kind": "trd",
+     "url": "https://github.com/owariband/Seekino/blob/feat/macos-desktop-backend/docs/design/03-product-reassessment/macos-desktop-backend-trd.md"
+    },
+    {
+     "label": "问题与验收",
+     "kind": "source",
+     "url": "https://github.com/owariband/Seekino/blob/feat/macos-desktop-backend/docs/dev/problems.md#desktop-backend-01"
     }
    ]
   }

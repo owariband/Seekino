@@ -115,6 +115,8 @@ class ArtifactStore(Protocol):
     def resolve(self, uri: str) -> Path: ...
 
 
+    def list_upload_staging(self) -> tuple[str, ...]: ...
+
     def delete_upload_staging(self, upload_session_id: str) -> None: ...
 
 
@@ -488,14 +490,18 @@ class LocalArtifactStore:
 
     def list_attachment_conversations(self) -> tuple[str, ...]:
         directory = self._conversation_path(PurePosixPath("media", "conversations"))
-        if not directory.exists():
+        return self._uuid_directories(directory, "conversation_id")
+
+    @staticmethod
+    def _uuid_directories(directory: Path, field_name: str) -> tuple[str, ...]:
+        if not directory.is_dir():
             return ()
         identifiers = []
         for child in directory.iterdir():
             if child.is_symlink() or not child.is_dir():
                 continue
             try:
-                identifier = canonical_uuid(child.name, "conversation_id")
+                identifier = canonical_uuid(child.name, field_name)
             except ValueError:
                 continue
             if identifier == child.name:
@@ -527,10 +533,17 @@ class LocalArtifactStore:
         return path
 
 
+    def list_upload_staging(self) -> tuple[str, ...]:
+        directory = self.base_directory / "staging" / "uploads"
+        if directory.resolve() != directory:
+            return ()
+        return self._uuid_directories(directory, "upload_session_id")
+
     def delete_upload_staging(self, upload_session_id: str) -> None:
         session_id = canonical_uuid(upload_session_id, "upload_session_id")
-        directory = self._path(PurePosixPath("staging", "uploads", session_id))
-
+        directory = self.base_directory / "staging" / "uploads" / session_id
+        if directory.resolve() != directory:
+            raise ArtifactIntegrityError("upload staging path contains a symbolic link")
         self._delete_tree(directory)
 
 

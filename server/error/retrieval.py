@@ -1,25 +1,33 @@
 from collections.abc import Iterator
 from contextlib import contextmanager
+from functools import singledispatch
 
 import httpx
 from arkruntime._exceptions import ArkAPIConnectionError, ArkAPIStatusError
-from elastic_transport import ConnectionError as ElasticConnectionError
-from elastic_transport import ConnectionTimeout
-from elasticsearch import ApiError
 
 from engine.rag.retrieval.contracts import RetrievalUnavailableError, SeriesNotReadyError
+
+
+@singledispatch
+def transient_status(error: Exception) -> bool:
+    """Cloud adapters register their own transport errors when loaded."""
+    return False
 
 
 @contextmanager
 def retrieval_backend_errors() -> Iterator[None]:
     try:
         yield
-    except (httpx.TransportError, ArkAPIConnectionError, ElasticConnectionError, ConnectionTimeout,
+    except (httpx.TransportError, ArkAPIConnectionError,
             ConnectionError, TimeoutError) as exc:
         raise RetrievalUnavailableError() from exc
-    except (httpx.HTTPStatusError, ArkAPIStatusError, ApiError) as exc:
+    except (httpx.HTTPStatusError, ArkAPIStatusError) as exc:
         status = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else exc.status_code
         if status in {408, 429} or status >= 500:
+            raise RetrievalUnavailableError() from exc
+        raise
+    except Exception as exc:
+        if transient_status(exc):
             raise RetrievalUnavailableError() from exc
         raise
 

@@ -14,6 +14,8 @@ from gateway.rerank import RerankScore
 from gateway.tracing import LangfuseTracing
 
 if TYPE_CHECKING:
+    from ..storage.elasticsearch import ElasticsearchVideoChunkStore
+    from ..storage.index_contract import EventSearchStore
     from gateway.model_factory import GatewayClient
 
 from ..config.parse_profile import ParseEmbeddingConfig, validate_embedding_sparse_support
@@ -22,8 +24,6 @@ from ..service.video_parse_persistence import VideoParsePersistenceService
 from ..service.retrieval_rerank import StructuredTextReranker
 from ..service.video_retrieval import VideoParseRetrievalService
 from ..service.video_event_retrieval import VideoEventRetrievalService
-from ..storage.elasticsearch import ElasticsearchVideoChunkStore
-from ..storage.elasticsearch_events import ElasticsearchVideoEventStore
 
 
 def validate_rerank_source(
@@ -52,7 +52,7 @@ def build_retrieval_service(
         gateway_config, embedding_config, sparse_enabled=retrieval_config.sparse_weight > 0,
     )
     client = gateway_client if gateway_client is not None else GatewayClient(gateway_config)
-    encoder, embedder = _build_query_embedding(
+    encoder, embedder = build_query_embedding(
         client, embedding_config, request_timeout_seconds=request_timeout_seconds,
     )
     rerank_binding = validate_rerank_source(gateway_config, retrieval_config)
@@ -83,7 +83,7 @@ def build_retrieval_service(
 
 
 def build_event_retrieval_service(
-    persistence: VideoParsePersistenceService, store: ElasticsearchVideoEventStore, *,
+    persistence: VideoParsePersistenceService, store: EventSearchStore, *,
     gateway_config: GatewayConfig, embedding_config: ParseEmbeddingConfig,
     retrieval_config: RetrievalConfig, contract: EventIndexingContract,
     request_timeout_seconds: float, exact: bool = False,
@@ -93,7 +93,7 @@ def build_event_retrieval_service(
     from gateway.model_factory import GatewayClient
 
     client = gateway_client if gateway_client is not None else GatewayClient(gateway_config)
-    encoder, embedder = _build_query_embedding(
+    encoder, embedder = build_query_embedding(
         client, embedding_config, request_timeout_seconds=request_timeout_seconds,
     )
     if contract.semantic_encoder != encoder or (
@@ -115,7 +115,7 @@ def build_event_retrieval_service(
     )
 
 
-def _build_query_embedding(
+def build_query_embedding(
     client: GatewayClient, config: ParseEmbeddingConfig, *, request_timeout_seconds: float,
 ) -> tuple[EncoderContract, _LazyQueryEmbedder]:
     binding = EmbeddingModelBinding(

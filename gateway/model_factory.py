@@ -313,6 +313,7 @@ class GatewayClient:
     def __init__(
         self, config: GatewayConfig, *, environ: Mapping[str, str] | None = None,
         supervisor_sessions: DeepAgentSessionStore | None = None, allow_local_endpoints: bool | None = None,
+        enable_supervisor: bool = True,
     ) -> None:
         self.config = config
         self._environ = os.environ if environ is None else environ
@@ -322,7 +323,7 @@ class GatewayClient:
         self._codex_executors: dict[str, ThreadPoolExecutor] = {}
         self._whisperx_runtimes: dict[tuple[str, str], Any] = {}
         self._diarization_locks: dict[str, Any] = {}
-        owns_supervisor_sessions = supervisor_sessions is None and config.supervisor_harness == "deepagents"
+        owns_supervisor_sessions = enable_supervisor and supervisor_sessions is None and config.supervisor_harness == "deepagents"
         if owns_supervisor_sessions:
             from gateway.agent_model.deepagents import DeepAgentSessionStore
             supervisor_sessions = DeepAgentSessionStore()

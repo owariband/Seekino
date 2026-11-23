@@ -8,6 +8,16 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session, sessionmaker
 
 
+class SQLiteSessionFactory(sessionmaker[Session]):
+    """Reserve the desktop writer before a repository can read lease or version state."""
+
+    @contextmanager
+    def begin(self) -> Iterator[Session]:
+        with self() as session, session.begin():
+            session.connection(execution_options={"sqlite_begin_immediate": True})
+            yield session
+
+
 @contextmanager
 def serialized_transaction(
     session_factory: sessionmaker[Session], name: str,
@@ -16,7 +26,7 @@ def serialized_transaction(
     with session_factory() as probe:
         engine = probe.get_bind()
     if engine.dialect.name != "mysql":
-        # SQLite is used by sequential unit tests, not capacity competition tests.
+        # The desktop session factory takes the SQLite writer lock through commit.
         with session_factory.begin() as session:
             yield session
         return

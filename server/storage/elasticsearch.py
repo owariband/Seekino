@@ -7,7 +7,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from elasticsearch import BadRequestError, Elasticsearch, NotFoundError
+from elastic_transport import ConnectionError as ElasticConnectionError, ConnectionTimeout
+from elasticsearch import ApiError, BadRequestError, Elasticsearch, NotFoundError
 
 from engine.rag.indexing.projection import (
     INDEX_PROJECTION_VERSION,
@@ -22,6 +23,11 @@ from engine.rag import (
 from engine.rag.contracts import VideoChunkRetrievalIdentity
 from engine.rag.encoding import validate_sparse_weights
 
+from .index_contract import (
+    IndexDocumentConsistencyError as ElasticsearchDocumentConsistencyError,
+    IndexSchemaError as ElasticsearchIndexSchemaError, StoredDocumentState, document_id,
+)
+from ..error.retrieval import transient_status
 from ..database import DatabaseEnvironment
 from ..constants.parse import MAX_INDEX_GENERATION
 from ..utils.validation import canonical_uuid, require_nonempty_text
@@ -44,12 +50,16 @@ _SOURCE_FIELDS = (
 )
 
 
-class ElasticsearchIndexSchemaError(RuntimeError):
-    """The configured physical index has an incompatible search contract."""
+@transient_status.register(ElasticConnectionError)
+@transient_status.register(ConnectionTimeout)
+def _connection_unavailable(error) -> bool:
+    return True
 
 
-class ElasticsearchDocumentConsistencyError(RuntimeError):
-    """Elasticsearch returned a document outside the authorized task scope."""
+@transient_status.register(ApiError)
+def _api_unavailable(error) -> bool:
+    return error.status_code in {408, 429} or error.status_code >= 500
+
 
 
 class ElasticsearchBulkWriteError(RuntimeError):
@@ -80,25 +90,6 @@ class ElasticsearchBulkWriteError(RuntimeError):
 
 
 @dataclass(frozen=True, slots=True)
-class StoredDocumentState:
-    present: bool
-    tenant_id: str | None = None
-    series_id: str | None = None
-    video_id: str | None = None
-    parse_task_id: str | None = None
-    video_chunk_id: str | None = None
-    content_version: int | None = None
-    index_generation: int | None = None
-    lexical_fields_present: bool = False
-    semantic_text_present: bool = False
-    semantic_vector_present: bool = False
-    vision_vector_present: bool = False
-    semantic_vector: tuple[float, ...] | None = None
-    vision_vector: tuple[float, ...] | None = None
-    sparse_token_weights: tuple[tuple[str, float], ...] | None = None
-
-
-@dataclass(frozen=True, slots=True)
 class VideoChunkIndexMatch:
     rank: int
     score: float
@@ -121,15 +112,6 @@ class _TrustedScope:
     series_ids: frozenset[str]
     parse_tasks_by_video_id: Mapping[str, str]
     index_generation: int
-
-
-def document_id(parse_task_id: str, video_chunk_id: str) -> str:
-    """Keep one stable document per parse task and Chunk across content updates."""
-
-    return (
-        f"{canonical_uuid(parse_task_id, 'parse_task_id')}:"
-        f"{canonical_uuid(video_chunk_id, 'video_chunk_id')}"
-    )
 
 
 def _external_version(content_version: int, index_generation: int) -> int:
