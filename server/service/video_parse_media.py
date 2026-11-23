@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import fcntl
 import json
 import math
 import os
@@ -11,7 +10,7 @@ import subprocess
 import time
 import wave
 from collections.abc import Callable, Iterator, Sequence
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
@@ -22,6 +21,7 @@ from engine.parsev2.planning import plan_chunks
 from engine.parsev2.edit_reference import ReferenceSegment
 from engine.parsev2.reference_scan import scan_reference
 
+from ..utils.file_lock import exclusive_lock
 from ..utils.validation import canonical_uuid
 
 
@@ -516,17 +516,19 @@ class VideoParseMediaService:
         # Keep the lock for the actual media context lifetime, including a
         # revoked lease whose provider thread has not exited. A crashed process
         # releases it automatically; another Consumer can then reap the files.
-        with (directory / ".execution.lock").open("a+b") as lock:
-            os.set_inheritable(lock.fileno(), False)
+        lock_path = directory / ".execution.lock"
+        if os.name == "nt" and directory.name.startswith(".reaping-lease-"):
+            # The Windows lock is named by path. Keep the existing lease identity
+            # while its directory moves to the reaper's tombstone.
+            version = directory.name.removeprefix(".reaping-lease-").split("-", 1)[0]
+            lock_path = directory.with_name(f"lease-{version}") / ".execution.lock"
+        with ExitStack() as cleanup:
             try:
-                fcntl.flock(lock, fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))
+                cleanup.enter_context(exclusive_lock(lock_path, blocking=blocking))
             except BlockingIOError:
                 yield False
                 return
-            try:
-                yield True
-            finally:
-                fcntl.flock(lock, fcntl.LOCK_UN)
+            yield True
 
     def _create_workspace(self, identity: MediaLeaseIdentity) -> Path:
         video_task = canonical_uuid(

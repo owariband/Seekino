@@ -8,6 +8,7 @@ from datetime import timedelta
 from functools import wraps
 from hashlib import file_digest, sha256
 import os
+import sys
 from pathlib import Path
 from threading import Condition
 from uuid import uuid4
@@ -259,7 +260,7 @@ def open_library(library_root: Path | str) -> DesktopLibrary:
     upload, images = UploadServiceConfig(), ImageUploadConfig()
     limits = AgentServiceConfig(**config.agent_runtime)
     dimensions = config.resolve_embedding_binding().dimensions
-    media = PyAVMedia()
+    media = PyAVMedia(video_encoder="libx264") if sys.platform == "win32" else PyAVMedia()
     defaults = ParseConfig.from_defaults(runtime=runtime, gateway=config, upload=upload, images=images,
                                          embedding_model=None, embedding_dimensions=dimensions, embedding_fps=None, mq=mq,
                                          preprocessing=media.preprocessing)

@@ -9,7 +9,8 @@ _AUDIO_RATE = 48_000
 
 
 class PlaybackDecoder:
-    def __init__(self, path: str):
+    def __init__(self, path: str, *, rgb: bool = False):
+        self._rgb = rgb
         self._container = av.open(path)
         try:
             self._video = _video_stream(self._container)
@@ -48,6 +49,8 @@ class PlaybackDecoder:
                 if at < start:
                     tail = frame
                     continue
+                if tail is not None and at > start:
+                    yield self._picture(tail, start)
                 tail = None
                 yield self._picture(frame, at)
             else:
@@ -66,7 +69,12 @@ class PlaybackDecoder:
     def _picture(self, frame, at):
         if frame.rotation:
             frame = av.VideoFrame.from_image(frame.to_image().rotate(frame.rotation, expand=True))
-        # The display layer consumes video-range NV12 and copies directly from PyAV's planes.
+        if self._rgb:
+            picture = frame.reformat(format="rgb24")
+            plane, = picture.planes
+            return (0, round((at - self._origin) * 1_000_000), picture.width, picture.height,
+                    memoryview(plane), plane.line_size)
+        # The original macOS display layer consumes video-range NV12.
         picture = frame.reformat(format="nv12", dst_color_range="MPEG")
         luma, chroma = picture.planes
         return (0, round((at - self._origin) * 1_000_000), picture.width, picture.height,

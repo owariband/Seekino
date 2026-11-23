@@ -4,15 +4,20 @@ from hashlib import sha256
 import json
 import os
 from pathlib import Path
-import sys
 
 from ..constants.parse import RUNTIME_DETAIL_KEY
 from ..service.mcp_evidence import StaleEvidenceError
 from ..service.parse_control import ACTIVE_STATUSES, is_paused
-from .host import _reject_child_process
+from .host import enforce_single_process
 from .runtime import open_library
 
 MODEL_KEYS = ("ARK_API_KEY", "DEEPSEEK_API_KEY")
+
+
+def _poster_id(video):
+    # Keep a fallback frame distinct from a subsequently published cover or keyframe.
+    version = video.cover_uri or next(iter(video.keyframe_uris), video.content_hash)
+    return video.video_id + "/" + sha256(version.encode()).hexdigest()
 
 
 def _video_item(library, video):
@@ -22,14 +27,19 @@ def _video_item(library, video):
         "title": video.display_name or video.original_filename,
         "durationMs": video.duration_seconds, "status": video.parse_status,
         "indexStatus": video.index_status, "progress": video.parse_progress,
-        "cover": str(cover) if cover else None,
+        "cover": str(cover) if cover else None, "posterID": _poster_id(video),
     }
 
 
 def _series_item(series):
+    first = series.first_video
+    representative = series.representative_video or first
     return {
         "id": series.series_id, "title": series.display_name or series.name,
-        "count": series.video_count, "ready": series.ready_video_count,
+        "count": series.video_count, "ready": series.ready_video_count, "description": series.description,
+        "firstVideoID": first.video_id if first else "",
+        "firstVideoTitle": (first.display_name or first.original_filename) if first else "",
+        "posterID": _poster_id(representative) if representative else "",
     }
 
 
@@ -119,6 +129,16 @@ class Application:
                 videos = [_video_item(library, library.video(video_id))
                           for video_id in dict.fromkeys(hit.video_id for hit in result.hits)]
                 return {"hits": [asdict(hit) for hit in result.hits], "partial": result.partial, "videos": videos}
+            case "posterSource":
+                video_id, _, _ = args["posterID"].partition("/")
+                video = library.video(video_id)
+                if _poster_id(video) != args["posterID"]:
+                    raise ValueError("视频封面已更新")
+                thumbnail = library.thumbnail(video)
+                if thumbnail:
+                    return {"image": str(thumbnail)}
+                source = library.open_video(video_id)
+                return {"original": str(source.path), "atMs": min(10000, source.duration_ms // 10)}
             case "openResult" | "openVideo":
                 playback = (library.open_result(args["sourceRef"]) if action == "openResult"
                             else library.open_video(args["videoID"]))
@@ -131,18 +151,15 @@ class Application:
 
 
 _application = None
-_auditing = False
 
 
 def dispatch(raw: str) -> str:
-    global _application, _auditing
+    global _application
     try:
         request = json.loads(raw)
         action, args = request["action"], request["args"]
         if action == "open":
-            if not _auditing:
-                sys.addaudithook(_reject_child_process)
-                _auditing = True
+            enforce_single_process()
             if _application is not None:
                 _application.library.close()
                 _application = None

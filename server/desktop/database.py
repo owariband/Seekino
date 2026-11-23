@@ -3,13 +3,13 @@ from __future__ import annotations
 
 from contextlib import ExitStack, closing
 from dataclasses import dataclass
-import fcntl
 from pathlib import Path
 
 from sqlalchemy import Engine, URL, create_engine, event
 
 from ..database import SchemaUpgradeRequiredError, create_schema
 from ..utils.database import SQLiteSessionFactory
+from ..utils.file_lock import exclusive_lock
 
 _SCHEMA_VERSION = 1
 _APPLICATION_ID = int.from_bytes(b"SKNO", "big")
@@ -31,9 +31,8 @@ def open_desktop_database(database_path: Path) -> DesktopDatabase:
     path.parent.mkdir(parents=True, exist_ok=True)
     with ExitStack() as resources:
         # Never unlink the inode: a second opener must always lock the same file.
-        lock = resources.enter_context(path.with_name(path.name + ".lock").open("ab"))
         try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            resources.enter_context(exclusive_lock(path.with_name(path.name + ".lock"), blocking=False))
         except BlockingIOError as exc:
             raise RuntimeError(f"Seekino library is already open: {path}") from exc
         engine = create_engine(

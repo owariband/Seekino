@@ -2982,3 +2982,5 @@ micrograd v5 共 146 块，整集 90 分 04.884 秒。调度反复锁取候选�
 ### DESKTOP-APP-01 · 缺少原生窗口和播放器，嵌入后端无法作为 App 交付
 
 2026-11-23。PR #183 提供了可随包移动的后端和按时间解码原片的接口。桌面用户需要双击安装后完成导入、解析、搜索和连续回看。在同一台 Apple Silicon Mac 上，PR #184 已用固定模型回放走通桌面入口，验证了真实 App 的首帧和音轨时间、进程及 DMG 复制后重开。实际模型和签名公证后的干净 Mac 验收仍需完成。 [TRD](../design/03-product-reassessment/macos-desktop-app-trd.md) · [报告](../report/desktop/native/2026-11-23-acceptance.md) · [PR #184](https://github.com/owariband/Seekino/pull/184)
+
+0.2.0 已用 Web 同素材画面对照 Mac 窗口，并交付 Windows x64 验收包。窗口视觉、动效与真实模型的用户验收，以及 Windows 真机验证仍待完成。

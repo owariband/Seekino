@@ -11,9 +11,9 @@ from tempfile import TemporaryDirectory
 from PIL import Image
 
 from build_host import ROOT, build as build_host
+from qt_bundle import collect, copy_frontend, install_qt
 
 MINIMUM_MACOS = "15.0"
-NATIVE = ROOT / "desktop" / "native"
 
 
 def _run(*command):
@@ -72,8 +72,6 @@ def _icon(resources):
     with Image.open(ROOT / "assets" / "seekino-logo.png") as source:
         icon = source.convert("RGBA")
         icon.save(resources / "Seekino.icns")
-        icon.thumbnail((256, 256), Image.Resampling.LANCZOS)
-        icon.save(resources / "SeekinoLogo.png")
 
 
 def build(destination, wheel, version, identity):
@@ -108,15 +106,14 @@ def build(destination, wheel, version, identity):
         }))
         _icon(resources)
         libraries = _place_code(contents)
-        bridge = stage / "Bridge.o"
+        copy_frontend(resources)
+        qt_wheels = stage / "qt"
+        install_qt(qt_wheels)
+        libraries += collect(qt_wheels, resources / "site-packages", frameworks)
         _run("xcrun", "clang", "-arch", "arm64", f"-mmacosx-version-min={MINIMUM_MACOS}",
-             "-O2", "-Wall", "-Wextra", "-Werror", "-I", sysconfig.get_path("include"),
-             "-c", NATIVE / "Bridge.c", "-o", bridge)
-        _run("xcrun", "swiftc", "-target", f"arm64-apple-macos{MINIMUM_MACOS}", "-swift-version", "5",
-             "-O", "-module-cache-path", stage / "swift-cache", "-import-objc-header", NATIVE / "Bridge.h",
-             "-L", frameworks, "-lpython3.12", "-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks",
-             "-framework", "AudioToolbox", "-framework", "CoreVideo", "-framework", "AVFoundation",
-             *sorted(NATIVE.glob("*.swift")), bridge, "-o", executable)
+             "-O2", "-Wall", "-Werror", "-I", sysconfig.get_path("include"),
+             '-DSEEKINO_ENTRY=L"desktop.main"', ROOT / "deploy/desktop/host.c",
+             "-L", frameworks, "-lpython3.12", "-Wl,-rpath,@executable_path/../Frameworks", "-o", executable)
         signature = ["--force", "--sign", identity]
         if identity != "-":
             signature += ["--timestamp"]
@@ -131,7 +128,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("destination", type=Path)
     parser.add_argument("--media-wheel", required=True, type=Path)
-    parser.add_argument("--version", default="0.1.0")
+    parser.add_argument("--version", default="0.2.0")
     parser.add_argument("--identity", default="-", help="Developer ID Application identity for release signing")
     options = parser.parse_args()
     build(options.destination, options.media_wheel, options.version, options.identity)

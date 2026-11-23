@@ -6180,13 +6180,14 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "type": "requirement",
    "status": "verifying",
    "priority": "unset",
-   "description": "SwiftUI 原生界面在单一 Seekino 进程中完成视频导入、V2、搜索及回看。交付 Apple Silicon 的 App 与 DMG。",
-   "next": "用户用实际素材与模型验收，另在有 Developer ID 的构建环境公证并验证干净 Mac。",
-   "verification": "固定模型回放通过。原生首个画面和音轨均为 300 ms，系统观察为 0 次子进程创建。DMG 已校验、挂载和复制，重开独立资料库通过。",
+   "description": "Qt Quick 窗口保留 Seekino Web 的品牌和素材展示，macOS 适配标题栏与资料树。Mac 和 Windows 共用导入、解析、搜索和回看入口。",
+   "next": "在用户 Mac 验收布局、动效和实际模型，另验证 Windows x64 真机与签名公证后的干净 Mac。",
+   "verification": "0.2.0 已对照 Web 同素材首页，在 Mac 验证资料树动效、窄窗口搜索和原片回看。69 项回归通过，最终 DMG 静音回看时观察到零次 fork/exec。Windows x64 包通过静态核对。",
    "updatedAt": "2026-11-23",
    "tags": [
     "macOS",
-    "SwiftUI",
+    "Qt Quick",
+    "Windows",
     "FFmpeg"
    ],
    "related": [

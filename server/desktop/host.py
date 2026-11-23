@@ -6,9 +6,23 @@ import sys
 from dataclasses import asdict
 from pathlib import Path
 
+
+_PROCESS_EVENTS = frozenset({"subprocess.Popen", "_winapi.CreateProcess", "os.system", "os.spawn",
+                             "os.posix_spawn", "os.fork", "os.forkpty", "os.exec"})
+_auditing = False
+
+
 def _reject_child_process(event, _args):
-    if event in {"subprocess.Popen", "os.system", "os.posix_spawn", "os.fork", "os.forkpty", "os.exec"}:
-        raise RuntimeError(f"embedded backend attempted to create a process: {event}")
+    if event in _PROCESS_EVENTS:
+        # Platform probes can handle an unavailable OS command and use native APIs instead.
+        raise PermissionError(f"embedded desktop cannot create a process: {event}")
+
+
+def enforce_single_process():
+    global _auditing
+    if not _auditing:
+        sys.addaudithook(_reject_child_process)
+        _auditing = True
 
 
 def main():
@@ -24,7 +38,7 @@ def main():
     parser.add_argument("--verify-process", action="store_true", help="fail on Python child-process or exec audit events")
     args = parser.parse_args()
     if args.verify_process:
-        sys.addaudithook(_reject_child_process)
+        enforce_single_process()
     from .runtime import open_library
     if args.import_file and not args.request_key:
         parser.error("--import-file requires a stable --request-key")

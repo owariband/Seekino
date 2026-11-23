@@ -4,14 +4,14 @@ import sys
 
 import pytest
 
-from engine.common.media_contract import FFMPEG_PREPROCESSING, PYAV_PREPROCESSING
+from engine.common.media_contract import FFMPEG_PREPROCESSING
 from engine.rag import EventIndexingContract
 from server.config.parse_profile import index_contract_fingerprint
 from server.storage.index_contract import IndexSchemaError
 from tests.server.test_desktop_pipeline import _fixed_model_responses, _fixture_movie, _wait_for_completion
 
 
-@pytest.mark.skipif(sys.platform != "darwin", reason="desktop video preprocessing requires VideoToolbox")
+@pytest.mark.skipif(sys.platform not in {"win32", "darwin"}, reason="desktop packaging targets Windows and macOS")
 def test_desktop_freezes_and_rebuilds_its_visual_inputs(tmp_path, monkeypatch):
     pytest.importorskip("av")
     pytest.importorskip("sqlite_vec")
@@ -19,6 +19,9 @@ def test_desktop_freezes_and_rebuilds_its_visual_inputs(tmp_path, monkeypatch):
     from server.desktop.runtime import open_library
     from server.service import video_parse_index_coordinator as coordinator
 
+    from engine.common.pyav_media import PyAVMedia
+
+    expected = (PyAVMedia(video_encoder="libx264") if sys.platform == "win32" else PyAVMedia()).preprocessing
     revisions = []
     manifest_type = coordinator.VideoClipManifest
 
@@ -37,17 +40,17 @@ def test_desktop_freezes_and_rebuilds_its_visual_inputs(tmp_path, monkeypatch):
         _wait_for_completion(library, task_id, calls)
         assert library.rebuild_index(task_id)
         _wait_for_completion(library, task_id, calls)
-        assert revisions == [PYAV_PREPROCESSING.clip, PYAV_PREPROCESSING.clip]
+        assert revisions == [expected.clip, expected.clip]
         assert library.search("红旗", series_ids=[series.series_id], keywords_only=True).hits
 
     with sqlite3.connect(root / "library.sqlite3") as db:
         config_json, detail_json = db.execute("SELECT parse_config,detail FROM video_parse_task WHERE id=?", (task_id,)).fetchone()
         config = VideoParseV2Config.model_validate_json(config_json)
         accepted = EventIndexingContract.model_validate(json.loads(detail_json)["_event_index_target_v1"]["contract"])
-        assert accepted.capture.preprocess_revision == PYAV_PREPROCESSING.jpeg
+        assert accepted.capture.preprocess_revision == expected.jpeg
         options = dict(provider=accepted.semantic_encoder.provider, encoder_revision=accepted.semantic_encoder.encoder_revision,
                        max_height=config.visual_input.max_height)
-        assert config.indexing.contract_fingerprint == index_contract_fingerprint(config.models.embedding, preprocessing=PYAV_PREPROCESSING, **options)
+        assert config.indexing.contract_fingerprint == index_contract_fingerprint(config.models.embedding, preprocessing=expected, **options)
         assert config.indexing.contract_fingerprint != index_contract_fingerprint(config.models.embedding, **options)
         receipt = json.loads(db.execute("SELECT detail FROM chunk_parse_content").fetchone()[0])["_index_embeddings_v2"]["receipt"]
         assert receipt["events"]["contract_id"] == accepted.contract_id
@@ -62,7 +65,7 @@ def test_desktop_freezes_and_rebuilds_its_visual_inputs(tmp_path, monkeypatch):
         open_library(root)
 
 
-@pytest.mark.skipif(sys.platform != "darwin", reason="desktop video preprocessing requires VideoToolbox")
+@pytest.mark.skipif(sys.platform not in {"win32", "darwin"}, reason="desktop packaging targets Windows and macOS")
 def test_delete_import_invalidates_playback_and_removes_media_and_index(tmp_path, monkeypatch):
     pytest.importorskip("av")
     pytest.importorskip("sqlite_vec")

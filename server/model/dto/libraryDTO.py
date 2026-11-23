@@ -117,6 +117,7 @@ class SeriesState:
     videos: tuple[VideoSummaryState, ...] = ()
     pending_uploads: tuple[UploadSessionState, ...] = ()
     representative_video: VideoSummaryState | None = None
+    first_video: VideoSummaryState | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -43,7 +43,7 @@ with open_library(root) as library:
 
 ## 构建 Seekino.app 与 DMG
 
-原生产品在 `desktop/native/`。Apple Silicon 上使用 Command Line Tools 或 Xcode、CPython 3.12、uv 和本页的自建媒体 wheel。目标系统从 macOS 15 起。随包的运行时按 `uv.lock` 装入，动态库和 Python 扩展位于 `Contents/Frameworks`，Python import 路径由包内相对软链接保留。
+窗口在 `desktop/ui/`，macOS 与 Windows 均从 `desktop.main` 进入，使用同一套 Qt Quick 组件和进程内 Python 服务。Apple Silicon 上使用 Command Line Tools 或 Xcode、CPython 3.12、uv 和本页的自建媒体 wheel。目标系统从 macOS 15 起。随包的运行时按 `uv.lock` 装入，动态库和 Python 扩展位于 `Contents/Frameworks`，Python import 路径由包内相对软链接保留。
 
 ```sh
 uv run --locked --python 3.12.16 python deploy/desktop/build_app.py /tmp/Seekino.app --media-wheel "$stage"/wheels/av-*.whl
@@ -51,6 +51,20 @@ uv run --locked --python 3.12.16 python deploy/desktop/verify_app.py /tmp/Seekin
 python3 deploy/desktop/build_dmg.py /tmp/Seekino.app /tmp/Seekino-macos-arm64.dmg
 ```
 
-双击 DMG，将 Seekino 拖进 Applications 后打开。在设置填入默认模型组合的火山方舟和 DeepSeek API Key，选取或拖入 MP4、MOV、AVI。解析任务页显示当前阶段、暂停与重试。建库完成后切换关键词或描述搜索，点击结果从原片对应时间播放。`⌘O` 导入，`⌘K` 聚焦搜索，`⌘,` 打开设置。替换程序时资料库仍在 `~/Library/Application Support/Seekino/`。程序内的模型凭据由 macOS 钥匙串持有。
+双击 DMG，将 Seekino 拖进 Applications 后打开。用 `⌘O` 选择视频，或直接拖入窗口。首次解析可在设置填入火山方舟和 DeepSeek API Key。用工具栏打开解析任务，查看进度、暂停或重试。`⌘K` 查找台词或画面，点击结果从对应时间回看原片。`⌘⇧L` 收起或展开系列资料树，`⌘,` 打开设置。替换程序时资料库仍在 `~/Library/Application Support/Seekino/`。程序内的模型凭据由 macOS 钥匙串持有。
 
 默认命令生成供本机验收的 ad-hoc 签名包。正式分发时，构建 App 增加 `--identity`，构建 DMG 增加同一 `--identity` 与 `--notary-profile`。以签名公证成功的实际 DMG 做干净机器安装验收。媒体 wheel 保留 FFmpeg 许可和构建清单，随正式发布提供该清单对应的 FFmpeg 源码。 [Apple 分发说明](https://developer.apple.com/documentation/xcode/packaging-mac-software-for-distribution) · [媒体构建记录](../../docs/report/server/desktop-backend/media-build.md)
+
+
+## Windows x64 桌面验收包
+
+解压 ZIP 后打开 `Seekino/Seekino.exe`，保留同目录的运行库。资料库存放在 `%LOCALAPPDATA%/Seekino`，模型密钥保存在 Windows 凭据管理器。文件选择和系统窗口控件由 Windows 提供。`Ctrl+O` 导入、`Ctrl+K` 搜索。
+
+用 uv 下载 x64 Windows CPython 3.12.16，构建机安装项目 Python 依赖、Pillow、pefile 和 Zig。构建器按锁文件校验 Windows wheel，并链接 Windows GUI 入口。在有独立 RC 编译器的环境可传 `--rc` 指定。
+
+```sh
+uv python install --no-bin --no-registry --install-dir /tmp/seekino-python cpython-3.12.16-windows-x86_64-none
+python deploy/desktop/build_windows.py /tmp/Seekino-windows-x64.zip --python-runtime /tmp/seekino-python/cpython-3.12.16-windows-x86_64-none
+```
+
+macOS 候选使用项目自建的 FFmpeg 与 VideoToolbox。Windows 验收包使用锁定的 PyAV Windows wheel 和其中的 libx264 编码器。Windows 真机安装、音频设备、凭据存取及正式分发所需的媒体构建和签名需单独验收。两个窗口共用资料树、搜索与回放逻辑，每个平台的数据库保存在本机。

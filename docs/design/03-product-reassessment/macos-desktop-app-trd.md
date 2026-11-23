@@ -17,9 +17,11 @@
 
 # 3. 改造方案与建模
 
-SwiftUI / AppKit 管窗口、快捷键、文件选择和设置。通过 CPython C API 调用 `server.desktop.runtime`，操作交给既有的 Library、Job、Upload 和证据服务。补齐系列详情和持久任务列表的桌面入口。资料库使用 Application Support 下的 Seekino 目录，受管原片和 SQLite 由同一 Library 持有。在后台调用 Python，退出时等待 `close()` 释放 Consumer 和资料库。Keychain 提供进程内模型凭据。
+macOS 和 Windows 共用 Qt Quick 窗口、交互状态和 PyAV 播放器。窗口从桌面线程直接调用既有 Python 服务。系列、任务和版本仍由后端维护。Mac 用 Application Support 和钥匙串，Windows 用 LocalAppData 和凭据管理器。关闭时等待后台任务释放资料库。
 
-点击命中时由 `open_result` 复核来源版本，使用受管原片路径与整数毫秒区间。播放器使用同一批 FFmpeg 动态库，按原片的显示时间寻址，用 macOS 媒体渲染器输出音画。App 构建复用 PR 1 的锁定依赖和媒体构建输入。在 Apple Silicon 上优先验证可搬移的候选包，再检查 Developer ID 签名、公证与最低系统版本。
+窗口内容以 Seekino Web 的青瓷色、品牌素材、搜索输入区、视频封面与动效为对照。Typora 提供 macOS 布局参考，窗口左上保留系统按钮，标题栏容纳高频操作，可收起的资料树直接展开系列和视频。验收同时看空库、有素材的首页、搜索命中，以及开启系统“减少动态效果”后的切换。 [Web 主题](../../../web/src/styles/global.css) · [Web 首页](../../../web/src/features/player/WatchHomePage.tsx) · [Typora 资料树](https://support.typora.io/File-Management/)
+
+点击结果时 `open_result` 复核来源版本，PyAV 从受管原片的整数毫秒区间解码，Qt 输出图像和 PCM。macOS 使用自建媒体 wheel，Windows 预览使用锁定的 x64 wheel。Windows 编码合同标明 libx264，Mac 库继续识别已有的 VideoToolbox 合同。
 
 # 4. 对照实验与结果分析
 
@@ -31,4 +33,7 @@ SwiftUI / AppKit 管窗口、快捷键、文件选择和设置。通过 CPython 
 
 # 6. 结果验收与闭环
 
-本机安装候选已构建并通过 DMG 挂载、复制、重开资料库和连续播放验证。Apple Silicon 架构和 macOS 15 部署目标已检查，实际运行环境是 macOS 26.5.1。SwiftUI 界面保留青瓷配色、资料库和任务入口、带时间码的结果卡片，以及点击定位原片的操作。包在观察路径中没有额外进程。已有证据支持交给用户验收。正式分发仍需实际模型、签名公证、目标 Mac、长片体验与跨版本升级验证。 [安装候选报告](../../report/desktop/native/2026-11-23-acceptance.md) · [工作台](../../dev/workbench.html)
+首轮 SwiftUI 安装候选已构建并通过 DMG 挂载、复制、重开资料库和连续播放验证。Apple Silicon 架构和 macOS 15 部署目标已检查，实际运行环境是 macOS 26.5.1。SwiftUI 界面保留青瓷配色、资料库和任务入口、带时间码的结果卡片，以及点击定位原片的操作。包在观察路径中没有额外进程。首轮验收发现，左栏重复了网页导航，窗口缺少 Web 版的动效；Swift 窗口也不能直接供 Windows 使用。正式分发仍需实际模型、签名公证、目标 Mac、长片体验与跨版本升级验证。 [安装候选报告](../../report/desktop/native/2026-11-23-acceptance.md) · [工作台](../../dev/workbench.html)
+
+
+0.2.0 用相同宣传片对照 Web 和 Mac 首页，又测试了窄窗口、资料树收放、搜索建议、原片跳转、播放器闲置隐去和减少动态效果。App 和 Windows ZIP 已构建，Windows 仅完成静态核对；用户对视觉与交互的验收仍在进行。 [窗口对照、录屏和安装包实测](../../report/desktop/native/2026-11-23-acceptance.md#020-的窗口动效和安装)

@@ -576,34 +576,20 @@ def test_reaper_keeps_another_process_media_until_that_process_really_exits(tmp_
         process.close()
 
 
-def test_workspace_lock_is_not_inherited_by_an_unrelated_subprocess(tmp_path, monkeypatch):
-    source = tmp_path / "source.mp4"
-    source.write_bytes(b"source")
-    service = VideoParseMediaService(tmp_path / "work", command_runner=_fake_runner([]))
-    descriptors = []
-    original = os.set_inheritable
-
-    def capture(descriptor, inheritable):
-        descriptors.append(descriptor)
-        original(descriptor, inheritable)
-
-    monkeypatch.setattr(os, "set_inheritable", capture)
-    with service.prepare_video_segment(
-        _identity(), source_video=source, start_seconds=0,
-        end_seconds=1000, max_height=360,
-    ):
-        descriptor = descriptors[-1]
-        assert not os.get_inheritable(descriptor)
-        stat = os.fstat(descriptor)
-        result = subprocess.run([
-            sys.executable, "-c",
-            "import os,sys\n"
-            "try: stat=os.fstat(int(sys.argv[1]))\n"
-            "except OSError: pass\n"
-            "else: assert (stat.st_dev,stat.st_ino) != (int(sys.argv[2]),int(sys.argv[3]))\n",
-            str(descriptor), str(stat.st_dev), str(stat.st_ino),
-        ], close_fds=False, capture_output=True, text=True, timeout=10)
-        assert result.returncode == 0, result.stderr
+def test_workspace_lock_is_not_inherited_by_an_unrelated_subprocess(tmp_path):
+    service = VideoParseMediaService(tmp_path / "work")
+    child = None
+    try:
+        with service._workspace_lock(tmp_path, blocking=True):
+            child = subprocess.Popen([sys.executable, "-c", "import sys; sys.stdin.buffer.read()"],
+                                     stdin=subprocess.PIPE, close_fds=False)
+        # The child stays alive while the parent drops and reacquires the same lock.
+        with service._workspace_lock(tmp_path, blocking=False) as acquired:
+            assert acquired
+    finally:
+        if child is not None:
+            child.stdin.close()
+            child.wait(timeout=10)
 
 
 def test_workspace_marker_is_published_atomically(tmp_path):

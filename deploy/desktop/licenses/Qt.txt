@@ -1,0 +1,9 @@
+Seekino desktop uses unmodified, dynamically linked Qt 6.10.3, Qt for Python
+(PySide6) 6.10.3 and Shiboken 6.10.3. The upstream Qt/PySide copyright notices
+and third-party attributions apply. LGPL-3.0 and GPL-3.0 texts are included here.
+The wheel metadata in site-packages identifies the original distributors.
+
+Qt source archives and corresponding Qt for Python sources:
+https://download.qt.io/archive/qt/6.10/6.10.3/single/
+https://code.qt.io/cgit/pyside/pyside-setup.git/tag/?h=v6.10.3
+https://doc.qt.io/qt-6/licenses-used-in-qt.html

@@ -16,7 +16,7 @@ from gateway.ark.multimodal import ArkMultimodalModel
 from gateway.model_factory import GenerativeModel
 from gateway.multimodal import TextInput
 
-pytestmark = pytest.mark.skipif(sys.platform != "darwin", reason="desktop media uses VideoToolbox")
+pytestmark = pytest.mark.skipif(sys.platform not in {"win32", "darwin"}, reason="desktop packaging targets Windows and macOS")
 
 
 def _fixture_movie(path):
