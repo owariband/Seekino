@@ -5,6 +5,7 @@ from contextlib import AbstractContextManager
 from copy import deepcopy
 from datetime import datetime, timedelta
 import hashlib
+from itertools import batched
 import json
 import math
 from uuid import uuid4
@@ -1078,6 +1079,15 @@ class UploadRepository:
             status=UploadSessionStatus.UPLOADING.value, completion_token=None,
             completion_start_time=None, completion_stage=None, version=UploadSession.version + 1,
         )
+
+    def completed_staging_ids(self, staged_ids: tuple[str, ...]) -> tuple[str, ...]:
+        completed = []
+        with self._session_factory() as session:
+            for batch in batched(staged_ids, 500):
+                completed.extend(session.scalars(select(UploadSession.id).where(
+                    UploadSession.id.in_(batch), UploadSession.status == UploadSessionStatus.COMPLETED.value,
+                )))
+        return tuple(completed)
 
     def recover_interrupted_completions(self) -> None:
         """Only an exclusively held desktop library can fence all previous upload owners."""

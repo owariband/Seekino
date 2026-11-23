@@ -30,16 +30,18 @@ def main():
         parser.error("--import-file requires a stable --request-key")
     with open_library(args.library) as library:
         report = {"pid": os.getpid(), "library": str(args.library.resolve())}
-        if args.import_file or args.query:
-            series = library.create_series(args.series)
         if args.import_file:
+            series = library.create_series(args.series)
             upload = library.import_file(args.import_file, series_id=series.series_id,
                                          episode_order=args.episode, idempotency_key=args.request_key)
             report.update(video_id=upload.video_id, task_id=upload.video_parse_task_id)
         if args.task:
             report["status"] = library.task(args.task).task.status
         if args.query:
-            result = library.search(args.query, series_ids=[series.series_id], keywords_only=args.keywords_only)
+            from ..constants.tenant import DEFAULT_LOCAL_TENANT_ID
+            from ..model.identifiers import derive_series_id
+            series_id = derive_series_id(DEFAULT_LOCAL_TENANT_ID, args.series)
+            result = library.search(args.query, series_ids=[series_id], keywords_only=args.keywords_only)
             report["search"] = asdict(result)
             if result.hits:
                 source = library.open_result(result.hits[0].source_ref)

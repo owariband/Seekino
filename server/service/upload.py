@@ -33,6 +33,7 @@ from ..repository.upload import (
 )
 from ..storage.index_contract import ChunkIndexStore, IndexCleanupStore
 from ..storage.artifact import (
+    ArtifactIntegrityError,
     ArtifactStore,
     UploadSegmentArtifact,
 )
@@ -409,6 +410,21 @@ class UploadService:
         )
         return state
 
+    def reconcile_completed_staging(self) -> None:
+        try:
+            staged = self._artifact_store.list_upload_staging()
+        except OSError:
+            _logger.exception("upload_staging_scan_failed")
+            return
+        for session_id in self._repository.completed_staging_ids(staged):
+            self._cleanup_completed_staging(session_id)
+
+    def _cleanup_completed_staging(self, session_id: str) -> None:
+        try:
+            self._artifact_store.delete_upload_staging(session_id)
+        except (OSError, ArtifactIntegrityError):
+            _logger.exception("completed_upload_staging_cleanup_failed upload_session_id=%s", session_id)
+
     def reconcile_deletions(self, *, limit: int = 100) -> tuple[int, int]:
         try:
             pending = self._repository.list_pending_deletions(limit=limit)
@@ -554,6 +570,7 @@ class UploadService:
                 raise UploadConflictError(
                     "completed upload is missing its VideoParseTask"
                 )
+            self._cleanup_completed_staging(session_id)
             return CompletedUploadState(
                 session=claim.session,
                 video_id=claim.session.video_id,

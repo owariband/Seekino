@@ -249,6 +249,7 @@ def open_library(library_root: Path | str) -> DesktopLibrary:
         )
         consumer = build_video_consumer(video, mq, video_concurrency=runtime.video_concurrency)
         cleanup.callback(consumer.close)
+        video.uploads.reconcile_completed_staging()
         video.uploads.reconcile_deletions()
         consumer.start()
         return DesktopLibrary(video, cleanup.pop_all())
