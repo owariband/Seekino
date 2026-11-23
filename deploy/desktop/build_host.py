@@ -1,4 +1,4 @@
-"""Build the unsigned macOS integration host with a relocatable CPython 3.12 distribution."""
+"""Build the ad-hoc signed macOS integration host with relocatable CPython 3.12."""
 import argparse
 import json
 import plistlib
@@ -99,7 +99,8 @@ def build(destination: Path, media_wheel: Path | None = None) -> None:
         subprocess.run(["clang", str(ROOT / "deploy/desktop/host.c"), "-I" + sysconfig.get_path("include"),
                         "-L" + str(frameworks), "-lpython3.12", "-Wl,-rpath,@executable_path/../Frameworks",
                         "-o", exe], check=True)
-        subprocess.run(["codesign", "--force", "--sign", "-", exe], check=True)
+        subprocess.run(["codesign", "--force", "--sign", "-", app], check=True)
+        subprocess.run(["codesign", "--verify", "--strict", app], check=True)
         app.rename(destination)
 
 
