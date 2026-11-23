@@ -44,7 +44,7 @@
 
 ## MySQL 和 SQLite 在哪里配置
 
-数据库类型写在仓库的 `config/storage.yaml`。启动 HTTP 服务取 `server`，打开 `Seekino.app` 取 `desktop`。例如，同一台 Mac 上运行 `start.sh` 会用 MySQL，双击桌面应用会打开它自己的 SQLite 文件。`SEEKINO_ENVIRONMENT` 管开发、测试和生产数据的隔离。配置草案已提交，两个启动入口读取它的代码属于 PR 1 待实现的部分。 [两套配置](../../../config/storage.yaml) · [现有环境检查](../../../server/caller/mysql.py#L118)
+按桌面版设计，`Seekino.app` 把素材信息和解析任务写入本机 SQLite，搜索使用同一资料库里的全文和向量索引。只有 HTTP 服务端连接 MySQL 和 Elasticsearch。仓库的 `config/storage.yaml` 分别用 `desktop` 和 `server` 记录这两套配置。`SEEKINO_ENVIRONMENT` 管开发、测试和生产数据的隔离。配置草案已提交，两个启动入口读取它的代码属于 PR 1 待实现的部分。 [两套配置](../../../config/storage.yaml) · [现有环境检查](../../../server/caller/mysql.py#L118)
 
 | 启动入口 | 数据库类型和地址分别在哪填 | 首版技术栈与理由 |
 | --- | --- | --- |
@@ -60,7 +60,7 @@ sqlite+pysqlite:////Users/demo/Library/Application Support/Seekino/library.sqlit
 
 **代码在哪做选择。** PR 1 拟在 `server/config/storage.py` 用现有的 PyYAML 读取上面的文件，用 Pydantic 按 `database.type` 校验字段。HTTP 入口让 `ServerSettings` 解析 MySQL 地址，交给现有 MySQL 连接工厂。桌面入口只传资料库目录，按 `desktop.database.file` 拼出库文件的绝对路径，用 `URL.create("sqlite+pysqlite", database=str(db_path))` 打开。两种连接都交给现有的 `create_session_factory(engine)`，导入和任务服务拿到相同类型的 SQLAlchemy 会话。任务锁和索引的不同写法分别见下文。 [现有 MySQL 地址读取](../../../server/config/settings.py#L261) · [连接工厂](../../../server/caller/mysql.py#L46) · [会话工厂](../../../server/database.py#L296) · [SQLAlchemy URL 构造](https://docs.sqlalchemy.org/en/20/core/engines.html#sqlalchemy.engine.URL.create)
 
-服务器从部署资源读取 `config/storage.yaml`，桌面从 `Seekino.app/Contents/Resources/config/storage.yaml` 读取同一份配置。业务代码收到的是选好的实现。服务端缺少 MySQL 地址或正式环境的地址类型不匹配时，在创建连接前报错。桌面只读 `desktop`，即使启动环境里有 `SEEKINO_DATABASE_URL`，也只打开宿主指定目录里的文件。现有 HTTP 隔离测试继续允许显式的测试 SQLite 配置。 [容器复制配置目录](../../../deploy/docker/Dockerfile#L30) · [数据库隔离用例](../../../tests/server/test_database.py#L49)
+桌面入口从 `Seekino.app/Contents/Resources/config/storage.yaml` 取 `desktop`，只打开应用管理的资料库文件。MySQL 和 ES 的连接地址只由服务端入口读取。服务端缺少 MySQL 地址或正式环境的地址类型不匹配时，在创建连接前报错。现有 HTTP 隔离测试继续允许显式的测试 SQLite 配置。 [容器复制配置目录](../../../deploy/docker/Dockerfile#L30) · [数据库隔离用例](../../../tests/server/test_database.py#L49)
 
 ## 可被宿主直接调用的入口
 
@@ -201,7 +201,7 @@ python -m pytest -q -s docs/report/server/desktop-backend/test_import_probe.py
 
 | 实验 | 固定条件和故障点 | 当前证据 |
 | --- | --- | --- |
-| 配置是否选对库 | 在同一台 Mac 启动 HTTP 和桌面两个入口。HTTP 使用隔离的 MySQL 测试库，桌面进程也故意带上该 URL，但只传入一个新的资料库目录。再试缺少服务端 URL、正式服务端误填 SQLite 地址、桌面库目录不可写 | 待接入后验证。分别核对实际数据库驱动和目标库、桌面数据库文件的绝对路径，以及配置错误能否在启动时报告 |
+| 桌面资料库与服务端存储 | 桌面测试只提供一个空的资料库目录，导入样片并搜索。另测目录不可写。服务端单独连接隔离的 MySQL 和 ES，另测缺少 MySQL 地址及正式服务端误填 SQLite 地址。 | 待接入后验证。桌面须在指定目录创建 SQLite 文件并从本地索引返回命中，全程对 MySQL 和 ES 的连接尝试均为 0。服务端须连到指定的测试库。错误配置须在对应入口报错。 |
 | 媒体 CLI vs PyAV | 同机和同源文件。样本覆盖常用 MP4/H.264、HEVC、WebM、VFR、非零起点、旋转信息、长 GOP、无/多音轨、长音频尾及损坏文件。保存源 PTS、选帧/切片起止、音轨和落盘格式。比较编码器差异时保留产物供模型输入验收 | 上述 MP4 已完成导入时长对照。包内构建、跨格式、抽帧、切片和音轨待测 |
 | 本地索引 vs ES | 固定 V2 产物、embedding 和查询范围，将两端候选输入相同评测。先标注 `video_id + [start_ms, end_ms)`，正确命中要求视频匹配、区间交并比 ≥ 0.5。对短关键词和文本/视觉查询分别记录首个正确命中的名次及 top-k 内的正例覆盖。复查失效版本和跨库干扰 | 待测 |
 | 恢复、并发与云端回归 | 在独立文件库同时领取同一任务，注入上传落位后、索引激活前后和业务提交前的进程退出。核对索引可见性、租约、库状态和额外模型计费。云端在隔离 MySQL/ES 运行现有 bootstrap、V2 队列、索引及检索用例 | 待测 |
