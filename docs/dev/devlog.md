@@ -214,7 +214,7 @@
 
 ### 方案验证
 
-本轮只核对源码和组件文档。第一项实测将用最小宿主加载包内 PyAV，并用同一带时间标记的短片对照 CLI。现有代理视频使用 `libx264`，首轮要实际生成模型可接受的代理，再定随包编解码构建。 [指标与实验计划](../design/03-product-reassessment/macos-desktop-backend-trd.md)
+2026-11-23，在 Apple Silicon 开发机上把同一段 MP4 交给现有导入服务两次，只更换读取时长的函数。原片画面长 8.008 秒，音轨长 9 秒。两次都写入 8008 毫秒，原片逐字节一致，各生成一个待解析任务。Python 在现有读法下启动了 1 次 `ffprobe`，换 PyAV 并将 `PATH` 指向空目录后，导入期间记录到 0 次 `subprocess.Popen`。下一步在最小宿主中验证包内库、切片、抽帧和音轨。现有代理视频使用 `libx264`，首轮要实际生成模型可接受的代理，再定随包编解码构建。 [复现实验](../report/server/desktop-backend/test_import_probe.py) · [指标与实验计划](../design/03-product-reassessment/macos-desktop-backend-trd.md)
 
 ### 指标对比
 

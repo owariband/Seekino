@@ -6,21 +6,24 @@
 
 **PR** [#183](https://github.com/owariband/Seekino/pull/183) · **需求** [DESKTOP-BACKEND-01](../../dev/workbench.html) · [问题记录](../../dev/problems.md#desktop-backend-01)
 
-桌面版的目标是让用户装好 `Seekino.app` 就能导入、解析和搜索视频，点击结果就跳到原片的命中位置。应用管理 SQLite、索引和媒体库。原生界面、Python 后端、解析和播放共用一个 Seekino 进程，FFmpeg 以库的形式随应用分发。
+桌面版要让用户装好 `Seekino.app` 后，导入一部片，搜“蓝色杯子”，点一下结果就能从那个镜头开始看。原片、数据库和索引由应用管理。交付时，解析和播放期间都只能有一个 Seekino 应用进程。
 
-现有 Web / 自部署版已跑通上传到回看。本机部署仍要启动 MySQL、Elasticsearch、API 和 Web。前期比较过独立 Python 服务和嵌入 Python 的 Web 视图方案，最终选定原生界面直调 Python。媒体处理参考 VLC 在进程内调用 libavcodec 的做法，先用 PyAV 验证。 [本机部署记录 B18](../../dev/problems.md) · [Local / Cloud 设计](../02-agent-harness/local-cloud-trd.md) · [VLC 解码实现](https://github.com/videolan/vlc/blob/3.0.24/modules/codec/avcodec/video.c#L1246)
+现有 Web 版已经能从上传走到回看。但今天直接调用它的启动函数，程序先要求 MySQL 和 Elasticsearch（ES），读视频时长还要启动 `ffprobe`。把 Python 源码放进 `.app` 后，这些依赖依然存在。 [本机部署记录 B18](../../dev/problems.md) · [启动时打开的服务](../../../server/caller/base.py#L47) · [读时长的命令](../../../engine/common/media_probe.py#L10)
 
-| 环节 | 现行源码与桌面接入点 |
-| --- | --- |
-| 启动与收尾 | HTTP lifespan 调用 `ApplicationRuntime` 的 start / close。`caller.init` 要求 ES，`bootstrap` 同时装配 Consumer、检索和 Chat checkpoint。桌面需要一个能独立装配所需服务的入口。 [运行时](../../../server/main.py#L27) · [Caller](../../../server/caller/base.py#L47) · [服务装配](../../../server/bootstrap.py#L195) |
-| 入库与任务 | `UploadService.complete` 校验并保存媒体，写入 V2 任务。SQLite 现用于隔离测试。生产队列用 MySQL 命名锁串行检查并发容量，用行锁保护任务的读取和更新。相关 Interval Refine 提交后才放行 Chunk INDEX。 [导入完成](../../../server/service/upload.py#L530) · [数据库检查](../../../server/caller/mysql.py#L118) · [命名锁](../../../server/utils/database.py#L12) · [领取](../../../server/mq/video_parse_queue.py#L164) · [索引放行](../../../server/mq/video_parse_queue.py#L939) |
-| 索引与搜索 | V2 Coordinator 写入并校验 Chunk 和 Event 投影，再提交 INDEX 完成状态。Event Search 在 SQL 指定的范围内找候选，按任务、内容版本和索引代数回源核对。桌面要接管发布、查询和恢复。 [索引发布](../../../server/service/video_parse_index_coordinator.py#L163) · [ES 查询](../../../server/storage/elasticsearch_events.py#L229) · [Event 搜索及回源](../../../server/service/video_event_retrieval.py#L108) |
-| 媒体与回看 | 导入时探测时长，解析时抽帧、切片和抽取音频，这些操作都会启动媒体命令。浏览器播放依赖 HTTP URL 和浏览器支持的编解码格式。媒体服务可以通过 Artifact Store 找到原片。 [时长探测](../../../engine/common/media_probe.py#L10) · [批量抽帧](../../../engine/common/frame_sampler.py#L28) · [代理视频与 PCM](../../../server/service/video_parse_media.py#L562) · [原片与播放视图](../../../server/service/media.py#L199) |
-| 打包依赖 | 项目锁定 Python 3.12，设置 `package = false`，依赖清单包含服务端和可选能力。部分 Prompt 在导入时按模块路径读取，配置默认路径也指向源码树。桌面打包要明确运行时、资源和依赖，安装到不同目录后也能加载。 [项目依赖](../../../pyproject.toml) · [Prompt 资源示例](../../../agent/video_parse_v2/edit_reference.py#L19) · [Gateway 配置路径](../../../gateway/config.py#L38) |
+**PR 1 保留一份导入、解析和搜索代码。把里面依赖具体数据库或媒体工具的操作拆出来，云端和桌面各提供自己的做法。** 按这部片从导入到回看的顺序，改动落在下面几处。
 
-**PR 1** 提供可嵌入的 Python 后端、SQLite 库、FTS5 和嵌入式向量检索，以及 PyAV 媒体实现。用可重复构建的最小 macOS 宿主验收导入自有视频、Parse V2（含 Refine）、建索引、关键词或描述搜索，最后按证据定位原片。云端 HTTP / MySQL / ES 沿用现有契约和环境隔离规则。
+| 用户这一步在做什么 | 两端共用哪段业务 | 云端怎样做 | 桌面准备怎样做 |
+| --- | --- | --- | --- |
+| 导入视频 | `UploadService.complete` 校验文件、保存原片、创建解析任务 | `ffprobe` 读时长，素材和任务记入 MySQL | PyAV 从原片读时长，素材和任务记入 SQLite。这个读时长的替换已在真实导入函数上跑过。 [调用点](../../../server/service/upload.py#L588) · [实测记录](#4-对照实验与结果分析) |
+| 开始解析 | 同一个 V2 任务执行器领取任务，决定解析哪些时间段、在哪些位置取帧 | 领取时用 MySQL 锁，取帧、切片、抽音频时启动 `ffmpeg` | 领取时由 SQLite 先取得写权。取帧、切片和抽音频交给 PyAV，在应用进程内调用 FFmpeg 动态库。 [领取](../../../server/mq/video_parse_queue.py#L164) · [抽帧](../../../server/service/video_parse_media.py#L606) |
+| 让解析出的片段可以搜索 | 从已确认的解析结果生成带版本的片段、文本和向量 | 写入 ES 并确认可查，再到 MySQL 将索引任务记为完成 | 在同一个 SQLite 事务里写片段、全文索引、向量和完成记录。中途退出，下次可重试。 [现有索引提交](../../../server/service/video_parse_index_coordinator.py#L163) |
+| 搜“蓝色杯子”，点击结果 | 先限定可查的视频，再找候选、排序，回到正式解析记录核对片段和时间 | ES 找候选。浏览器从 HTTP 地址播放原片 | FTS5 找关键词，本地向量索引找相似画面或描述。核对后取受管原片路径和起止毫秒，交给播放器。 [搜索](../../../server/service/video_event_retrieval.py#L107) · [取原片](../../../server/service/media.py#L199) |
 
-**PR 2**（分支、TRD、PR 待建）使用 PR 1 交付的调用合同、数据与资源布局、媒体库和嵌入验证。接口确定后可以先接线，等 PR 1 合入 `dev` 后，PR 2 再用合入版本完成原生窗口、进程内播放器、签名公证和干净机器安装验收。原生界面框架在 PR 2 选定。桌面 Chat、原生 Agent/MCP、云同步、历史 MySQL 库迁入及高级解析档案可另行评估。
+前期比较了独立 Python 服务、嵌入 Python 的 Web 视图和原生界面直调 Python 三种做法。已选定第三种，媒体处理参考 VLC 在进程内调用解码库的方式。 [Local / Cloud 设计](../02-agent-harness/local-cloud-trd.md) · [VLC 解码实现](https://github.com/videolan/vlc/blob/3.0.24/modules/codec/avcodec/video.c#L1246)
+
+**PR 1 的交付物**是一个能由最小 macOS 程序直接调用的 Python 后端。在这个程序里从空资料库走完导入、Parse V2（含 Refine）、关键词和描述搜索，再按命中时间从原片解出画面和音频。同时从 HTTP 入口回归云端的 MySQL / ES 链路。
+
+**PR 2 的交付物**是用户安装的 `Seekino.app`。PR 2 的分支、TRD 和 PR 待建，可在接口确定后接线。PR 1 合入 `dev` 后，PR 2 用同一套后端和媒体库接原生窗口与播放器，在干净的 Mac 上验收安装、签名公证和播放期间的实际进程。原生 UI 框架在 PR 2 选定。桌面 Chat、原生 Agent/MCP、云同步、历史 MySQL 库迁入和高级解析档案留待后续评估。
 
 # 2. 影响因素、假设与评价指标
 
@@ -39,40 +42,47 @@
 
 # 3. 改造方案与建模
 
-```mermaid
-flowchart LR
-    Mac["原生宿主 / 最小验收宿主"] --> Desktop["桌面运行时 · 进程内调用"]
-    Web["Web / CLI"] --> HTTP["现有 HTTP / CLI 装配"]
-    Desktop --> Serve["共享 Server 业务与 V2 Consumer"]
-    HTTP --> Serve
-    Serve --> Core["Engine 投影、融合和时间校验<br/>Parse V2 Harness 与 Gateway 模型调用"]
-    Serve -->|桌面装配| Embedded["SQLite · FTS5 · 向量扩展<br/>Artifact Store · PyAV"]
-    Serve -->|服务端装配| Existing["MySQL · ES<br/>Artifact Store · 现有 FFmpeg CLI"]
-```
-
 ## 可被宿主直接调用的入口
 
-LightRAG 换向量库时，改的是启动配置 `LIGHTRAG_VECTOR_STORAGE`。填 `NanoVectorDBStorage`，程序就创建本地向量库。填 `PGVectorStorage` 并配好 PostgreSQL，程序就创建 PostgreSQL 的向量实现。无论选哪一个，查片段的代码都调用 `chunks_vdb.query(...)`。Seekino 借用这个做法。一开始选好谁负责存和查，后面的导入、解析和搜索照常调用原有业务方法。 [LightRAG 启动配置](https://github.com/HKUDS/LightRAG/blob/ce3aa6bfe0982003c0684b408995945582681f05/lightrag/api/config.py#L640-L657) · [LightRAG 查片段](https://github.com/HKUDS/LightRAG/blob/ce3aa6bfe0982003c0684b408995945582681f05/lightrag/operate.py#L5872-L5874) · [源码调研](../../research/2026-11-23-lightrag-storage-switching.md)
+今天的 `init_application` 一次创建数据库连接、检索、视频任务和 Chat。PR 1 会从 `server/bootstrap.py` 提出创建视频服务的代码，放进拟新增的 `server/video_services.py`。云端仍由 HTTP 入口打开 MySQL 和 ES，再创建视频服务、Chat 和路由。桌面由拟新增的 `server/desktop/runtime.py::open_library` 打开本机资料库，直接创建同一组视频服务并启动 V2 任务执行器。桌面首次创建自己的新库，已有 MySQL 数据的迁移另行设计。 [现在的启动顺序](../../../server/main.py#L45) · [创建视频服务的代码](../../../server/bootstrap.py#L250) · [启动任务执行器](../../../server/bootstrap.py#L585)
 
-Seekino 的搜索已经有一个现成的例子。`VideoEventRetrievalService.search` 会调用 `self._store.search_vector(...)` 找候选片段。现在 `self._store` 用的是 ES。给桌面写一个从本地向量索引找候选的实现，也提供 `search_vector`，返回相同格式的片段，后面的排序、核对版本和回看仍走现有代码。 [现有搜索调用](../../../server/service/video_event_retrieval.py#L130)
+两个启动入口的区别可以用下面几行表示。函数名和参数名是拟定设计，省略了文件目录、模型连接、并发配置和索引代数等参数。索引代数也由入口传入，公共代码可以直接用它校验版本。 [现有解析配置](../../../server/bootstrap.py#L138)
 
-| 要做的事 | HTTP 版启动时选 | 桌面版启动时选 |
-| --- | --- | --- |
-| 保存视频信息、解析结果和任务 | MySQL | SQLite，需实现同样的任务领取和提交规则 |
-| 按关键词或向量找片段 | Elasticsearch | FTS5 和嵌入式向量索引 |
-| 探测时长、抽帧、切片和抽音频 | 现有 FFmpeg 命令 | PyAV，在当前进程调用包内 FFmpeg 库 |
+```python
+# 云端启动
+cloud = build_video_services(
+    sessions=mysql_sessions, write_tx=mysql_write,
+    index_writer=es_writer, event_reader=es_events, media=ffmpeg_cli,
+)
 
-**改代码的地方在启动入口。** 现在 `server/main.py::init_application` 先调用 `caller.init`，创建 MySQL 和 ES，再由 `server/bootstrap.py` 创建视频、HTTP 和 Chat 所需的服务。计划把创建视频服务的代码提到一个共用函数 `build_video_services`（拟名）。HTTP 入口沿用 `caller.init` 打开 MySQL 和 ES，把它们交给共用函数，再挂 HTTP 路由。桌面由拟新增的 `server/desktop/runtime.py::open_library` 打开 SQLite、受管库和本地索引，也交给同一个函数，启动现有 V2 Consumer。数据库连接、索引、媒体函数、文件存放位置和模型连接都在启动时传入。索引代数也由各入口提供。 [现有启动](../../../server/main.py#L45) · [MySQL/ES 初始化](../../../server/caller/base.py#L47) · [视频服务创建](../../../server/bootstrap.py#L250) · [解析配置](../../../server/bootstrap.py#L138) · [Consumer 启动接线](../../../server/bootstrap.py#L585)
+# 桌面打开资料库
+desktop = build_video_services(
+    sessions=sqlite_sessions, write_tx=sqlite_write,
+    index_writer=sqlite_writer, event_reader=sqlite_events, media=pyav_media,
+)
+```
 
-例如点击「导入」后，桌面按现有分片大小读本机文件，直接调用 `UploadService.create_session → upload_segment → complete`。哈希去重、保存原片、冻结解析配置和创建任务都复用这一条路。应用仍需为暂存和拼接预留磁盘空间。任务状态、暂停和重试照常调用对应 Service。点击搜索结果时，先核对命中的版本，再用 `MediaService.get_original` 找到原片。 [分片入库](../../../server/service/upload.py#L435) · [完成导入](../../../server/service/upload.py#L530) · [Event 搜索](../../../server/service/video_event_retrieval.py#L77) · [原片读取](../../../server/service/media.py#L199)
+以导入为例，桌面按现有分片大小读取本机文件，直接调用 `create_session → upload_segment → complete`。`complete` 先校验并保存原片，接着通过 `self._probe_duration(原片路径)` 取整数毫秒，最后写视频记录和解析任务。这个参数今天就有。建服务时让它指向 `media.probe_duration`，调用方就可以使用两种读法。暂存和拼接仍占用本机磁盘。 [分片入库](../../../server/service/upload.py#L435) · [读取时长、创建任务](../../../server/service/upload.py#L588)
 
-首轮桌面打开自己的新库。换用 SQLite 需要先写好并验证 SQLite 的任务和索引实现。已有 MySQL 资料库的迁移另行设计。
+```mermaid
+flowchart LR
+    A["UploadService.complete 保存原片"] --> B["probe_duration(原片路径)"]
+    B -->|云端| C["启动 ffprobe"]
+    B -->|桌面| D["PyAV 调用 libavformat"]
+    C --> E["返回视频时长，单位毫秒"]
+    D --> E
+    E --> F["写视频记录和 V2 任务"]
+```
+
+搜索采用 LightRAG 换向量库的做法。LightRAG 启动时按 `LIGHTRAG_VECTOR_STORAGE` 选 `NanoVectorDBStorage` 或 `PGVectorStorage`，检索代码始终调用 `chunks_vdb.query(...)`。Seekino 已经有对应的调用 `self._store.search_lexical(...)` 和 `self._store.search_vector(...)`。要改的是创建这些对象的地方，以及业务代码里还直接引用 ES 的地方。 [LightRAG 启动配置](https://github.com/HKUDS/LightRAG/blob/ce3aa6bfe0982003c0684b408995945582681f05/lightrag/api/config.py#L640-L657) · [LightRAG 查片段](https://github.com/HKUDS/LightRAG/blob/ce3aa6bfe0982003c0684b408995945582681f05/lightrag/operate.py#L5872-L5874) · [Seekino 查候选](../../../server/service/video_event_retrieval.py#L130) · [源码调研](../../research/2026-11-23-lightrag-storage-switching.md)
 
 | 宿主操作 | 由后端保证的合同 |
 | --- | --- |
 | 打开/关闭资料库 | 宿主传入数据根、资源根及生效模型配置，初始化库和任务执行器。退出时先停止接收和领取新任务，协作取消在途任务或等它完成提交，再关闭 Consumer 和存储。退出超时后，通过回收持久化租约恢复任务。 |
 | 导入与任务控制 | 应用流式导入本机文件，沿用入库校验、去重、系列排序和 V2 任务接纳，返回 video/task ID。查询进度、暂停、继续、重试和重解析仍按既有状态与版本规则执行。 |
 | 搜索和回看 | 用运行时的本机身份校验资料范围，直接调用检索服务。返回可再次校验的 source ref、video ID 和起止毫秒整数。打开结果时重新核对版本，找到受管原片，把该毫秒位置交给包内 FFmpeg 解码。 |
+
+项目使用 Python 3.12，`pyproject.toml` 目前设置了 `package = false`，依赖清单也包含 HTTP 和数据库客户端。桌面构建要收齐运行时、按模块路径读取的 Prompt 和模型配置，明确区分包内资源与应用可写目录。用省去云端数据库驱动、没有 MySQL / ES 服务的环境打开桌面资料库，检查是否还有公共模块在导入时加载云端依赖。 [项目依赖](../../../pyproject.toml) · [Prompt 读取](../../../agent/video_parse_v2/edit_reference.py#L19) · [配置路径](../../../gateway/config.py#L38)
 
 CPython 3.12 随宿主进程启动和退出。用最小原生可执行文件通过 CPython C API 加载包内解释器，并按指定路径加载资源。UI 主线程只发起调用和接收结果，长任务由现有 Consumer 和线程执行。错误在跨 ABI 传递时转换。 [CPython 嵌入文档](https://docs.python.org/3.12/extending/embedding.html)
 
@@ -84,7 +94,9 @@ CPython 3.12 随宿主进程启动和退出。用最小原生可执行文件通�
 
 首版导入时，先在同一磁盘暂存并校验副本，再原子移动到受管库，然后提交 V2 任务。文件落位和数据库分别提交，沿用可重试的完成记录和清理规则，覆盖只完成文件落位、重复导入、中断和磁盘满。桌面从新库起步，维护独立的 Schema 版本，迁移前做一致性备份，升级时保留数据目录。 [现有导入提交](../../../server/service/upload.py#L530) · [Artifact Store 合同](../../../server/README.md#L366)
 
-**改写事务的取得方式，复用 V2 调度和提交规则。** `MySqlVideoParseQueue.claim_video` 用 `serialized_transaction` 的命名锁保护并发容量，再用行锁领取；Chunk / Refine 的领取也锁定任务行。现有 SQLite 测试分支只开普通事务。生产桌面需要在第一次读取判断条件前取得 SQLite 写事务。 [领取视频](../../../server/mq/video_parse_queue.py#L164) · [领取 Chunk](../../../server/mq/video_parse_queue.py#L239) · [领取 Refine](../../../server/mq/video_parse_queue.py#L320) · [现有事务实现](../../../server/utils/database.py#L12)
+`UploadRepository` 和解析持久化服务都已经接收 SQLAlchemy 的 `session_factory`。普通的视频记录、任务记录和查询继续用这些类。桌面新增打开本机 SQLite 文件和迁移表的入口。现有 `caller.mysql` 只允许测试使用 SQLite，云端仍走它原有的环境校验。 [现有连接和业务对象](../../../server/bootstrap.py#L250) · [数据库环境校验](../../../server/caller/mysql.py#L118)
+
+**领取任务要改锁的用法。** 今天 `VideoParseConsumer` 直接依赖 `MySqlVideoParseQueue`。让它和解析服务接收共用的 V2 队列，把数据库写事务交给启动入口提供。队列保留挑选任务、续约、重试和拒绝过期结果的规则。MySQL 仍先用命名锁核对容量，再锁定要领取的记录。SQLite 要在读取决定归属的状态前取得写权。两端都向执行器返回原有的 `VideoParseLease`。 [执行器领取任务](../../../server/mq/video_parse_consumer.py#L259) · [领取视频](../../../server/mq/video_parse_queue.py#L164) · [领取 Chunk](../../../server/mq/video_parse_queue.py#L239) · [领取 Refine](../../../server/mq/video_parse_queue.py#L320) · [现有事务实现](../../../server/utils/database.py#L12)
 
 - 在 `server/utils/database.py` 提供由宿主选择的写事务入口。MySQL 领容量时继续用现有命名锁和行锁，普通写入沿用已有事务。SQLite 在同一连接执行 `BEGIN IMMEDIATE` 后才读状态。复用队列的候选顺序、容量判断及租约更新代码。纯读取照常开读事务。
 - 以 `claim_video` 为例，取得写事务后重新读取候选任务，核对到期时间、暂停状态、现有租约与剩余容量，成功时一起写入容量占用、新 owner、递增的 lease version 和过期时间。事务提交成功才把 lease 交给 Consumer。有调度通知的入口继续在提交后发送。领 Chunk、Refine 和 INDEX 同样在写事务内复核阶段和父任务条件。
@@ -94,14 +106,18 @@ CPython 3.12 随宿主进程启动和退出。用最小原生可执行文件通�
 
 ## 索引发布、检索和证据
 
-桌面主搜索以 Event 为粒度，SQLite 保存业务事实与可重建的 Chunk / Event 投影。**在 `VideoParseIndexCoordinator.index_chunk` 拆开生成投影和发布投影。** 继续用当前 INDEX lease 加载冻结的 Chunk 快照和 Refine 结果，复用 `_build_document`、`_index_events` 中的生成逻辑以及现有 embedding 缓存。生成阶段在写事务外产出 `VideoChunkIndexDocument`、`EventIndexDocument` 和对应版本，发布阶段负责写入并完成 INDEX。 [现有 Coordinator](../../../server/service/video_parse_index_coordinator.py#L163) · [Event 发布](../../../server/service/video_parse_index_coordinator.py#L389) · [表示缓存](../../../server/service/video_parse_index_coordinator.py#L621)
+桌面主搜索以 Event 为粒度，SQLite 保存业务事实与可重建的 Chunk / Event 投影。**在生成检索记录之后，把“发布这一版索引”交给一个单独的方法。** 今天解析任务每次执行 INDEX，都由 `VideoParseRuntimeService._build_index_coordinator` 把 `self._elasticsearch_store` 交给 Coordinator。计划把启动时选好的发布对象传到这个调用点。共用代码交出当前任务的租约、Chunk、Event 和版本，拟由 `index_writer.publish(lease, chunk, events)` 接收这一版数据，让它可查，并在成功时把任务记为完成。ES 的 `refresh`、可见性检查和异常重试放进云端实现。 [解析任务真正创建 Coordinator 的位置](../../../server/service/video_parse.py#L2244) · [现有写入与检查](../../../server/service/video_parse_index_coordinator.py#L216)
+
+继续用当前 INDEX lease 加载冻结的 Chunk 快照和 Refine 结果，复用 `_build_document`、`_index_events` 中的生成逻辑以及现有 embedding 缓存。生成阶段在写事务外产出 `VideoChunkIndexDocument`、`EventIndexDocument` 和对应版本，发布阶段负责写入并完成 INDEX。 [现有 Coordinator](../../../server/service/video_parse_index_coordinator.py#L163) · [Event 发布](../../../server/service/video_parse_index_coordinator.py#L389) · [表示缓存](../../../server/service/video_parse_index_coordinator.py#L621)
 
 - **Cloud 发布。** 继续用 ES 的版本检查、`bulk_upsert` 和 `verify_ready`，核对 Event 集合和回执后，再调用 MySQL 中的 `VideoParsePersistenceService.complete_chunk_indexing`。ES 重试和可见性处理留在这一实现内。
 - **桌面发布。** 取得 SQLite 写事务后，重新核对 INDEX lease、任务状态、内容版本和索引代数，再写入 Chunk、Event、FTS5 和向量投影。将已写入的 Event 集合与回执核对，在同一 session 调用 `server/service/video_parse_content.py` 现有的 `save_index_embeddings` 和 `complete_chunk_indexing` 写回执、核对租约并推进状态。任一步失败就一起回滚，提交后才通知。这个落点复用已接受 session 的提交逻辑，桌面可以在一个事务里完成发布。 [当前提交入口](../../../server/service/video_parse_persistence.py#L997) · [现有版本、回执与状态校验](../../../server/service/video_parse_content.py#L584)
 
 `UploadService` 校验模型与索引合同，`UploadService` 和 `ParseJobService` 的删除路径会清理投影。接入新实现时，一并使用本地合同校验和按任务删除后的校验。重建沿用落盘的有效 embedding，按任务、Chunk、Event、内容版本及代数写入；切换代数前核对覆盖率和编码合同。需要重算时由任务流程记录计算和模型用量。 [入库合同检查](../../../server/service/upload.py#L677) · [任务删除](../../../server/service/job.py#L102)
 
-**搜索只换候选读取。** `VideoEventRetrievalService.search` 已先从 SQL 得到当前已完成任务及就绪版本，再通过 `search_lexical` / `search_vector` 取候选。桌面实现提供本地索引标识和 `bind_contract` 校验，再用 FTS5 和向量索引返回同样的 `RawEventHit`。融合、版本核验和回源继续由现有 Service 执行。 [实际搜索入口](../../../server/service/video_event_retrieval.py#L107) · [候选数据结构](../../../engine/rag/retrieval/contracts.py#L409)
+**搜索服务接收一个能查候选的对象。** 现在 `VideoEventRetrievalService` 的构造参数和创建它的工厂都写着 `store: ElasticsearchVideoEventStore`，公共错误处理也直接导入了 ES 的异常类。把参数改成 Python `Protocol`，列出业务实际使用的索引名、向量维度、`bind_contract`、`search_lexical` 和 `search_vector`。ES 类实现这些方法，并在内部把 ES 错误转成业务可识别的错误。桌面另写一个实现，用 FTS5 和本地向量表返回同样的 `RawEventHit`。 [构造参数](../../../server/service/video_event_retrieval.py#L31) · [创建搜索服务](../../../server/common/retrieval.py#L85) · [错误处理](../../../server/error/retrieval.py#L6)
+
+例如搜“蓝色杯子”，共用的 `search` 先查清允许搜索的任务和版本，把范围交给相应的索引。索引返回候选 Event、所属片段和版本。随后共用代码合并候选，回到正式的解析时间线，核对这个 Event，再给出原片的起止毫秒。两端可以共用这套权限检查和排序，也能拒绝重解析前留下的旧命中。 [实际搜索入口](../../../server/service/video_event_retrieval.py#L107) · [候选数据结构](../../../engine/rag/retrieval/contracts.py#L409)
 
 1. **关键词。** 比较 FTS5 中文分词与 trigram，按 Event 词法字段建索引，返回命中字段和原文。用两字人名等短词试验分词，或在已授权范围内做受限的精确匹配。验证简繁、混合标点和英文词边界。
 2. **相似检索。** 优先试 `sqlite-vec`，保留文本和视觉的编码器身份、维度、输入模式、指令及距离合同。先在 SQL 中限定资料和版本，再取各通道的 top-k。若虚表无法支持动态范围过滤，在同一库上试验带范围条件的精确距离查询，按质量和延迟选型。
@@ -109,7 +125,9 @@ CPython 3.12 随宿主进程启动和退出。用最小原生可执行文件通�
 
 ## 进程内媒体和包内运行时
 
-**调用链为 `VideoParseMediaService → PyAV → 包内 FFmpeg 动态库`。** PyAV 的 `av.open`、解码、编码和重采样在宿主进程里运行。Server 继续决定读哪个原片或代理、如何切窗、输出放在哪个租约目录，以及何时校验租约。在 `engine/common/` 统一探测、批量抽帧、单帧、切片和 WAV 提取的签名。桌面将 PyAV 实现放在 `engine/common/pyav_media.py`（拟新增），服务端沿用现有 CLI 实现。装配时选好其中一组，传给 `VideoParseMediaService`。让 `_materialize_video`、`_materialize_audio`、`_materialize_frame` 分别调用切片、PCM 和单帧操作。让 `prepare_episode` 用批量抽帧操作，`prepare_speaker_audio` 用带起止时间的 PCM 操作。入库已有 `probe_duration` 参数，直接传桌面版探测。 [现有媒体构造参数](../../../server/service/video_parse_media.py#L69) · [入库探测注入](../../../server/service/upload.py#L62) · [PyAV 的 FFmpeg 依赖](https://pyav.basswood.io/docs/stable/overview/installation.html#bring-your-own-ffmpeg)
+以取一帧为例，今天 `_materialize_frame` 在解析服务里拼出 `ffmpeg -ss … -frames:v 1 …`，最后通过 `subprocess.run` 启动程序。准备把这个调用点改成 `self._media.frame_at(video, output, at_ms=at_seconds, max_height=max_height)`（拟定接口）。云端的 `frame_at` 封装现有命令。桌面的 `frame_at` 用 `av.open` 打开同一文件，定位到目标之前的关键帧，再解码到目标画面，缩放并保存 JPEG。PyAV 在 Seekino 进程里调用包内 FFmpeg 的解封装、解码和缩放库。 [现有命令](../../../server/service/video_parse_media.py#L606) · [启动子进程](../../../server/service/video_parse_media.py#L648) · [PyAV 定位与解码](https://pyav.basswood.io/docs/stable/api/container.html#av.container.InputContainer.seek)
+
+同样拆出读时长、批量抽帧、切片和提取 WAV 的操作，拟将桌面实现放在 `engine/common/pyav_media.py`。`VideoParseMediaService` 继续决定读原片还是代理、取哪个时间窗、租约是否有效、产物放到哪里。`prepare_episode` 调用批量抽帧，`prepare_speaker_audio` 调用带起止时间的音频提取，上传和解析共用同一个时长读取函数。 [现有媒体构造参数](../../../server/service/video_parse_media.py#L69) · [入库探测注入](../../../server/service/upload.py#L62) · [PyAV 的 FFmpeg 依赖](https://pyav.basswood.io/docs/stable/overview/installation.html#bring-your-own-ffmpeg)
 
 | 操作 | 现有入口 | 桌面调用及要保留的行为 |
 | --- | --- | --- |
@@ -130,25 +148,47 @@ PyAV 指定流时，`seek` 的偏移要先将原片毫秒和时间原点换算�
 
 ## 实施次序
 
-| 顺序 | 交付与推进依据 |
-| --- | --- |
-| 1. 最小嵌入与媒体试验 | 先做 Apple Silicon 最小宿主，从包内加载 CPython、SQLite/FTS5、候选向量扩展和 PyAV。用带标记短片验证 probe、seek、切片及 PCM，触发一次真实编码。用同条件的 CLI 输出对照。包内加载、编码可用性或时间不达标时，先解决这一环节。 |
-| 2. 运行时与 SQLite | 先提取共用视频装配，用现有 MySQL / ES / CLI 配置跑 HTTP 回归。再接 SQLite Schema、写事务、受管导入和 Consumer 恢复，确定桌面调用入口。用固定模型响应运行正式 V2 Prepare/Understanding/Refine，先完成并发和强退校验。 |
-| 3. 发布、搜索、回看 | 接上 SQLite 原子发布与 FTS5、向量召回，将媒体实现切到包内 PyAV，用固定模型响应跑完整主链。加入旧版本、索引重建、低覆盖与文件丢失用例，再做 ES 同数据对照。 |
-| 4. 安装前交接 | 交付最小宿主的可重复构建入口、运行时和资源清单、库路径与升级合同、媒体能力和实测记录。清理环境重跑全链，并补云端既有入口回归。PR 2 在此产物上接 UI、播放和安装包，优先复用同一套已锁定 ABI 的 libav 库。 |
+| 顺序 | 改哪一步 | 怎样知道可以做下一步 |
+| --- | --- | --- |
+| 1. 先试包内媒体库 | 在 Apple Silicon 最小宿主中加载包内 CPython、PyAV、SQLite/FTS5 和候选向量扩展。用带时间标记的短片读时长、抽帧、切片和提取 PCM。 | 与同机 CLI 对比时间和音轨，实际编码一次代理视频。动态库加载或时间不对，先在这里处理。 |
+| 2. 提取两端共用的视频服务 | 从现有启动代码提取 `build_video_services`，给任务队列传入写事务，把索引发布、候选查询和媒体调用改为接收实现。先把现有 MySQL、ES 和 CLI 接回这些位置。 | 从现有 HTTP 入口跑导入、任务、索引和搜索回归，确认拆分后云端仍走通。 |
+| 3. 接 SQLite 和 PyAV | 桌面直接导入原片并建立任务，在 SQLite 写事务中领取和提交，解析时使用包内 PyAV。用固定模型响应走 Prepare、Understanding 和 Refine。 | 同一任务由两个连接争抢时只有一方领到。强退出再开能恢复，旧任务不能覆盖新结果。抽帧和音频仍对得上原片。 |
+| 4. 用同一搜索服务接本地索引 | 在 SQLite 一次提交片段、FTS5、向量和任务状态。把本地候选交回现有搜索代码，让命中可以定位原片。 | 两端用同一批解析结果对照命中。模拟提交中断、旧版本、索引重建、覆盖不足和原片缺失，逐项核对结果。 |
+| 5. 交给原生桌面 | 移动最小宿主目录，在清理过的环境跑完整流程。交付可重复构建入口、锁定的媒体库、资源清单、库路径和升级办法。 | 记录宿主从启动到退出的进程事件及实际加载的库。PR 2 用这套后端接窗口和播放器，在干净 Mac 上安装验收。 |
 
 # 4. 对照实验与结果分析
 
+## 导入服务换用 PyAV 的实测结果
+
+2026-11-23，在 Apple Silicon 开发机（macOS 26.5.1、Python 3.12.16、PyAV 19.0.2、FFmpeg CLI 9.0.2）用 `f556027b` 版本的业务代码做了对照。先生成一段 MP4，画面长 8.008 秒，音轨长 9 秒。把同一个文件分别导入两个隔离的内存 SQLite 测试库。两次都调用 `UploadService.create_session → upload_segment → complete`，给 `probe_duration` 传不同的函数。第二次还把 `PATH` 指向空目录。
+
+| 交给导入服务的方法 | 写入的视频时长 | 原片及任务 | 导入期间观测到的 Python `subprocess.Popen` 调用 |
+| --- | ---: | --- | --- |
+| 项目现用的 `ffprobe` 读法 | 8008 毫秒 | 原片逐字节一致，1 个待解析任务 | `ffprobe` 1 次 |
+| 通过 `av.open` 读视频流时长 | 8008 毫秒 | 原片逐字节一致，1 个待解析任务 | 0 次 |
+
+这次证明在导入函数里换掉读时长的方法，能保住这段 MP4 的时长、原片和任务记录。试验用开发机已安装的库，计数范围是 Python 的 `Popen` 调用。其他格式、切片和音轨，以及整个应用的操作系统进程记录，仍按下表验证。 [可复跑的实验](../../report/server/desktop-backend/test_import_probe.py)
+
+在已装上述 PyAV 和 FFmpeg 的项目 Python 环境中，从仓库根目录可重跑这组对照。
+
+```bash
+python -m pytest -q -s docs/report/server/desktop-backend/test_import_probe.py
+```
+
+另复跑了两个现有搜索用例和一个现有 CLI 媒体用例，3 个均通过。搜索用例给同一服务传入测试用的索引和模型，检查“蓝色杯子”的多个候选能合并并找到时间，也检查纯关键词查询不会调用向量模型。真实 ES 与本地索引的命中差异仍待测。 [搜索用例](../../../tests/server/test_video_event_retrieval.py#L116) · [纯关键词](../../../tests/server/test_video_event_retrieval.py#L175) · [CLI 样片](../../../tests/server/test_video_parse_media.py#L629)
+
+## 其余对照实验
+
 | 实验 | 固定条件和故障点 | 当前证据 |
 | --- | --- | --- |
-| 媒体 CLI vs PyAV | 同机和同源文件。样本覆盖常用 MP4/H.264、HEVC、WebM、VFR、非零起点、旋转信息、长 GOP、无/多音轨、长音频尾及损坏文件。保存源 PTS、选帧/切片起止、音轨和落盘格式。比较编码器差异时保留产物供模型输入验收 | 待测 |
+| 媒体 CLI vs PyAV | 同机和同源文件。样本覆盖常用 MP4/H.264、HEVC、WebM、VFR、非零起点、旋转信息、长 GOP、无/多音轨、长音频尾及损坏文件。保存源 PTS、选帧/切片起止、音轨和落盘格式。比较编码器差异时保留产物供模型输入验收 | 上述 MP4 已完成导入时长对照。包内构建、跨格式、抽帧、切片和音轨待测 |
 | 本地索引 vs ES | 固定 V2 产物、embedding 和查询范围，将两端候选输入相同评测。先标注 `video_id + [start_ms, end_ms)`，正确命中要求视频匹配、区间交并比 ≥ 0.5。对短关键词和文本/视觉查询分别记录首个正确命中的名次及 top-k 内的正例覆盖。复查失效版本和跨库干扰 | 待测 |
 | 恢复、并发与云端回归 | 在独立文件库同时领取同一任务，注入上传落位后、索引激活前后和业务提交前的进程退出。核对索引可见性、租约、库状态和额外模型计费。云端在隔离 MySQL/ES 运行现有 bootstrap、V2 队列、索引及检索用例 | 待测 |
 | 宿主真实调用 | 移动最小运行时目录，清理开发机 `PATH`、`PYTHONPATH` 等环境变量，以宿主从头执行。采集实际 dylib 路径以及从启动到退出的子进程事件，覆盖短命的 ffmpeg/ffprobe 和提供方辅助命令。另测断网后已有原片定位及词法搜索 | 待测 |
 
 媒体对照复用已有的批量选帧、长音频尾和窗口重叠用例，同输入分别走 CLI 和 PyAV。嵌入宿主必须从业务入口触发时长探测、带代理的 Prepare、全片或 Chunk WAV、Event 取帧和索引所需切片，再用命中结果定位原片。在清理 PATH 的环境记录这些调用与进程事件，能覆盖只测 PyAV 能否导入时遗漏的 CLI 路径。 [批量抽帧用例](../../../tests/engine/test_frame_sampler.py#L85) · [实际媒体用例](../../../tests/server/test_video_parse_media.py#L629)
 
-报告计划放在 `docs/report/server/desktop-backend/`。保存 Git 提交、系统和架构、依赖与构建标识、模型和配置指纹、样本清单、命令、原始结果及失败复现。用固定模型响应回放验证任务调度和媒体调用，再用真实模型核对它能否接收转码产物、完整链路的业务效果和实际费用。
+本轮导入对照的复现用例已放在 `docs/report/server/desktop-backend/`。后续实验沿用这一目录。保存 Git 提交、系统和架构、依赖与构建标识、模型和配置指纹、样本清单、命令、原始结果及失败复现。用固定模型响应回放验证任务调度和媒体调用，再用真实模型核对它能否接收转码产物、完整链路的业务效果和实际费用。
 
 # 5. 试点验证与方案取舍
 
@@ -160,7 +200,7 @@ PR 2 在无开发环境的目标 Mac 上安装并首次启动 `Seekino.app`。�
 
 # 6. 结果验收与闭环
 
-已核对共用视频装配的提取位置、SQLite 写事务覆盖范围、索引提交函数，以及每项媒体操作的 CLI 入口。上面描述的是 PR 1 的改造设计，代码实现与实测待执行。
+已从真实导入函数验证了一个替换点。同一 MP4 分别用 `ffprobe` 和 PyAV 读时长，两次都保存了原片和一个待解析任务。SQLite 生产事务、本地索引读写、其余媒体操作和桌面启动入口仍待实现。下一步在最小 macOS 宿主中从包内加载 PyAV，实际抽帧、切片并提取音轨，按第 2 节口径与 CLI 对照。
 
 - **PR 1 验收**由后端交付方在实际嵌入宿主中执行第 2 节的用例。先用包内 PyAV 处理带时间标记的样片，完成一次实际编码的切片，再确定媒体构建方案。SQLite 并发、FTS5 短词、向量范围、云端回归和性能目标仍待验证。
 - **产品验收**由桌面交付方负责，以 PR 2 在干净 Mac 上的实测为准。安装包的单进程行为、真实播放、签名、公证、最低 macOS 版本和 Intel 支持范围待确认。

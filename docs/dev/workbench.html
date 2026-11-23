@@ -6143,7 +6143,7 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "priority": "unset",
    "description": "让原生宿主直接调用 Python V2 后端，用应用管理的 SQLite、检索索引和媒体库完成导入、解析、搜索及按证据定位原片。媒体操作通过进程内 FFmpeg 库执行。",
    "next": "在 Apple Silicon 最小宿主上加载包内 CPython、SQLite/FTS5、向量扩展和 PyAV。用带时间标记的短片对照现有 CLI，并实际生成一次供解析模型使用的代理切片。",
-   "verification": "已核对 dev 的启动、任务、索引和媒体源码，并创建 TRD 草稿 PR。嵌入宿主、PyAV 兼容性、SQLite 并发恢复和检索对照均待测。最终安装及播放验收由后续桌面 PR 完成。",
+   "verification": "开发机用同一 MP4 从导入入口分别调用 ffprobe 和 PyAV，均写入 8008 毫秒并创建一个待解析任务。包内 PyAV 的媒体兼容性、SQLite 并发恢复和本地搜索仍待验证。安装与播放由后续桌面 PR 验收。",
    "updatedAt": "2026-11-23",
    "tags": [
     "macOS",
