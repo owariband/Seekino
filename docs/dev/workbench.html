@@ -6172,6 +6172,45 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "url": "https://github.com/owariband/Seekino/blob/feat/macos-desktop-backend/docs/dev/problems.md#desktop-backend-01"
     }
    ]
+  },
+  {
+   "id": "DESKTOP-APP-01",
+   "title": "macOS 原生应用与安装包",
+   "category": "platform",
+   "type": "requirement",
+   "status": "verifying",
+   "priority": "unset",
+   "description": "SwiftUI 原生界面在单一 Seekino 进程中完成视频导入、V2、搜索及回看。交付 Apple Silicon 的 App 与 DMG。",
+   "next": "用户用实际素材与模型验收，另在有 Developer ID 的构建环境公证并验证干净 Mac。",
+   "verification": "固定模型回放通过。原生首个画面和音轨均为 300 ms，系统观察为 0 次子进程创建。DMG 已校验、挂载和复制，重开独立资料库通过。",
+   "updatedAt": "2026-11-23",
+   "tags": [
+    "macOS",
+    "SwiftUI",
+    "FFmpeg"
+   ],
+   "related": [
+    "DESKTOP-BACKEND-01",
+    "MOD-PLATFORM"
+   ],
+   "branch": "feat/macos-desktop-app",
+   "links": [
+    {
+     "label": "PR #184",
+     "kind": "pr",
+     "url": "https://github.com/owariband/Seekino/pull/184"
+    },
+    {
+     "label": "桌面 TRD",
+     "kind": "trd",
+     "url": "https://github.com/owariband/Seekino/blob/feat/macos-desktop-app/docs/design/03-product-reassessment/macos-desktop-app-trd.md"
+    },
+    {
+     "label": "安装候选实测",
+     "kind": "source",
+     "url": "https://github.com/owariband/Seekino/blob/feat/macos-desktop-app/docs/report/desktop/native/2026-11-23-acceptance.md"
+    }
+   ]
   }
  ]
 }</script>

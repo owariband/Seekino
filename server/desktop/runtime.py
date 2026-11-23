@@ -1,7 +1,7 @@
 """Python entry point used by the native host. All operations use one local library."""
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from contextlib import ExitStack
 from dataclasses import dataclass
 from datetime import timedelta
@@ -41,6 +41,7 @@ class PlaybackRange:
     path: Path
     start_ms: int
     end_ms: int
+    duration_ms: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,8 +115,38 @@ class DesktopLibrary:
                                                offset=offset, limit=limit)
 
     @_while_open
+    def series(self, series_id: str):
+        return self._video.library.get_series(series_id, tenant_id=DEFAULT_LOCAL_TENANT_ID)
+
+    @_while_open
+    def list_tasks(self, *, offset: int = 0, limit: int = 100):
+        return self._video.jobs.list_video_parse_tasks(
+            tenant_id=DEFAULT_LOCAL_TENANT_ID, offset=offset, limit=limit,
+        )
+
+    @_while_open
+    def video(self, video_id: str):
+        return self._video.library.get_video(video_id, tenant_id=DEFAULT_LOCAL_TENANT_ID)
+
+    @_while_open
+    def thumbnail(self, video):
+        image = self._video.media.thumbnail_view(video.video_id, tenant_id=DEFAULT_LOCAL_TENANT_ID, video=video)
+        if image is None:
+            return None
+        try:
+            return self._video.media.get_image(image.image_id, tenant_id=DEFAULT_LOCAL_TENANT_ID).path
+        except FileNotFoundError:
+            return None
+
+    @_while_open
+    def open_video(self, video_id: str) -> PlaybackRange:
+        video = self._video.library.get_video(video_id, tenant_id=DEFAULT_LOCAL_TENANT_ID)
+        original = self._video.media.get_original(video_id, tenant_id=DEFAULT_LOCAL_TENANT_ID, video=video)
+        return PlaybackRange(original.path, 0, video.duration_seconds, video.duration_seconds)
+
+    @_while_open
     def import_file(self, path: Path, *, series_id: str, episode_order: int,
-                    idempotency_key: str):
+                    idempotency_key: str, on_progress: Callable[[int, int], None] | None = None):
         """Use a stable request key to retry an interrupted or completed upload."""
         path = Path(path)
         types = {".mp4": "video/mp4", ".mov": "video/quicktime", ".avi": "video/x-msvideo"}
@@ -136,6 +167,9 @@ class DesktopLibrary:
             )
             if state.status != "COMPLETED":
                 detail = uploads.get_detail(state.upload_session_id, tenant_id=DEFAULT_LOCAL_TENANT_ID)
+                transferred = detail.session.uploaded_size_bytes
+                if on_progress:
+                    on_progress(transferred, size)
                 for number in detail.missing_segment_numbers:
                     start = number * state.preferred_segment_size_bytes
                     source.seek(start)
@@ -143,6 +177,9 @@ class DesktopLibrary:
                     uploads.upload_segment(state.upload_session_id, number, data, tenant_id=DEFAULT_LOCAL_TENANT_ID,
                                            checksum_sha256=sha256(data).hexdigest(), start_byte=start,
                                            end_byte_exclusive=start + len(data), total_size_bytes=size)
+                    if on_progress:
+                        transferred += len(data)
+                        on_progress(transferred, size)
         return uploads.complete(state.upload_session_id, tenant_id=DEFAULT_LOCAL_TENANT_ID)
 
     @_while_open
@@ -198,7 +235,7 @@ class DesktopLibrary:
         evidence = ref.resolve(self._video.persistence, tenant_id=DEFAULT_LOCAL_TENANT_ID)
         event = evidence.all_time_events[ref.timeline_index]
         original = self._video.media.get_original(evidence.video_id, tenant_id=DEFAULT_LOCAL_TENANT_ID, video=evidence)
-        return PlaybackRange(original.path, event["start_seconds"], event["end_seconds"])
+        return PlaybackRange(original.path, event["start_seconds"], event["end_seconds"], evidence.duration_seconds)
 
 
 def open_library(library_root: Path | str) -> DesktopLibrary:

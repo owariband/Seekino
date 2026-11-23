@@ -2978,3 +2978,7 @@ micrograd v5 共 146 块，整集 90 分 04.884 秒。调度反复锁取候选�
 2026-11-23。用户安装 `Seekino.app` 后需要直接使用私有素材库。现有 V2 启动依赖 MySQL 和 Elasticsearch，任务依赖数据库锁，媒体处理依赖 FFmpeg 命令。后端验收覆盖宿主直接导入、解析、搜索并定位原片，正常退出和崩溃后的任务恢复，以及云端同链路回归。最终单进程播放及无开发环境安装由后续原生桌面 PR 验收。 [TRD](../design/03-product-reassessment/macos-desktop-backend-trd.md) · [决策记录](devlog.md#devlog-macos-desktop-backend-20261123) · [工作台](workbench.html) · [PR #183](https://github.com/owariband/Seekino/pull/183)
 
 **2026-11-23 补充验证。** 独立原生宿主在本机资料库完成实际解析和索引，固定模型响应下两种搜索均定位至原片 [300, 1200) 毫秒。macOS 记录到 0 次 fork/exec。空 MySQL 和 ES 上的 HTTP 上传、搜索和片段下载也已回归。真实素材命中率和商业桌面包验收仍待完成。[后端证据](../report/server/desktop-backend/embedded-host.md)
+
+### DESKTOP-APP-01 · 缺少原生窗口和播放器，嵌入后端无法作为 App 交付
+
+2026-11-23。PR #183 提供了可随包移动的后端和按时间解码原片的接口。桌面用户需要双击安装后完成导入、解析、搜索和连续回看。在同一台 Apple Silicon Mac 上，PR #184 已用固定模型回放走通桌面入口，验证了真实 App 的首帧和音轨时间、进程及 DMG 复制后重开。实际模型和签名公证后的干净 Mac 验收仍需完成。 [TRD](../design/03-product-reassessment/macos-desktop-app-trd.md) · [报告](../report/desktop/native/2026-11-23-acceptance.md) · [PR #184](https://github.com/owariband/Seekino/pull/184)

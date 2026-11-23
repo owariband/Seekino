@@ -40,3 +40,17 @@ with open_library(root) as library:
 `open_library` 只接收目录。首次创建 `library.sqlite3`，同库的第二个宿主会收到占用错误。原片放在资料库的 `media/` 下。宿主应保持库打开以推进任务，退出时调用 `close()`。任务页可用 `set_paused`、`retry_parse`、`reparse`，按版本防止覆盖刚发生的变更。`list_series` 可列出已有系列，`delete_import` 会清理受管原片和派生索引。索引缺失时，`rebuild_index(task_id)` 使用已冻结的合同重建。
 
 解析和描述搜索连接已配置的模型服务。开发者可把 SDK 模型配置放在资料库的 `models.yaml`，未提供时使用随包的 API 配置示例，密钥从模型配置指定的环境变量读取。数据库地址由宿主固定。服务端部署仍按 Docker 配置设置 MySQL、ES、鉴权和资源范围。[模型格式](../../deploy/cloud/models.example.yaml) · [云端部署](../cloud/README.md)
+
+## 构建 Seekino.app 与 DMG
+
+原生产品在 `desktop/native/`。Apple Silicon 上使用 Command Line Tools 或 Xcode、CPython 3.12、uv 和本页的自建媒体 wheel。目标系统从 macOS 15 起。随包的运行时按 `uv.lock` 装入，动态库和 Python 扩展位于 `Contents/Frameworks`，Python import 路径由包内相对软链接保留。
+
+```sh
+uv run --locked --python 3.12.16 python deploy/desktop/build_app.py /tmp/Seekino.app --media-wheel "$stage"/wheels/av-*.whl
+uv run --locked --python 3.12.16 python deploy/desktop/verify_app.py /tmp/Seekino.app
+python3 deploy/desktop/build_dmg.py /tmp/Seekino.app /tmp/Seekino-macos-arm64.dmg
+```
+
+双击 DMG，将 Seekino 拖进 Applications 后打开。在设置填入默认模型组合的火山方舟和 DeepSeek API Key，选取或拖入 MP4、MOV、AVI。解析任务页显示当前阶段、暂停与重试。建库完成后切换关键词或描述搜索，点击结果从原片对应时间播放。`⌘O` 导入，`⌘K` 聚焦搜索，`⌘,` 打开设置。替换程序时资料库仍在 `~/Library/Application Support/Seekino/`。程序内的模型凭据由 macOS 钥匙串持有。
+
+默认命令生成供本机验收的 ad-hoc 签名包。正式分发时，构建 App 增加 `--identity`，构建 DMG 增加同一 `--identity` 与 `--notary-profile`。以签名公证成功的实际 DMG 做干净机器安装验收。媒体 wheel 保留 FFmpeg 许可和构建清单，随正式发布提供该清单对应的 FFmpeg 源码。 [Apple 分发说明](https://developer.apple.com/documentation/xcode/packaging-mac-software-for-distribution) · [媒体构建记录](../../docs/report/server/desktop-backend/media-build.md)
