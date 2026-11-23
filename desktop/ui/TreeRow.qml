@@ -5,6 +5,7 @@ import QtQuick.Layouts
 Button {
     id: rowButton
     property bool branch: false
+    property bool hasDisclosure: false
     property bool expanded: false
     property bool current: false
     property int count: 0
@@ -13,11 +14,11 @@ Button {
     hoverEnabled: true
     Accessible.name: text
     Keys.onLeftPressed: event => {
-        if (branch && expanded) disclose()
+        if (hasDisclosure && expanded) disclose()
         else event.accepted = false
     }
     Keys.onRightPressed: event => {
-        if (branch && !expanded) disclose()
+        if (hasDisclosure && !expanded) disclose()
         else event.accepted = false
     }
     Keys.onUpPressed: focusNextPrevChild(false)
@@ -34,21 +35,28 @@ Button {
     contentItem: RowLayout {
         spacing: 5
         Item {
-            Layout.preferredWidth: rowButton.branch ? 12 : 22
+            Layout.preferredWidth: rowButton.hasDisclosure ? 18 : rowButton.branch ? 0 : 24
             Layout.preferredHeight: 20
             Glyph {
-                anchors.centerIn: parent; width: 10; height: 10; visible: rowButton.branch
+                anchors.centerIn: parent; width: 10; height: 10; visible: rowButton.hasDisclosure
                 name: "chevron"; ink: Studio.dim; rotation: rowButton.expanded ? 90 : 0
                 Behavior on rotation { NumberAnimation { duration: Studio.hover; easing.type: Easing.OutCubic } }
             }
         }
         Glyph { Layout.preferredWidth: 15; Layout.preferredHeight: 15; name: rowButton.branch ? "folder" : "film"; ink: rowButton.current ? Studio.ink : Studio.muted }
-        Mark { Layout.fillWidth: true; text: rowButton.text; font.pixelSize: 12; color: rowButton.current ? Studio.ink : Studio.muted }
-        Mark { visible: rowButton.branch && rowButton.count > 0; text: rowButton.count; font.pixelSize: 10; color: Studio.dim; Layout.rightMargin: 4 }
+        Mark { Layout.fillWidth: true; text: rowButton.text; font.pixelSize: 13; color: Studio.ink }
+        Mark { visible: rowButton.branch && rowButton.count > 0; text: rowButton.count; font.pixelSize: 11; color: Studio.muted; Layout.rightMargin: 4 }
     }
     leftPadding: 2; rightPadding: 4
+    AbstractButton {
+        visible: rowButton.hasDisclosure
+        objectName: "disclose_" + rowButton.objectName
+        width: 22; height: parent.height; focusPolicy: Qt.NoFocus
+        Accessible.name: (rowButton.expanded ? "收起" : "展开") + rowButton.text
+        onClicked: rowButton.disclose()
+    }
     ToolTip.visible: hovered && contentItem.width < fontMetrics.advanceWidth(text) + 56
     ToolTip.text: text
     ToolTip.delay: 550
-    FontMetrics { id: fontMetrics; font.pixelSize: 12 }
+    FontMetrics { id: fontMetrics; font.pixelSize: 13 }
 }

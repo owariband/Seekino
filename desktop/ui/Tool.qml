@@ -19,6 +19,7 @@ Button {
     implicitHeight: primary ? 40 : 30
     padding: 0
     opacity: enabled ? 1 : .42
+    Behavior on opacity { NumberAnimation { duration: Studio.quick } }
     Accessible.name: hint || text
     ToolTip.visible: hovered && hint.length > 0
     ToolTip.text: hint
@@ -40,6 +41,7 @@ Button {
         border.width: button.visualFocus ? 2 : button.outlined ? 1 : 0
         border.color: button.visualFocus ? Studio.accent : Studio.line
         Behavior on color { ColorAnimation { duration: Studio.hover } }
+        Behavior on border.color { ColorAnimation { duration: Studio.quick } }
     }
     scale: down && !Studio.reduce ? .96 : 1
     Behavior on scale { NumberAnimation { duration: Studio.quick; easing.type: Easing.OutCubic } }

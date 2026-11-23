@@ -43,6 +43,9 @@ class PlaybackRange:
     start_ms: int
     end_ms: int
     duration_ms: int = 0
+    video_id: str = ""
+    series_id: str = ""
+    description: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,8 +81,9 @@ def _while_open(method):
 
 
 class DesktopLibrary:
-    def __init__(self, video: VideoServices, resources: ExitStack):
+    def __init__(self, video: VideoServices, resources: ExitStack, consumer=None):
         self._video = video
+        self._consumer = consumer
         self._resources = resources
         self._closed = False
         self._closing = False
@@ -105,6 +109,10 @@ class DesktopLibrary:
             with self._lifetime:
                 self._closed = True
                 self._lifetime.notify_all()
+
+    @_while_open
+    def start_processing(self):
+        self._consumer.start()
 
     @_while_open
     def create_series(self, name: str):
@@ -143,7 +151,8 @@ class DesktopLibrary:
     def open_video(self, video_id: str) -> PlaybackRange:
         video = self._video.library.get_video(video_id, tenant_id=DEFAULT_LOCAL_TENANT_ID)
         original = self._video.media.get_original(video_id, tenant_id=DEFAULT_LOCAL_TENANT_ID, video=video)
-        return PlaybackRange(original.path, 0, video.duration_seconds, video.duration_seconds)
+        return PlaybackRange(original.path, 0, video.duration_seconds, video.duration_seconds,
+                             video.video_id, video.series_id)
 
     @_while_open
     def import_file(self, path: Path, *, series_id: str, episode_order: int,
@@ -236,17 +245,19 @@ class DesktopLibrary:
         evidence = ref.resolve(self._video.persistence, tenant_id=DEFAULT_LOCAL_TENANT_ID)
         event = evidence.all_time_events[ref.timeline_index]
         original = self._video.media.get_original(evidence.video_id, tenant_id=DEFAULT_LOCAL_TENANT_ID, video=evidence)
-        return PlaybackRange(original.path, event["start_seconds"], event["end_seconds"], evidence.duration_seconds)
+        return PlaybackRange(original.path, event["start_seconds"], event["end_seconds"], evidence.duration_seconds,
+                             evidence.video_id, evidence.series_id, event["description"])
 
 
-def open_library(library_root: Path | str) -> DesktopLibrary:
+def open_library(library_root: Path | str, *, gateway_config=None, gateway_environ=None,
+                 start_consumer=True) -> DesktopLibrary:
     root = Path(library_root).expanduser().resolve()
     storage = desktop_storage()
     # Operators may configure model connections for this library. Storage always comes from the bundle.
     models = root / "models.yaml"
     if not models.is_file():
         models = STORAGE_CONFIG.parents[1] / "deploy" / "cloud" / "models.example.yaml"
-    config = load_config(models)
+    config = gateway_config if gateway_config is not None else load_config(models)
     supported = {"ark", "openai", "chat_api", "openai_audio", "openai_vision", "ollama_embedding"}
     for source in config.model_sources.values():
         if source.adapter not in supported:
@@ -274,7 +285,7 @@ def open_library(library_root: Path | str) -> DesktopLibrary:
         index = SQLiteSearchIndex(database.session_factory, semantic_dimensions=dimensions,
                                   vision_dimensions=dimensions, vision_enabled=defaults.embedding.input_mode == "multimodal",
                                   index_name="desktop_events")
-        gateway = GatewayClient(config, enable_supervisor=False, allow_local_endpoints=True)
+        gateway = GatewayClient(config, environ=gateway_environ, enable_supervisor=False, allow_local_endpoints=True)
         cleanup.callback(gateway.close)
         artifacts = build_artifact_storage(root / "media", environment=DatabaseEnvironment.PRODUCTION)
         video = build_video_services(
@@ -289,5 +300,6 @@ def open_library(library_root: Path | str) -> DesktopLibrary:
         cleanup.callback(consumer.close)
         video.uploads.reconcile_completed_staging()
         video.uploads.reconcile_deletions()
-        consumer.start()
-        return DesktopLibrary(video, cleanup.pop_all())
+        if start_consumer:
+            consumer.start()
+        return DesktopLibrary(video, cleanup.pop_all(), consumer)

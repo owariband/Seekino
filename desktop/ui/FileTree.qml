@@ -12,6 +12,8 @@ Rectangle {
     signal newSeriesRequested()
     signal libraryRequested()
     function setExpanded(id, value) {
+        if (value) workspace.ensureSeriesLoaded(id)
+        if (!!expanded[id] === value) return
         var copy = Object.assign({}, expanded)
         copy[id] = value; expanded = copy
     }
@@ -40,14 +42,10 @@ Rectangle {
                 readonly property var files: workspace.videosBySeries[modelData.id] || []
                 TreeRow {
                     objectName: "treeSeries_" + seriesNode.modelData.id
-                    text: seriesNode.modelData.title; count: seriesNode.modelData.count; branch: true; expanded: seriesNode.open
+                    text: seriesNode.modelData.title; count: seriesNode.modelData.count; branch: true; hasDisclosure: true; expanded: seriesNode.open
                     current: tree.page === "series" && workspace.selectedSeries === seriesNode.modelData.id
-                    function pick() {
-                        tree.setExpanded(seriesNode.modelData.id, !expanded)
-                        tree.seriesPicked(seriesNode.modelData.id)
-                    }
-                    onClicked: pick()
-                    onDisclose: pick()
+                    onClicked: tree.seriesPicked(seriesNode.modelData.id)
+                    onDisclose: tree.setExpanded(seriesNode.modelData.id, !expanded)
                 }
                 Item {
                     width: parent.width; clip: true
@@ -74,7 +72,7 @@ Rectangle {
             }
         }
         Mark {
-            Layout.leftMargin: 16; Layout.bottomMargin: 12
+            Layout.leftMargin: 16; Layout.topMargin: 8; Layout.bottomMargin: 12
             font.pixelSize: 11; color: Studio.dim
             text: workspace.series.length + " 个系列"
         }

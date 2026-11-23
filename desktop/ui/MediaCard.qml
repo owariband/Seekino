@@ -9,17 +9,24 @@ AbstractButton {
     property string detail: ""
     property string badge: ""
     property bool episode: false
+    implicitHeight: Math.ceil(width * (episode ? 9/16 : 10/16)) + 55
+    padding: 0; focusPolicy: Qt.StrongFocus
     hoverEnabled: true; Accessible.name: [title,detail].join("，")
     contentItem: ColumnLayout {
         spacing: 5
         Item {
             id: art
-            Layout.fillWidth: true; Layout.preferredHeight: width*(card.episode ? 9/16 : 10/16)
-            transform: Translate { y: card.hovered && !Studio.reduce ? -3 : 0; Behavior on y { NumberAnimation { duration: Studio.hover; easing.type: Easing.OutCubic } } }
+            Layout.fillWidth: true; Layout.preferredHeight: Math.round(card.width*(card.episode ? 9/16 : 10/16))
+            transform: Translate { y: card.down && !Studio.reduce ? 1 : card.hovered && !Studio.reduce ? -2 : 0; Behavior on y { NumberAnimation { duration: Studio.hover; easing.type: Easing.OutCubic } } }
             Rectangle { anchors.fill: parent; radius: card.episode ? 4 : 14; color: Studio.surfaceMuted; border.color: card.visualFocus ? Studio.accent : Studio.line }
             CardShadow { radius: card.episode ? 4 : 14; opacity: card.hovered ? 1 : 0; Behavior on opacity { NumberAnimation { duration: Studio.hover } } }
             Glyph { anchors.centerIn: parent; width: 30; height: 30; name: "film"; ink: Studio.actionBg }
-            Image { anchors.fill: parent; source: card.cover; asynchronous: true; fillMode: Image.PreserveAspectCrop; clip: true }
+            Image {
+                anchors.fill: parent; source: card.cover; asynchronous: true; mipmap: true
+                fillMode: Image.PreserveAspectCrop; clip: true
+                opacity: status === Image.Ready ? 1 : 0
+                Behavior on opacity { NumberAnimation { duration: Studio.hover } }
+            }
             Canvas {
                 anchors.fill: parent
                 property color paper: Studio.paper
@@ -53,7 +60,7 @@ AbstractButton {
                 Mark { id: duration; anchors.centerIn: parent; text: card.badge; font.pixelSize: 11; color: "#f3f8f5" }
             }
         }
-        Mark { Layout.fillWidth: true; Layout.topMargin: 3; text: card.title; color: card.hovered ? Studio.actionBg : Studio.ink; font.pixelSize: 15; font.weight: Font.DemiBold }
-        Mark { Layout.fillWidth: true; text: card.detail; color: Studio.muted; font.pixelSize: 12 }
+        Mark { Layout.fillWidth: true; Layout.topMargin: 3; text: card.title; color: card.hovered || card.visualFocus ? Studio.actionBg : Studio.ink; textFormat: Text.PlainText; font.pixelSize: 15; font.weight: Font.DemiBold }
+        Mark { Layout.fillWidth: true; textFormat: Text.PlainText; text: card.detail; color: Studio.muted; font.pixelSize: 12 }
     }
 }

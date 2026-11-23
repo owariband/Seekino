@@ -9,6 +9,12 @@ FocusScope {
     property bool hit: false
     property int startMs: 0
     property int endMs: 0
+    readonly property alias positionMs: surface.positionMs
+    readonly property alias hasFrame: surface.hasFrame
+    readonly property string hitDescription: hit ? (workspace?.playbackContext?.description || "") : ""
+    readonly property bool insideHit: hit && positionMs >= startMs && positionMs < endMs
+    readonly property string hitStatus: insideHit ? "命中区间内" : positionMs < startMs ? "命中区间前" : "已过命中区间"
+    readonly property color rangeColor: "#f0c97b"
     property bool cinema: false
     property int previousVisibility: Window.Windowed
     property bool controlsAwake: true
@@ -112,7 +118,7 @@ FocusScope {
         id: stage
         parent: player.cinema ? player.Overlay.overlay : player
         anchors.fill: parent
-        anchors.bottomMargin: !player.cinema && player.hit ? evidence.height : 0
+        anchors.bottomMargin: player.hit ? evidence.height : 0
         z: player.cinema ? 100 : 0
         clip: true
         color: "#090c0b"
@@ -160,6 +166,7 @@ FocusScope {
                     id: seek; objectName: "seekSlider"; Layout.fillWidth: true; implicitHeight: 21
                     from: 0; to: Math.max(1,surface.durationMs); leftPadding: 0; rightPadding: 0
                     hoverEnabled: true; activeFocusOnTab: true; Accessible.name: "播放位置"
+                    Accessible.description: player.hit ? player.hitStatus + "，命中 " + Studio.time(player.startMs,true) + " 至 " + Studio.time(player.endMs,true) : ""
                     Binding { target: seek; property: "value"; value: surface.positionMs; when: !seek.pressed }
                     onPressedChanged: { player.reveal(); if (!pressed) surface.seek(Math.round(value)) }
                     Keys.onLeftPressed: player.skip(-10000)
@@ -168,6 +175,16 @@ FocusScope {
                         x: 0; y: (seek.height - height)/2; width: seek.width; height: 6; radius: 3
                         color: "#60ffffff"
                         Rectangle { width: parent.width * seek.visualPosition; height: parent.height; radius: 3; color: player.timelineColor }
+                        Rectangle {
+                            id: hitBand; objectName: "hitRangeBand"
+                            visible: player.hit && surface.durationMs > 0
+                            readonly property real startX: Math.min(parent.width, Math.max(0, player.startMs / seek.to * parent.width))
+                            readonly property real endX: Math.min(parent.width, Math.max(startX, player.endMs / seek.to * parent.width))
+                            // Keep even a sub-pixel event legible above the six-pixel playback track.
+                            width: Math.min(parent.width, Math.max(6, endX - startX))
+                            x: Math.max(0, Math.min(parent.width - width, (startX + endX - width) / 2))
+                            y: -8; height: 4; radius: 2; color: player.rangeColor
+                        }
                     }
                     handle: Rectangle {
                         x: seek.visualPosition * (seek.width - width); y: (seek.height - height)/2
@@ -184,7 +201,7 @@ FocusScope {
                     PlayerButton { text: "+10s"; hint: "前进 10 秒 (→)"; onClicked: player.skip(10000) }
                     Text {
                         Layout.leftMargin: 5; color: "#c6d0ce"; font.pixelSize: 12
-                        text: Studio.time(seek.pressed ? seek.value : surface.positionMs, false) + " / " + Studio.time(surface.durationMs, false)
+                        text: Studio.time(seek.pressed ? seek.value : surface.positionMs, player.hit) + " / " + Studio.time(surface.durationMs, false)
                     }
                     Item { Layout.fillWidth: true }
                     PlayerButton { objectName: "muteButton"; symbol: surface.muted || surface.volume === 0 ? "muted" : "volume"; hint: surface.muted || surface.volume === 0 ? "打开声音 (M)" : "静音 (M)"; onClicked: player.toggleMute() }
@@ -214,14 +231,36 @@ FocusScope {
         }
     }
 
-    RowLayout {
-        id: evidence; anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom
-        anchors.leftMargin: 18; anchors.rightMargin: 14; height: 48; spacing: 12
-        visible: player.hit && !player.cinema
-        Mark {
-            Layout.fillWidth: true; font.pixelSize: 12; secondary: true
-            text: "命中片段   " + Studio.time(player.startMs, true) + " – " + Studio.time(player.endMs, true)
+    Rectangle {
+        id: evidence; objectName: "hitEvidenceBar"
+        parent: player.cinema ? player.Overlay.overlay : player
+        anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom
+        z: player.cinema ? 101 : 1; visible: player.hit; height: details.implicitHeight + 20
+        color: player.cinema ? "#171c1a" : Studio.sheet
+        readonly property color ink: player.cinema ? "#dde5e1" : Studio.ink
+        readonly property color secondary: player.cinema ? "#a7b5ae" : Studio.muted
+        readonly property color labelColor: player.cinema || Studio.dark ? player.rangeColor : "#81541a"
+        RowLayout {
+            anchors.fill: parent; anchors.leftMargin: 16; anchors.rightMargin: 12
+            spacing: 12
+            ColumnLayout {
+                id: details; Layout.fillWidth: true; spacing: 4
+                RowLayout {
+                    Layout.fillWidth: true; spacing: 7
+                    Rectangle { implicitWidth: 12; implicitHeight: 3; radius: 1; color: evidence.labelColor }
+                    Text { text: player.hitStatus; color: evidence.labelColor; font.weight: Font.DemiBold; font.pixelSize: 12 }
+                    Text { Layout.fillWidth: true; font.pixelSize: 12; color: evidence.secondary; text: Studio.time(player.startMs, true) + " – " + Studio.time(player.endMs, true); elide: Text.ElideRight }
+                }
+                Text {
+                    Layout.fillWidth: true; text: player.hitDescription; textFormat: Text.PlainText
+                    color: evidence.ink; font.pixelSize: 14; font.weight: Font.Medium
+                    maximumLineCount: 2; wrapMode: Text.Wrap; elide: Text.ElideRight; visible: text.length > 0
+                }
+            }
+            Tool {
+                objectName: "returnToHit"; contentColor: evidence.ink; text: "回到命中处"; hint: "从命中片段开头播放"; textSize: 12
+                onClicked: { surface.seek(player.startMs); surface.setPlaying(true); player.reveal() }
+            }
         }
-        Tool { text: "回到命中处"; hint: "从命中片段开头播放"; textSize: 12; onClicked: { surface.seek(player.startMs); surface.setPlaying(true); player.reveal() } }
     }
 }

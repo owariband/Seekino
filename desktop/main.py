@@ -105,7 +105,7 @@ def main():
     app = QGuiApplication([sys.argv[0]])
     app.setApplicationName("Seekino")
     app.setOrganizationName("Seekino")
-    app.setApplicationVersion("0.2.3")
+    app.setApplicationVersion("0.2.5")
     app.setWindowIcon(QIcon(str(basedir.parent / "SeekinoLogo.png")))
     from .qt_player import register_player
     register_player()
@@ -129,6 +129,7 @@ def main():
     if sys.platform == "darwin" and app.platformName() == "cocoa":
         _unify_titlebar(window)
     window.show()
+    app.aboutToQuit.connect(window.rememberPlayback)
     app.aboutToQuit.connect(workspace.shutdown)
     try:
         return app.exec()

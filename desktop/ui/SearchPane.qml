@@ -11,6 +11,7 @@ Item {
     signal openHit(string ref, string title)
     signal importRequested()
     signal settingsRequested()
+    signal jobsRequested()
     function focusQuery() { query.forceActiveFocus(); query.selectAll() }
     function run() {
         if (query.text.trim().length && workspace.ready && !workspace.searching)
@@ -64,13 +65,36 @@ Item {
             ColumnLayout {
                 anchors.fill: parent; spacing: 10
                 Mark { Layout.fillWidth: true; font.pixelSize: 18; font.weight: Font.DemiBold; text: workspace.searching ? "正在搜索…" : "“" + workspace.lastQuery + "”" }
-                Mark { text: workspace.searching ? "" : workspace.hits.length + " 个片段" + (workspace.partial ? "   ·   部分视频的索引仍在构建中" : ""); secondary: true; font.pixelSize: 12 }
+                Mark { visible: !workspace.searching && !workspace.searchIndexUnavailable; text: workspace.hits.length + " 个片段"; secondary: true; font.pixelSize: 12 }
+                Rectangle {
+                    visible: workspace.partial && !workspace.searching
+                    Layout.fillWidth: true; implicitHeight: coverage.implicitHeight + 8
+                    radius: 7; color: Studio.wash; border.color: Studio.line
+                    RowLayout {
+                        id: coverage
+                        anchors.left: parent.left; anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
+                        anchors.leftMargin: 12; anchors.rightMargin: 6; spacing: 6
+                        Text {
+                            Layout.fillWidth: true; wrapMode: Text.Wrap
+                            text: workspace.searchIndexUnavailable ? "所选范围暂无可检索的索引" : "本次搜索覆盖不完整"
+                            font.pixelSize: 13; color: Studio.ink
+                        }
+                        Tool {
+                            id: coverageButton; objectName: "searchCoverageJobs"; text: "查看解析任务"; textSize: 12; corner: 5
+                            contentColor: Studio.actionBg
+                            Keys.onReturnPressed: searchPane.jobsRequested()
+                            Keys.onEnterPressed: searchPane.jobsRequested()
+                            onClicked: searchPane.jobsRequested()
+                        }
+                    }
+                }
                 Item {
                     Layout.fillWidth: true; Layout.fillHeight: true
                     ColumnLayout {
                         visible: !workspace.hits.length; anchors.centerIn: parent; spacing: 8
                         Kino { Layout.alignment: Qt.AlignHCenter; Layout.preferredWidth: 128; Layout.preferredHeight: 56; mood: workspace.searching ? "loading" : "think" }
-                        Mark { Layout.alignment: Qt.AlignHCenter; text: workspace.searching ? "正在查找片段…" : "没有找到片段，换个关键词再试试。"; color: Studio.muted }
+                        Mark { Layout.alignment: Qt.AlignHCenter; text: workspace.searching ? "正在查找片段…" : workspace.searchIndexUnavailable ? "索引发布后，可再次搜索。" : workspace.partial ? "当前可检索范围内暂无命中。"
+                              : workspace.series.length ? "没有找到片段，换个关键词再试试。" : "资料库里还没有视频。"; color: Studio.muted }
                     }
                     ListView {
                         anchors.fill: parent; clip: true; boundsBehavior: Flickable.StopAtBounds; spacing: 8
@@ -79,9 +103,12 @@ Item {
                         delegate: DocumentRow {
                             required property var modelData
                             objectName: "searchHit_" + modelData.sourceRef
-                            width: ListView.view.width; multiline: true; title: modelData.description || modelData.title
-                            detail: Studio.time(modelData.startMs, true) + " – " + Studio.time(modelData.endMs, true) + "     " + modelData.title
-                            cover: modelData.cover || ""; onClicked: searchPane.openHit(modelData.sourceRef,modelData.title)
+                            width: ListView.view.width; title: modelData.description || modelData.title
+                            markedTitle: modelData.highlighted
+                            sourceLabel: [modelData.seriesTitle, "第 " + modelData.episode + " 集"].filter(Boolean).join("  ·  ")
+                            filename: modelData.filename
+                            timeRange: Studio.time(modelData.startMs, true) + " – " + Studio.time(modelData.endMs, true)
+                            preview: modelData.cover || ""; onClicked: searchPane.openHit(modelData.sourceRef,modelData.title)
                         }
                     }
                 }
@@ -103,6 +130,8 @@ Item {
                 selectByMouse: true; wrapMode: TextEdit.Wrap
                 placeholderText: searchPane.keywords ? "输入一句台词，或切换到描述搜索…" : "描述一个画面，找回那一刻…"
                 Accessible.name: "搜索内容"; font.pixelSize: 14
+                KeyNavigation.priority: KeyNavigation.BeforeItem
+                KeyNavigation.tab: coverageButton.visible ? coverageButton : null
                 Keys.onReturnPressed: event => { if (!(event.modifiers & Qt.ShiftModifier)) searchPane.run(); else event.accepted=false }
                 Keys.onEnterPressed: event => { if (!(event.modifiers & Qt.ShiftModifier)) searchPane.run(); else event.accepted=false }
             }

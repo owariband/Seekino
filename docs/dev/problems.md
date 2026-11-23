@@ -2984,3 +2984,7 @@ micrograd v5 共 146 块，整集 90 分 04.884 秒。调度反复锁取候选�
 2026-11-23。PR #183 提供了可随包移动的后端和按时间解码原片的接口。桌面用户需要双击安装后完成导入、解析、搜索和连续回看。在同一台 Apple Silicon Mac 上，PR #184 已用固定模型回放走通桌面入口，验证了真实 App 的首帧和音轨时间、进程及 DMG 复制后重开。实际模型和签名公证后的干净 Mac 验收仍需完成。 [TRD](../design/03-product-reassessment/macos-desktop-app-trd.md) · [报告](../report/desktop/native/2026-11-23-acceptance.md) · [PR #184](https://github.com/owariband/Seekino/pull/184)
 
 0.2.0 已用 Web 同素材画面对照 Mac 窗口，并交付 Windows x64 验收包。窗口视觉、动效与真实模型的用户验收，以及 Windows 真机验证仍待完成。
+
+2026-11-24。0.2.4 已验证同片多条命中的独立预览、资料树展开时连续播放、跨集续看，以及在 640 × 440 窗口用键盘编辑设置。当前验收范围与素材见[内页验收](../report/desktop/native/2026-11-23-acceptance.md#024-内页验收)。
+
+0.2.5 纠正了桌面设置把云示例的两个密钥同时设为必填的错误。在隔离资料库分别验证了单一 Ark 连接与用户指定的 OpenAI 兼容连接，补测换地址、冻结的向量合同及旧版模型配置。[模型连接与安装](../report/desktop/native/2026-11-23-acceptance.md#025-模型连接与安装)

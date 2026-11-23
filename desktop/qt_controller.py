@@ -1,13 +1,15 @@
 """Shared, asynchronous window model for the macOS and Windows desktop shells."""
 from concurrent.futures import ThreadPoolExecutor
+from html import escape
 import json
 import os
 from pathlib import Path
+import re
 import sys
 
-from PySide6.QtCore import QObject, Property, QTimer, QUrl, Qt, Signal, Slot
+from PySide6.QtCore import QObject, Property, QSettings, QTimer, QUrl, Qt, Signal, Slot
 
-from .credentials import KEYS, platform_store
+from .credentials import platform_store
 
 
 def default_library_root() -> Path:
@@ -41,6 +43,20 @@ def _cover(item):
     return "image://posters/" + item["posterID"] if item["posterID"] else ""
 
 
+def _highlight_description(description, query):
+    # Only our <b> tags can reach the Qt styled-text parser.
+    words = sorted(set(query.split()), key=len, reverse=True)
+    if not words:
+        return escape(description)
+    matches = re.finditer("|".join(re.escape(word) for word in words), description, re.IGNORECASE)
+    pieces = []
+    end = 0
+    for match in matches:
+        pieces.extend((escape(description[end:match.start()]), "<b>" + escape(match.group()) + "</b>"))
+        end = match.end()
+    return "".join(pieces) + escape(description[end:])
+
+
 def _videos(series_id):
     items = _request("seriesDetail", id=series_id)
     for item in items:
@@ -66,55 +82,69 @@ def _state_property(qt_type, key, signal):
 
 class Workspace(QObject):
     readyChanged = Signal()
+    refreshingChanged = Signal()
+    savingKeysChanged = Signal()
+    recentPlaybackChanged = Signal()
     busyImportChanged = Signal()
     importLabelChanged = Signal()
     importProgressChanged = Signal()
     searchingChanged = Signal()
     lastQueryChanged = Signal()
     partialChanged = Signal()
-    modelReadyChanged = Signal()
+    searchIndexUnavailableChanged = Signal()
+    modelConfigChanged = Signal()
+    importModelReadyChanged = Signal()
+    searchModelReadyChanged = Signal()
     errorChanged = Signal()
     selectedSeriesChanged = Signal()
     seriesChanged = Signal()
     videosBySeriesChanged = Signal()
     jobsChanged = Signal()
     hitsChanged = Signal()
-    modelKeysChanged = Signal()
-    settingsNeeded = Signal()
+    settingsNeeded = Signal(str)
+    deferredActionResumed = Signal()
     credentialsSaved = Signal()
     seriesCreated = Signal(str)
+    playbackContextChanged = Signal()
+    playbackContext = _state_property("QVariantMap", "playbackContext", playbackContextChanged)
     playbackReady = Signal(str, "qlonglong", "qlonglong", "qlonglong", str, bool)
     _completed = Signal(object, object, object)
     _importing = Signal(str)
 
     ready = _state_property(bool, "ready", readyChanged)
+    refreshing = _state_property(bool, "refreshing", refreshingChanged)
+    savingKeys = _state_property(bool, "savingKeys", savingKeysChanged)
+    recentPlayback = _state_property("QVariantMap", "recentPlayback", recentPlaybackChanged)
     busyImport = _state_property(bool, "busyImport", busyImportChanged)
     importLabel = _state_property(str, "importLabel", importLabelChanged)
     importProgress = _state_property(float, "importProgress", importProgressChanged)
     searching = _state_property(bool, "searching", searchingChanged)
     lastQuery = _state_property(str, "lastQuery", lastQueryChanged)
     partial = _state_property(bool, "partial", partialChanged)
-    modelReady = _state_property(bool, "modelReady", modelReadyChanged)
+    searchIndexUnavailable = _state_property(bool, "searchIndexUnavailable", searchIndexUnavailableChanged)
+    modelConfig = _state_property("QVariantMap", "modelConfig", modelConfigChanged)
+    importModelReady = _state_property(bool, "importModelReady", importModelReadyChanged)
+    searchModelReady = _state_property(bool, "searchModelReady", searchModelReadyChanged)
     error = _state_property(str, "error", errorChanged)
     selectedSeries = _state_property(str, "selectedSeries", selectedSeriesChanged)
     series = _state_property("QVariantList", "series", seriesChanged)
     videosBySeries = _state_property("QVariantMap", "videosBySeries", videosBySeriesChanged)
     jobs = _state_property("QVariantList", "jobs", jobsChanged)
     hits = _state_property("QVariantList", "hits", hitsChanged)
-    modelKeys = _state_property("QVariantMap", "modelKeys", modelKeysChanged)
 
     def __init__(self, root=None, parent=None, *, credentials=None):
         super().__init__(parent)
         self.root = Path(root) if root is not None else default_library_root()
         self._credentials = credentials
         self._state = {
+            "refreshing": False, "savingKeys": False, "recentPlayback": {},
             "ready": False, "busyImport": False, "importLabel": "", "importProgress": -1.0,
-            "searching": False, "lastQuery": "", "partial": False, "modelReady": False, "error": "",
+            "searching": False, "lastQuery": "", "partial": False, "searchIndexUnavailable": False, "importModelReady": False, "searchModelReady": False, "error": "",
             "selectedSeries": "", "series": [], "videosBySeries": {}, "jobs": [], "hits": [],
-            "modelKeys": dict.fromkeys(KEYS, False),
+            "modelConfig": {}, "playbackContext": {},
         }
-        self._closing = self._starting = self._refreshing = self._refresh_again = False
-        self._saving = False
+        self._closing = self._starting = self._refresh_again = False
+        self._watch_settings = QSettings(str(self.root / "watch-history.ini"), QSettings.Format.IniFormat)
         self._backend_opened = False
         self._loaded = set()
         self._working_jobs = set()
@@ -165,11 +195,25 @@ class Workspace(QObject):
     def clearError(self):
         self._set("error", "")
 
-    def _open_library(self, keys):
-        self._backend_opened = False
-        flags = _request("open", root=str(self.root), keys=keys)
-        self._backend_opened = True
-        return flags
+    def _read_credentials(self, names, *, warnings=None):
+        if not names:
+            return {}
+        if self._credentials is None:
+            self._credentials = platform_store()
+        keys = {}
+        for name in names:
+            try:
+                keys[name] = self._credentials.read(name)
+            except (OSError, RuntimeError) as exc:
+                if warnings is None:
+                    raise
+                warnings.append(str(exc))
+        return keys
+
+    def _update_models(self, settings):
+        self._set("modelConfig", settings)
+        self._set("importModelReady", settings["importReady"])
+        self._set("searchModelReady", settings["searchReady"])
 
     @Slot()
     def start(self):
@@ -178,25 +222,32 @@ class Workspace(QObject):
         self._starting = True
 
         def open_library():
+            settings = _request("modelSettings", root=str(self.root))
             keys = {}
-            warning = ""
+            warnings = []
             try:
-                if self._credentials is None:
-                    self._credentials = platform_store()
-                keys = {name: self._credentials.read(name) for name in KEYS}
+                keys = self._read_credentials(settings["credentialNames"], warnings=warnings)
             except (OSError, RuntimeError) as exc:
-                warning = str(exc)
-            keys = self._open_library(keys)
-            return keys, warning, _snapshot(set())
+                warnings.append(str(exc))
+            _request("open", root=str(self.root), keys=keys)
+            self._backend_opened = True
+            return _request("modelSettings", root=str(self.root)), "\n".join(dict.fromkeys(warnings)), _snapshot(set())
 
         def opened(value, error):
             self._starting = False
             if not error:
-                keys, warning, (series, jobs, children) = value
-                self._update_keys(keys)
+                settings, warning, (series, jobs, children) = value
+                self._update_models(settings)
                 self._set("series", series)
                 self._set("jobs", jobs)
                 self._set("videosBySeries", children)
+                history = self._watch_settings.value("recent", {})
+                if isinstance(history, dict):
+                    valid = {item["id"] for item in series}
+                    self._set("recentPlayback", {key: item for key, item in history.items()
+                              if key in valid and isinstance(item, dict) and isinstance(item.get("videoID"), str)
+                              and isinstance(item.get("positionMs"), int) and isinstance(item.get("durationMs"), int)
+                              and 0 < item["positionMs"] < item["durationMs"]})
                 self._set("ready", True)
                 if warning:
                     self._set("error", warning)
@@ -204,23 +255,19 @@ class Workspace(QObject):
 
         self._submit(open_library, opened)
 
-    def _update_keys(self, keys):
-        self._set("modelKeys", keys)
-        self._set("modelReady", all(keys.get(name) for name in KEYS))
-
     @Slot()
     def refresh(self):
         if not self.ready:
             self.start()
             return
-        if self._refreshing:
+        if self.refreshing:
             self._refresh_again = True
             return
-        self._refreshing = True
+        self._set("refreshing", True)
         loaded = self._loaded.copy()
 
         def refreshed(value, error):
-            self._refreshing = False
+            self._set("refreshing", False)
             if not error:
                 series, jobs, children = value
                 valid = {row["id"] for row in series}
@@ -230,6 +277,7 @@ class Workspace(QObject):
                 self._set("videosBySeries", {k: v for k, v in (self.videosBySeries | children).items() if k in valid})
                 if self.selectedSeries not in valid:
                     self._set("selectedSeries", "")
+                self._resume_model_action()
             if self._refresh_again:
                 self._refresh_again = False
                 self.refresh()
@@ -238,7 +286,7 @@ class Workspace(QObject):
 
     def _poll_jobs(self):
         active = {"PENDING", "PREPARING", "PARSING", "INDEXING"}
-        if not self._refreshing and any(j["latest"] and not j["paused"] and j["status"] in active for j in self.jobs):
+        if not self.refreshing and any(j["latest"] and not j["paused"] and j["status"] in active for j in self.jobs):
             self.refresh()
 
     def _poll_transfer(self):
@@ -250,6 +298,10 @@ class Workspace(QObject):
     @Slot(str)
     def loadSeries(self, series_id):
         self._set("selectedSeries", series_id)
+        self.ensureSeriesLoaded(series_id)
+
+    @Slot(str)
+    def ensureSeriesLoaded(self, series_id):
         if not self.ready or not series_id or series_id in self._loaded:
             return
         self._loaded.add(series_id)
@@ -261,6 +313,19 @@ class Workspace(QObject):
                 self._set("videosBySeries", self.videosBySeries | {series_id: rows})
 
         self._submit(lambda: _videos(series_id), loaded)
+
+    @Slot(str, str, "qlonglong", "qlonglong")
+    def rememberPlayback(self, series_id, video_id, position, duration):
+        if not self.ready or not series_id or not video_id or duration <= 0:
+            return
+        recent = self.recentPlayback.copy()
+        if 0 < position < duration - min(1000, duration // 50):
+            recent[series_id] = {"videoID": video_id, "positionMs": position, "durationMs": duration}
+        elif recent.get(series_id, {}).get("videoID") == video_id:
+            del recent[series_id]
+        if recent != self.recentPlayback:
+            self._set("recentPlayback", recent)
+            self._watch_settings.setValue("recent", recent)
 
     @Slot(str)
     def createSeries(self, name):
@@ -278,7 +343,7 @@ class Workspace(QObject):
 
     @Slot("QVariantList", str)
     def importFiles(self, urls, series_id):
-        if not self.ready or self.busyImport or self._saving or not urls:
+        if not self.ready or self.busyImport or self.savingKeys or not urls:
             return
         files = []
         for entry in urls:
@@ -288,9 +353,9 @@ class Workspace(QObject):
                 self._set("error", "请选择 MP4、MOV 或 AVI 视频")
                 return
             files.append(path)
-        if not self.modelReady:
-            self._deferred = (urls, series_id)
-            self.settingsNeeded.emit()
+        if not self.importModelReady:
+            self._deferred = ("import", (urls, series_id))
+            self.settingsNeeded.emit("import")
             return
         self._set("busyImport", True)
         self._set_import_label("准备导入")
@@ -327,51 +392,99 @@ class Workspace(QObject):
     def cancelDeferredImport(self):
         self._deferred = None
 
-    @Slot(str, str)
-    def saveKeys(self, ark, deepseek):
-        if self._saving or self.busyImport or self.searching or self._starting:
+    @Slot("QVariantMap", "QVariantMap")
+    def saveModelConfig(self, draft, secrets):
+        if not self.ready or self.savingKeys or self.busyImport or self.searching or self._working_jobs:
             self._set("error", "请在当前操作结束后保存模型设置")
             return
-        self._saving = True
-        changes = dict(zip(KEYS, (ark.strip(), deepseek.strip()), strict=True))
+        draft = dict(draft)
+        # QML Number arrives in a QVariantMap as a double even for whole dimensions.
+        dimensions = draft.get("dimensions")
+        if isinstance(dimensions, float) and dimensions.is_integer():
+            draft["dimensions"] = int(dimensions)
+        revision = draft.pop("revision", self.modelConfig.get("revision"))
+        retain = draft.pop("retainConfig", False)
+        change = {"revision": revision, **({"retainConfig": True} if retain else {"form": draft})}
+        self._set("savingKeys", True)
 
         def save():
-            if self._credentials is None:
-                self._credentials = platform_store()
-            for name, key in changes.items():
-                if key:
-                    self._credentials.write(name, key)
-            keys = {name: self._credentials.read(name) for name in KEYS}
-            return self._open_library(keys)
+            prepared = _request("prepareModelSettings", root=str(self.root), **change)
+            allowed = set(prepared["credentialNames"])
+            prior = self._read_credentials(allowed)
+            updates = {}
+            for key, value in secrets.items():
+                if not isinstance(value, str) or not value.strip():
+                    continue
+                name = prepared.get("credentialName") if key == "connection" and not retain else key
+                if name not in allowed:
+                    raise ValueError("凭据与当前服务地址不匹配，请重新打开设置")
+                if value.strip() != prior[name]:
+                    updates[name] = value.strip()
+            written = []
+            try:
+                for name, value in updates.items():
+                    self._credentials.write(name, value)
+                    written.append(name)
+                settings = _request("saveModelSettings", root=str(self.root), keys=prior | updates, **change)
+            except Exception:
+                rollback_failed = False
+                for name in reversed(written):
+                    try:
+                        if prior[name]:
+                            self._credentials.write(name, prior[name])
+                        else:
+                            self._credentials.delete(name)
+                    except (OSError, RuntimeError):
+                        rollback_failed = True
+                if rollback_failed:
+                    raise RuntimeError("模型设置未应用，部分凭据未能恢复。请检查系统凭据存储后重新保存。") from None
+                raise
+            return settings
 
-        def saved(keys, error):
-            self._saving = False
+        def saved(settings, error):
+            self._set("savingKeys", False)
             if error:
-                self._set("ready", self._backend_opened)
-            else:
-                self._update_keys(keys)
-                self._set("ready", True)
-                self._poll.start()
-                pending, self._deferred = self._deferred, None
-                self.credentialsSaved.emit()
-                self.refresh()
-                if pending:
-                    self.importFiles(*pending)
+                return
+            self._update_models(settings)
+            self.credentialsSaved.emit()
+            # Retry readiness belongs to the original task's frozen model contract.
+            self.refresh()
 
         self._submit(save, saved)
+
+    def _resume_model_action(self):
+        if not self._deferred or self.savingKeys:
+            return
+        action, args = self._deferred
+        if action == "retry":
+            job = next((row for row in self.jobs if row["id"] == args[0]), None)
+            if not job or not job["canRetry"] or not job["retryReady"]:
+                return
+        elif (action == "import" and not self.importModelReady) or (action == "search" and not self.searchModelReady):
+            return
+        self._deferred = None
+        self.deferredActionResumed.emit()
+        if action == "import":
+            self.importFiles(*args)
+        elif action == "search":
+            self.search(*args)
+        else:
+            self.retryTask(*args)
 
     @Slot(str, bool, str)
     def search(self, query, keywords, series_id):
         query = query.strip()
-        if not self.ready or self.searching or self._saving or not query:
+        if not self.ready or self.searching or self.savingKeys or not query:
             return
-        if not keywords and not self.modelReady:
-            self.settingsNeeded.emit()
+        if not keywords and not self.searchModelReady:
+            self._deferred = ("search", (query, keywords, series_id))
+            self.settingsNeeded.emit("search")
             return
         scope = [series_id] if series_id else [item["id"] for item in self.series]
         self._set("lastQuery", query)
         self._set("hits", [])
         self._set("partial", False)
+        self._set("searchIndexUnavailable", False)
         if not scope:
             return
         self._set("searching", True)
@@ -379,14 +492,19 @@ class Workspace(QObject):
         def searched(result, error):
             if not error:
                 videos = {video["id"]: video for video in result["videos"]}
+                series_names = {item["id"]: item["title"] for item in self.series}
                 rows = []
                 for hit in result["hits"]:
                     video = videos[hit["video_id"]]
                     rows.append({"sourceRef": hit["source_ref"], "videoID": video["id"], "title": video["title"],
-                                 "cover": _cover(video),
+                                 "cover": f"image://posters/hit/{result['previewScope']}/{hit['source_ref']}",
+                                 "seriesID": video["seriesID"], "seriesTitle": series_names.get(video["seriesID"], ""),
+                                 "episode": video["episode"], "filename": video["filename"],
+                                 "highlighted": _highlight_description(hit["description"], query),
                                  "startMs": hit["start_ms"], "endMs": hit["end_ms"], "description": hit["description"]})
                 self._set("hits", rows)
                 self._set("partial", result["partial"])
+                self._set("searchIndexUnavailable", result.get("indexUnavailable", False))
             self._set("searching", False)
 
         self._submit(lambda: _request("search", query=query, seriesIDs=scope, keywords=keywords), searched,
@@ -400,6 +518,8 @@ class Workspace(QObject):
 
         def opened(media, error):
             if not error and request == self._play_request:
+                self._set("playbackContext", {"videoID": media["video_id"], "seriesID": media["series_id"],
+                                              "description": media["description"]})
                 self.playbackReady.emit(media["path"], media["start_ms"], media["end_ms"], media["duration_ms"],
                                         title, action == "openResult")
 
@@ -423,8 +543,12 @@ class Workspace(QObject):
 
     @Slot(str)
     def retryTask(self, job_id):
-        if not self.modelReady:
-            self.settingsNeeded.emit()
+        job = next((row for row in self.jobs if row["id"] == job_id), None)
+        if not job or not job["canRetry"]:
+            return
+        if not job["retryReady"]:
+            self._deferred = ("retry", (job_id,))
+            self.settingsNeeded.emit("retry")
             return
         self._update_job(job_id, "retry")
 
@@ -454,6 +578,7 @@ class Workspace(QObject):
         if self._closing:
             return
         self._closing = True
+        self._watch_settings.sync()
         self._poll.stop()
         self._progress.stop()
         for executor in (self._transfer, self._queries, self._requests):

@@ -9,14 +9,14 @@ _AUDIO_RATE = 48_000
 
 
 class PlaybackDecoder:
-    def __init__(self, path: str, *, rgb: bool = False):
+    def __init__(self, path: str, *, rgb: bool = False, video_only: bool = False):
         self._rgb = rgb
         self._container = av.open(path)
         try:
             self._video = _video_stream(self._container)
             self._video.thread_type = "AUTO"
             self._video.codec_context.thread_count = 4
-            audios = self._container.streams.audio
+            audios = () if video_only else self._container.streams.audio
             self._audio = max(audios, key=lambda stream: (
                 bool(stream.disposition & av.stream.Disposition.default), stream.codec_context.channels,
             ), default=None)
@@ -29,7 +29,7 @@ class PlaybackDecoder:
     def seek(self, ms: int) -> None:
         start = self._origin + Fraction(ms, 1000)
         # Read an audio preroll even when the requested video frame is a keyframe.
-        _seek(self._container, self._video, max(self._origin, start - 1))
+        _seek(self._container, self._video, max(self._origin, start - 1) if self._audio is not None else start)
         self._samples = self._decode(start)
 
     def next_sample(self):

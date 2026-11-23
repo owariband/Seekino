@@ -29,7 +29,7 @@ QtObject {
     readonly property color field: sheet
     readonly property color ink: mix("#17312b","#dde5e1")
     readonly property color muted: mix("#566b65","#a7b5ae")
-    readonly property color dim: mix("#85938e","#8a9b96")
+    readonly property color dim: mix("#596e65","#8a9b96")
     readonly property color line: mix("#26244940","#24a0cdc0")
     readonly property color strongLine: mix("#61238c78","#6b74c5ba")
     readonly property color wash: mix("#eaf5f0","#1f2e2a")

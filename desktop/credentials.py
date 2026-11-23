@@ -4,7 +4,6 @@ import sys
 from ctypes import wintypes
 
 SERVICE = "app.seekino.desktop.models"
-KEYS = ("ARK_API_KEY", "DEEPSEEK_API_KEY")
 
 
 class MacKeychain:
@@ -21,6 +20,7 @@ class MacKeychain:
             c.c_void_p, *text, *text, *text, c.POINTER(c.c_void_p),
         ]
         self.security.SecKeychainItemModifyAttributesAndData.argtypes = [c.c_void_p, c.c_void_p, *text]
+        self.security.SecKeychainItemDelete.argtypes = [c.c_void_p]
 
     @staticmethod
     def _query(name):
@@ -56,6 +56,20 @@ class MacKeychain:
         if code:
             raise RuntimeError(f"写入钥匙串失败（{code}）")
 
+    def delete(self, name):
+        item = c.c_void_p()
+        code = self.security.SecKeychainFindGenericPassword(*self._query(name), None, None, c.byref(item))
+        if code == -25300:
+            return
+        if code == 0:
+            try:
+                code = self.security.SecKeychainItemDelete(item)
+            finally:
+                self.foundation.CFRelease(item)
+        if code:
+            raise RuntimeError(f"恢复钥匙串失败（{code}）")
+
+
 
 class _Credential(c.Structure):
     _fields_ = [
@@ -73,6 +87,7 @@ class WindowsCredentials:
         self.api.CredReadW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
                                        c.POINTER(c.POINTER(_Credential))]
         self.api.CredWriteW.argtypes = [c.POINTER(_Credential), wintypes.DWORD]
+        self.api.CredDeleteW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD]
         self.api.CredFree.argtypes = [c.c_void_p]
 
     def read(self, name):
@@ -94,6 +109,13 @@ class WindowsCredentials:
                              CredentialBlob=c.cast(buffer, c.c_void_p), Persist=2, UserName=name)
         if not self.api.CredWriteW(c.byref(record), 0):
             raise c.WinError(c.get_last_error())
+
+    def delete(self, name):
+        if not self.api.CredDeleteW(f"{SERVICE}/{name}", 1, 0):
+            code = c.get_last_error()
+            if code != 1168:
+                raise c.WinError(code)
+
 
 
 def platform_store():

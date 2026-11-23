@@ -15,7 +15,7 @@ ApplicationWindow {
     property string page: "library"
     property string priorPage: "library"
     property string activeVideo: ""
-    property string pendingVideo: ""
+    property string activeSeries: ""
     property string openFailure: ""
     readonly property string currentName: page === "player" ? watch.title : page === "series" ?
         (browser.selected?.title || "系列") : page === "search" ? "搜索片段" : page === "jobs" ? "解析任务" : "资料库"
@@ -23,11 +23,17 @@ ApplicationWindow {
     readonly property bool treeShown: Studio.preferences.treeVisibility < 0 ? workspace.series.length > 0 : Studio.preferences.treeVisibility === 1
     function go(next) {
         workspace.cancelOpenMedia()
-        if (page === "player" && next !== "player") watch.close()
+        if (page === "player" && next !== "player") { rememberPlayback(); watch.close() }
         page = next
     }
     function showSeries(id) { workspace.loadSeries(id); tree.setExpanded(id,true); go("series") }
-    function play(id,caption) { pendingVideo=id; workspace.openVideo(id,caption) }
+    function play(id,caption) { workspace.openVideo(id,caption) }
+    function rememberPlayback() {
+        if (page === "player" && !watch.hit && watch.hasFrame)
+            workspace.rememberPlayback(activeSeries, activeVideo, watch.positionMs, watch.endMs)
+    }
+    onClosing: rememberPlayback()
+    Timer { interval: 10000; running: window.page === "player" && !watch.hit; repeat: true; onTriggered: window.rememberPlayback() }
     function searchPage() { go("search"); Qt.callLater(search.focusQuery) }
     function back() { go(page === "player" ? priorPage : "library") }
     function choose() { if (workspace.ready && !workspace.busyImport) files.open() }
@@ -56,12 +62,18 @@ ApplicationWindow {
     }
     Connections {
         target: workspace
-        function onSettingsNeeded() { prefs.openSettings() }
+        function onSettingsNeeded(purpose) { prefs.openSettings(purpose, true) }
         function onSeriesCreated(id) { window.showSeries(id) }
         function onPlaybackReady(path,startMs,endMs,durationMs,title,hit) {
-            if (window.page !== "player") window.priorPage=window.page
-            window.activeVideo=hit ? "" : window.pendingVideo
-            watch.open(path,startMs,endMs,durationMs,title,hit)
+            if (window.page === "player") window.rememberPlayback()
+            else window.priorPage = window.page
+            const context = workspace.playbackContext
+            window.activeVideo = context.videoID
+            window.activeSeries = context.seriesID
+            tree.setExpanded(context.seriesID, true)
+            const recent = workspace.recentPlayback[context.seriesID]
+            const resume = !hit && recent?.videoID === context.videoID && recent.positionMs < durationMs
+            watch.open(path, resume ? recent.positionMs : startMs, endMs, durationMs, title, hit)
             window.page="player"
         }
         function onErrorChanged() {
@@ -85,21 +97,24 @@ ApplicationWindow {
                 onDoubleClicked: window.visibility === Window.Maximized ? window.showNormal() : window.showMaximized()
             }
             Row {
-                x: window.mac && window.visibility !== Window.FullScreen ? 80 : 9; anchors.verticalCenter: parent.verticalCenter; spacing: 2
+                id: navigation
+                x: window.mac && window.visibility !== Window.FullScreen ? 80 : 9; anchors.verticalCenter: parent.verticalCenter; spacing: 3
                 Tool { objectName: "toggleSidebar"; glyph: "sidebar"; hint: "显示或隐藏资料树"; onClicked: window.toggleTree() }
+                Brand { objectName: "homeWordmark"; anchors.verticalCenter: parent.verticalCenter; onClicked: window.go("library") }
                 Tool { visible: window.page !== "library"; glyph: "left"; hint: "返回"; onClicked: window.back() }
             }
-            Brand { x: window.mac && window.visibility !== Window.FullScreen ? (window.page === "library" ? 114 : 147) : (window.page === "library" ? 42 : 78); anchors.verticalCenter: parent.verticalCenter; onClicked: window.go("library") }
             Row {
-                visible: window.page === "player" || window.page === "series"
                 id: caption
+                readonly property real maxWidth: Math.max(0, Math.min(toolbar.width - 2 * (navigation.x + navigation.width + 12),
+                                                                        2 * (toolbarButtons.x - 12) - toolbar.width))
+                visible: !quickSearch.visible && maxWidth >= 70
                 anchors.centerIn: parent; spacing: 7
                 Glyph { width: 14; height: width; anchors.verticalCenter: parent.verticalCenter; name: window.page === "player" ? "film" : window.page === "search" ? "search" : window.page === "jobs" ? "activity" : "folder"; ink: Studio.dim }
-                Mark { text: window.currentName; width: Math.min(implicitWidth, window.width*.3); font.pixelSize: 12; font.weight: Font.DemiBold; secondary: true }
+                Mark { text: window.currentName; width: Math.min(implicitWidth, Math.max(0, caption.maxWidth - 21)); font.pixelSize: 13; font.weight: Font.DemiBold; secondary: true }
             }
             AbstractButton {
                 id: quickSearch; objectName: "searchButton"
-                visible: (window.page === "library" || window.page === "jobs") && window.width >= 790
+                visible: window.page === "library" && window.width >= 790
                 anchors.centerIn: parent; width: Math.min(360,window.width*.33); height: window.mac ? 32 : 36; hoverEnabled: true
                 Accessible.name: "搜索片段"; onClicked: window.searchPage()
                 background: Rectangle {
@@ -114,6 +129,7 @@ ApplicationWindow {
                 }
             }
             Row {
+                id: toolbarButtons
                 anchors.right: parent.right; anchors.rightMargin: 9; anchors.verticalCenter: parent.verticalCenter; spacing: 2
                 Tool { objectName: "searchIconButton"; visible: !quickSearch.visible; glyph: "search"; hint: "搜索片段"; chosen: window.page === "search"; onClicked: window.searchPage() }
                 Tool {
@@ -145,7 +161,7 @@ ApplicationWindow {
                     id: tree; objectName: "treePane"
                     width: window.treeWidth; height: parent.height; x: parent.width-width; visible: parent.width > 0
                     activeVideo: window.activeVideo; page: window.page
-                    onSeriesPicked: id => { workspace.loadSeries(id); window.go("series") }
+                    onSeriesPicked: id => window.showSeries(id)
                     onVideoPicked: (id,title) => window.play(id,title)
                     onNewSeriesRequested: window.newFolder()
                     onLibraryRequested: window.go("library")
@@ -161,18 +177,23 @@ ApplicationWindow {
                     onOpenSeries: id => window.showSeries(id)
                     onOpenVideo: (id,title) => window.play(id,title)
                     onImportRequested: window.choose()
+                    onSettingsRequested: prefs.openSettings("import")
                 }
                 SearchPane {
                     id: search; anchors.fill: parent
                     enabled: workspace.ready && window.page === "search"; opacity: enabled ? 1 : 0; visible: opacity > 0
                     Behavior on opacity { NumberAnimation { duration: Studio.page; easing.type: Easing.OutCubic } }
                     onOpenHit: (ref,title) => workspace.openResult(ref,title)
-                    onSettingsRequested: prefs.openSettings()
+                    onJobsRequested: window.go("jobs")
+                    onSettingsRequested: prefs.openSettings("search")
                     onImportRequested: window.choose()
                 }
                 JobsPane {
                     anchors.fill: parent; enabled: workspace.ready && window.page === "jobs"; opacity: enabled ? 1 : 0; visible: opacity > 0
                     Behavior on opacity { NumberAnimation { duration: Studio.page; easing.type: Easing.OutCubic } }
+                    onSearchRequested: window.searchPage()
+                    onSettingsRequested: prefs.openSettings("retry")
+                    onInspectVideo: (id,title) => window.play(id,title)
                 }
                 WatchPane {
                     id: watch; anchors.fill: parent; enabled: window.page === "player"; opacity: enabled ? 1 : 0; visible: opacity > 0
@@ -202,7 +223,7 @@ ApplicationWindow {
             Behavior on opacity { NumberAnimation { duration: Studio.hover } }
         }
     }
-    Preferences { id: prefs; objectName: "preferences" }
+    Preferences { id: prefs; objectName: "preferences"; toolbarHeight: toolbar.height }
     Sheet {
         id: createDialog; objectName: "createSeriesSheet"
         contentItem: ColumnLayout {
