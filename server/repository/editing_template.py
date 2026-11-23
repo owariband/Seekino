@@ -82,7 +82,9 @@ class EditingTemplateRepository:
     def _write(self):
         with self.sessions.begin() as session:
             if session.get_bind().dialect.name == "sqlite":
-                session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+                connection = session.connection()
+                if not connection.get_execution_options().get("sqlite_begin_immediate"):
+                    connection.exec_driver_sql("BEGIN IMMEDIATE")
             yield session
 
     def search(self, scopes, query, limit=5, tags=None):

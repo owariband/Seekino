@@ -1,4 +1,4 @@
-# PR 1 配置草案。Docker 使用 server，桌面构建时只将 desktop 段写入应用包。
+# Docker 读取 server。构建桌面宿主时只复制 desktop。
 server:
   database:
     type: mysql
@@ -14,5 +14,5 @@ desktop:
   search:
     type: sqlite
     text: fts5
-    vector: sqlite-vec  # 首轮验证候选
+    vector: sqlite-vec
   media: pyav

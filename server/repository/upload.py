@@ -1070,6 +1070,23 @@ class UploadRepository:
                     result.append(self._snapshot(session, record, segments=segments_by_upload.get(record.id, [])))
             return result
 
+    @staticmethod
+    def _release_completion_statement():
+        return update(UploadSession).where(
+            UploadSession.status == UploadSessionStatus.COMPLETING.value,
+        ).values(
+            status=UploadSessionStatus.UPLOADING.value, completion_token=None,
+            completion_start_time=None, completion_stage=None, version=UploadSession.version + 1,
+        )
+
+    def recover_interrupted_completions(self) -> None:
+        """Only an exclusively held desktop library can fence all previous upload owners."""
+        with self._session_factory.begin() as session:
+            session.execute(self._release_completion_statement().values(
+                last_error="Previous desktop session ended during upload completion",
+                last_error_code="COMPLETION_INTERRUPTED",
+            ))
+
     def release_completion(
         self,
         upload_session_id: str,
@@ -1081,22 +1098,10 @@ class UploadRepository:
         summary = error.strip()[:8192] or "upload completion failed"
         with self._session_factory.begin() as session:
             result = session.execute(
-                update(UploadSession)
-                .where(
+                self._release_completion_statement().where(
                     UploadSession.id == upload_session_id,
-                    UploadSession.status
-                    == UploadSessionStatus.COMPLETING.value,
                     UploadSession.completion_token == completion_token,
-                )
-                .values(
-                    status=UploadSessionStatus.UPLOADING.value,
-                    completion_token=None,
-                    completion_start_time=None,
-                    last_error=summary,
-                    last_error_code=error_code,
-                    completion_stage=None,
-                    version=UploadSession.version + 1,
-                )
+                ).values(last_error=summary, last_error_code=error_code)
             )
             return result.rowcount == 1
 

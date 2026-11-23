@@ -19,6 +19,7 @@ from .logging import LoggingConfig
 from .mq import MQConsumerConfig
 from .retrieval import RetrievalConfig
 from .sse import SSEConfig
+from .storage import server_storage
 from .upload import UploadServiceConfig
 from .video_summarize import VideoSummarizeConfig
 
@@ -259,7 +260,7 @@ def resolve_environment(value: DatabaseEnvironment | str | None = None) -> Datab
 
 
 def resolve_database_url(value: str | None = None) -> str:
-    return _required_environment("SEEKINO_DATABASE_URL", value=value)
+    return _required_environment(server_storage().database.url_env, value=value)
 
 
 def resolve_database_pool_recycle_seconds(value: int | str | None = None) -> int:

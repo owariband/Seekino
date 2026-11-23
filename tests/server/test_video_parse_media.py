@@ -133,7 +133,7 @@ def test_episode_decode_failure_never_publishes_partial_assets(tmp_path, monkeyp
     task = str(uuid4())
     def fail(*_args, **_kwargs):
         raise RuntimeError("decode failed")
-    monkeypatch.setattr("server.service.video_parse_media.extract_video_frames_batch", fail)
+    monkeypatch.setattr("engine.common.ffmpeg_media.extract_video_frames_batch", fail)
     with pytest.raises(RuntimeError, match="decode failed"):
         with service.prepare_episode(MediaLeaseIdentity(task, task, 1, execution_kind="video"),
             source_video=source, duration_ms=1000, chunk_duration=1,

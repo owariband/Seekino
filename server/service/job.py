@@ -5,9 +5,8 @@ from typing import Literal
 
 from ..model.dto.taskDTO import VideoParseTaskDetail
 from ..model.task import VideoParseTaskStatus
+from ..storage.index_contract import IndexCleanupStore
 from ..repository.job import ParseJobRepository
-from ..storage.elasticsearch import ElasticsearchVideoChunkStore
-from ..storage.elasticsearch_events import ElasticsearchVideoEventStore
 from .library import LibraryService
 from ..utils.validation import canonical_uuid, require_nonempty_text
 
@@ -19,8 +18,8 @@ class ParseJobService:
         library: LibraryService,
         *,
         execution_mode: Literal["v2"] = "v2",
-        video_parse_index_store: ElasticsearchVideoChunkStore | None = None,
-        video_event_index_store: ElasticsearchVideoEventStore | None = None,
+        video_parse_index_store: IndexCleanupStore | None = None,
+        video_event_index_store: IndexCleanupStore | None = None,
     ) -> None:
         if execution_mode != "v2":
             raise ValueError("execution_mode must be 'v2'")

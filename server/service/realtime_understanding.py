@@ -26,7 +26,7 @@ from gateway.config import GatewayConfig
 from gateway.multimodal import ImageInput, TextInput
 
 from ..model.dto.taskDTO import ChunkParseLease
-from ..mq.video_parse_queue import MySqlVideoParseQueue
+from ..mq.video_parse_queue import VideoParseQueue
 from .video_parse_persistence import (
     VideoParseConflictError, VideoParseLeaseLostError, VideoParsePersistenceService,
 )
@@ -50,7 +50,7 @@ class RealtimeUnderstandingService:
     def __init__(
         self,
         persistence: VideoParsePersistenceService,
-        queue: MySqlVideoParseQueue,
+        queue: VideoParseQueue,
         parse_runtime: VideoParseRuntimeService,
         artifact_store: ArtifactStore,
         *,

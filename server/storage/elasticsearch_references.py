@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+
 import hashlib
 import json
 
 from elasticsearch import BadRequestError, Elasticsearch
 
-from engine.parsev2.edit_reference import ReferenceChunk
+from engine.parsev2.edit_reference import ReferenceChunk, observation_fingerprint
 from ..config.elasticsearch import validate_index_name
 
 
@@ -65,8 +66,3 @@ class ElasticsearchReferenceStore:
             if {hit["_id"]: hit["_source"] for hit in visible["hits"]["hits"]} != documents:
                 raise RuntimeError("reference projection differs from the current source")
         return {"index_name": self.index_name, "segments": sorted(d["segment_id"] for d in documents.values())}
-
-
-def observation_fingerprint(observation):
-    return hashlib.sha256(json.dumps(observation.model_dump(mode="json"), sort_keys=True, ensure_ascii=False,
-                                     separators=(",", ":")).encode()).hexdigest()

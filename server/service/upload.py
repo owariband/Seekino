@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 
 from agent.video_parse_v2.input import ParseConfig as VideoParseV2Config
+from engine.common.media_contract import FFMPEG_PREPROCESSING, MediaPreprocessing
 from engine.common.media_probe import probe_video_duration_seconds
 from engine.parsev2.planning import MAX_INTERVAL_CHUNKS
 from engine.rag import EncoderContract
@@ -30,12 +31,11 @@ from ..repository.upload import (
     UploadSessionNotFoundError,
     UploadStateError,
 )
+from ..storage.index_contract import ChunkIndexStore, IndexCleanupStore
 from ..storage.artifact import (
     ArtifactStore,
     UploadSegmentArtifact,
 )
-from ..storage.elasticsearch import ElasticsearchVideoChunkStore
-from ..storage.elasticsearch_events import ElasticsearchVideoEventStore
 from ..utils.errors import exception_summary
 from ..utils.time import now_utc, require_utc_datetime, unix_time_ms_to_datetime
 from ..utils.validation import canonical_uuid, require_nonempty_text
@@ -67,12 +67,13 @@ class UploadService:
         config: UploadServiceConfig | None = None,
         probe_duration: Callable[[str | Path], int] = probe_video_duration_seconds,
         clock: Callable[[], datetime | int] | None = None,
-        video_parse_index_store: ElasticsearchVideoChunkStore | None = None,
+        video_parse_index_store: ChunkIndexStore | None = None,
         parse_defaults: ParseConfig,
         video_parse_query_encoder: EncoderContract | None = None,
         video_parse_query_encoder_source: str | None = None,
         video_parse_query_encoder_supports_sparse: bool = True,
-        video_event_index_store: ElasticsearchVideoEventStore | None = None,
+        video_event_index_store: IndexCleanupStore | None = None,
+        preprocessing: MediaPreprocessing = FFMPEG_PREPROCESSING,
     ) -> None:
         if (video_parse_query_encoder is None) != (
             video_parse_query_encoder_source is None
@@ -92,6 +93,7 @@ class UploadService:
         self._repository = repository
         self._artifact_store = artifact_store
         self._config = config or UploadServiceConfig()
+        self._preprocessing = preprocessing
         self._probe_duration = probe_duration
         self._clock = clock or now_utc
         self._video_parse_index_store = video_parse_index_store
@@ -112,6 +114,12 @@ class UploadService:
         # Temporary compatibility for injected test clocks and callers that
         # still expose the old millisecond clock at the service boundary.
         return unix_time_ms_to_datetime(value)
+
+    def validate_size(self, total_size_bytes: int) -> None:
+        if isinstance(total_size_bytes, bool) or not isinstance(total_size_bytes, int):
+            raise ValueError("total_size_bytes must be an integer")
+        if not 0 < total_size_bytes <= self._config.maximum_upload_size_bytes:
+            raise ValueError("total_size_bytes is outside the configured upload limit")
 
     def create_session(
         self,
@@ -147,10 +155,7 @@ class UploadService:
             raise ValueError(
                 "media_type must be video/mp4, video/quicktime, or video/x-msvideo"
             )
-        if isinstance(total_size_bytes, bool) or not isinstance(total_size_bytes, int):
-            raise ValueError("total_size_bytes must be an integer")
-        if not 0 < total_size_bytes <= self._config.maximum_upload_size_bytes:
-            raise ValueError("total_size_bytes is outside the configured upload limit")
+        self.validate_size(total_size_bytes)
         if content_sha256 is not None and not _SHA256_PATTERN.fullmatch(content_sha256):
             raise ValueError("content_sha256 must be 64 lowercase hex characters")
 
@@ -726,7 +731,7 @@ class UploadService:
                 "contract_fingerprint": index_contract_fingerprint(
                     resolved_embedding, provider=active_encoder.provider,
                     encoder_revision=active_encoder.encoder_revision,
-                    max_height=config.visual_input.max_height,
+                    max_height=config.visual_input.max_height, preprocessing=self._preprocessing,
                 ),
             }),
         })

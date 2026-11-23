@@ -156,11 +156,11 @@ class VideoParsePersistenceService:
         Unaccepted tasks remain outside the full Parse delivery queues.
         """
 
-        created_at = now if now is not None else now_utc()
         while True:
             with self._session_factory() as session:
                 candidate_id = _latest_video_task_id(session, video_id)
             with self._session_factory.begin() as session:
+                created_at = now if now is not None else now_utc()
                 task = None
                 if candidate_id is not None:
                     task = task_store.get_task(session, candidate_id, for_update=True, include_deleted=False)
@@ -251,8 +251,8 @@ class VideoParsePersistenceService:
     ) -> None:
         """Release topology preparation; only accepted tasks enter full Parse."""
 
-        finished_at = now if now is not None else now_utc()
         with self._session_factory.begin() as session:
+            finished_at = now if now is not None else now_utc()
             task = _locked_video_lease(session, lease, finished_at)
             runtime = _ensure_runtime(task.detail)[RUNTIME_DETAIL_KEY]
             task.status = (VideoParseTaskStatus.PARSING.value if runtime.get("accepted")
@@ -509,12 +509,12 @@ class VideoParsePersistenceService:
     ) -> PreparedVideoParseState:
         """Idempotently freeze Chunk and Interval children for a claimed task."""
 
-        prepared_at = now if now is not None else now_utc()
         ordered_chunk_ids = tuple(video_chunk_ids)
         if not ordered_chunk_ids or len(set(ordered_chunk_ids)) != len(ordered_chunk_ids):
             raise ValueError("video_chunk_ids must be a nonempty unique sequence")
 
         with self._session_factory.begin() as session:
+            prepared_at = now if now is not None else now_utc()
             task = _locked_video_lease(session, lease, prepared_at)
             video = task_store.get_video(session, task.video_id)
             if video is None:
@@ -555,11 +555,11 @@ class VideoParsePersistenceService:
     ) -> tuple[VideoChunkState, ...]:
         """Create the immutable source-time topology while holding Prepare lease."""
 
-        prepared_at = now if now is not None else now_utc()
         normalized = tuple(plans)
         if [item[0] for item in normalized] != list(range(len(normalized))):
             raise ValueError("plans must have consecutive sequence numbers")
         with self._session_factory.begin() as session:
+            prepared_at = now if now is not None else now_utc()
             return content_ops.ensure_video_chunks(
                 session,
                 lease=lease,
@@ -595,8 +595,8 @@ class VideoParsePersistenceService:
         *,
         now: datetime | None = None,
     ) -> VideoParseTaskState:
-        activated_at = now if now is not None else now_utc()
         with self._session_factory.begin() as session:
+            activated_at = now if now is not None else now_utc()
             task = _locked_video_lease(session, lease, activated_at)
             if task.status != VideoParseTaskStatus.PREPARING.value:
                 raise VideoParseConflictError("only PREPARING tasks can be activated")
@@ -642,8 +642,8 @@ class VideoParsePersistenceService:
 
     def commit_content_route(self, lease: VideoParseLease, decision: ContentRoute,
                              *, now: datetime | None = None) -> ParseConfig:
-        committed_at = now or now_utc()
         with self._session_factory.begin() as session:
+            committed_at = now or now_utc()
             task = _locked_video_lease(session, lease, committed_at)
             if (task.is_deleted or _latest_video_task_id(session, task.video_id) != task.id
                     or _video_failure_status(task) is not None):
@@ -669,8 +669,8 @@ class VideoParsePersistenceService:
     def finish_video_asr_preparation(
         self, lease: VideoParseLease, *, now: datetime | None = None,
     ) -> None:
-        prepared_at = now if now is not None else now_utc()
         with self._session_factory.begin() as session:
+            prepared_at = now if now is not None else now_utc()
             task = _locked_video_lease(session, lease, prepared_at)
             if (task.is_deleted or _latest_video_task_id(session, task.video_id) != task.id
                     or _video_failure_status(task) is not None):
@@ -694,8 +694,8 @@ class VideoParsePersistenceService:
         self, lease: VideoParseLease, *, now: datetime | None = None,
     ) -> dict[str, Any] | None:
         """Freeze the task's eligible Understanding sources under the Video lease."""
-        started_at = now if now is not None else now_utc()
         with self._session_factory.begin() as session:
+            started_at = now if now is not None else now_utc()
             return voiceprint_ops.begin_voiceprint_preparation(
                 session,
                 lease=lease,
@@ -706,12 +706,12 @@ class VideoParsePersistenceService:
         self, lease: VideoParseLease, *, model: Mapping[str, str], now: datetime | None = None,
     ) -> None:
         """Fence the encoder identity across interrupted preparation attempts."""
-        bound_at = now if now is not None else now_utc()
         identity = dict(model)
         if (set(identity) != {"name", "encoder_revision"}
             or any(not isinstance(value, str) or not value.strip() for value in identity.values())):
             raise ValueError("voiceprint encoder requires a model name and immutable revision")
         with self._session_factory.begin() as session:
+            bound_at = now if now is not None else now_utc()
             return voiceprint_ops.bind_voiceprint_encoder(
                 session,
                 lease=lease,
@@ -730,7 +730,6 @@ class VideoParsePersistenceService:
         The locked parent fences the lease; a callback renewing it on another
         connection would wait on this transaction's own row lock.
         """
-        finished_at = now if now is not None else now_utc()
         payload = deepcopy(dict(preparation))
         encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True,
                              separators=(",", ":"), allow_nan=False).encode()
@@ -741,6 +740,7 @@ class VideoParsePersistenceService:
             or descriptor.get("checksum") != checksum):
             raise VideoParseConflictError("voiceprint artifact descriptor or checksum does not match preparation")
         with self._session_factory.begin() as session:
+            finished_at = now if now is not None else now_utc()
             return voiceprint_ops.finish_voiceprint_scoring(
                 session,
                 lease=lease,
@@ -767,8 +767,8 @@ class VideoParsePersistenceService:
         start_ms: int, end_ms: int, model: str, encoder_revision: str,
         replace_source_ref: str | None = None, now: datetime | None = None,
     ) -> dict[str, Any] | None:
-        checked_at = now if now is not None else now_utc()
         with self._session_factory.begin() as session:
+            checked_at = now if now is not None else now_utc()
             return voiceprint_ops.precheck_voiceprint_registration(
                 session,
                 lease=lease,
@@ -788,8 +788,8 @@ class VideoParsePersistenceService:
         model: str, encoder_revision: str, vector: Sequence[float], pcm_sha256: str,
         duration_ms: int, replace_source_ref: str | None = None, now: datetime | None = None,
     ) -> dict[str, Any]:
-        registered_at = now if now is not None else now_utc()
         with self._session_factory.begin() as session:
+            registered_at = now if now is not None else now_utc()
             return voiceprint_ops.register_voiceprint(
                 session,
                 lease=lease,
@@ -811,8 +811,8 @@ class VideoParsePersistenceService:
     def unregister_voiceprint(
         self, lease: VideoParseLease, *, source_ref: str, now: datetime | None = None,
     ) -> dict[str, Any]:
-        removed_at = now if now is not None else now_utc()
         with self._session_factory.begin() as session:
+            removed_at = now if now is not None else now_utc()
             return voiceprint_ops.unregister_voiceprint(
                 session,
                 lease=lease,
@@ -823,8 +823,8 @@ class VideoParsePersistenceService:
     def get_voiceprint_speaker_list(
         self, lease: VideoParseLease, *, now: datetime | None = None,
     ) -> dict[str, Any]:
-        loaded_at = now if now is not None else now_utc()
         with self._session_factory.begin() as session:
+            loaded_at = now if now is not None else now_utc()
             return voiceprint_ops.get_voiceprint_speaker_list(
                 session,
                 lease=lease,
@@ -835,8 +835,8 @@ class VideoParsePersistenceService:
         self, lease: VideoParseLease, *, skip_reasons: Mapping[str, str] | None = None,
         now: datetime | None = None,
     ) -> dict[str, Any]:
-        finished_at = now if now is not None else now_utc()
         with self._session_factory.begin() as session:
+            finished_at = now if now is not None else now_utc()
             return voiceprint_ops.finish_voiceprint_preparation(
                 session,
                 lease=lease,
@@ -848,8 +848,8 @@ class VideoParsePersistenceService:
         self, lease: VideoParseLease, *, now: datetime | None = None,
     ) -> bool:
         """Normal cancellation returns the phase without charging a failure."""
-        stopped_at = now if now is not None else now_utc()
         with self._session_factory.begin() as session:
+            stopped_at = now if now is not None else now_utc()
             return voiceprint_ops.stop_voiceprint_preparation(
                 session,
                 lease=lease,
@@ -875,11 +875,11 @@ class VideoParsePersistenceService:
         detail: Mapping[str, Any] | None = None,
         now: datetime | None = None,
     ) -> tuple[str, ...]:
-        committed_at = now if now is not None else now_utc()
         payload = deepcopy(dict(content))
         if not payload:
             raise ValueError("content must not be empty")
         with self._session_factory.begin() as session:
+            committed_at = now if now is not None else now_utc()
             touched = content_ops.commit_chunk_result(
                 session,
                 lease=lease,
@@ -933,8 +933,8 @@ class VideoParsePersistenceService:
     ) -> IntervalRefinementCommit:
         """Merge independent event edits under current leases and commit once."""
 
-        committed_at = now if now is not None else now_utc()
         with self._session_factory.begin() as session:
+            committed_at = now if now is not None else now_utc()
             parent = _locked_parent_task(session, lease.video_parse_task_id)
             size = _interval_size(parent.parse_config)
             locked_intervals = interval_store.list_tasks(
@@ -972,8 +972,8 @@ class VideoParsePersistenceService:
         """Freeze one Event build target at the first leased INDEX execution."""
 
         target = _normalize_event_index_target(configured_target)
-        bound_at = now if now is not None else now_utc()
         with self._session_factory.begin() as session:
+            bound_at = now if now is not None else now_utc()
             return content_ops.bind_event_index_target(
                 session,
                 lease=lease,
@@ -997,20 +997,29 @@ class VideoParsePersistenceService:
     def complete_chunk_indexing(
         self, lease: ChunkParseLease, content_version: int, index_generation: int,
         *, event_target: Mapping[str, Any] | None = None,
-        now: datetime | None = None,
+        publish_projection: Callable[[Session], None] | None = None,
+        receipt: Mapping[str, Any] | None = None, now: datetime | None = None,
     ) -> VideoParseTaskState:
-        """Record a publication only after the host proves its exact ES visibility."""
+        """Commit a local projection with its receipt, or acknowledge an external publication."""
+        if (receipt is None) != (publish_projection is None):
+            raise ValueError("local projection and publication receipt are required together")
         if type(content_version) is not int or content_version < 1 or type(index_generation) is not int or index_generation < 1:
             raise VideoParseConflictError("indexed Chunk versions must be positive integers")
-        completed_at = now if now is not None else now_utc()
         with self._session_factory.begin() as session:
+            if publish_projection is not None:
+                content_ops.save_index_embeddings(
+                    session, lease=lease, chunk_parse_task_id=lease.chunk_parse_task_id,
+                    content_version=content_version, representations={}, receipt=receipt,
+                    event_target=event_target, saved_at=now if now is not None else now_utc(),
+                )
+                publish_projection(session)
             state = content_ops.complete_chunk_indexing(
                 session,
                 lease=lease,
                 content_version=content_version,
                 index_generation=index_generation,
                 event_target=event_target,
-                completed_at=completed_at,
+                completed_at=now if now is not None else now_utc(),
             )
         if self._dispatch is not None:
             self._dispatch.after_commit(lease, EpisodeReadyTasks.lease_state, indexed_version=content_version)
@@ -1035,8 +1044,8 @@ class VideoParsePersistenceService:
             or content_version <= 0
         ):
             raise ValueError("content_version must be a positive integer")
-        saved_at = now if now is not None else now_utc()
         with self._session_factory.begin() as session:
+            saved_at = now if now is not None else now_utc()
             return content_ops.save_index_embeddings(
                 session,
                 lease=lease,
@@ -1053,8 +1062,8 @@ class VideoParsePersistenceService:
         now: datetime | None = None,
     ) -> tuple[str, ...]:
         """Requeue released Chunks while preserving Parse and Refine results."""
-        requested_at = now if now is not None else now_utc()
         with self._session_factory.begin() as session:
+            requested_at = now if now is not None else now_utc()
             reset = content_ops.request_index_rebuild(
                 session,
                 video_parse_task_id=video_parse_task_id,
@@ -1071,8 +1080,8 @@ class VideoParsePersistenceService:
         *,
         now: datetime | None = None,
     ) -> VideoParseTaskState:
-        aggregated_at = now if now is not None else now_utc()
         with self._session_factory.begin() as session:
+            aggregated_at = now if now is not None else now_utc()
             _locked_video_lease(session, lease, aggregated_at)
             task = _aggregate_video_task(
                 session,
@@ -1106,8 +1115,8 @@ class VideoParsePersistenceService:
                 or isinstance(lease, IntervalParseLease) and lease.phase == "REFINING"):
             raise ValueError("timing supports only Video ASR, Chunk Parse/Index and Interval Refine")
 
-        sampled_at = now if now is not None else now_utc()
         with self._session_factory.begin() as session:
+            sampled_at = now if now is not None else now_utc()
             return execution_ops.record_execution_timing(
                 session,
                 lease=lease,
@@ -1130,10 +1139,10 @@ class VideoParsePersistenceService:
             raise ValueError("call_id must not be blank")
         if lease_duration <= timedelta(0):
             raise ValueError("lease_duration must be positive")
-        reserved_at = now if now is not None else now_utc()
-        expires_at = reserved_at + lease_duration
-        now_ms = datetime_to_unix_time_ms(reserved_at)
         with self._session_factory.begin() as session:
+            reserved_at = now if now is not None else now_utc()
+            expires_at = reserved_at + lease_duration
+            now_ms = datetime_to_unix_time_ms(reserved_at)
             return execution_ops.reserve_model_call(
                 session,
                 lease=lease,
@@ -1157,9 +1166,9 @@ class VideoParsePersistenceService:
             raise ValueError("call_id must not be blank")
         if lease_duration <= timedelta(0):
             raise ValueError("lease_duration must be positive")
-        renewed_at = now if now is not None else now_utc()
-        renewed_at_ms = datetime_to_unix_time_ms(renewed_at)
         with self._session_factory.begin() as session:
+            renewed_at = now if now is not None else now_utc()
+            renewed_at_ms = datetime_to_unix_time_ms(renewed_at)
             return execution_ops.renew_model_call(
                 session,
                 lease=lease,
@@ -1177,8 +1186,8 @@ class VideoParsePersistenceService:
         *,
         now: datetime | None = None,
     ) -> bool:
-        released_at = now if now is not None else now_utc()
         with self._session_factory.begin() as session:
+            released_at = now if now is not None else now_utc()
             return execution_ops.release_model_call(
                 session,
                 video_parse_task_id=video_parse_task_id,
@@ -1199,9 +1208,6 @@ class VideoParsePersistenceService:
             raise ValueError("lease_duration must be positive")
         if not worker_id.strip():
             raise ValueError("worker_id must not be blank")
-        claimed_at = now if now is not None else now_utc()
-        now_ms = datetime_to_unix_time_ms(claimed_at)
-        expires_at = claimed_at + lease_duration
         with self._session_factory() as session:
             frontier = _series_prefix_frontier(session, series_id)
         if frontier is None:
@@ -1209,6 +1215,9 @@ class VideoParsePersistenceService:
         frontier_task_id, _previous_compact = frontier
 
         with self._session_factory.begin() as session:
+            claimed_at = now if now is not None else now_utc()
+            now_ms = datetime_to_unix_time_ms(claimed_at)
+            expires_at = claimed_at + lease_duration
             return prefix_ops.claim_next_prefix(
                 session,
                 series_id=series_id,
@@ -1228,7 +1237,6 @@ class VideoParsePersistenceService:
     ) -> PrefixParseLease | None:
         """Periodic recovery scan across Series after notifications are lost."""
 
-        claimed_at = now if now is not None else now_utc()
         with self._session_factory() as session:
             series_ids = task_store.list_series_ids(session)
         for series_id in series_ids:
@@ -1236,7 +1244,7 @@ class VideoParsePersistenceService:
                 series_id,
                 worker_id,
                 lease_duration=lease_duration,
-                now=claimed_at,
+                now=now,
             )
             if lease is not None:
                 return lease
@@ -1251,8 +1259,8 @@ class VideoParsePersistenceService:
     ) -> bool:
         if lease_duration <= timedelta(0):
             raise ValueError("lease_duration must be positive")
-        heartbeat_at = now if now is not None else now_utc()
         with self._session_factory.begin() as session:
+            heartbeat_at = now if now is not None else now_utc()
             return prefix_ops.heartbeat_prefix(
                 session,
                 lease=lease,
@@ -1282,8 +1290,8 @@ class VideoParsePersistenceService:
         input_fingerprint: str | None = None,
         now: datetime | None = None,
     ) -> tuple[str, ...]:
-        committed_at = now if now is not None else now_utc()
         with self._session_factory.begin() as session:
+            committed_at = now if now is not None else now_utc()
             reset = prefix_ops.commit_prefix(
                 session,
                 lease=lease,
@@ -1305,8 +1313,8 @@ class VideoParsePersistenceService:
         error: str,
         now: datetime | None = None,
     ) -> bool:
-        failed_at = now if now is not None else now_utc()
         with self._session_factory.begin() as session:
+            failed_at = now if now is not None else now_utc()
             return prefix_ops.retry_prefix(
                 session,
                 lease=lease,
@@ -1322,8 +1330,8 @@ class VideoParsePersistenceService:
     ) -> bool:
         """Release a cancelled Prefix execution without recording a failure."""
 
-        released_at = now if now is not None else now_utc()
         with self._session_factory.begin() as session:
+            released_at = now if now is not None else now_utc()
             return prefix_ops.release_prefix(
                 session,
                 lease=lease,

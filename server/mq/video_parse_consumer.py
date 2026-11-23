@@ -18,7 +18,7 @@ from gateway.agent_model.errors import ModelFailureReason
 from ..model.dto.taskDTO import ChunkParseLease, IntervalParseLease, VideoParseLease
 from ..utils.time import now_utc
 from ..utils.retry import task_retry_delay
-from .video_parse_queue import MySqlVideoParseQueue
+from .video_parse_queue import VideoParseQueue
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,7 +140,7 @@ class VideoParseConsumer:
 
     def __init__(
         self,
-        queue: MySqlVideoParseQueue,
+        queue: VideoParseQueue,
         handlers: VideoParseConsumerHandlers,
         *,
         worker_id: str,

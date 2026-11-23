@@ -18,7 +18,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
-from typing import Literal, TypeVar
+from typing import TYPE_CHECKING, Literal, TypeVar
 
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel
@@ -26,7 +26,6 @@ from pydantic import BaseModel
 from agent.video_parse_v2 import ParseAgent
 from agent.video_parse_v2.edit_reference import consolidate, observe_segments
 from engine.parsev2.edit_reference import ReferenceChunk
-from ..storage.elasticsearch_references import ElasticsearchReferenceStore
 from agent.video_parse_v2.content_route import routing_evidence
 from agent.utils.context_canvas_tools import build_context_canvas_tools
 from agent.utils.context_canvas import ContextCanvas
@@ -59,6 +58,7 @@ from agent.video_parse_v2.state import (
     VideoRunSnapshot,
     VideoTaskStatus,
 )
+from engine.common.media_contract import FFMPEG_PREPROCESSING, MediaPreprocessing
 from engine.common.transcription import TranscriptAnalysis, VideoASRAgent, normalize_transcription
 from .video_parse_results import build_asr_identity, build_diarization_identity
 from .video_parse_routing import classify_video, preview_times
@@ -79,7 +79,6 @@ from engine.rag import (
     EncoderContract,
     SparseEncoderContract,
     VideoClipInputContract,
-    VIDEO_CLIP_PREPROCESS_REVISION,
 )
 from engine.rag.indexing.events import EventIndexingContract
 from gateway.agent_model.errors import ModelFailureError
@@ -107,7 +106,7 @@ from ..model.dto.taskDTO import (
     VideoParseLease,
     VideoParseTaskInputState,
 )
-from ..mq.video_parse_queue import MySqlVideoParseQueue
+from ..mq.video_parse_queue import VideoParseQueue
 from .video_parse_persistence import (
     ModelCallBudgetExhaustedError,
     VideoParseLeaseLostError,
@@ -116,8 +115,6 @@ from .video_parse_persistence import (
     VoiceprintRegistrationRejectedError,
 )
 from ..storage.artifact import ArtifactIntegrityError, ArtifactStore
-from ..storage.elasticsearch import ElasticsearchVideoChunkStore
-from ..storage.elasticsearch_events import ElasticsearchVideoEventStore
 from ..utils.execution import (
     BlockingCallCancelled, ExecutionCalls, cleanup_execution, execution_calls, run_blocking,
 )
@@ -133,6 +130,13 @@ from .video_parse_media import (
 )
 from .video_parse_model_calls import ModelCallRequestScope, VideoParseModelCallManager
 from .video_parse_refine_updates import RefineContentUpdates, RefineSubscription
+
+
+if TYPE_CHECKING:
+    from ..storage.elasticsearch import ElasticsearchVideoChunkStore
+    from ..storage.elasticsearch_events import ElasticsearchVideoEventStore
+    from ..storage.elasticsearch_references import ElasticsearchReferenceStore
+    from ..storage.sqlite_index import SQLiteSearchIndex
 
 
 _Result = TypeVar("_Result", bound=BaseModel)
@@ -157,11 +161,11 @@ class VideoParseRuntimeService:
     def __init__(
         self,
         persistence: VideoParsePersistenceService,
-        queue: MySqlVideoParseQueue,
+        queue: VideoParseQueue,
         artifact_store: ArtifactStore,
         media_service: VideoParseMediaService,
         gateway_config: GatewayConfig,
-        elasticsearch_store: ElasticsearchVideoChunkStore,
+        elasticsearch_store: ElasticsearchVideoChunkStore | SQLiteSearchIndex,
         *,
         worker_id: str,
         lease_duration: timedelta,
@@ -169,9 +173,11 @@ class VideoParseRuntimeService:
         parse_usage: ParseUsageService | None = None,
         tracing: LangfuseTracing | None = None,
         gateway_client: GatewayClient | None = None,
-        event_store: ElasticsearchVideoEventStore | None = None,
+        event_store: ElasticsearchVideoEventStore | SQLiteSearchIndex | None = None,
         event_contract: EventIndexingContract | None = None,
         reference_store: ElasticsearchReferenceStore | None = None,
+        local_publisher: SQLiteSearchIndex | None = None,
+        preprocessing: MediaPreprocessing = FFMPEG_PREPROCESSING,
     ) -> None:
         if not worker_id.strip():
             raise ValueError("worker_id must not be blank")
@@ -186,9 +192,11 @@ class VideoParseRuntimeService:
         self._dispatch = getattr(queue, "dispatch", None)
         self._artifact_store = artifact_store
         self._media_service = media_service
+        self._preprocessing = preprocessing
         self._gateway_config = gateway_config
         self._gateway = gateway_client or GatewayClient(gateway_config)
         self._elasticsearch_store = elasticsearch_store
+        self._local_publisher = local_publisher
         self._event_store = event_store
         self._reference_store = reference_store
         self._event_contract = event_contract
@@ -2213,7 +2221,7 @@ class VideoParseRuntimeService:
                     "encoder_model": embedder.encoder_model, "dimensions": dimensions,
                 }),
                 provider=provider, encoder_revision=embedder.encoder_revision,
-                max_height=inputs.parse_config.visual_input.max_height,
+                max_height=inputs.parse_config.visual_input.max_height, preprocessing=self._preprocessing,
             )
             if fingerprint != inputs.parse_config.indexing.contract_fingerprint:
                 raise ValueError("index encoder contract differs from the accepted task snapshot")
@@ -2239,6 +2247,8 @@ class VideoParseRuntimeService:
                 if (accepted.semantic_encoder != event_contract.semantic_encoder
                         or accepted.vision_encoder != event_contract.vision_encoder):
                     raise ValueError("Event encoder differs from the frozen task target")
+                if accepted.capture is not None and accepted.capture.preprocess_revision != self._preprocessing.jpeg:
+                    raise ValueError("Event frame preprocessing differs from the frozen task target")
                 event_options = {"event_store": self._event_store, "event_target": frozen}
             manager = self._model_manager.get()
             coordinator = VideoParseIndexCoordinator(
@@ -2249,6 +2259,7 @@ class VideoParseRuntimeService:
                 media_service=self._media_service,
                 check_active=check_active,
                 check_cancelled=manager.raise_if_cancelled if manager is not None else check_active,
+                local_publisher=self._local_publisher, preprocessing=self._preprocessing,
                 **event_options,
                 contract=ChunkIndexingContract(
                     retrieval_contract_id=PARSE_RETRIEVAL_CONTRACT,
@@ -2268,7 +2279,7 @@ class VideoParseRuntimeService:
                         fps=embedding.video_fps,
                         max_height=inputs.parse_config.visual_input.max_height,
                         mime_type="video/mp4",
-                        preprocess_revision=VIDEO_CLIP_PREPROCESS_REVISION,
+                        preprocess_revision=self._preprocessing.clip,
                     ) if embedding.input_mode == "multimodal" else None,
                     index_generation=index_generation,
                     sparse_encoder=(

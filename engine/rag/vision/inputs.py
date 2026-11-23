@@ -6,11 +6,12 @@ import math
 from dataclasses import dataclass
 from typing import Literal, TypeAlias
 
+from engine.common.media_contract import FFMPEG_PREPROCESSING
 from engine.rag._validation import (
     _nonblank, _positive_finite, _sha256_json, _validate_bounds, is_sha256,
 )
 
-VIDEO_CLIP_PREPROCESS_REVISION = "ffmpeg-h264-crf23-scale-cap-v1"
+VIDEO_CLIP_PREPROCESS_REVISION = FFMPEG_PREPROCESSING.clip
 
 @dataclass(frozen=True, slots=True)
 class VideoClipInputContract:

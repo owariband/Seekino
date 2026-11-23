@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field, replace
-from datetime import timedelta
 
 from agent.chat.supervisor import SupervisorRuntime
 from agent.chat.query_hook import QueryHook
@@ -17,38 +15,26 @@ from gateway.config import (
     ChatAPISourceConfig, ClaudeCodeModelSourceConfig, CodexModelSourceConfig, GatewayConfig, ModelBinding, load_config,
 )
 from gateway.model_factory import GatewayClient
-from gateway.multimodal import adapter_capabilities
 from gateway.personal_endpoint import PersonalModelTarget
 from sqlalchemy.engine import make_url
 from gateway.query_hook import QueryHookModels
 from gateway.tracing import LangfuseTracing
 from gateway.web_search import WebSearcher
 
+from .video_services import build_video_services, build_video_consumer
 from .config import ServerSettings
 from .caller import CallerResources
 from .service.video_event_retrieval import VideoEventRetrievalService
-from .common.retrieval import build_event_retrieval_service, build_retrieval_service, validate_rerank_source
+from .common.retrieval import validate_rerank_source
 from .common.storage import (
     build_artifact_storage,
 )
 from .config.agent import AgentServiceConfig
 from .config.global_agent_settings import read_global_agent_settings
-from .config.parse_profile import ParseConfig, resolve_event_indexing_contract
-from .config.usage import load_model_pricing
-from .mq.video_parse_consumer import (
-    VideoParseConsumer,
-    VideoParseConsumerHandlers,
-)
-from .mq.video_parse_queue import MySqlVideoParseQueue
+from .config.parse_profile import ParseConfig
+from .mq.video_parse_consumer import VideoParseConsumer
 from .repository.agent import AgentRepository
 from .repository.identity import IdentityRepository
-from .repository.job import ParseJobRepository
-from .repository.library import LibraryRepository
-from .repository.model_usage import ModelUsageRepository
-from .repository.parse_output_draft import ParseOutputDraftRepository
-from .repository.upload import UploadRepository
-from .service.video_parse_persistence import VideoParsePersistenceService
-from .service.video_parse_dispatch import ParseDispatch
 from .storage.elasticsearch_references import ElasticsearchReferenceStore
 from .service.agent_checkpoint import create_agent_checkpoint_store
 from .service.agent_chat import AgentChatService
@@ -60,13 +46,11 @@ from .service.media import MediaService
 from .service.mcp_retrieval import McpRetrievalService
 from .repository.editing_template import EditingTemplateRepository
 from .service.model_settings import ModelSettings
-from .service.parse_output_draft import ParseOutputDraftService
 from .service.personal_models import LegacyPersonalModels
 from .service.yaml_chat_models import YamlChatBinding
 from .service.parse_usage import ParseUsageService
 from .service.realtime_understanding import RealtimeUnderstandingService
 from .service.upload import UploadService
-from .service.video_parse import VideoParseRuntimeService
 from .service.video_parse_media import VideoParseMediaService
 from .service.video_summarize import VideoSummarizeService
 from .service.video_frame_reader import VideoFrameReader
@@ -251,104 +235,28 @@ def _build_application_services(
         settings.artifact_root,
         environment=settings.environment,
     )
-    library = LibraryService(
-        LibraryRepository(
-            session_factory,
-            execution_mode=settings.parse_execution_mode,
-        ),
-        artifact_store,
-    )
-    job_repository = ParseJobRepository(session_factory)
-    jobs = ParseJobService(
-        job_repository,
-        library,
-        execution_mode=settings.parse_execution_mode,
-        video_parse_index_store=elasticsearch_store,
-        video_event_index_store=resources.elasticsearch_event_store,
-    )
-    tracing = None
-    parse_usage = ParseUsageService(
-        ModelUsageRepository(session_factory),
-        drafts=ParseOutputDraftService(ParseOutputDraftRepository(session_factory)),
-        pricing=load_model_pricing(settings.model_pricing_path),
-    )
-    construction_cleanup.callback(parse_usage.close)
-    parse_dispatch = ParseDispatch(session_factory, reconcile_interval=settings.mq.heartbeat_interval)
-    parse_persistence = VideoParsePersistenceService(session_factory, dispatch=parse_dispatch)
     assert settings.elasticsearch is not None
     reference_store = ElasticsearchReferenceStore(
         resources.elasticsearch_client, index_name=settings.elasticsearch.index_name + "_edit_reference",
         environment=settings.environment,
     ) if resources.elasticsearch_client is not None else None
-    media = MediaService(
-        library, artifact_store, config=settings.images,
-        parse_persistence=parse_persistence,
-        reference_index_name=reference_store.index_name if reference_store is not None else None,
+    tracing = None
+    video = build_video_services(
+        session_factory, artifact_store, elasticsearch_store, resources.elasticsearch_event_store,
+        gateway_client=gateway_client, gateway_config=gateway_config, parse_defaults=parse_defaults,
+        parse_media=VideoParseMediaService(artifact_store.base_directory / "work" / "video-parse-v2"),
+        mq=settings.mq, video_concurrency=settings.parse.video_concurrency, upload_config=settings.upload,
+        images=settings.images, retrieval_config=settings.retrieval, reference_store=reference_store,
+        request_timeout_seconds=min(t for t in (settings.agent_request_timeout_seconds,
+                                                settings.agent.execution_timeout_seconds) if t is not None),
+        max_output_tokens=settings.agent.max_output_tokens, model_pricing_path=settings.model_pricing_path,
+        construction_cleanup=construction_cleanup, index_generation=settings.elasticsearch.index_generation,
     )
-
-    retrieval, video_parse_query_encoder = build_retrieval_service(
-        parse_persistence, elasticsearch_store,
-        gateway_config=gateway_config, embedding_config=parse_defaults.embedding,
-        retrieval_config=settings.retrieval,
-        index_generation=settings.elasticsearch.index_generation,
-        request_timeout_seconds=min(
-            timeout for timeout in (
-                settings.agent_request_timeout_seconds, settings.agent.execution_timeout_seconds,
-            ) if timeout is not None
-        ),
-        max_output_tokens=settings.agent.max_output_tokens, tracing=tracing,
-        gateway_client=gateway_client,
-    )
-    event_store = resources.elasticsearch_event_store
-    event_contract = None
-    event_retrieval = None
-    if event_store is not None:
-        event_contract = resolve_event_indexing_contract(
-            video_parse_query_encoder, max_height=parse_defaults.window.analysis_max_height,
-            vision_enabled=parse_defaults.embedding.input_mode == "multimodal",
-        )
-        event_retrieval = build_event_retrieval_service(
-            parse_persistence, event_store, gateway_config=gateway_config,
-            embedding_config=parse_defaults.embedding, retrieval_config=settings.retrieval,
-            contract=event_contract,
-            request_timeout_seconds=min(timeout for timeout in (
-                settings.agent_request_timeout_seconds, settings.agent.execution_timeout_seconds,
-            ) if timeout is not None), tracing=tracing, gateway_client=gateway_client,
-        )
-    uploads = UploadService(
-        UploadRepository(session_factory),
-        artifact_store,
-        config=settings.upload,
-        video_parse_index_store=elasticsearch_store,
-        parse_defaults=parse_defaults,
-        video_parse_query_encoder=video_parse_query_encoder,
-        video_parse_query_encoder_source=parse_defaults.embedding.source,
-        video_parse_query_encoder_supports_sparse=adapter_capabilities(
-            gateway_config.source(parse_defaults.embedding.source).adapter,
-        ).sparse_embedding,
-        video_event_index_store=event_store,
-    )
-    v2_queue = MySqlVideoParseQueue(session_factory, video_concurrency=settings.parse.video_concurrency,
-                                   dispatch=parse_dispatch)
-    v2_runtime = VideoParseRuntimeService(
-        parse_persistence,
-        v2_queue,
-        artifact_store,
-        VideoParseMediaService(
-            artifact_store.base_directory / "work" / "video-parse-v2"
-        ),
-        gateway_config,
-        elasticsearch_store,
-        worker_id=settings.mq.consumer_id,
-        lease_duration=settings.mq.lease_duration,
-        heartbeat_interval=settings.mq.heartbeat_interval,
-        parse_usage=parse_usage,
-        tracing=tracing,
-        gateway_client=gateway_client,
-        event_store=event_store,
-        event_contract=event_contract,
-        reference_store=reference_store,
-    )
+    library, uploads, jobs, media = video.library, video.uploads, video.jobs, video.media
+    retrieval, event_retrieval = video.retrieval, video.event_retrieval
+    assert retrieval is not None
+    parse_persistence, parse_usage = video.persistence, video.usage
+    v2_runtime, v2_queue = video.runtime, video.queue
     summary_service = (
         VideoSummarizeService(
             parse_persistence, artifact_store, gateway_client,
@@ -570,36 +478,9 @@ def _build_application_services(
     )
     construction_cleanup.callback(agent.close)
 
-    async def maintenance() -> None:
-        # Both cleanups are best-effort and isolated so one failure cannot
-        # stall the other's next maintenance cycle.
-        try:
-            await v2_runtime.reap_stale_media()
-        except Exception:
-            _logger.exception("Video Parse V2 media reaper failed")
-        try:
-            await asyncio.to_thread(uploads.reconcile_deletions)
-        except Exception:
-            _logger.exception("upload deletion reconcile failed")
-
-    parse_consumer = VideoParseConsumer(
-        v2_queue,
-        VideoParseConsumerHandlers(
-            prepare=v2_runtime.prepare,
-            understand=v2_runtime.understand,
-            failure=v2_runtime.notify_task_failed,
-            refine=v2_runtime.refine,
-            index=v2_runtime.index,
-            prefix=v2_runtime.run_next_prefix,
-            maintenance=maintenance,
-            summarize=summary_service.run_next if summary_service is not None else None,
-        ),
-        worker_id=settings.mq.consumer_id,
-        lease_duration=settings.mq.lease_duration,
-        heartbeat_interval=settings.mq.heartbeat_interval,
-        poll_interval=timedelta(seconds=settings.mq.poll_interval_seconds),
-        maintenance_interval=settings.mq.lease_duration,
-        video_concurrency=settings.parse.video_concurrency,
+    parse_consumer = build_video_consumer(
+        video, settings.mq, video_concurrency=settings.parse.video_concurrency,
+        summarize=summary_service.run_next if summary_service is not None else None,
         summarize_concurrency=settings.summarize.concurrency,
     )
     construction_cleanup.callback(parse_consumer.close)

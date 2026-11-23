@@ -21,15 +21,15 @@ from gateway.usage import model_call_context
 
 from .video_parse_persistence import VideoParseConflictError, VideoParsePersistenceService
 from ..error.retrieval import retrieval_backend_errors
+from ..storage.index_contract import EventSearchStore
 from ..model.dto.mediaDTO import VideoVisualCue, VideoVisualTimeline
-from ..storage.elasticsearch_events import ElasticsearchVideoEventStore
 from .video_retrieval import QueryEmbedder, RetrievalIndexConsistencyError
 
 class VideoEventRetrievalService:
     """Keep Event ranking and facts typed; expose familiar Chunk Evidence to the Agent."""
 
     def __init__(
-        self, persistence: VideoParsePersistenceService, store: ElasticsearchVideoEventStore,
+        self, persistence: VideoParsePersistenceService, store: EventSearchStore,
         embedder: QueryEmbedder, *, contract: EventIndexingContract,
         policy: RetrievalPolicy, vision_embedder: QueryEmbedder | None = None,
         exact: bool = False, tracing: LangfuseTracing | None = None,
@@ -119,6 +119,8 @@ class VideoEventRetrievalService:
         # Absence/coverage is checked before any model call; it is not an empty match.
         self._store.bind_contract(self._contract)
         source_generations = selected.event_source_generations
+        if (require_coverage := getattr(self._store, "require_coverage", None)) is not None:
+            require_coverage(source_generations)
         sources = tuple(source_generations)
         context = {
             "tenant_id": tenant_id, "series_ids": selected.series_ids,

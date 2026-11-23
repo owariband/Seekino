@@ -63,7 +63,7 @@ from ..utils.retry import task_retry_delay
 from ..utils.database import serialized_transaction
 
 
-class MySqlVideoParseQueue:
+class VideoParseQueue:
     """DB-backed V2 delivery with independent phase leases and fencing."""
 
     def __init__(
@@ -96,8 +96,8 @@ class MySqlVideoParseQueue:
         """Claim fixed topology through the same service capacity as full Parse."""
         worker = require_nonempty_text(worker_id, "worker_id")
         _require_lease_duration(lease_duration)
-        claimed_at = now if now is not None else now_utc()
         with serialized_transaction(self._session_factory, VIDEO_PARSE_CAPACITY_LOCK_NAME) as session:
+            claimed_at = now if now is not None else now_utc()
             if session is None:
                 return None
             task = session.scalar(select(VideoParseTask).where(
@@ -123,7 +123,6 @@ class MySqlVideoParseQueue:
         """Prioritize requested understanding, sharing capacity and lease fencing."""
         worker = require_nonempty_text(worker_id, "worker_id")
         _require_lease_duration(lease_duration)
-        claimed_at = now if now is not None else now_utc()
         with self._session_factory() as session:
             parent_id = session.scalar(select(ChunkParseTask.video_task_id).where(
                 ChunkParseTask.id == chunk_parse_task_id,
@@ -131,6 +130,7 @@ class MySqlVideoParseQueue:
         if parent_id is None:
             return None
         with serialized_transaction(self._session_factory, VIDEO_PARSE_CAPACITY_LOCK_NAME) as session:
+            claimed_at = now if now is not None else now_utc()
             if session is None:
                 return None
             parent = session.scalar(select(VideoParseTask).where(
@@ -167,7 +167,7 @@ class MySqlVideoParseQueue:
     ) -> VideoParseLease | None:
         worker = require_nonempty_text(worker_id, "worker_id")
         _require_lease_duration(lease_duration)
-        claimed_at = now if now is not None else now_utc()
+        scanned_at = now if now is not None else now_utc()
         with self._session_factory() as session:
             candidates = list(session.execute(select(
                 VideoParseTask.id, _capacity_acquired().label("acquired"),
@@ -176,7 +176,7 @@ class MySqlVideoParseQueue:
             ).where(
                 VideoParseTask.status.in_(["PENDING", "PREPARING", "PARSING", "INDEXING"]),
                 VideoParseTask.lease_owner.is_(None),
-                VideoParseTask.next_execute_time <= claimed_at,
+                VideoParseTask.next_execute_time <= scanned_at,
                 VideoParseTask.is_deleted.is_(False),
                 VideoParseTask.detail[RUNTIME_DETAIL_KEY]["accepted"].as_boolean().is_(True),
             )))
@@ -186,6 +186,7 @@ class MySqlVideoParseQueue:
                                          row.create_date, row.id))
         for candidate_id, *_priority in candidates:
             with serialized_transaction(self._session_factory, VIDEO_PARSE_CAPACITY_LOCK_NAME) as session:
+                claimed_at = now if now is not None else now_utc()
                 if session is None:
                     return None
                 parent = session.scalar(select(VideoParseTask).where(
@@ -242,14 +243,15 @@ class MySqlVideoParseQueue:
     ) -> ChunkParseLease | None:
         worker = require_nonempty_text(worker_id, "worker_id")
         _require_lease_duration(lease_duration)
-        claimed_at = now if now is not None else now_utc()
+        scanned_at = now if now is not None else now_utc()
         stage = "parse" if phase == ChunkTaskPhase.PARSE else "index"
         for parent_id in self._parent_candidates(stage, video_parse_task_id):
-            generation, candidates = (self.dispatch.candidates(parent_id, stage, claimed_at)
+            generation, candidates = (self.dispatch.candidates(parent_id, stage, scanned_at)
                                       if self.dispatch is not None else (None, ()))
             if generation is not None and not candidates:
                 continue
             with self._session_factory.begin() as session:
+                claimed_at = now if now is not None else now_utc()
                 parent = _claim_parent(session, parent_id, ready_work=generation is not None)
                 if (not _eligible_parent(parent) or phase == ChunkTaskPhase.PARSE and parent.status != "PARSING"
                     or not _phase_capacity(session, parent, stage, now=claimed_at)):
@@ -323,13 +325,14 @@ class MySqlVideoParseQueue:
     ) -> IntervalParseLease | None:
         worker = require_nonempty_text(worker_id, "worker_id")
         _require_lease_duration(lease_duration)
-        claimed_at = now if now is not None else now_utc()
+        scanned_at = now if now is not None else now_utc()
         for parent_id in self._parent_candidates("refine", video_parse_task_id):
-            generation, keys = (self.dispatch.candidates(parent_id, "refine", claimed_at)
+            generation, keys = (self.dispatch.candidates(parent_id, "refine", scanned_at)
                                 if self.dispatch is not None else (None, ()))
             if generation is not None and not keys:
                 continue
             with self._session_factory.begin() as session:
+                claimed_at = now if now is not None else now_utc()
                 parent = _claim_parent(session, parent_id, ready_work=generation is not None)
                 if (not _eligible_parent(parent)
                     or (parent.parse_config.get("voiceprint") is not None
@@ -397,9 +400,9 @@ class MySqlVideoParseQueue:
         now: datetime | None = None,
     ) -> bool:
         _require_lease_duration(lease_duration)
-        heartbeat_at = now if now is not None else now_utc()
         result = None
         with self._session_factory.begin() as session:
+            heartbeat_at = now if now is not None else now_utc()
             result = session.execute(
                 update(VideoParseTask)
                 .where(
@@ -430,10 +433,10 @@ class MySqlVideoParseQueue:
 
     def _heartbeat_child(self, lease, *, lease_duration: timedelta, now: datetime | None) -> bool:
         _require_lease_duration(lease_duration)
-        heartbeat_at = now if now is not None else now_utc()
         model = ChunkParseTask if isinstance(lease, ChunkParseLease) else IntervalParseTask
         task_id = lease.chunk_parse_task_id if isinstance(lease, ChunkParseLease) else lease.interval_parse_task_id
         with self._session_factory.begin() as session:
+            heartbeat_at = now if now is not None else now_utc()
             parent = session.scalar(select(VideoParseTask).where(
                 VideoParseTask.id == lease.video_parse_task_id,
             ).with_for_update())
@@ -614,8 +617,8 @@ class MySqlVideoParseQueue:
         self, lease: VideoParseLease, *, error: str,
         now: datetime | None = None,
     ) -> VideoParseRetryResult | None:
-        failed_at = now if now is not None else now_utc()
         with self._session_factory.begin() as session:
+            failed_at = now if now is not None else now_utc()
             task = session.scalar(select(VideoParseTask).where(
                 VideoParseTask.id == lease.video_parse_task_id,
                 VideoParseTask.status.in_(["PREPARING", "PARSING", "INDEXING"]),
@@ -661,8 +664,8 @@ class MySqlVideoParseQueue:
     def fail_chunk(self, lease: ChunkParseLease, *, error: str, stage: str,
                    reason: str, now: datetime | None = None) -> bool:
         """Consume a final subgraph failure without scheduling another attempt."""
-        failed_at = now if now is not None else now_utc()
         with self._session_factory.begin() as session:
+            failed_at = now if now is not None else now_utc()
             parent = session.scalar(select(VideoParseTask).where(
                 VideoParseTask.id == lease.video_parse_task_id,
             ).with_for_update())
@@ -701,10 +704,10 @@ class MySqlVideoParseQueue:
         return self._retry_child(lease, error=error, retry_at=retry_at, now=now)
 
     def _retry_child(self, lease, *, error: str, retry_at: datetime, now: datetime | None) -> bool:
-        failed_at = now if now is not None else now_utc()
         model = ChunkParseTask if isinstance(lease, ChunkParseLease) else IntervalParseTask
         task_id = lease.chunk_parse_task_id if isinstance(lease, ChunkParseLease) else lease.interval_parse_task_id
         with self._session_factory.begin() as session:
+            failed_at = now if now is not None else now_utc()
             parent = session.scalar(select(VideoParseTask).where(
                 VideoParseTask.id == lease.video_parse_task_id,
             ).with_for_update())
@@ -725,8 +728,8 @@ class MySqlVideoParseQueue:
 
     def release_execution(self, lease, *, now: datetime | None = None) -> bool:
         """Return stopped work; unfinished voice execution retains its failure outcome."""
-        released_at = now if now is not None else now_utc()
         with self._session_factory.begin() as session:
+            released_at = now if now is not None else now_utc()
             parent = session.scalar(select(VideoParseTask).where(
                 VideoParseTask.id == lease.video_parse_task_id,
             ).with_for_update())
@@ -898,6 +901,10 @@ class MySqlVideoParseQueue:
             if self.dispatch is not None:
                 self.dispatch.invalidate(parent_id)
         return changed
+
+
+# Keep the public server queue name for existing integrations.
+MySqlVideoParseQueue = VideoParseQueue
 
 
 def _accepted(task: VideoParseTask) -> bool:
