@@ -1,6 +1,7 @@
 """Compare the two media implementations with exactly the same local files."""
 
 import json
+import os
 import shutil
 import subprocess
 import wave
@@ -56,10 +57,25 @@ def _no_children(monkeypatch):
     monkeypatch.setattr(subprocess, "Popen", fail)
 
 
-def test_episode_and_replay_use_original_clock_and_no_children(tmp_path, source, monkeypatch):
+@pytest.fixture(params=[
+    "mpeg4",
+    pytest.param("videotoolbox", marks=pytest.mark.skipif(
+        os.environ.get("SEEKINO_TEST_VIDEOTOOLBOX") != "1",
+        reason="run with SEEKINO_TEST_VIDEOTOOLBOX=1 on a Mac with hardware encoding access",
+    )),
+])
+def media_encoder(request):
+    # Generic CI exercises the same timestamps and stream selection with
+    # FFmpeg's built-in MPEG-4 encoder. Mac acceptance covers the shipping default.
+    if request.param == "videotoolbox":
+        return PyAVMedia(), "h264"
+    return PyAVMedia(video_encoder="mpeg4"), "mpeg4"
+
+
+def test_episode_and_replay_use_original_clock_and_no_children(tmp_path, source, monkeypatch, media_encoder):
     # The software encoder makes this contract executable on Linux CI. The
     # shipping macOS encoder is tested separately on a host with VideoToolbox.
-    backend = PyAVMedia(video_encoder="libx264")
+    backend, expected_codec = media_encoder
     cli = FFmpegMedia()
     assert cli.probe_duration(source, check_active=_active) == backend.probe_duration(source) == 2500
     for first_track, expected_hz in [(True, 440), (False, 880)]:
@@ -86,7 +102,7 @@ def test_episode_and_replay_use_original_clock_and_no_children(tmp_path, source,
         assert [t for t, _ in last["ocr_frames"]] == [2125, 2375]
         assert backend.probe_duration(manifest.parent / first["visual_video_path"]) == 1500
         with av.open(str(manifest.parent / first["video_path"])) as clip:
-            assert [(s.type, s.codec_context.name) for s in clip.streams] == [("video", "h264"), ("audio", "aac")]
+            assert [(s.type, s.codec_context.name) for s in clip.streams] == [("video", expected_codec), ("audio", "aac")]
             assert clip.streams.audio[0].codec_context.channels == 1
         _, frequency = _frequency(manifest.parent / first["audio_path"])
         assert frequency == pytest.approx(440, abs=3)
@@ -165,18 +181,18 @@ def test_missing_stream_duration_and_cancelled_decode(tmp_path, monkeypatch):
     assert not list(service.base_directory.iterdir())
 
 
-def test_silent_hevc_and_corrupt_input(tmp_path, monkeypatch):
+def test_silent_hevc_and_corrupt_input(tmp_path, monkeypatch, media_encoder):
     source = tmp_path / "silent-hevc.mp4"
     _ffmpeg("-f", "lavfi", "-i", "testsrc2=size=96x64:rate=10:duration=1",
             "-c:v", "libx265", "-tag:v", "hvc1", source)
     cli_duration = FFmpegMedia().probe_duration(source, check_active=_active)
     _no_children(monkeypatch)
-    backend = PyAVMedia(video_encoder="libx264")
+    backend, expected_codec = media_encoder
     assert backend.probe_duration(source) == cli_duration == 1000
     target = tmp_path / "proxy.mp4"
     backend.clip(source, target, start_ms=200, end_ms=800, max_height=80, check_active=_active)
     with av.open(str(target)) as clip:
-        assert [s.type for s in clip.streams] == ["video"]
+        assert [(s.type, s.codec_context.name) for s in clip.streams] == [("video", expected_codec)]
     assert backend.probe_duration(target) == 600
 
     broken = tmp_path / "incomplete.mp4"
