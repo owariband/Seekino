@@ -52,16 +52,21 @@ flowchart LR
 
 ## 可被宿主直接调用的入口
 
-**先拆启动入口，再替换依赖。** 当前 `server/main.py::init_application` 调 `caller.init` 创建 MySQL 和 ES，再进入 `server/bootstrap.py::_build_application_services`。后者还会创建 Chat checkpoint。桌面入口要从后面的装配中复用视频服务。 [当前启动](../../../server/main.py#L45) · [MySQL/ES 装配](../../../server/caller/base.py#L47) · [Chat checkpoint 装配](../../../server/bootstrap.py#L195)
+LightRAG 换向量库时，改的是启动配置 `LIGHTRAG_VECTOR_STORAGE`。填 `NanoVectorDBStorage`，程序就创建本地向量库。填 `PGVectorStorage` 并配好 PostgreSQL，程序就创建 PostgreSQL 的向量实现。无论选哪一个，查片段的代码都调用 `chunks_vdb.query(...)`。Seekino 借用这个做法。一开始选好谁负责存和查，后面的导入、解析和搜索照常调用原有业务方法。 [LightRAG 启动配置](https://github.com/HKUDS/LightRAG/blob/ce3aa6bfe0982003c0684b408995945582681f05/lightrag/api/config.py#L640-L657) · [LightRAG 查片段](https://github.com/HKUDS/LightRAG/blob/ce3aa6bfe0982003c0684b408995945582681f05/lightrag/operate.py#L5872-L5874) · [源码调研](../../research/2026-11-23-lightrag-storage-switching.md)
 
-从 `server/bootstrap.py` 提取一个共用的 `build_video_services`（拟名）。把创建 Library、Upload、Parse Job、V2 Persistence、Runtime、Consumer 以及媒体和检索入口的代码移进去。它接收已经创建的数据库连接工厂、写事务策略、索引发布与召回实现、媒体操作、Artifact Store 和已配置的 GatewayClient。把 `_parse_defaults` 直接读取的 ES `index_generation` 改为参数，两个入口各自提供索引代数。 [解析配置](../../../server/bootstrap.py#L138) · [视频服务创建](../../../server/bootstrap.py#L250) · [Consumer 接线](../../../server/bootstrap.py#L585)
+Seekino 的搜索已经有一个现成的例子。`VideoEventRetrievalService.search` 会调用 `self._store.search_vector(...)` 找候选片段。现在 `self._store` 用的是 ES。给桌面写一个从本地向量索引找候选的实现，也提供 `search_vector`，返回相同格式的片段，后面的排序、核对版本和回看仍走现有代码。 [现有搜索调用](../../../server/service/video_event_retrieval.py#L130)
 
-| 入口 | 调用顺序 |
-| --- | --- |
-| Cloud / 自部署 | `create_http_application` 走现有 `caller.init`，把 MySQL、ES 和 CLI 媒体操作传给共用视频服务。服务端继续装配身份认证、Chat 等能力，再把服务挂到 HTTP 路由。 |
-| macOS | 宿主导入 `server/desktop/runtime.py`（拟新增），由 `open_library` 打开 SQLite 和受管资料库，装配本地索引与 PyAV，再调用同一个 `build_video_services` 并启动现有 `VideoParseConsumer`。宿主直接调用返回的 Python 业务入口，装配范围只含桌面首条业务链。 |
+| 要做的事 | HTTP 版启动时选 | 桌面版启动时选 |
+| --- | --- | --- |
+| 保存视频信息、解析结果和任务 | MySQL | SQLite，需实现同样的任务领取和提交规则 |
+| 按关键词或向量找片段 | Elasticsearch | FTS5 和嵌入式向量索引 |
+| 探测时长、抽帧、切片和抽音频 | 现有 FFmpeg 命令 | PyAV，在当前进程调用包内 FFmpeg 库 |
 
-桌面本机导入先直接调用 `UploadService.create_session → upload_segment → complete`。按现有分片大小读取文件并调用 Python 方法。序号、哈希去重、配置快照、原片发布及 V2 任务接纳走同一套实现。应用仍需为暂存和拼接预留磁盘空间。任务进度、暂停和重试继续走相应 Service。搜索调用 `VideoEventRetrievalService.search`，回看在校验结果对应版本后用 `MediaService.get_original` 找到原片。 [分片入库](../../../server/service/upload.py#L435) · [完成导入](../../../server/service/upload.py#L530) · [Event 搜索](../../../server/service/video_event_retrieval.py#L77) · [原片读取](../../../server/service/media.py#L199)
+**改代码的地方在启动入口。** 现在 `server/main.py::init_application` 先调用 `caller.init`，创建 MySQL 和 ES，再由 `server/bootstrap.py` 创建视频、HTTP 和 Chat 所需的服务。计划把创建视频服务的代码提到一个共用函数 `build_video_services`（拟名）。HTTP 入口沿用 `caller.init` 打开 MySQL 和 ES，把它们交给共用函数，再挂 HTTP 路由。桌面由拟新增的 `server/desktop/runtime.py::open_library` 打开 SQLite、受管库和本地索引，也交给同一个函数，启动现有 V2 Consumer。数据库连接、索引、媒体函数、文件存放位置和模型连接都在启动时传入。索引代数也由各入口提供。 [现有启动](../../../server/main.py#L45) · [MySQL/ES 初始化](../../../server/caller/base.py#L47) · [视频服务创建](../../../server/bootstrap.py#L250) · [解析配置](../../../server/bootstrap.py#L138) · [Consumer 启动接线](../../../server/bootstrap.py#L585)
+
+例如点击「导入」后，桌面按现有分片大小读本机文件，直接调用 `UploadService.create_session → upload_segment → complete`。哈希去重、保存原片、冻结解析配置和创建任务都复用这一条路。应用仍需为暂存和拼接预留磁盘空间。任务状态、暂停和重试照常调用对应 Service。点击搜索结果时，先核对命中的版本，再用 `MediaService.get_original` 找到原片。 [分片入库](../../../server/service/upload.py#L435) · [完成导入](../../../server/service/upload.py#L530) · [Event 搜索](../../../server/service/video_event_retrieval.py#L77) · [原片读取](../../../server/service/media.py#L199)
+
+首轮桌面打开自己的新库。换用 SQLite 需要先写好并验证 SQLite 的任务和索引实现。已有 MySQL 资料库的迁移另行设计。
 
 | 宿主操作 | 由后端保证的合同 |
 | --- | --- |
