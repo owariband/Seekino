@@ -36,6 +36,7 @@ Item {
         if (query.text.trim().length && workspace.ready && !workspace.searching)
             workspace.searchScopes(query.text.trim(), keywords, scopes)
     }
+    Rectangle { anchors.fill: parent; color: Studio.paper }
     Flickable {
         id: viewport
         anchors.fill: parent; clip: true; boundsBehavior: Flickable.StopAtBounds

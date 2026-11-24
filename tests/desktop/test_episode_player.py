@@ -53,3 +53,52 @@ def test_pcm_tempo_preserves_tone_and_scales_duration(rate):
     samples = array("h", b"".join(packet[3] for packet in blocks))[::2]
     crossings = sum(a < 0 <= b for a, b in zip(samples, samples[1:]))
     assert abs(crossings * hz / length - 500) < 6
+
+
+def test_scrub_coalesces_motion_and_discards_frames_after_release_and_open(monkeypatch):
+    pytest.importorskip("PySide6")
+    from concurrent.futures import Future
+    from PySide6.QtCore import QCoreApplication
+    from PySide6.QtGui import QImage
+    from desktop import qt_player
+
+    app = QCoreApplication.instance() or QCoreApplication([])
+    requests = []
+
+    def pending(decode, path, at_ms, bounds):
+        future = Future()
+        requests.append((path, at_ms, future))
+        return future
+
+    monkeypatch.setattr(qt_player._scrub_worker, "submit", pending)
+    monkeypatch.setattr(qt_player, "_decode", lambda *args: None)
+    surface = qt_player.VideoSurface()
+    frame = QImage(4, 4, QImage.Format.Format_RGB32)
+    frame.fill(0xFF39A343)
+    try:
+        surface.open("first.mp4", 120, 2000)
+        surface.setPlaying(False)
+        surface.beginScrub()
+        surface.previewScrub(450)
+        surface._tick()
+        for ms in range(500, 701):
+            surface.previewScrub(ms)
+            surface._tick()
+        assert [at for _, at, _ in requests] == [450]
+
+        requests[0][2].set_result(frame)
+        surface._tick()
+        assert surface._image == frame
+        assert [at for _, at, _ in requests] == [450, 700]
+        surface.endScrub(850)
+        assert surface.positionMs == 850 and not surface.playing
+
+        surface.open("next.mp4", 300, 5000)
+        stale = frame.copy()
+        stale.fill(0xFF123456)
+        requests[1][2].set_result(stale)
+        surface.endScrub(1700)  # Release of a gesture that began in the previous video.
+        surface._tick()
+        assert surface._image.isNull() and surface.positionMs == 300 and surface.playing
+    finally:
+        surface.close()

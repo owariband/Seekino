@@ -205,8 +205,13 @@ FocusScope {
                     from: 0; to: Math.max(1,surface.durationMs); leftPadding: 0; rightPadding: 0
                     hoverEnabled: true; activeFocusOnTab: true; Accessible.name: qsTr("播放位置")
                     Accessible.description: player.hit ? qsTr("%1，命中 %2 至 %3").arg(player.hitStatus).arg(Studio.time(player.startMs,true)).arg(Studio.time(player.endMs,true)) : ""
-                    Binding { target: seek; property: "value"; value: surface.positionMs; when: !seek.pressed }
-                    onPressedChanged: { player.reveal(); if (!pressed) surface.seek(Math.round(value)) }
+                    value: surface.positionMs
+                    onPressedChanged: {
+                        player.reveal()
+                        if (pressed) surface.beginScrub()
+                        else surface.endScrub(Math.round(value))
+                    }
+                    onMoved: if (pressed) surface.previewScrub(Math.round(value))
                     Keys.onLeftPressed: player.skip(-10000)
                     Keys.onRightPressed: player.skip(10000)
                     background: Rectangle {

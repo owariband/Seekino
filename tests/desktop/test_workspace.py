@@ -121,6 +121,10 @@ def test_import_search_and_open_hit_through_window_model(tmp_path, monkeypatch):
         later = home_picture("hero", 1400)
         assert early.size() == later.size() == QSize(128, 96)
         assert later.pixelColor(40, 40).red() - early.pixelColor(40, 40).red() > 65
+        assert home_picture("hero", 100).cacheKey() == early.cacheKey()
+        shelf = home_picture("shelf", 100)
+        assert shelf.size() == early.size()
+        assert home_picture("shelf", 100).cacheKey() == shelf.cacheKey()
         assert home_picture("hero", -1).size() == QSize(128, 96)
         assert home_picture("shelf", -1).size() == QSize(128, 96)
         assert home_picture("hero", "bad").isNull()
@@ -145,6 +149,8 @@ def test_import_search_and_open_hit_through_window_model(tmp_path, monkeypatch):
         original.rename(missing)
         try:
             assert provider.requestImage(previews[0], QSize(), QSize()).isNull()
+            assert home_picture("hero", 100).isNull()
+            assert home_picture("shelf", 100).isNull()
         finally:
             missing.rename(original)
         workspace.rememberPlayback(series_id, hit["videoID"], 750, 2000)

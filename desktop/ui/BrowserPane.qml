@@ -37,7 +37,7 @@ Item {
         Qt.callLater(() => page.itemAtIndex(row)?.focusCard(index % columns))
     }
     // Resolve the featured episode and verify any saved position against this library.
-    readonly property bool loadHomeHistory: workspace.ready && !browsingSeries && !!heroID
+    readonly property bool loadHomeHistory: enabled && workspace.ready && !browsingSeries && !!heroID
     onLoadHomeHistoryChanged: if (loadHomeHistory) workspace.ensureSeriesLoaded(heroID)
     onHeroIDChanged: {
         if (loadHomeHistory) workspace.ensureSeriesLoaded(heroID)
@@ -230,12 +230,16 @@ Item {
                     required property var modelData
                     required property int index
                     width: rail.cardWidth; height: implicitHeight
-                    readonly property var history: workspace.recentPlayback[modelData.id]
+                    readonly property var history: browser.enabled ? workspace.recentPlayback[modelData.id] : null
                     readonly property var saved: history ? (workspace.videosBySeries[modelData.id] || []).find(v => v.id === history.videoID) : null
                     onHistoryChanged: if (history) workspace.ensureSeriesLoaded(modelData.id)
                     title: modelData.title
-                    cover: saved?.posterID ? "image://posters/shelf/" + saved.posterID + "/" + history.positionMs
-                        : modelData.posterID ? "image://posters/shelf/" + modelData.posterID + "/-1" : (modelData.cover || "")
+                    Binding on cover {
+                        when: browser.enabled; delayed: true
+                        value: saved?.posterID ? "image://posters/shelf/" + saved.posterID + "/" + history.positionMs
+                             : modelData.posterID ? "image://posters/shelf/" + modelData.posterID + "/-1" : (modelData.cover || "")
+                        restoreMode: Binding.RestoreNone
+                    }
                     coverFallback: modelData.cover || ""
                     compactShelf: browser.width <= 580
                     detail: qsTr("%1 集 · 查看系列").arg(modelData.count); objectName: "seriesCard_" + modelData.id

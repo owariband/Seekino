@@ -1,6 +1,7 @@
 """Play verified local originals on the PyAV source timeline in a Qt Quick item."""
 
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from fractions import Fraction
 
 import av
@@ -8,7 +9,7 @@ from queue import Empty, Full, Queue
 from threading import Event, Thread
 from time import monotonic
 
-from PySide6.QtCore import Property, QCoreApplication, QRectF, QSizeF, Qt, QTimer, Signal, Slot
+from PySide6.QtCore import Property, QCoreApplication, QRectF, QSize, QSizeF, Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QImage, QPainter
 from PySide6.QtMultimedia import QAudioFormat, QAudioSink, QMediaDevices, QtAudio
 from PySide6.QtQml import qmlRegisterType
@@ -18,6 +19,27 @@ from server.desktop.playback import PlaybackDecoder
 
 _RATE = 48_000
 _BYTES_PER_FRAME = 4  # Interleaved, signed little-endian stereo PCM16.
+
+
+# The native window owns a single playback surface. Preview requests never queue
+# behind pointer motion: the GUI submits again only when the prior frame finishes.
+_scrub_worker = ThreadPoolExecutor(1, thread_name_prefix="Seekino scrub")
+
+
+def playback_frame(path, at_ms, bounds):
+    """Read an owned still on the same source timeline and rotation as playback."""
+    decoder = PlaybackDecoder(path, rgb=True, video_only=True)
+    try:
+        decoder.seek(at_ms)
+        sample = decoder.next_sample()
+        if sample is None:
+            raise ValueError("该位置没有可预览画面")
+        _, _, width, height, pixels, stride = sample
+        source = QImage(pixels, width, height, stride, QImage.Format.Format_RGB888)
+        size = source.size().boundedTo(source.size().scaled(bounds, Qt.KeepAspectRatio))
+        return source.scaled(size, Qt.KeepAspectRatio, Qt.SmoothTransformation).copy()
+    finally:
+        decoder.close()
 
 
 class _AudioTempo:
@@ -132,6 +154,7 @@ class VideoSurface(QQuickPaintedItem):
         self._rate = 1.0
         self._error = ""
         self._image = QImage()
+        self._scrub_session = self._scrub_target = self._preview_job = None
         self._videos = deque()
         self._audio = deque()
         self._sink = self._device = None
@@ -206,6 +229,43 @@ class VideoSurface(QQuickPaintedItem):
         self.playingChanged.emit()
         self.seek(start)
 
+    @Slot()
+    def beginScrub(self):
+        if not self._path:
+            return
+        self._scrub_session = object()
+        self._timer.stop()
+        if self._sink and self._playing:
+            self._sink.suspend()
+
+    @Slot(int)
+    def previewScrub(self, target):
+        if self._scrub_session is not None:
+            self._scrub_target = max(0, min(target, self._duration - 1))
+            if not self._timer.isActive():
+                self._timer.start()
+
+    @Slot(int)
+    def endScrub(self, target):
+        if self._scrub_session is not None:
+            self.seek(target)
+
+    def _tick_preview(self):
+        if self._preview_job:
+            session, future = self._preview_job
+            if not future.done():
+                return
+            self._preview_job = None
+            if session is self._scrub_session and session is not None and future.exception() is None:
+                self._image = future.result()
+                self.update()
+        if self._scrub_target is not None:
+            future = _scrub_worker.submit(playback_frame, self._path, self._scrub_target, QSize(960, 540))
+            self._preview_job = self._scrub_session, future
+            self._scrub_target = None
+        elif self._scrub_session is not None:
+            self._timer.stop()
+
     @Slot(int)
     def seek(self, target):
         if not self._path:
@@ -227,6 +287,8 @@ class VideoSurface(QQuickPaintedItem):
             return
         self._playing = value
         self.playingChanged.emit()
+        if self._scrub_session is not None:
+            return
         if value and self._position >= self._duration:
             self.seek(0)
         elif value:
@@ -257,6 +319,7 @@ class VideoSurface(QQuickPaintedItem):
         self.update()
 
     def _reset_stream(self):
+        self._scrub_session = self._scrub_target = None
         if self._cancel:
             self._cancel.set()
         self._cancel = self._thread = self._packets = None
@@ -281,6 +344,10 @@ class VideoSurface(QQuickPaintedItem):
             self.positionChanged.emit()
 
     def _tick(self):
+        if self._scrub_session is not None or self._preview_job:
+            self._tick_preview()
+            if self._scrub_session is not None:
+                return
         if self._packets is None:
             return
         # Drain demux output without letting queued high-resolution images grow.
