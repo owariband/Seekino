@@ -107,6 +107,27 @@ Item {
         }
     }
 
+    component PanelTab: Tool {
+        id: tab
+        Accessible.role: Accessible.PageTab
+        Accessible.selected: chosen
+        implicitWidth: contentItem.implicitWidth + 2; implicitHeight: companion.compact ? 40 : 44
+        symbolSize: 15; textSize: 13
+        background: Item {
+            Rectangle {
+                anchors.fill: parent; anchors.topMargin: 5; anchors.bottomMargin: 5; radius: 5
+                color: tab.down ? Studio.selected : tab.hovered ? Studio.surfaceMuted : "transparent"
+                border.width: tab.visualFocus ? 2 : 0; border.color: Studio.accent
+                Behavior on color { ColorAnimation { duration: Studio.hover } }
+            }
+            Rectangle {
+                anchors.bottom: parent.bottom; width: parent.width; height: 2; radius: 1
+                color: Studio.actionBg; opacity: tab.chosen ? 1 : 0
+                Behavior on opacity { NumberAnimation { duration: Studio.quick } }
+            }
+        }
+    }
+
     AbstractButton {
         id: entry
         objectName: "kinoEntry"
@@ -211,8 +232,7 @@ Item {
         property real customX: -1
         property real customY: -1
         readonly property real edgeX: Studio.watchPanel.leftEdge ? 24 : companion.width - width - 24
-        readonly property real conversationHeight: Math.min(640, companion.height - 40, Math.round(companion.height * .62))
-        readonly property real edgeY: companion.clamp(companion.height - entry.dockBottom - conversationHeight, 24, companion.height - height - 16)
+        readonly property real edgeY: companion.clamp(companion.height - entry.dockBottom - height, 24, companion.height - height - 16)
         x: companion.libraryMode || companion.compact ? 0 : !companion.floating ? companion.width - width
            : companion.clamp(customX < 0 ? edgeX : customX, 8, companion.width - width - 8)
         y: companion.libraryMode ? 0 : companion.compact ? companion.height - height : !companion.floating ? 0
@@ -220,17 +240,8 @@ Item {
         readonly property real maxDockWidth: Math.min(850, Math.max(320, companion.width - 420))
         width: companion.libraryMode || companion.compact ? companion.width : companion.floating ?
             companion.clamp(Math.round(companion.width * .25), 320, 400) : companion.clamp(Studio.watchPanel.dockWidth, 320, maxDockWidth)
-        readonly property bool firstConnection: !workspace.watchModelReady && !turns.count && !workspace.watchBusy &&
-                                                !workspace.watchError && !companion.showingEpisodes
-        readonly property real welcomeHeight: toolbar.implicitHeight + welcome.implicitHeight + composer.implicitHeight + 44 +
-                                              (String(companion.pendingImage).length ? 30 : 0) +
-                                              (workspace.playbackContext.sourceRef ? 20 : 0)
         height: companion.libraryMode ? companion.height : companion.compact ? Math.min(companion.height - 84, Math.max(236, Math.round(companion.height*.57)))
-              : companion.floating ? (firstConnection ? Math.min(conversationHeight, welcomeHeight) : conversationHeight) : companion.height
-        Behavior on height {
-            enabled: panel.animateFloat && companion.opened && !Studio.reduce
-            NumberAnimation { duration: Studio.panel; easing.type: Easing.OutCubic }
-        }
+              : companion.floating ? Math.min(640, companion.height - 40, Math.round(companion.height * .62)) : companion.height
         enabled: companion.opened; visible: opacity > 0
         readonly property bool animateFloat: companion.floating && !companion.libraryMode
         transformOrigin: Studio.watchPanel.leftEdge ? Item.BottomLeft : Item.BottomRight
@@ -293,11 +304,32 @@ Item {
         ColumnLayout {
             anchors.fill: parent; anchors.margins: 1; spacing: 0
             Item {
-                id: toolbar
-                implicitHeight: 44; Layout.fillWidth: true
+                Layout.fillWidth: true; Layout.preferredHeight: companion.compact ? 40 : 44
+                Row {
+                    id: tabs
+                    anchors.left: parent.left; anchors.leftMargin: 10; anchors.verticalCenter: parent.verticalCenter
+                    spacing: 8
+                    PanelTab {
+                        objectName: "watchChatTab"; visible: !companion.libraryMode
+                        glyph: "chat"; text: qsTr("聊天"); chosen: !companion.showingEpisodes
+                        onClicked: companion.focusQuestion()
+                    }
+                    PanelTab {
+                        objectName: "watchEpisodesTab"; visible: !companion.libraryMode
+                        glyph: "film"; text: qsTr("选集"); chosen: companion.showingEpisodes
+                        onClicked: { companion.showingEpisodes = true; episodeList.forceActiveFocus(); panel.markActivity() }
+                    }
+                }
+                Mark {
+                    visible: companion.libraryMode
+                    anchors.left: tabs.left; anchors.right: actions.left; anchors.verticalCenter: parent.verticalCenter
+                    text: qsTr("Kino 素材库问答"); font.pixelSize: 15; font.weight: Font.DemiBold
+                }
                 MouseArea {
                     id: panelMove; objectName: "watchPanelMove"
-                    anchors.fill: parent; enabled: companion.floating && !companion.libraryMode
+                    anchors.left: tabs.right; anchors.right: actions.left
+                    anchors.top: parent.top; anchors.bottom: parent.bottom
+                    enabled: companion.floating && !companion.libraryMode
                     preventStealing: true; hoverEnabled: true
                     cursorShape: pressed ? Qt.ClosedHandCursor : Qt.OpenHandCursor
                     ToolTip.visible: containsMouse && !pressed && !watchOptions.visible
@@ -315,42 +347,28 @@ Item {
                         panel.customY = companion.clamp(point.y - offset.y, 8, companion.height - panel.height - 8)
                     }
                 }
-                RowLayout {
-                    anchors.fill: parent; anchors.leftMargin: 15; anchors.rightMargin: 8; spacing: 1
-                    Mark {
-                        text: companion.libraryMode ? qsTr("Kino 素材库问答") : companion.showingEpisodes ? qsTr("选集") : qsTr("Kino 陪看")
-                        Layout.fillWidth: true; font.pixelSize: 14; font.weight: Font.DemiBold
-                    }
-                    Tool {
-                        objectName: "watchEpisodesTab"; visible: !companion.libraryMode && !companion.showingEpisodes
-                        text: qsTr("选集"); textSize: 12; implicitWidth: contentItem.implicitWidth + 14
-                        onClicked: { companion.showingEpisodes = true; episodeList.forceActiveFocus(); panel.markActivity() }
-                    }
-                    Tool {
-                        objectName: "watchChatTab"; visible: !companion.libraryMode && companion.showingEpisodes
-                        glyph: "left"; text: qsTr("聊天"); textSize: 12; symbolSize: 12
-                        implicitWidth: contentItem.implicitWidth + 10; onClicked: companion.focusQuestion()
-                    }
-                    Tool { objectName: "watchHistory"; glyph: "history"; symbolSize: 15; hint: qsTr("查看或新建对话")
+                Row {
+                    id: actions
+                    anchors.right: parent.right; anchors.rightMargin: 6; anchors.verticalCenter: parent.verticalCenter
+                    Tool { implicitWidth: 27; objectName: "watchHistory"; glyph: "history"; hint: qsTr("查看或新建对话")
                         enabled: !workspace.watchBusy; onClicked: conversations.open() }
-                    Tool { objectName: "libraryChatSettings"; visible: companion.libraryMode; glyph: "sliders"; symbolSize: 15
+                    Tool { implicitWidth: 27; objectName: "libraryChatSettings"; visible: companion.libraryMode; glyph: "sliders"
                         hint: qsTr("问答模型设置"); onClicked: companion.settingsRequested() }
-                    Tool {
+                    Tool { implicitWidth: 27;
                         id: optionsButton; objectName: "watchOptionsButton"; visible: !companion.libraryMode
-                        glyph: "sliders"; symbolSize: 15; hint: qsTr("观看设置"); chosen: watchOptions.visible
+                        glyph: "sliders"; hint: qsTr("观看设置"); chosen: watchOptions.visible
                         onClicked: watchOptions.visible ? watchOptions.close() : watchOptions.open()
                     }
-                    Tool {
+                    Tool { implicitWidth: 27;
                         objectName: "watchChatDock"; visible: !companion.libraryMode && !companion.compact
-                        glyph: companion.floating ? "dockRight" : "floatWindow"; symbolSize: 15
+                        glyph: companion.floating ? "dockRight" : "floatWindow"
                         hint: companion.floating ? qsTr("停靠到侧栏") : qsTr("改为悬浮窗")
                         onClicked: Studio.watchPanel.docked = !Studio.watchPanel.docked
                     }
-                    Tool { objectName: "watchChatClose"; glyph: "close"; symbolSize: 15
-                        hint: qsTr("关闭陪看 (Esc)"); onClicked: companion.dismiss() }
+                    Tool { implicitWidth: 27; objectName: "watchChatClose"; glyph: "close"; hint: qsTr("关闭陪看 (Esc)"); onClicked: companion.dismiss() }
                 }
             }
-            Rectangle { Layout.fillWidth: true; Layout.leftMargin: 14; Layout.rightMargin: 14; implicitHeight: 1; color: Studio.line }
+            Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: Studio.line }
             ListView {
                 id: episodeList; objectName: "companionEpisodeList"; visible: companion.showingEpisodes
                 Layout.fillWidth: true; Layout.fillHeight: true; Layout.margins: 10
@@ -488,46 +506,29 @@ Item {
                         }
                     }
                 }
-                RowLayout {
-                    id: welcome
+                Column {
                     visible: !turns.count && !workspace.watchBusy && !workspace.watchError
                     anchors.centerIn: parent
-                    width: Math.min(348, parent.width - 32); spacing: 12
-                    Item {
-                        Layout.preferredWidth: 52; Layout.preferredHeight: 48
-                        Rectangle {
-                            anchors.centerIn: parent; width: 44; height: 44; radius: 22
-                            color: Studio.dark ? Studio.wash : Studio.selected
-                        }
-                        Kino {
-                            id: welcomeKino; objectName: "watchWelcomeKino"
-                            anchors.centerIn: parent; anchors.verticalCenterOffset: -6
-                            sceneWidth: 38; width: 58; height: 46
-                            ground: false; interactive: true; dozeWhenIdle: true
-                        }
+                    width: parent.width - 30; spacing: 5
+                    Kino {
+                        id: welcomeKino; objectName: "watchWelcomeKino"
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        sceneWidth: 64; width: 192; height: 84
+                        interactive: true; dozeWhenIdle: true
                     }
-                    ColumnLayout {
-                        Layout.fillWidth: true; spacing: 3
-                        Text {
-                            Layout.fillWidth: true
-                            text: companion.libraryMode ? qsTr("想从所选系列里找什么？") : qsTr("想了解画面里的哪一处？")
-                            color: Studio.ink; font.pixelSize: 15; font.weight: Font.Medium; wrapMode: Text.Wrap
-                        }
-                        Tool {
-                            objectName: "chatConfigureModel"; visible: !workspace.watchModelReady
-                            text: qsTr("连接问答模型"); glyph: "chevron"; trailingGlyph: true
-                            textSize: 12; symbolSize: 12; implicitHeight: 27; implicitWidth: contentItem.implicitWidth + 6
-                            contentColor: Studio.actionBg
-                            onClicked: companion.settingsRequested()
-                        }
-                        Tool {
-                            visible: workspace.watchModelReady
-                            text: companion.libraryMode ? qsTr("找出有人在门口等待的片段") : qsTr("解释一下这帧画面")
-                            glyph: "chevron"; trailingGlyph: true
-                            textSize: 12; symbolSize: 12; implicitHeight: 27; implicitWidth: contentItem.implicitWidth + 6
-                            contentColor: Studio.actionBg
-                            onClicked: { question.text = text; companion.focusQuestion() }
-                        }
+                    Text {
+                        visible: workspace.watchModelReady
+                        width: parent.width; text: companion.libraryMode ? qsTr("想从所选系列里找什么？") : qsTr("想了解画面里的哪一处？")
+                        color: Studio.ink; font.pixelSize: 15; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.Wrap
+                    }
+                    Tool {
+                        visible: workspace.watchModelReady; anchors.horizontalCenter: parent.horizontalCenter
+                        text: companion.libraryMode ? qsTr("找出有人在门口等待的片段") : qsTr("解释一下这帧画面"); textSize: 13; outlined: true
+                        onClicked: { question.text = text; companion.focusQuestion() }
+                    }
+                    Tool {
+                        objectName: "chatConfigureModel"; visible: !workspace.watchModelReady; anchors.horizontalCenter: parent.horizontalCenter
+                        text: qsTr("配置问答模型…"); chosen: true; onClicked: companion.settingsRequested()
                     }
                 }
             }
@@ -575,11 +576,34 @@ Item {
                     if (last && workspace.askWatch(last.text, last.positionMs, last.attachments?.[0]?.previewUrl || "")) companion.questionSent()
                 }
             }
-            Mark {
+            Item {
+                id: frameContext
                 Layout.fillWidth: true; Layout.leftMargin: 14; Layout.rightMargin: 14
-                visible: companion.libraryMode || !!workspace.playbackContext.sourceRef
-                text: companion.libraryMode ? companion.videoTitle : qsTr("已引用片段 ") + Studio.time(workspace.playbackContext.clipStartMs,true) + " – " + Studio.time(workspace.playbackContext.clipEndMs,true)
-                textFormat: Text.PlainText; secondary: true; font.pixelSize: 12; font.features: ({ "tnum": 1 })
+                implicitHeight: Math.max(sourceLabel.implicitHeight, frameTime.implicitHeight)
+                readonly property var episode: companion.episodes[companion.currentEpisode]
+                readonly property string frameSource: companion.Window.window?.visibility === Window.FullScreen
+                    ? companion.videoTitle : episode ? qsTr("第 %1 集").arg(episode.episode) : ""
+                Mark {
+                    id: sourceLabel
+                    text: companion.libraryMode ? companion.videoTitle : workspace.playbackContext.sourceRef
+                        ? qsTr("已引用片段 ") : frameContext.frameSource
+                    visible: text.length > 0
+                    width: Math.min(implicitWidth, Math.max(0, frameContext.width - (frameTime.visible ? frameTime.implicitWidth + 4 : 0)))
+                    Accessible.name: text
+                    textFormat: Text.PlainText; secondary: true; font.pixelSize: 12
+                }
+                Mark {
+                    id: frameTime; objectName: "watchFrameTime"; visible: !companion.libraryMode
+                    x: sourceLabel.visible ? sourceLabel.width + 4 : 0
+                    text: workspace.playbackContext.sourceRef
+                        ? Studio.time(workspace.playbackContext.clipStartMs,true) + " – " + Studio.time(workspace.playbackContext.clipEndMs,true)
+                        : (sourceLabel.visible ? "· " : "") + Studio.time(companion.positionMs, false)
+                    Accessible.name: text
+                    textFormat: Text.PlainText; secondary: true; font.pixelSize: 12; font.features: ({ "tnum": 1 })
+                }
+                ToolTip.visible: sourceHover.hovered && !companion.libraryMode && companion.videoTitle.length > 0
+                ToolTip.text: companion.videoTitle; ToolTip.delay: 650
+                HoverHandler { id: sourceHover }
             }
             RowLayout {
                 visible: String(companion.pendingImage).length > 0; Layout.fillWidth: true; Layout.leftMargin: 12; Layout.rightMargin: 12
@@ -588,18 +612,17 @@ Item {
                 Tool { glyph: "close"; hint: qsTr("移除参考图片"); onClicked: companion.pendingImage = "" }
             }
             Rectangle {
-                id: composer
-                Layout.fillWidth: true; Layout.leftMargin: 11; Layout.rightMargin: 11
-                Layout.topMargin: 6; Layout.bottomMargin: 11
+                Layout.fillWidth: true; Layout.leftMargin: 10; Layout.rightMargin: 10
+                Layout.topMargin: 5; Layout.bottomMargin: 10
                 implicitHeight: Math.min(88, Math.max(42, question.contentHeight + 18))
-                color: Studio.dark ? Qt.darker(Studio.sheet, 1.15) : Studio.sheet; radius: 10
+                color: Studio.paper; radius: 10
                 border.color: question.activeFocus ? Studio.strongLine : Studio.line
                 Behavior on border.color { ColorAnimation { duration: Studio.hover } }
                 Tool { id: addImage; objectName: "watchAttach"; glyph: "plus"; hint: qsTr("添加参考图片")
                     anchors.left: parent.left; anchors.leftMargin: 3; anchors.bottom: parent.bottom; anchors.bottomMargin: 5
                     enabled: !workspace.watchBusy; onClicked: pickImage.open() }
                 ScrollView {
-                    anchors.left: addImage.right; anchors.top: parent.top; anchors.bottom: parent.bottom; anchors.right: stamp.visible ? stamp.left : sendButton.left
+                    anchors.left: addImage.right; anchors.top: parent.top; anchors.bottom: parent.bottom; anchors.right: sendButton.left
                     anchors.margins: 4; contentWidth: availableWidth
                     ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
                     TextArea {
@@ -619,23 +642,11 @@ Item {
                         }
                     }
                 }
-                Mark {
-                    id: stamp; objectName: "watchFrameTime"
-                    visible: !companion.libraryMode && !workspace.playbackContext.sourceRef
-                    anchors.right: sendButton.left; anchors.rightMargin: 7; anchors.verticalCenter: sendButton.verticalCenter
-                    text: Studio.time(companion.positionMs, false); color: Studio.dim
-                    font.pixelSize: 11; font.features: ({ "tnum": 1 })
-                    Accessible.name: companion.videoTitle + " · " + text
-                    ToolTip.visible: stampHover.hovered; ToolTip.text: Accessible.name; ToolTip.delay: 500
-                    HoverHandler { id: stampHover }
-                }
                 Tool {
                     id: sendButton; objectName: "watchChatSend"
                     anchors.right: parent.right; anchors.rightMargin: 5; anchors.bottom: parent.bottom; anchors.bottomMargin: 5
-                    glyph: workspace.watchBusy ? "stop" : "up"; hint: workspace.watchBusy ? qsTr("停止生成") : qsTr("发送问题")
-                    primary: enabled; fillColor: enabled ? Studio.actionBg : Studio.surfaceMuted
-                    contentColor: enabled ? Studio.actionFg : Studio.dim; opacity: 1
-                    implicitWidth: 29; implicitHeight: 29; corner: height / 2; symbolSize: 15
+                    glyph: workspace.watchBusy ? "stop" : "up"; hint: workspace.watchBusy ? qsTr("停止生成") : qsTr("发送问题"); primary: true
+                    implicitWidth: 31; implicitHeight: 31; corner: 9
                     enabled: workspace.watchBusy || !!question.text.trim()
                     onClicked: workspace.watchBusy ? workspace.stopWatch() : companion.send()
                 }

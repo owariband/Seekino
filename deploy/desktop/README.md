@@ -51,6 +51,8 @@ uv run --locked --python 3.12.16 python deploy/desktop/verify_app.py /tmp/Seekin
 python3 deploy/desktop/build_dmg.py /tmp/Seekino.app /tmp/Seekino-macos-arm64.dmg
 ```
 
+在 macOS 用 `python3 deploy/desktop/run_probe.py --timeout 75 -- <命令及参数>` 运行临时 Qt 验收脚本。监督程序会等待脚本及其窗口退出，截图提前写出不会结束计时。如果脚本卡住、被中断，或提前返回并留下同组子进程，监督程序向本次验收的进程组发送 TERM，留出一秒退出时间后再用 KILL 清理。正常完成时保留脚本退出码，超时返回 124。
+
 双击 DMG，将 Seekino 拖进 Applications 后打开。用 `⌘O` 选择视频，或直接拖入窗口。用 `⌘,` 打开设置，在「模型服务 → 添加连接」填写名称，在同一表单选择 Ark 或 OpenAI 兼容协议并填写凭据。OpenAI 兼容连接可自填服务地址，可保存多个同类型连接。在「模型用途」分别给视频理解、语音转写、向量检索与观看问答选连接和模型，点「应用」。向量维度应与服务实际返回的维度一致。观看问答也可以沿用视频理解。
 
 从工具栏打开解析任务，可以查看进度、暂停或重试。`⌘K` 查找台词或画面，点击结果从对应时间回看原片。`⌘⇧L` 收起或展开系列资料树。设置 → 外观可切换中文与 English，选择保存在本机。F1 或帮助菜单打开原生使用文档窗口。替换程序时资料库仍在 `~/Library/Application Support/Seekino/`。程序内保存的模型凭据由 macOS 钥匙串持有。

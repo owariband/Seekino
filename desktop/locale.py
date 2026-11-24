@@ -51,7 +51,6 @@ MESSAGES: dict[str, str] = {
     "重新打开": "Reopen",
     "文件": "File",
     "关闭窗口": "Close Window",
-    "连接问答模型": "Connect a vision model",
     "显示": "View",
     "隐藏资料树": "Hide library tree",
     "显示资料树": "Show library tree",
