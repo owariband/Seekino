@@ -24,6 +24,10 @@ def _frame_bytes(path, at_ms, poster_id):
 
 @lru_cache(maxsize=48)
 def _hit_image(path, at_ms, identity):
+    return _playback_frame(path, at_ms, QSize(384, 216))
+
+
+def _playback_frame(path, at_ms, bounds):
     # Use the same PTS and rotation rules as playback, including between-frame seeks.
     from server.desktop.playback import PlaybackDecoder
 
@@ -34,7 +38,7 @@ def _hit_image(path, at_ms, identity):
             if sample[0] == 0:
                 _, _, width, height, rgb, stride = sample
                 source = QImage(rgb, width, height, stride, QImage.Format.Format_RGB888)
-                target = source.size().boundedTo(source.size().scaled(384, 216, Qt.KeepAspectRatio))
+                target = source.size().boundedTo(source.size().scaled(bounds, Qt.KeepAspectRatio))
                 return source.scaled(target, Qt.KeepAspectRatio, Qt.SmoothTransformation).copy()
         raise ValueError("该命中位置没有可预览画面")
     finally:
@@ -56,6 +60,15 @@ class PosterProvider(QQuickImageProvider):
                     raise ValueError("无效的命中预览")
                 source = _request("hitPreview", scope=match[1], sourceRef=match[2])
                 image = _hit_image(source["original"], source["atMs"], id)
+            elif id.startswith(("hero/", "shelf/")):
+                kind, remaining = id.split("/", 1)
+                poster_id, position = remaining.rsplit("/", 1)
+                if not re.fullmatch(r"-1|[0-9]{1,15}", position):
+                    raise ValueError("无效的观看位置")
+                bounds = QSize(2560, 1440) if kind == "hero" else QSize(960, 600)
+                source = _request("posterSource", posterID=poster_id, surface=kind, atMs=int(position))
+                image = (self._read_image(source["image"], bounds) if "image" in source else
+                         _playback_frame(source["original"], source["atMs"], bounds))
             else:
                 image = self._cover(id)
         except (EOFError, RuntimeError, OSError, ValueError):
@@ -69,11 +82,14 @@ class PosterProvider(QQuickImageProvider):
     def _cover(id):
         source = _request("posterSource", posterID=id)
         if "image" in source:
-            reader = QImageReader(source["image"])
-            reader.setAutoTransform(True)
-            dimensions = reader.size()
-            if dimensions.isValid():
-                reader.setScaledSize(dimensions.boundedTo(dimensions.scaled(
-                    QSize(960, 540), Qt.AspectRatioMode.KeepAspectRatio)))
-            return reader.read()
+            return PosterProvider._read_image(source["image"], QSize(960, 540))
         return QImage.fromData(_frame_bytes(source["original"], source["atMs"], id), "JPEG")
+
+    @staticmethod
+    def _read_image(path, bounds):
+        reader = QImageReader(path)
+        reader.setAutoTransform(True)
+        dimensions = reader.size()
+        if dimensions.isValid():
+            reader.setScaledSize(dimensions.boundedTo(dimensions.scaled(bounds, Qt.KeepAspectRatio)))
+        return reader.read()

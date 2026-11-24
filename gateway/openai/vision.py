@@ -83,6 +83,23 @@ class OpenAIVisionModel:
             timeout=self._timeout, max_retries=0,
         )
 
+    def stream_media_text(self, inputs):
+        from gateway.agent_model.multimodal import _chat_content, _encode_inputs
+        from gateway.streaming.chat import stream_chat_text
+
+        content = _chat_content(_encode_inputs(inputs, self.provider_name))
+        request = dict(model=self.model_name, messages=[{"role": "user", "content": content}],
+                       temperature=self.temperature, timeout=self._timeout, **{self._token_parameter: self._max_tokens})
+        if self.reasoning_effort:
+            request["reasoning_effort"] = self.reasoning_effort
+        with self._new_client() as client, track_model_call(provider=self.provider_name, model=self.model_name,
+                                                           operation="watch_answer") as call:
+            unregister = call.add_cancel_callback(client.close)
+            try:
+                yield from stream_chat_text(client.chat.completions, usage_call=call, **request)
+            finally:
+                unregister()
+
     def generate(
         self,
         inputs: Sequence[MultimodalInput],

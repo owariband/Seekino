@@ -9,7 +9,7 @@ AbstractButton {
     readonly property int frames: pose === "jump" ? 29 : pose === "loading" ? 12 : 36
     property int frame: 0
     implicitWidth: 192; implicitHeight: 84
-    Accessible.name: "戳一戳 Kino"
+    Accessible.name: qsTr("戳一戳 Kino")
     hoverEnabled: true
     onClicked: { if (!Studio.reduce) { poked = true; frame = 0 } }
     onPoseChanged: frame = 0

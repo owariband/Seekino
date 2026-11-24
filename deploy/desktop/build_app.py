@@ -133,7 +133,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("destination", type=Path)
     parser.add_argument("--media-wheel", required=True, type=Path)
-    parser.add_argument("--version", default="0.2.12")
+    parser.add_argument("--version", default="0.2.14")
     parser.add_argument("--identity", default="-", help="Developer ID Application identity for release signing")
     options = parser.parse_args()
     build(options.destination, options.media_wheel, options.version, options.identity)

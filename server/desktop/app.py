@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 from threading import Condition
+from uuid import uuid4
 
 from engine.rag.retrieval.contracts import EventIndexNotReadyError, SeriesNotReadyError
 
@@ -14,7 +15,9 @@ from ..service.mcp_evidence import StaleEvidenceError
 from ..service.parse_control import ACTIVE_STATUSES, is_paused
 from .host import enforce_single_process
 from .runtime import open_library
+from .model_catalogue import discover as discover_models
 from .model_settings import ModelProfile, LEGACY_KEYS
+from .usage import overview as usage_overview
 from .watch_settings import prepare_watch, save_watch, watch_credentials, watch_view
 
 MODEL_KEYS = LEGACY_KEYS
@@ -96,6 +99,12 @@ def _job_item(detail):
         detail.is_latest and not detail.has_active_execution_lease and not detail.has_active_prefix_lease
         and detail.upload_session_id is not None and state.status in {"PARSING_FAILED", "INDEXING_FAILED"}
     )
+    terminal = state.status in {"COMPLETE", "PARSING_FAILED", "INDEXING_FAILED"}
+    pending_takeover = state.status == "PENDING" and runtime.get("accepted") is not True
+    can_reparse = bool(detail.is_latest and detail.upload_session_id and not paused
+                       and not detail.has_active_prefix_suffix_lease
+                       and (terminal or (detail.pending_takeover_enabled if pending_takeover
+                                         else not detail.has_active_execution_lease)))
     error = state.last_error or {}
     failed = state.status in {"PARSING_FAILED", "INDEXING_FAILED"}
     failure, action = _job_failure(error, state.status) if error or failed else (None, "")
@@ -111,6 +120,8 @@ def _job_item(detail):
         "title": detail.original_filename, "episode": detail.episode_order, "status": state.status,
         "progress": (state.detail.get("progress") or {}).get("percent"), "elapsedMs": state.processing_duration_ms,
         "latest": detail.is_latest, "paused": paused, "canPause": can_pause, "canRetry": can_retry,
+        "canReparse": can_reparse, "canDelete": bool(detail.is_latest and detail.upload_session_id),
+        "canDeleteVersion": not detail.is_latest,
         "uploadID": detail.upload_session_id, "version": state.version, "leaseVersion": state.lease_version,
         "error": failure, "errorAction": action,
     }
@@ -132,8 +143,16 @@ class Application:
         config, environ = profile.for_gateway(keys)
         # Existing failed tasks can be resumed with just their frozen model credentials.
         process = any(profile.ready_sources(keys).values())
-        return open_library(self._root, gateway_config=config, gateway_environ=environ,
-                            start_consumer=start and process and profile.view(keys)["mode"] != "new")
+        unconfigured = profile.view(keys)["mode"] == "new"
+        library = open_library(self._root, gateway_config=config, gateway_environ=environ,
+                               start_consumer=start and process and not unconfigured)
+        if unconfigured:
+            try:
+                library.identify_unconfigured_samples()
+            except Exception:
+                library.close()
+                raise
+        return library
 
     def save_models(self, args):
         current = ModelProfile.read(self._root)
@@ -173,15 +192,31 @@ class Application:
     def call(self, action, args):
         library = self.library
         match action:
-            case "askWatch":
+            case "episodeTimeline":
+                return library.episode_timeline(args["videoID"])
+            case "episodeInterpret":
+                from server.service.video_find_query import interpret_with_binding
                 from .watch_settings import watch_connection
                 connection = watch_connection(self._root, self.profile, self.keys)
                 if connection is None:
-                    raise ValueError("请先配置 Kino 观看问答使用的视觉模型。")
-                return library.ask_watch(
-                    connection, video_id=args["videoID"], series_id=args["seriesID"],
-                    position_ms=args["positionMs"], question=args["question"], history=args.get("history", []),
-                )
+                    raise ValueError("请先配置 Kino 问答使用的模型。")
+                config, environ = connection
+                binding = config.resolve_model_binding("vision", environ=environ)
+                return interpret_with_binding(args["query"], config, binding, environ=environ,
+                                              allow_local=True).model_dump()
+            case "episodeRelated":
+                return library.episode_related(args["videoID"], args["query"])
+            case "askWatch" | "askLibrary":
+                from .watch_conversation import answer_turn
+                return answer_turn(self, action, args)
+            case "watchHistory":
+                from .watch_history import LIBRARY_CHAT
+                video, thread = args["videoID"], args.get("threadID")
+                if video != LIBRARY_CHAT:
+                    library.open_video(video)
+                if args.get("delete"):
+                    return library.watch_history.delete(video, thread)
+                return library.watch_history.view(video, thread)
             case "close":
                 library.close()
                 return None
@@ -190,36 +225,29 @@ class Application:
             case "seriesDetail":
                 state = library.series(args["id"])
                 return [_video_item(library, item) for item in state.videos]
+            case "libraryMetadata" | "updateLibrary" | "changeEpisode" | "exportLibrary" | "backgroundImage":
+                return library.manage(action, args)
             case "createSeries":
                 return _series_item(library.create_series(args["name"]))
             case "tasks":
                 available = self.profile.ready_sources(self.keys)
                 return [{**_job_item(task), "retryReady": self.profile.retry_ready(task.task, available)}
                         for task in library.list_tasks(offset=args.get("offset", 0))]
+            case "taskDetail" | "taskUsage":
+                detail = library.task(args["id"])
+                if action == "taskUsage":
+                    from .usage import overview
+                    return overview(library, detail.task.video_parse_task_id)
+                from ..utils.time import datetime_to_unix_time_ms
+                task = detail.task
+                return {**_job_item(detail), "chunks": task.chunk_count, "facts": task.detail.get("progress") or {},
+                        "timing": task.detail.get("timing") or {}, "updatedAt": datetime_to_unix_time_ms(task.update_time)}
+            case "usage":
+                return usage_overview(library)
             case "importProgress":
                 return self._transfer_progress
             case "import":
-                if not self.profile.view(self.keys)["importReady"]:
-                    raise ValueError("请先配置视频解析所需的模型服务。")
-                path = Path(args["path"]).resolve(strict=True)
-                state = library.series(args["seriesID"])
-                # Resume a prior import from the same source before reserving a new episode.
-                key = sha256(os.fsencode(path.name)).hexdigest()
-                size = path.stat().st_size
-                pending = next((entry for entry in state.pending_uploads
-                                if entry.original_filename == path.name and entry.total_size_bytes == size), None)
-                order = pending.episode_order if pending else max(
-                    (item.episode_order for item in (*state.videos, *state.pending_uploads)), default=0,
-                ) + 1
-                self._transfer_progress = None
-                try:
-                    result = library.import_file(
-                        path, series_id=state.series_id, episode_order=order,
-                        idempotency_key=f"{state.series_id}:{key}:{order}", on_progress=self._report_transfer,
-                    )
-                finally:
-                    self._transfer_progress = None
-                return {"videoID": result.video_id}
+                return self.import_local(args)
             case "pause":
                 library.set_paused(args["id"], paused=args["paused"], expected_version=args["version"],
                                    expected_lease_version=args["leaseVersion"])
@@ -227,6 +255,24 @@ class Application:
             case "retry":
                 library.retry_parse(args["uploadID"], expected_job_version=args["version"],
                                     expected_lease_version=args["leaseVersion"])
+                return None
+            case "reparse" | "deleteImport" | "deleteVersion" | "deleteHistory":
+                detail = library.task(args["id"])
+                row = _job_item(detail)
+                if row["version"] != args["version"]:
+                    raise ValueError("任务版本已变化，请刷新后重试。")
+                if action == "reparse" and row["canReparse"]:
+                    if not self.profile.view(self.keys)["importReady"]:
+                        raise ValueError("请先配置解析模型。")
+                    library.reparse(row["uploadID"], expected_job_version=row["version"])
+                elif action == "deleteImport" and row["canDelete"]:
+                    library.delete_import(row["uploadID"])
+                elif action == "deleteVersion" and row["canDeleteVersion"]:
+                    library.delete_parse_history(task_id=row["id"], version=row["version"])
+                elif action == "deleteHistory" and row["latest"]:
+                    library.delete_parse_history(video_id=row["videoID"])
+                else:
+                    raise ValueError("这项操作不适用于当前任务状态，请刷新后检查。")
                 return None
             case "search":
                 if not args["keywords"] and not self.profile.view(self.keys)["searchReady"]:
@@ -250,17 +296,70 @@ class Application:
                 video = library.video(video_id)
                 if _poster_id(video) != args["posterID"]:
                     raise ValueError("视频封面已更新")
-                thumbnail = library.thumbnail(video)
-                if thumbnail:
-                    return {"image": str(thumbnail)}
+                surface = args.get("surface", "card")
+                at = args.get("atMs", -1)
+                if surface not in {"card", "hero", "shelf"} or type(at) is not int or at < -1:
+                    raise ValueError("无效的视频预览")
+                if at == -1:
+                    thumbnail = library.thumbnail(video)
+                    if thumbnail:
+                        return {"image": str(thumbnail)}
                 source = library.open_video(video_id)
-                return {"original": str(source.path), "atMs": min(10000, source.duration_ms // 10)}
+                if at == -1:
+                    if surface == "shelf":
+                        at = round(source.duration_ms * .35)
+                    else:
+                        at = min(30000 if surface == "hero" else 10000, source.duration_ms // 10)
+                return {"original": str(source.path), "atMs": max(0, min(at, source.duration_ms - 1))}
             case "openResult" | "openVideo":
                 playback = (library.open_result(args["sourceRef"]) if action == "openResult"
                             else library.open_video(args["videoID"]))
-                return {**asdict(playback), "path": str(playback.path)}
+                return {**asdict(playback), "path": str(playback.path), "watch": library.watch_history.view(playback.video_id)}
             case _:
                 raise ValueError("未知的桌面应用操作")
+
+    def import_local(self, args, on_progress=None):
+        library = self.library
+        from server.storage.sqlite_index import DEFERRED_UPLOAD_PREFIX
+        model_view = self.profile.view(self.keys)
+        if model_view["mode"] != "new" and not model_view["importReady"]:
+            raise ValueError("已配置的解析模型缺少凭据，请先在设置中补齐。")
+        path = Path(args["path"]).resolve(strict=True)
+        state = library.series(args["seriesID"])
+        # Resume a prior import from the same source before reserving a new episode.
+        size = path.stat().st_size
+        requested = args.get("episode")
+        if requested is not None and (type(requested) is not int or not 0 < requested <= 2147483647):
+            raise ValueError("集号必须是正整数。")
+        pending = next((entry for entry in state.pending_uploads
+                        if entry.original_filename == path.name and entry.total_size_bytes == size
+                        and requested in (None, entry.episode_order)), None)
+        order = requested or (pending.episode_order if pending else max(
+            (item.episode_order for item in (*state.videos, *state.pending_uploads)), default=0,
+        ) + 1)
+        # Expired or cancelled transfers keep their idempotency records. Only
+        # a resumable session should reuse a key.
+        token = str(uuid4())
+        if pending:
+            token = library.transfer_token(pending.upload_session_id)
+        elif model_view["mode"] == "new":
+            token = DEFERRED_UPLOAD_PREFIX + token
+        self._transfer_progress = None
+        try:
+            result = library.import_file(
+                path, series_id=state.series_id, episode_order=order,
+                idempotency_key=token, on_progress=on_progress or self._report_transfer,
+            )
+        except InterruptedError:
+            # The transfer can only be interrupted before complete() publishes the video.
+            for entry in library.series(state.series_id).pending_uploads:
+                if entry.status == "UPLOADING" and library.transfer_token(entry.upload_session_id) == token:
+                    library.delete_import(entry.upload_session_id)
+                    break
+            raise
+        finally:
+            self._transfer_progress = None
+        return {"videoID": result.video_id}
 
     def _report_transfer(self, stored, total):
         self._transfer_progress = stored / total
@@ -313,6 +412,12 @@ def _dispatch(action, args):
         slots = candidate.slots()
         return {"credentialName": slots.get(candidate.source, ""), "credentialNames": list(candidate.values({})),
                 "revision": profile.revision}
+    if action == "discoverModels":
+        root = Path(args["root"]).resolve()
+        keys = _application.keys if _application and _application._root.resolve() == root else {}
+        return discover_models(root, purpose=args.get("purpose", "model"), protocol=args.get("protocol", ""),
+                               base_url=args.get("baseUrl", ""), api_key=args.get("apiKey", ""),
+                               revision=args.get("revision", ""), keys=keys)
     if action == "open":
         enforce_single_process()
         if _application is not None:
@@ -342,12 +447,20 @@ def _dispatch(action, args):
     return result
 
 
+def import_from_window(args, on_progress):
+    # The native importer can pause between segments without blocking Qt's UI thread.
+    with _using_library(False):
+        if _application is None:
+            raise RuntimeError("资料库尚未打开")
+        return _application.import_local(args, on_progress)
+
+
 def dispatch(raw: str) -> str:
     args = {}
     try:
         request = json.loads(raw)
         action, args = request["action"], request["args"]
-        with _using_library(action in {"open", "close", "saveModelSettings", "saveWatchSettings"}):
+        with _using_library(action in {"open", "close", "saveModelSettings", "saveWatchSettings", "deleteImport", "deleteVersion", "deleteHistory"}):
             result = _dispatch(action, args)
         return json.dumps({"value": result}, ensure_ascii=False, allow_nan=False)
     except StaleEvidenceError:
@@ -356,6 +469,8 @@ def dispatch(raw: str) -> str:
         message = str(exc) or type(exc).__name__
         supplied = args.get("keys", {}) if isinstance(args, dict) else {}
         secrets = list(supplied.values()) if isinstance(supplied, dict) else []
+        if isinstance(args, dict) and isinstance(args.get("apiKey"), str):
+            secrets.append(args["apiKey"])
         current = _application
         if current:
             secrets.extend(current.keys.values())

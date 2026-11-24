@@ -4,18 +4,37 @@ import QtQuick.Controls.Basic
 
 Item {
     id: searchPane
-    property string scope: ""
+    property var scopes: []
+    function toggleScope(id) {
+        if (!id) scopes = []
+        else scopes = scopes.includes(id) ? scopes.filter(selected => selected !== id) : scopes.concat([id])
+    }
     property bool keywords: true
     readonly property bool draft: !workspace.lastQuery && !workspace.searching
-    readonly property var examples: ["下雨天有人在门口等待的画面","乐队第一次站上舞台演出","两个人在天台吵架的那一段"]
+    readonly property var examples: [qsTr("下雨天有人在门口等待的画面"),qsTr("乐队第一次站上舞台演出"),qsTr("两个人在天台吵架的那一段")]
     signal openHit(string ref, string title)
     signal importRequested()
     signal settingsRequested()
     signal jobsRequested()
+    signal watchSettingsRequested()
+    Sheet {
+        id: libraryChat; padding: 0; width: Math.min(600,parent.width - 32); height: Math.min(570,parent.height - 36)
+        onOpened: { workspace.openLibraryConversation(searchPane.scopes); chatLoader.item.showPanel() }
+        onClosed: workspace.leaveLibraryConversation()
+        contentItem: Loader {
+            id: chatLoader; active: libraryChat.visible
+            sourceComponent: WatchCompanion {
+                libraryMode: true; videoTitle: scopeButton.text
+                onCloseRequested: libraryChat.close()
+                onSettingsRequested: searchPane.watchSettingsRequested()
+            }
+        }
+    }
+    onEnabledChanged: if (!enabled) libraryChat.close()
     function focusQuery() { query.forceActiveFocus(); query.selectAll() }
     function run() {
         if (query.text.trim().length && workspace.ready && !workspace.searching)
-            workspace.search(query.text.trim(), keywords, scope)
+            workspace.searchScopes(query.text.trim(), keywords, scopes)
     }
     Flickable {
         id: viewport
@@ -36,7 +55,7 @@ Item {
             Kino { Layout.alignment: Qt.AlignHCenter; Layout.preferredWidth: 192; Layout.preferredHeight: 84; mood: "idle" }
             Text {
                 Layout.fillWidth: true; color: Studio.muted; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.Wrap
-                text: "描述记得的画面、台词或人物关系，一起把那一刻找回来。"; font.pixelSize: 15
+                text: qsTr("描述记得的画面、台词或人物关系，一起把那一刻找回来。"); font.pixelSize: 15
             }
             Column {
                 id: prompts
@@ -64,8 +83,8 @@ Item {
             Layout.fillHeight: true; visible: !searchPane.draft
             ColumnLayout {
                 anchors.fill: parent; spacing: 10
-                Mark { Layout.fillWidth: true; font.pixelSize: Studio.pageTitleSize; font.weight: Font.DemiBold; text: workspace.searching ? "正在搜索…" : "“" + workspace.lastQuery + "”" }
-                Mark { visible: !workspace.searching && !workspace.searchIndexUnavailable; text: workspace.hits.length + " 个片段"; secondary: true; font.pixelSize: 12 }
+                Mark { Layout.fillWidth: true; font.pixelSize: Studio.pageTitleSize; font.weight: Font.DemiBold; text: workspace.searching ? qsTr("正在搜索…") : "“" + workspace.lastQuery + "”" }
+                Mark { visible: !workspace.searching && !workspace.searchIndexUnavailable; text: qsTr("%1 个片段").arg(workspace.hits.length); secondary: true; font.pixelSize: 12 }
                 Rectangle {
                     visible: workspace.partial && !workspace.searching
                     Layout.fillWidth: true; implicitHeight: coverage.implicitHeight + 8
@@ -76,11 +95,11 @@ Item {
                         anchors.leftMargin: 12; anchors.rightMargin: 6; spacing: 6
                         Text {
                             Layout.fillWidth: true; wrapMode: Text.Wrap
-                            text: workspace.searchIndexUnavailable ? "所选范围暂无可检索的索引" : "本次搜索覆盖不完整"
+                            text: workspace.searchIndexUnavailable ? qsTr("所选范围暂无可检索的索引") : qsTr("本次搜索覆盖不完整")
                             font.pixelSize: 13; color: Studio.ink
                         }
                         Tool {
-                            id: coverageButton; objectName: "searchCoverageJobs"; text: "查看解析任务"; textSize: 12; corner: 5
+                            id: coverageButton; objectName: "searchCoverageJobs"; text: qsTr("查看解析任务"); textSize: 12; corner: 5
                             contentColor: Studio.actionBg
                             Keys.onReturnPressed: searchPane.jobsRequested()
                             Keys.onEnterPressed: searchPane.jobsRequested()
@@ -93,8 +112,8 @@ Item {
                     ColumnLayout {
                         visible: !workspace.hits.length; anchors.centerIn: parent; spacing: 8
                         Kino { Layout.alignment: Qt.AlignHCenter; Layout.preferredWidth: 128; Layout.preferredHeight: 56; mood: workspace.searching ? "loading" : "think" }
-                        Mark { Layout.alignment: Qt.AlignHCenter; text: workspace.searching ? "正在查找片段…" : workspace.searchIndexUnavailable ? "索引发布后，可再次搜索。" : workspace.partial ? "当前可检索范围内暂无命中。"
-                              : workspace.series.length ? "没有找到片段，换个关键词再试试。" : "资料库里还没有视频。"; color: Studio.muted }
+                        Mark { Layout.alignment: Qt.AlignHCenter; text: workspace.searching ? qsTr("正在查找片段…") : workspace.searchIndexUnavailable ? qsTr("索引发布后，可再次搜索。") : workspace.partial ? qsTr("当前可检索范围内暂无命中。")
+                              : workspace.series.length ? qsTr("没有找到片段，换个关键词再试试。") : qsTr("资料库里还没有视频。"); color: Studio.muted }
                     }
                     ListView {
                         anchors.fill: parent; clip: true; boundsBehavior: Flickable.StopAtBounds; spacing: 8
@@ -105,9 +124,10 @@ Item {
                             objectName: "searchHit_" + modelData.sourceRef
                             width: ListView.view.width; title: modelData.description || modelData.title
                             markedTitle: modelData.highlighted
-                            sourceLabel: [modelData.seriesTitle, modelData.episode ? "第 " + modelData.episode + " 集" : ""].filter(Boolean).join(" · ")
+                            sourceLabel: [modelData.seriesTitle, modelData.episode ? qsTr("第 %1 集").arg(modelData.episode) : ""].filter(Boolean).join(" · ")
                             filename: modelData.filename
                             timeRange: Studio.time(modelData.startMs, true) + " – " + Studio.time(modelData.endMs, true)
+                            onAsk: workspace.askAboutResult(modelData.sourceRef, modelData.title)
                             preview: modelData.cover || ""; onClicked: searchPane.openHit(modelData.sourceRef,modelData.title)
                         }
                     }
@@ -128,8 +148,8 @@ Item {
                 color: Studio.ink; placeholderTextColor: Studio.dim; background: Item {}
                 selectionColor: Studio.selected; selectedTextColor: Studio.ink
                 selectByMouse: true; wrapMode: TextEdit.Wrap
-                placeholderText: searchPane.keywords ? "输入一句台词，或切换到描述搜索…" : "描述一个画面，找回那一刻…"
-                Accessible.name: "搜索内容"; font.pixelSize: 14
+                placeholderText: searchPane.keywords ? qsTr("输入一句台词，或切换到描述搜索…") : qsTr("描述一个画面，找回那一刻…")
+                Accessible.name: qsTr("搜索内容"); font.pixelSize: 14
                 KeyNavigation.priority: KeyNavigation.BeforeItem
                 KeyNavigation.tab: coverageButton.visible ? coverageButton : null
                 Keys.onReturnPressed: event => { if (!(event.modifiers & Qt.ShiftModifier)) searchPane.run(); else event.accepted=false }
@@ -138,17 +158,18 @@ Item {
             RowLayout {
                 id: controls; anchors.bottom: parent.bottom; anchors.left: parent.left; anchors.right: parent.right
                 anchors.leftMargin: 10; anchors.rightMargin: 8; anchors.bottomMargin: 8; spacing: 6
-                Tool { glyph: "plus"; hint: "导入视频"; onClicked: searchPane.importRequested() }
-                Tool { text: searchPane.keywords ? "关键词" : "描述搜索"; glyph: "down"; hint: "切换关键词与描述搜索"; symbolSize: 11; textSize: 12; onClicked: searchPane.keywords=!searchPane.keywords }
+                Tool { glyph: "plus"; hint: qsTr("导入视频"); onClicked: searchPane.importRequested() }
+                Tool { text: searchPane.keywords ? qsTr("关键词") : qsTr("描述搜索"); glyph: "down"; hint: qsTr("切换关键词与描述搜索"); symbolSize: 11; textSize: 12; onClicked: searchPane.keywords=!searchPane.keywords }
                 Item { Layout.fillWidth: true }
-                Tool { objectName: "submitSearch"; primary: true; corner: 10; implicitWidth: 34; implicitHeight: 34; glyph: "up"; hint: "搜索"; enabled: query.text.trim().length > 0 && !workspace.searching; onClicked: searchPane.run() }
+                Tool { objectName: "submitSearch"; primary: true; corner: 10; implicitWidth: 34; implicitHeight: 34; glyph: "up"; hint: qsTr("搜索"); enabled: query.text.trim().length > 0 && !workspace.searching; onClicked: searchPane.run() }
             }
         }
         RowLayout {
             Layout.fillWidth: true; spacing: 6
             Tool {
-                id: scopeButton; text: workspace.series.find(item => item.id === searchPane.scope)?.title || "全部视频系列"
-                glyph: "down"; outlined: true; hint: "选择搜索范围"; textSize: 11; symbolSize: 11
+                id: scopeButton; text: searchPane.scopes.length > 1 ? qsTr("已选 ") + searchPane.scopes.length + qsTr(" 个系列") :
+                    workspace.series.find(item => item.id === searchPane.scopes[0])?.title || qsTr("全部视频系列")
+                glyph: "down"; outlined: true; hint: qsTr("选择搜索范围"); textSize: 11; symbolSize: 11
                 Layout.maximumWidth: 240; clip: true; onClicked: scopeMenu.open()
                 Popup {
                     id: scopeMenu; x: 0; y: -height-4
@@ -156,17 +177,19 @@ Item {
                     modal: true; dim: false; focus: true
                     background: Rectangle { color: Studio.sheet; border.color: Studio.line; radius: 12 }
                     contentItem: ListView {
-                        clip: true; model: [{id:"",title:"全部视频系列"}].concat(workspace.series); ScrollBar.vertical: ScrollBar {}
+                        clip: true; model: [{id:"",title:qsTr("全部视频系列")}].concat(workspace.series); ScrollBar.vertical: ScrollBar {}
                         delegate: TreeRow {
                             required property var modelData; width: ListView.view.width
-                            text: modelData.title; current: modelData.id === searchPane.scope; branch: true
-                            onClicked: { searchPane.scope=modelData.id; scopeMenu.close() }
+                            text: modelData.title; current: modelData.id ? searchPane.scopes.includes(modelData.id) : !searchPane.scopes.length; branch: true
+                            onClicked: searchPane.toggleScope(modelData.id)
                         }
                     }
                 }
             }
             Item { Layout.fillWidth: true }
-            Tool { text: "配置模型"; glyph: "sliders"; textSize: 12; symbolSize: 14; onClicked: searchPane.settingsRequested() }
+            Tool { objectName: "libraryConversation"; text: qsTr("问 Kino"); glyph: "chat"; textSize: 12; outlined: true
+                enabled: workspace.series.length > 0; onClicked: libraryChat.open() }
+            Tool { text: qsTr("配置模型"); glyph: "sliders"; textSize: 12; symbolSize: 14; onClicked: searchPane.settingsRequested() }
         }
         }
     }

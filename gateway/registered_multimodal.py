@@ -54,6 +54,34 @@ class RegisteredMultimodalModel:
         finally:
             client.close()
 
+    def stream_media_text(self, inputs):
+        from openai import Omit, OpenAI, APIStatusError
+        from .streaming.chat import stream_chat_text
+
+        target = self._target
+        if target.protocol != "openai_chat":
+            raise ValueError("This model connection does not stream Chat Completions")
+        key = target.api_key.get_secret_value()
+        http = personal_http_client(target, allow_local=self._allow_local, timeout=self._request_timeout_seconds)
+        with OpenAI(base_url=target.base_url, api_key=key or "unused", max_retries=0, http_client=http) as client:
+            with track_model_call(provider=self.provider_name, model=self.model_name, operation="watch_answer") as call:
+                unregister = call.add_cancel_callback(client.close)
+                try:
+                    content = _chat_content(_encode_inputs(inputs, self.provider_name))
+                    request = dict(model=self.model_name, messages=[{"role": "user", "content": content}],
+                                   timeout=self._request_timeout_seconds, max_completion_tokens=self.max_output_tokens,
+                                   extra_headers={} if key else {"Authorization": Omit()})
+                    try:
+                        yield from stream_chat_text(client.chat.completions, usage_call=call, **request)
+                    except APIStatusError as exc:
+                        # Match the non-streamed personal endpoint's legacy token-limit fallback.
+                        if exc.status_code not in {400, 422} or "max_completion_tokens" not in str(exc).lower():
+                            raise
+                        request["max_tokens"] = request.pop("max_completion_tokens")
+                        yield from stream_chat_text(client.chat.completions, usage_call=call, **request)
+                finally:
+                    unregister()
+
     def tool_completion(self, client, messages, specs, choice, timeout):
         response = client.invoke([_convert_dict_to_message(message) for message in messages],
                                  tools=specs, tool_choice=choice, timeout=timeout)

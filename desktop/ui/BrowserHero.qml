@@ -102,7 +102,7 @@ Item {
         height: implicitHeight; spacing: 0
         Mark {
             Layout.fillWidth: true; color: "#a6cdbf"; font.pixelSize: 12; font.weight: Font.DemiBold
-            text: hero.seriesPage ? "视频系列" : hero.positionMs > 0 ? "上次观看" : "从这里开始"
+            text: hero.seriesPage ? qsTr("视频系列") : hero.positionMs > 0 ? qsTr("上次观看") : qsTr("从这里开始")
         }
         Text {
             objectName: "heroTitle"
@@ -115,12 +115,12 @@ Item {
         }
         RowLayout {
             Layout.topMargin: hero.compact ? 5 : 9; spacing: 9
-            Mark { visible: !!hero.featured?.episode; text: "第 " + (hero.featured?.episode || "") + " 集"; font.pixelSize: 13; font.weight: Font.DemiBold; color: "#9bd5c4" }
-            Mark { visible: hero.series?.count > 0; text: "共 " + (hero.series?.count || 0) + " 集"; font.pixelSize: 13; color: "#c2d2ca" }
+            Mark { visible: !!hero.featured?.episode; text: qsTr("第 %1 集").arg(hero.featured?.episode || ""); font.pixelSize: 13; font.weight: Font.DemiBold; color: "#9bd5c4" }
+            Mark { visible: hero.series?.count > 0; text: qsTr("共 %1 集").arg(hero.series?.count || 0); font.pixelSize: 13; color: "#c2d2ca" }
         }
         Text {
             Layout.fillWidth: true; Layout.topMargin: hero.compact ? 9 : 15
-            text: hero.series?.description || (hero.playable ? (hero.seriesPage ? (hero.featured?.title || hero.series?.firstVideoTitle) : "选一集开始观看，也可以一起寻找故事里的名场面。") : "导入视频，开始这个系列。")
+            text: hero.series?.description || (hero.playable ? (hero.seriesPage ? (hero.featured?.title || hero.series?.firstVideoTitle) : qsTr("选一集开始观看，也可以一起寻找故事里的名场面。")) : qsTr("导入视频，开始这个系列。"))
             textFormat: Text.PlainText; color: "#c8d8d0"; font.pixelSize: hero.compact ? 13 : 14
             lineHeightMode: Text.FixedHeight; lineHeight: hero.compact ? 20 : 23
             wrapMode: Text.Wrap; maximumLineCount: 2; elide: Text.ElideRight
@@ -132,7 +132,7 @@ Item {
                 Layout.fillWidth: true; Layout.preferredHeight: 3; radius: 2; color: "#385347"
                 Rectangle { height: parent.height; width: parent.width * Math.min(1, hero.positionMs / Math.max(1,hero.durationMs)); radius: 2; color: "#8cd4c2" }
             }
-            Mark { text: "已看至 " + Studio.time(hero.positionMs,hero.positionMs < 1000); color: "#c8d8d0"; font.pixelSize: 12; font.features: ({ "tnum": 1 }) }
+            Mark { text: qsTr("已看至 %1").arg(Studio.time(hero.positionMs,hero.positionMs < 1000)); color: "#c8d8d0"; font.pixelSize: 12; font.features: ({ "tnum": 1 }) }
         }
         Flow {
             id: actions
@@ -140,16 +140,16 @@ Item {
             Layout.preferredHeight: childrenRect.height; spacing: 10
             HeroAction {
                 objectName: "heroPlay"; visible: hero.playable; glyph: "play"
-                text: hero.positionMs > 0 ? "继续观看" : hero.seriesPage ? "开始观看" : "播放本集"
+                text: hero.positionMs > 0 ? qsTr("继续观看") : hero.seriesPage ? qsTr("开始观看") : qsTr("播放本集")
                 onClicked: hero.playRequested()
             }
             HeroAction {
                 objectName: "heroBrowse"; visible: hero.playable || !hero.seriesPage
-                trailing: true; glyph: hero.seriesPage ? "down" : "chevron"; text: hero.seriesPage ? "查看剧集" : "查看系列"
+                trailing: true; glyph: hero.seriesPage ? "down" : "chevron"; text: hero.seriesPage ? qsTr("查看剧集") : qsTr("查看系列")
                 onClicked: hero.browseRequested()
             }
             HeroAction {
-                visible: !hero.playable && hero.seriesPage; glyph: "import"; text: "导入视频"
+                visible: !hero.playable && hero.seriesPage; glyph: "import"; text: qsTr("导入视频")
                 onClicked: hero.importRequested()
             }
         }

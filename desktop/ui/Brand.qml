@@ -3,7 +3,7 @@ import QtQuick.Controls.Basic
 
 AbstractButton {
     id: brand
-    Accessible.name: "Seekino 首页"
+    Accessible.name: qsTr("Seekino 首页")
     implicitWidth: label.implicitWidth + 10; implicitHeight: 32
     FontLoader { id: inter; source: "art/inter-wordmark-750.ttf" }
     contentItem: Item {

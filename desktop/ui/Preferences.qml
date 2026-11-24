@@ -10,6 +10,7 @@ Sheet {
     property bool justSaved: false
     property bool replacing: false
     property bool appearance: false
+    property bool usage: false
     property string protocol: ""
     property bool keyless: false
     readonly property bool localEndpoint: protocol === "openai_chat" && isLoopbackUrl(address.text)
@@ -33,9 +34,9 @@ Sheet {
         && Number(dimensions.text) >= 1 && Number(dimensions.text) <= 2048 && (!needsEncoder || encoder.text.trim()))
     readonly property bool changed: retain ? Object.values(secretEdits).some(value => !!value.trim())
         : !!protocol && (signature() !== baseline || !!key.text.trim())
-    readonly property var themes: [{key:"system", label:"跟随系统"}, {key:"light", label:"浅色"}, {key:"dark", label:"深色"}]
-    readonly property var providers: [{key:"ark", label:"火山方舟 Ark"}, {key:"openai_chat", label:"OpenAI 兼容"}]
-    readonly property var roles: ({vision:"视频理解", transcription:"语音转录", embedding:"向量嵌入", rerank:"重排", ocr:"文字识别", summarize:"摘要", agent:"通用模型", supervisor:"复核", diarization:"说话人识别", vision_fallback:"备用视频理解"})
+    readonly property var themes: [{key:"system", label:qsTr("跟随系统")}, {key:"light", label:qsTr("浅色")}, {key:"dark", label:qsTr("深色")}]
+    readonly property var providers: [{key:"ark", label:"Ark"}, {key:"openai_chat", label:qsTr("OpenAI 兼容")}]
+    readonly property var roles: ({vision:qsTr("视频理解"), transcription:qsTr("语音转录"), embedding:qsTr("向量嵌入"), rerank:qsTr("重排"), ocr:qsTr("文字识别"), summarize:qsTr("摘要"), agent:qsTr("通用模型"), supervisor:qsTr("复核"), diarization:qsTr("说话人识别"), vision_fallback:qsTr("备用视频理解")})
     width: Math.min(588, parent ? parent.width - 24 : 588)
     anchors.centerIn: null
     x: parent ? Math.round((parent.width - width)/2) : 0
@@ -75,12 +76,12 @@ Sheet {
     }
     function selectProvider(next) {
         if (protocol === next) return
-        setForm(config.mode === "managed" && stored.protocol === next ? stored : {protocol: next, name: next === "ark" ? "火山方舟" : "OpenAI 兼容"})
+        setForm(config.mode === "managed" && stored.protocol === next ? stored : {protocol: next, name: next === "ark" ? "Ark" : qsTr("OpenAI 兼容")})
         justSaved = false
     }
     function openSettings(context, pending = false) {
         if (visible && !pending) return
-        purpose = context || "manual"; pendingAction = pending; appearance = false; justSaved = false
+        purpose = context || "manual"; pendingAction = pending; appearance = false; usage = false; justSaved = false
         load(); open()
     }
     function reveal(field) {
@@ -128,15 +129,16 @@ Sheet {
         spacing: prefs.compact ? 8 : 12
         RowLayout {
             Layout.fillWidth: true
-            Mark { text: "设置"; font.pixelSize: Studio.pageTitleSize; font.weight: Font.DemiBold }
+            Mark { text: qsTr("设置"); font.pixelSize: Studio.pageTitleSize; font.weight: Font.DemiBold }
             Item { Layout.fillWidth: true }
             RowLayout {
                 spacing: 5
-                Choice { id: modelTab; objectName: "modelTab"; text: "模型连接"; chosen: !prefs.appearance; onClicked: { prefs.appearance=false; scroll.contentY=0 } }
-                Choice { objectName: "appearanceTab"; text: "外观"; chosen: prefs.appearance; onClicked: { prefs.appearance=true; scroll.contentY=0 } }
+                Choice { id: modelTab; objectName: "modelTab"; text: qsTr("模型连接"); chosen: !prefs.appearance && !prefs.usage; onClicked: { prefs.appearance=false; prefs.usage=false; scroll.contentY=0 } }
+                Choice { objectName: "usageTab"; text: qsTr("用量"); chosen: prefs.usage; onClicked: { prefs.appearance=false; prefs.usage=true; scroll.contentY=0 } }
+                Choice { objectName: "appearanceTab"; text: qsTr("外观"); chosen: prefs.appearance; onClicked: { prefs.appearance=true; prefs.usage=false; scroll.contentY=0 } }
             }
             Item { Layout.fillWidth: true }
-            Tool { glyph: "close"; hint: "关闭设置"; enabled: !workspace.savingKeys; onClicked: prefs.close() }
+            Tool { glyph: "close"; hint: qsTr("关闭设置"); enabled: !workspace.savingKeys; onClicked: prefs.close() }
         }
         Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: Studio.line }
         Flickable {
@@ -150,7 +152,7 @@ Sheet {
                 id: fields; width: scroll.width - (scroll.contentHeight > scroll.height ? 12 : 0); spacing: prefs.compact ? 16 : 24
                 ColumnLayout {
                     visible: prefs.appearance; Layout.fillWidth: true; spacing: 8
-                    Heading { text: "外观" }
+                    Heading { text: qsTr("外观") }
                     RowLayout {
                         Repeater {
                             id: themeButtons; model: prefs.themes
@@ -163,19 +165,41 @@ Sheet {
                             }
                         }
                     }
-                    Note { text: "外观更改立即生效。" }
+                    Heading { text: qsTr("观看与 Kino"); Layout.topMargin: 10 }
+                    CheckBox { text: qsTr("发问时暂停，返回播放时继续"); palette.windowText: Studio.ink
+                        checked: Studio.preferences.pauseOnSend; onToggled: Studio.preferences.pauseOnSend = checked }
+                    RowLayout {
+                        Mark { text: qsTr("Kino 浮窗闲置后淡化") }
+                        SpinBox { from: 1; to: 60; value: Studio.preferences.kinoFadeSeconds
+                            onValueModified: Studio.preferences.kinoFadeSeconds = value }
+                        Mark { text: qsTr("秒"); secondary: true }
+                    }
+                    Item { Layout.preferredHeight: 8 }
+                    Heading { text: qsTr("界面语言") }
+                    RowLayout {
+                        spacing: 8
+                        Choice {
+                            objectName: "language_zh"; text: qsTr("简体中文")
+                            chosen: desktopLocale.language === "zh"; onClicked: desktopLocale.setLanguage("zh")
+                        }
+                        Choice {
+                            objectName: "language_en"; text: "English"
+                            chosen: desktopLocale.language === "en"; onClicked: desktopLocale.setLanguage("en")
+                        }
+                    }
+                    Note { text: qsTr("语言更改立即生效，并保存在此设备。") }
                 }
                 ColumnLayout {
-                    visible: !prefs.appearance; Layout.fillWidth: true; spacing: 8
-                    Heading { text: prefs.retain ? "已配置的模型服务" : "选择模型服务" }
+                    visible: !prefs.appearance && !prefs.usage; Layout.fillWidth: true; spacing: 8
+                    Heading { text: prefs.retain ? qsTr("已配置的模型服务") : qsTr("选择模型服务") }
                     Note {
                         objectName: "settingsPurpose"
                         visible: prefs.purpose !== "manual" || prefs.retain || !prefs.protocol
-                        text: prefs.purpose === "import" ? "导入并解析视频需要视频理解、语音转录和向量模型。"
-                            : prefs.purpose === "search" ? "描述检索使用资料库当前的向量模型。已建索引的关键词检索可直接使用。"
-                            : prefs.purpose === "retry" ? "重试任务将使用这里保存的模型和凭据。"
-                            : prefs.retain ? "当前连接来自资料库的模型配置，可在这里更新对应的 API Key。"
-                            : "用自己的模型服务解析视频、建立索引和检索画面。"
+                        text: prefs.purpose === "import" ? qsTr("导入并解析视频需要视频理解、语音转录和向量模型。")
+                            : prefs.purpose === "search" ? qsTr("描述检索使用资料库当前的向量模型。已建索引的关键词检索可直接使用。")
+                            : prefs.purpose === "retry" ? qsTr("重试任务将使用这里保存的模型和凭据。")
+                            : prefs.retain ? qsTr("当前连接来自资料库的模型配置，可在这里更新对应的 API Key。")
+                            : qsTr("用自己的模型服务解析视频、建立索引和检索画面。")
                     }
                     RowLayout {
                         visible: !prefs.retain; spacing: 8
@@ -190,72 +214,88 @@ Sheet {
                     }
                 }
                 ColumnLayout {
-                    visible: !prefs.appearance && !prefs.retain && !!prefs.protocol
+                    visible: !prefs.appearance && !prefs.usage && !prefs.retain && !!prefs.protocol
                     Layout.fillWidth: true; spacing: 8; enabled: !prefs.busy
                     RowLayout {
                         Layout.fillWidth: true; spacing: 12
                         Field {
                             id: address; inputName: "serviceUrl"; Layout.preferredWidth: 2
-                            label: "服务地址"; caption: prefs.protocol === "ark" ? "北京" : ""
+                            label: qsTr("服务地址"); caption: prefs.protocol === "ark" ? qsTr("北京") : ""
                             placeholder: "https://…/v1"; readOnly: prefs.protocol === "ark"
                             onEdited: { key.text=""; prefs.keyless=false; prefs.justSaved=false }
                         }
                         Field {
                             id: connectionName; inputName: "connectionName"
-                            label: "连接名称"; placeholder: "为连接命名"
+                            label: qsTr("连接名称"); placeholder: qsTr("为连接命名")
                         }
                     }
                     RowLayout {
                         visible: prefs.localEndpoint; Layout.fillWidth: true; Layout.topMargin: prefs.compact ? 8 : 12; spacing: 8
-                        Mark { text: "鉴权" }
+                        Mark { text: qsTr("鉴权") }
                         Choice {
-                            objectName: "authKey"; text: "使用密钥"; chosen: !prefs.keyless
+                            objectName: "authKey"; text: qsTr("使用密钥"); chosen: !prefs.keyless
                             onClicked: { prefs.keyless=false; prefs.justSaved=false }
                         }
                         Choice {
-                            objectName: "authNone"; text: "本机免密"; chosen: prefs.keyless
+                            objectName: "authNone"; text: qsTr("本机免密"); chosen: prefs.keyless
                             onClicked: { prefs.keyless=true; key.text=""; prefs.justSaved=false }
                         }
                     }
                     Field {
                         id: key; inputName: "connectionKey"; visible: !prefs.anonymous
                         Layout.topMargin: prefs.localEndpoint ? 0 : prefs.compact ? 8 : 12
-                        label: "API Key"; caption: prefs.hasSavedKey ? "此地址已保存密钥" : ""
-                        placeholder: prefs.hasSavedKey ? "留空保留当前密钥" : "输入此服务的 API Key"
+                        label: "API Key"; caption: prefs.hasSavedKey ? qsTr("此地址已保存密钥") : ""
+                        placeholder: prefs.hasSavedKey ? qsTr("留空保留当前密钥") : qsTr("输入此服务的 API Key")
                         secret: TextInput.Password
                     }
-                    Heading { Layout.topMargin: prefs.compact ? 8 : 16; text: "模型 ID" }
+                    Heading { Layout.topMargin: prefs.compact ? 8 : 16; text: qsTr("模型 ID") }
+                    ModelDiscovery {
+                        Layout.fillWidth: true
+                        protocol: prefs.protocol; baseUrl: address.text; apiKey: key.text
+                        revision: prefs.revision; purpose: "model"
+                        targets: [{key:"vision", label:qsTr("视频理解"), hint:qsTr("填入视频理解")},
+                                  {key:"transcription", label:qsTr("语音转录"), hint:qsTr("填入语音转录")},
+                                  {key:"embedding", label:qsTr("向量嵌入"), hint:qsTr("填入向量嵌入")},
+                                  {key:"rerank", label:qsTr("重排"), hint:qsTr("填入检索重排")}]
+                        onPicked: (model, target) => {
+                            if (target === "vision") vision.text = model
+                            else if (target === "transcription") transcription.text = model
+                            else if (target === "embedding") embedding.text = model
+                            else rerank.text = model
+                            prefs.justSaved = false
+                        }
+                    }
                     GridLayout {
                         Layout.fillWidth: true; columns: 2; columnSpacing: 12; rowSpacing: 12
                         Field {
                             id: vision; inputName: "visionModel"
-                            label: "视频理解"; placeholder: "支持视频输入的模型 ID"
+                            label: qsTr("视频理解"); placeholder: qsTr("支持视频输入的模型 ID")
                         }
                         Field {
                             id: transcription; inputName: "transcriptionModel"
-                            label: "语音转录"; placeholder: "支持音频输入的模型 ID"
+                            label: qsTr("语音转录"); placeholder: qsTr("支持音频输入的模型 ID")
                         }
                         Field {
                             id: embedding; inputName: "embeddingModel"
-                            label: "向量嵌入"; placeholder: "嵌入模型 ID"
+                            label: qsTr("向量嵌入"); placeholder: qsTr("嵌入模型 ID")
                         }
                         Field {
                             id: dimensions; inputName: "embeddingDimensions"
-                            label: "向量维度"; placeholder: "1–2048"
+                            label: qsTr("向量维度"); placeholder: "1–2048"
                             validator: IntValidator { bottom: 1; top: 2048 }
                         }
                         Field {
                             id: encoder; inputName: "encoderModel"; visible: prefs.needsEncoder
-                            label: "底层嵌入模型"; placeholder: "接入点对应的实际模型 ID"
+                            label: qsTr("底层嵌入模型"); placeholder: qsTr("接入点对应的实际模型 ID")
                         }
                         Field {
                             id: rerank; inputName: "rerankModel"
-                            label: "重排模型"; placeholder: "可选，默认使用视频理解模型"
+                            label: qsTr("重排模型"); placeholder: qsTr("可选，默认使用视频理解模型")
                         }
                     }
                 }
                 ColumnLayout {
-                    visible: !prefs.appearance && prefs.retain; Layout.fillWidth: true; spacing: 16
+                    visible: !prefs.appearance && !prefs.usage && prefs.retain; Layout.fillWidth: true; spacing: 16
                     Repeater {
                         model: prefs.retain ? prefs.config.connections || [] : []
                         ColumnLayout {
@@ -272,15 +312,19 @@ Sheet {
                             required property string modelData
                             inputName: "key_" + modelData; Layout.fillWidth: true; enabled: !prefs.busy
                             label: ((prefs.config.connections || []).filter(c => c.credentialName === modelData).map(c => c.label || c.name).join(" / ") || modelData) + " API Key"
-                            caption: prefs.config.credentials?.[modelData] ? "此地址已保存密钥" : "待填写"
-                            placeholder: prefs.config.credentials?.[modelData] ? "留空保留当前密钥" : "输入此服务的 API Key"
+                            caption: prefs.config.credentials?.[modelData] ? qsTr("此地址已保存密钥") : qsTr("待填写")
+                            placeholder: prefs.config.credentials?.[modelData] ? qsTr("留空保留当前密钥") : qsTr("输入此服务的 API Key")
                             secret: TextInput.Password; onFocused: item => prefs.reveal(item)
                             onEdited: { const values = Object.assign({},prefs.secretEdits); values[modelData]=text; prefs.secretEdits=values; prefs.justSaved=false }
                         }
                     }
-                    Tool { visible: prefs.config.mode === "legacy"; text: "改用新的模型连接…"; outlined: true; corner: 6; enabled: !prefs.busy; onClicked: { prefs.replacing=true; prefs.setForm({}); prefs.justSaved=false } }
+                    Tool { visible: prefs.config.mode === "legacy"; text: qsTr("改用新的模型连接…"); outlined: true; corner: 6; enabled: !prefs.busy; onClicked: { prefs.replacing=true; prefs.setForm({}); prefs.justSaved=false } }
                 }
-                Note { visible: prefs.replacing && !prefs.appearance; text: "保存新连接会替换资料库当前的模型配置。" }
+                Note { visible: prefs.replacing && !prefs.appearance && !prefs.usage; text: qsTr("保存新连接会替换资料库当前的模型配置。") }
+                UsageReport {
+                    visible: prefs.usage; Layout.fillWidth: true
+                    onVisibleChanged: if (visible) workspace.loadUsage()
+                }
             }
         }
         Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: Studio.line }
@@ -288,11 +332,11 @@ Sheet {
             Layout.fillWidth: true; spacing: 9
             Note {
                 objectName: "settingsStatus"
-                text: prefs.appearance ? "" : workspace.savingKeys ? "正在保存…" : prefs.justSaved && !prefs.changed ? "已保存。服务连通性尚未测试。"
-                    : prefs.busy ? "当前操作结束后可保存" : prefs.changed && !prefs.retain && !prefs.complete ? (prefs.anonymous ? "请补齐必填模型信息" : "请补齐密钥和必填模型信息") : prefs.anonymous ? "此本机连接使用免密访问。" : "密钥保存在本机。"
+                text: prefs.appearance || prefs.usage ? "" : workspace.savingKeys ? qsTr("正在保存…") : prefs.justSaved && !prefs.changed ? qsTr("已保存。服务连通性尚未测试。")
+                    : prefs.busy ? qsTr("当前操作结束后可保存") : prefs.changed && !prefs.retain && !prefs.complete ? (prefs.anonymous ? qsTr("请补齐必填模型信息") : qsTr("请补齐密钥和必填模型信息")) : prefs.anonymous ? qsTr("此本机连接使用免密访问。") : qsTr("密钥保存在本机。")
             }
-            Tool { id: apply; objectName: "saveCredentials"; visible: !prefs.appearance; text: "保存配置"; primary: enabled; outlined: !enabled; corner: 7; implicitHeight: 34; enabled: !prefs.busy && prefs.changed && (prefs.retain || prefs.complete); onClicked: prefs.save() }
-            Tool { id: done; objectName: "settingsDone"; text: "完成"; outlined: true; corner: 7; enabled: !workspace.savingKeys; onClicked: prefs.close() }
+            Tool { id: apply; objectName: "saveCredentials"; visible: !prefs.appearance && !prefs.usage; text: qsTr("保存配置"); primary: enabled; outlined: !enabled; corner: 7; implicitHeight: 34; enabled: !prefs.busy && prefs.changed && (prefs.retain || prefs.complete); onClicked: prefs.save() }
+            Tool { id: done; objectName: "settingsDone"; text: qsTr("完成"); outlined: true; corner: 7; enabled: !workspace.savingKeys; onClicked: prefs.close() }
         }
     }
 }

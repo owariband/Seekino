@@ -194,7 +194,8 @@ def test_single_ark_key_uses_only_ark_sdk_routes(tmp_path, monkeypatch):
 
 
 @pytest.mark.skipif(sys.platform not in {"darwin", "win32"}, reason="requires a packaged desktop video encoder")
-def test_ark_profile_import_to_original_at_sdk_http_boundary(tmp_path, monkeypatch):
+@pytest.mark.parametrize("import_first", [False, True])
+def test_ark_profile_import_to_original_at_sdk_http_boundary(tmp_path, monkeypatch, import_first):
     """Exercise the production parse, index and search graph with no paid service."""
     from time import monotonic, sleep
     from pathlib import Path
@@ -249,13 +250,20 @@ def test_ark_profile_import_to_original_at_sdk_http_boundary(tmp_path, monkeypat
 
     request("open", root=root)
     try:
+        series = request("createSeries", name="颜色")
+        if import_first:
+            imported = request("import", path=str(media), seriesID=series["id"], episode=3)
+            assert request("libraryMetadata", seriesID=series["id"])["videos"][0]["episode"] == 3
+            assert request("tasks")[0]["status"] == "PENDING"
+            request("close")
+            request("open", root=root)
         before = request("modelSettings", root=root)
         settings = dict(root=root, form=form("ark"), revision=before["revision"])
         plan = request("prepareModelSettings", **settings)
         after = request("saveModelSettings", **settings, keys={plan["credentialName"]: "one-ark-fixture"})
         assert len(after["credentialNames"]) == 1
-        series = request("createSeries", name="颜色")
-        imported = request("import", path=str(media), seriesID=series["id"])
+        if not import_first:
+            imported = request("import", path=str(media), seriesID=series["id"])
         deadline = monotonic() + 30
         while True:
             job, = request("tasks")
@@ -263,6 +271,17 @@ def test_ark_profile_import_to_original_at_sdk_http_boundary(tmp_path, monkeypat
                 break
             assert not job["error"] and monotonic() < deadline, (job["status"], job["error"], calls)
             sleep(0.05)
+        if import_first:
+            request("changeEpisode",seriesID=series["id"],videoID=imported["videoID"],episode=4)
+            request("updateLibrary", seriesID=series["id"], changes={"display_name":"红旗","transcript_language_hint":"ja"})
+            meta = request("libraryMetadata", seriesID=series["id"])
+            assert (meta["name"], meta["language"], meta["videos"][0]["episode"]) == ("红旗", "ja", 4)
+            dest = tmp_path / "export.jsonl"
+            export = dict(seriesID=series["id"], videos=[imported["videoID"]], destination=str(dest))
+            assert request("exportLibrary", types=["ACTION"], **export) == 1
+            assert "红旗" in dest.read_text()
+            with pytest.raises(ValueError, match="没有可导出"):
+                request("exportLibrary", types=["DIALOGUE"], **export)
         for query, keyword in (("红旗", True), ("红色旗帜", False)):
             results = request("search", query=query, seriesIDs=[series["id"]], keywords=keyword)
             hit, = results["hits"]

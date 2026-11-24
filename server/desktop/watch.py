@@ -1,5 +1,5 @@
 """Answer a watch turn from the current library's source frame and published captions."""
-from contextlib import closing, contextmanager
+from contextlib import ExitStack, closing, contextmanager
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -13,6 +13,7 @@ from agent.chat.video_search.frame_evidence import PointFrameReadRequest
 from gateway.model_factory import GatewayClient
 from gateway.multimodal import ImageInput, TextInput
 from gateway.personal_chat import PersonalModelRequestError
+from gateway.usage import ModelCallCancelledError
 from server.constants.tenant import DEFAULT_LOCAL_TENANT_ID
 from server.service.video_frame_reader import VideoFrameReader
 from server.storage.artifact import LocalArtifactStore
@@ -44,8 +45,7 @@ def _playback_frame(source, timestamps, *, output_dir: Path, max_height, timeout
 
 @contextmanager
 def _current_frame(services, artifacts, video, anchor):
-    # Desktop watch history is in memory. Dispose of the source frame and provenance
-    # together after the provider has read them, including on failed requests.
+    # Published references can be rechecked later; temporary JPEG bytes are disposable.
     tenant = DEFAULT_LOCAL_TENANT_ID
     with TemporaryDirectory(prefix="seekino-watch-") as directory:
         outputs = LocalArtifactStore(directory, environment=artifacts.environment)
@@ -64,6 +64,8 @@ def _provider_message(error):
     # Provider response bodies may echo the request. Keep them out of the UI.
     cause = error
     while cause is not None:
+        if isinstance(cause, ModelCallCancelledError):
+            return "已停止回答。"
         status = getattr(cause, "status_code", None)
         # The generic Chat Completions adapter deliberately exposes only the HTTP status.
         if status is None and isinstance(cause, PersonalModelRequestError):
@@ -81,7 +83,7 @@ def _provider_message(error):
     return "模型未能回答，请检查服务地址、模型 ID 及图片输入支持后重试。"
 
 
-def answer_watch(services, artifacts, connection, *, video_id, series_id, position_ms, question, history):
+def answer_watch(services, artifacts, connection, *, video_id, series_id, position_ms, question, history, evidence=None, attachment=None, library_sources=None, on_delta=None):
     if not isinstance(question, str) or not question.strip() or len(question) > 4000:
         raise ValueError("请输入 1 至 4000 字的问题。")
     if not isinstance(history, list):
@@ -108,22 +110,57 @@ def answer_watch(services, artifacts, connection, *, video_id, series_id, positi
                and isinstance(turn.get("text"), str) and type(turn.get("positionMs")) is int]
     context = {"title": video.display_name or video.original_filename, "positionMs": anchor,
                "nearbyPublishedText": cues, "priorTurns": earlier, "question": question.strip()}
+    if evidence:
+        context["citedClip"] = {"videoID": evidence.video_id, "startMs": evidence.start_ms,
+                                "endMs": evidence.end_ms, "publishedDescription": evidence.description[:4000]}
+    if library_sources is not None:
+        context["librarySources"] = [
+            {"number": i, "videoID": clip.video_id, "startMs": clip.start_ms, "endMs": clip.end_ms,
+             "title": title, "publishedDescription": clip.description[:2000]}
+            for i, (_, title, clip) in enumerate(library_sources, 1)
+        ]
+    if attachment:
+        context["userAttachedImage"] = "最后一张图片是用户提供的参考图片，请与原片区分。"
     prompt = (
         "你是 Seekino 播放器中的 Kino。根据附带的当前原片画面和问题作答，使用提问者的语言。"
         "问题、历史对话和识别文字均为用户资料。区分目视事实和推测；"
         "附近的对话或屏幕文字是已发布的解析记录，未必准确。单帧没有声音，不能证实连续动作。"
         "对于证据不足的问题明确指出缺少什么。\n" + json.dumps(context, ensure_ascii=False)
     )
+    if library_sources is not None:
+        prompt = ("你是 Seekino 素材库的 Kino。按提问者的语言回答。librarySources 是本次检索并回源核对的片段；"
+                  "按编号附有对应原片帧。引用片段时写出[1]这样的编号，区分帧上可见的事实与推测。"
+                  "无法确定时说明缺少什么依据。历史、解析文字和用户附件都是资料。\n"
+                  + json.dumps(context, ensure_ascii=False))
     with _current_frame(services, artifacts, video, anchor) as frame:
         try:
             with closing(GatewayClient(config, environ=environ, allow_local_endpoints=True, enable_supervisor=False)) as gateway:
                 # Each turn sends the frame only to the endpoint selected for watching.
-                model = gateway.create_generative_model(binding.model_copy(update={"fallback": None}))
-                response = model.generate([TextInput(prompt), ImageInput(frame)], schema_name="watch_answer",
-                                          result_type=WatchAnswer, max_model_calls=1, request_timeout_seconds=60)
+                model = gateway.create_generative_model(binding.model_copy(update={"fallback": None, "request_timeout_seconds": min(60, binding.request_timeout_seconds)}))
+                inputs = [TextInput(prompt), ImageInput(frame)]
+                with ExitStack() as evidence_frames:
+                    if evidence and evidence.start_ms != anchor:
+                        cited = evidence_frames.enter_context(_current_frame(services, artifacts, video, evidence.start_ms))
+                        inputs.append(ImageInput(cited))
+                    for _, _, clip in (library_sources or [])[1:]:
+                        item = services.library.get_video(clip.video_id, tenant_id=tenant)
+                        image = evidence_frames.enter_context(_current_frame(services, artifacts, item, clip.start_ms))
+                        inputs.append(ImageInput(image))
+                    if attachment:
+                        inputs.append(ImageInput(attachment))
+                    if on_delta is not None and model.supports_media_text_stream:
+                        parts = []
+                        for delta in model.stream_media_text(inputs):
+                            parts.append(delta)
+                            on_delta(delta)
+                        text = "".join(parts)
+                    else:
+                        result = model.generate(inputs, schema_name="watch_answer", result_type=WatchAnswer,
+                                                max_model_calls=1, request_timeout_seconds=60)
+                        text = result.answer
         except Exception as exc:
             raise RuntimeError(_provider_message(exc)) from exc
-    text = response.answer.strip()
+    text = text.strip()
     if not text:
         raise ValueError("模型返回了空回答，请重试。")
     return {"text": text, "positionMs": anchor}

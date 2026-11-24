@@ -6,6 +6,9 @@ QtObject {
     property Settings preferences: Settings {
         category: "workspace"
         property string appearance: "system"
+        property bool pauseOnSend: true
+        property bool episodeVisualFind: true
+        property int kinoFadeSeconds: 8
         // -1 follows the presence of materials until the user chooses a layout.
         property int treeVisibility: -1
     }
@@ -51,5 +54,10 @@ QtObject {
         function pad(v) { return v < 10 ? "0" + v : "" + v }
         return (h ? h + ":" + pad(Math.floor(s / 60) % 60) : Math.floor(s / 60)) + ":" + pad(s % 60)
             + (fractional ? "." + String(n % 1000).padStart(3, "0") : "")
+    }
+    // Translate text that comes from Python (server errors, import states). Reading
+    // desktopLocale.language keeps each binding live when the interface switches.
+    function translate(message) {
+        return typeof desktopLocale !== "undefined" && desktopLocale.language === "en" ? desktopLocale.translate(message) : message
     }
 }

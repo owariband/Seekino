@@ -51,7 +51,7 @@ Sheet {
     contentItem: ColumnLayout {
         id: body
         spacing: 16
-        Mark { text: "观看问答模型"; font.pixelSize: 20; font.weight: Font.DemiBold }
+        Mark { text: qsTr("观看问答模型"); font.pixelSize: 20; font.weight: Font.DemiBold }
         Flickable {
             id: scroll
             Layout.fillWidth: true; Layout.fillHeight: true; implicitHeight: fields.implicitHeight
@@ -66,36 +66,46 @@ Sheet {
                 RowLayout {
                     spacing: 4
                     Repeater {
-                        model: [{label:"沿用资料库", key:"inherit"}, {label:"OpenAI 兼容", key:"openai_chat"}, {label:"Ark", key:"ark"}]
+                        model: [{label:qsTr("沿用资料库"), key:"inherit"}, {label:qsTr("OpenAI 兼容"), key:"openai_chat"}, {label:"Ark", key:"ark"}]
                         Tool { required property var modelData; text: modelData.label; chosen: sheet.protocol === modelData.key
                             onClicked: sheet.choose(modelData.key) }
                     }
                 }
                 Mark {
                     visible: sheet.protocol === "inherit"; Layout.fillWidth: true
-                    text: workspace.modelConfig.watchInheritedModel || "资料库尚未配置视觉模型。"; secondary: true
+                    text: workspace.modelConfig.watchInheritedModel || qsTr("资料库尚未配置视觉模型。"); secondary: true
                 }
                 ModelField { id: address; visible: sheet.protocol !== "inherit"; Layout.fillWidth: true
-                    label: "服务地址"; inputName: "watchModelAddress"; placeholder: "https://…/v1"; readOnly: sheet.protocol === "ark"
+                    label: qsTr("服务地址"); inputName: "watchModelAddress"; placeholder: "https://…/v1"; readOnly: sheet.protocol === "ark"
+                    onEdited: { apiKey.text = ""; sheet.issue = "" }
                     onFocused: field => scroll.reveal(field) }
                 ModelField { id: modelId; visible: address.visible; Layout.fillWidth: true
-                    label: "视觉模型 ID"; inputName: "watchModelId"; placeholder: "支持图片输入的模型"
+                    label: qsTr("视觉模型 ID"); inputName: "watchModelId"; placeholder: qsTr("支持图片输入的模型")
                     onFocused: field => scroll.reveal(field) }
-                CheckBox { id: noKey; visible: sheet.protocol === "openai_chat" && sheet.localAddress; text: "本机服务无需 API Key"
+                ModelDiscovery {
+                    objectName: "watchModelDiscovery"; Layout.fillWidth: true; visible: address.visible
+                    enabled: !sheet.saving
+                    protocol: sheet.protocol; baseUrl: address.text
+                    apiKey: noKey.visible && noKey.checked ? "" : apiKey.text
+                    revision: sheet.revision; purpose: "watch"
+                    targets: [{key:"watch", label:qsTr("观看模型"), hint:qsTr("填入观看问答")}]
+                    onPicked: (model, target) => { modelId.text = model; sheet.issue = "" }
+                }
+                CheckBox { id: noKey; visible: sheet.protocol === "openai_chat" && sheet.localAddress; text: qsTr("本机服务无需 API Key")
                     palette.windowText: Studio.ink }
                 ModelField { id: apiKey; visible: address.visible && !(noKey.visible && noKey.checked); Layout.fillWidth: true
                     label: "API Key"; inputName: "watchModelKey"; secret: TextInput.Password
-                    placeholder: sheet.canKeepKey ? "已保存，留空可继续使用" : ""
+                    placeholder: sheet.canKeepKey ? qsTr("已保存，留空可继续使用") : ""
                     onFocused: field => scroll.reveal(field) }
-                Text { Layout.fillWidth: true; text: "提问时，Kino 会把当前画面和问题发送给所选模型。"
+                Text { Layout.fillWidth: true; text: qsTr("提问时，Kino 会把当前画面和问题发送给所选模型。")
                     color: Studio.muted; font.pixelSize: 13; wrapMode: Text.WordWrap }
-                Text { Layout.fillWidth: true; visible: !!sheet.issue; text: sheet.issue; color: Studio.ink; wrapMode: Text.WordWrap }
+                Text { Layout.fillWidth: true; visible: !!sheet.issue; text: Studio.translate(sheet.issue); color: Studio.ink; wrapMode: Text.WordWrap }
             }
         }
         RowLayout {
             Layout.alignment: Qt.AlignRight
-            Tool { text: "取消"; enabled: !sheet.saving; onClicked: sheet.close() }
-            Tool { objectName: "saveWatchModel"; text: sheet.saving ? "保存中…" : "保存"; primary: true
+            Tool { text: qsTr("取消"); enabled: !sheet.saving; onClicked: sheet.close() }
+            Tool { objectName: "saveWatchModel"; text: sheet.saving ? qsTr("保存中…") : qsTr("保存"); primary: true
                 enabled: !sheet.saving && (sheet.protocol === "inherit" || (!!address.text.trim() && !!modelId.text.trim()
                     && ((noKey.visible && noKey.checked) || !!apiKey.text.trim() || sheet.canKeepKey)))
                 onClicked: sheet.save() }

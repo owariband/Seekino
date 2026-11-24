@@ -85,6 +85,8 @@ class Workspace(QObject):
     refreshingChanged = Signal()
     savingKeysChanged = Signal()
     recentPlaybackChanged = Signal()
+    playbackByVideoChanged = Signal()
+    lastWatchedSeriesChanged = Signal()
     busyImportChanged = Signal()
     importLabelChanged = Signal()
     importProgressChanged = Signal()
@@ -93,18 +95,32 @@ class Workspace(QObject):
     partialChanged = Signal()
     searchIndexUnavailableChanged = Signal()
     modelConfigChanged = Signal()
+    modelsDiscovered = Signal(str, object, bool)
+    modelDiscoveryFailed = Signal(str, str)
+    usageChanged = Signal()
+    usageLoadingChanged = Signal()
+    usageErrorChanged = Signal()
     importModelReadyChanged = Signal()
     searchModelReadyChanged = Signal()
     errorChanged = Signal()
     selectedSeriesChanged = Signal()
     seriesChanged = Signal()
     videosBySeriesChanged = Signal()
+    taskPanelLoaded = Signal(str, str, int, "QVariantMap", str)
     jobsChanged = Signal()
     hitsChanged = Signal()
+    episodeFindChanged = Signal()
+    episodeFind = _state_property("QVariantMap", "episodeFind", episodeFindChanged)
+    watchThreadsChanged = Signal()
+    watchThreadIDChanged = Signal()
+    watchThreads = _state_property("QVariantList", "watchThreads", watchThreadsChanged)
+    watchThreadID = _state_property(str, "watchThreadID", watchThreadIDChanged)
     watchBusyChanged = Signal()
     watchErrorChanged = Signal()
     watchModelReadyChanged = Signal()
     watchMessagesChanged = Signal()
+    watchStreamingTextChanged = Signal()
+    watchStreamingText = _state_property(str, "watchStreamingText", watchStreamingTextChanged)
     watchBusy = _state_property(bool, "watchBusy", watchBusyChanged)
     watchModelReady = _state_property(bool, "watchModelReady", watchModelReadyChanged)
     watchError = _state_property(str, "watchError", watchErrorChanged)
@@ -119,11 +135,14 @@ class Workspace(QObject):
     playbackContext = _state_property("QVariantMap", "playbackContext", playbackContextChanged)
     playbackReady = Signal(str, "qlonglong", "qlonglong", "qlonglong", str, bool)
     _completed = Signal(object, object, object, bool)
+    _watch_delta = Signal(int, str)
     _importing = Signal(str)
 
     ready = _state_property(bool, "ready", readyChanged)
     refreshing = _state_property(bool, "refreshing", refreshingChanged)
     savingKeys = _state_property(bool, "savingKeys", savingKeysChanged)
+    playbackByVideo = _state_property("QVariantMap", "playbackByVideo", playbackByVideoChanged)
+    lastWatchedSeries = _state_property(str, "lastWatchedSeries", lastWatchedSeriesChanged)
     recentPlayback = _state_property("QVariantMap", "recentPlayback", recentPlaybackChanged)
     busyImport = _state_property(bool, "busyImport", busyImportChanged)
     importLabel = _state_property(str, "importLabel", importLabelChanged)
@@ -133,6 +152,9 @@ class Workspace(QObject):
     partial = _state_property(bool, "partial", partialChanged)
     searchIndexUnavailable = _state_property(bool, "searchIndexUnavailable", searchIndexUnavailableChanged)
     modelConfig = _state_property("QVariantMap", "modelConfig", modelConfigChanged)
+    usage = _state_property("QVariantMap", "usage", usageChanged)
+    usageLoading = _state_property(bool, "usageLoading", usageLoadingChanged)
+    usageError = _state_property(str, "usageError", usageErrorChanged)
     importModelReady = _state_property(bool, "importModelReady", importModelReadyChanged)
     searchModelReady = _state_property(bool, "searchModelReady", searchModelReadyChanged)
     error = _state_property(str, "error", errorChanged)
@@ -145,31 +167,41 @@ class Workspace(QObject):
     def __init__(self, root=None, parent=None, *, credentials=None):
         super().__init__(parent)
         self.root = Path(root) if root is not None else default_library_root()
+        from .library_tools import LibraryTools
+        self._library_tools = LibraryTools(self, _request)
         self._credentials = credentials
         self._state = {
-            "refreshing": False, "savingKeys": False, "recentPlayback": {},
+            "refreshing": False, "savingKeys": False, "recentPlayback": {}, "playbackByVideo": {}, "lastWatchedSeries": "",
             "ready": False, "busyImport": False, "importLabel": "", "importProgress": -1.0,
             "searching": False, "lastQuery": "", "partial": False, "searchIndexUnavailable": False, "importModelReady": False, "searchModelReady": False, "error": "",
             "selectedSeries": "", "series": [], "videosBySeries": {}, "jobs": [], "hits": [],
             "modelConfig": {}, "playbackContext": {}, "watchModelReady": False,
-            "watchMessages": [], "watchError": "", "watchBusy": False,
+            "episodeFind": {}, "watchMessages": [], "watchError": "", "watchBusy": False,
+            "watchThreads": [], "watchThreadID": "", "watchStreamingText": "",
+            "usage": {}, "usageLoading": False, "usageError": "",
         }
         self._closing = self._starting = self._refresh_again = False
         self._watch_settings = QSettings(str(self.root / "watch-history.ini"), QSettings.Format.IniFormat)
+        self._history = []
         self._backend_opened = False
         self._loaded = set()
         self._working_jobs = set()
+        self._find_generation = 0
+        self._find_timeline = None
+        self._find_future = None
         self._play_request = 0
         self._deferred = None
         self._watch_requests = ThreadPoolExecutor(1, thread_name_prefix="SeekinoWatch")
         self._watch_generation = 0
         self._watch_video = None
         self._watch_future = None
+        self._watch_control = None
         self._watch_threads = {}
         self._requests = ThreadPoolExecutor(1, thread_name_prefix="SeekinoLibrary")
         self._transfer = ThreadPoolExecutor(1, thread_name_prefix="SeekinoImport")
         self._queries = ThreadPoolExecutor(1, thread_name_prefix="SeekinoSearch")
         self._completed.connect(self._finish, Qt.ConnectionType.QueuedConnection)
+        self._watch_delta.connect(self._show_partial_watch, Qt.ConnectionType.QueuedConnection)
         self._importing.connect(self._set_import_label, Qt.ConnectionType.QueuedConnection)
         self._poll = QTimer(self, interval=1500)
         self._poll.timeout.connect(self._poll_jobs)
@@ -206,6 +238,10 @@ class Workspace(QObject):
     def _set_import_label(self, value):
         self._set("importLabel", value)
         self._set("importProgress", -1.0)
+
+    @Property(QObject, constant=True)
+    def libraryTools(self):
+        return self._library_tools
 
     @Slot()
     def clearError(self):
@@ -261,13 +297,7 @@ class Workspace(QObject):
                 self._set("series", series)
                 self._set("jobs", jobs)
                 self._set("videosBySeries", children)
-                history = self._watch_settings.value("recent", {})
-                if isinstance(history, dict):
-                    valid = {item["id"] for item in series}
-                    self._set("recentPlayback", {key: item for key, item in history.items()
-                              if key in valid and isinstance(item, dict) and isinstance(item.get("videoID"), str)
-                              and isinstance(item.get("positionMs"), int) and isinstance(item.get("durationMs"), int)
-                              and 0 < item["positionMs"] < item["durationMs"]})
+                self._restore_playback(series)
                 self._set("ready", True)
                 if warning:
                     self._set("error", warning)
@@ -315,6 +345,29 @@ class Workspace(QObject):
             value = _request("importProgress")
             self._set("importProgress", value if value is not None else -1.0)
 
+    @Slot(str, str, int)
+    def loadTaskPanel(self, task_id, section, generation):
+        if self.ready and section in {"taskDetail", "taskUsage"}:
+            self._submit(lambda: _request(section, id=task_id),
+                         lambda value, error: self.taskPanelLoaded.emit(task_id, section, generation, value or {}, error or ""),
+                         report_error=False)
+
+    @Slot()
+    def loadUsage(self):
+        if not self.ready or self.usageLoading or self._closing:
+            return
+        self._set("usageLoading", True)
+        self._set("usageError", "")
+
+        def loaded(value, error):
+            self._set("usageLoading", False)
+            if error:
+                self._set("usageError", error)
+            else:
+                self._set("usage", value)
+
+        self._submit(lambda: _request("usage"), loaded, report_error=False)
+
     @Slot(str)
     def loadSeries(self, series_id):
         self._set("selectedSeries", series_id)
@@ -334,18 +387,42 @@ class Workspace(QObject):
 
         self._submit(lambda: _videos(series_id), loaded)
 
+    def _restore_playback(self, series):
+        entries = self._watch_settings.value("videos")
+        if entries is None:
+            # 0.2.12 stored one position per series without a timestamp.
+            legacy = self._watch_settings.value("recent", {})
+            entries = [dict(item, seriesID=key) for key, item in legacy.items()
+                       if isinstance(item, dict)] if isinstance(legacy, dict) else []
+        valid_series = {row["id"] for row in series}
+        self._publish_playback([row for row in (entries if isinstance(entries, list) else [])
+                                if isinstance(row, dict) and row.get("seriesID") in valid_series
+                                and isinstance(row.get("videoID"), str)
+                                and type(row.get("positionMs")) is int and type(row.get("durationMs")) is int
+                                and row["durationMs"] > 0 and 0 <= row["positionMs"] <= row["durationMs"]])
+
+    def _publish_playback(self, entries):
+        recent, by_video = {}, {}
+        for row in entries:
+            item = {k: row[k] for k in ("videoID", "positionMs", "durationMs")}
+            by_video[row["videoID"]] = item
+            recent.setdefault(row["seriesID"], item)
+        self._history = entries
+        self._set("playbackByVideo", by_video)
+        self._set("recentPlayback", recent)
+        self._set("lastWatchedSeries", entries[0]["seriesID"] if entries else "")
+
     @Slot(str, str, "qlonglong", "qlonglong")
     def rememberPlayback(self, series_id, video_id, position, duration):
         if not self.ready or not series_id or not video_id or duration <= 0:
             return
-        recent = self.recentPlayback.copy()
-        if 0 < position < duration - min(1000, duration // 50):
-            recent[series_id] = {"videoID": video_id, "positionMs": position, "durationMs": duration}
-        elif recent.get(series_id, {}).get("videoID") == video_id:
-            del recent[series_id]
-        if recent != self.recentPlayback:
-            self._set("recentPlayback", recent)
-            self._watch_settings.setValue("recent", recent)
+        entries = [row for row in self._history if row["videoID"] != video_id]
+        position = max(0, min(position, duration))
+        entries.insert(0, {"seriesID": series_id, "videoID": video_id, "positionMs": position, "durationMs": duration})
+        entries = entries[:100]
+        if self._history != entries:
+            self._publish_playback(entries)
+            self._watch_settings.setValue("videos", entries)
 
     @Slot(str)
     def createSeries(self, name):
@@ -373,7 +450,7 @@ class Workspace(QObject):
                 self._set("error", "请选择 MP4、MOV 或 AVI 视频")
                 return
             files.append(path)
-        if not self.importModelReady:
+        if not self.importModelReady and self.modelConfig.get("mode") != "new":
             self._deferred = ("import", (urls, series_id))
             self.settingsNeeded.emit("import")
             return
@@ -488,6 +565,22 @@ class Workspace(QObject):
 
         self._submit(save, saved, report_error=not watch)
 
+    @Slot(str, str, str, str, str, str)
+    def discoverModels(self, request_id, purpose, protocol, base_url, api_key, revision):
+        if self._closing:
+            return
+
+        def discovered(value, error):
+            if error:
+                self.modelDiscoveryFailed.emit(request_id, error)
+            else:
+                self.modelsDiscovered.emit(request_id, value.get("modelIds") or [],
+                                           bool(value.get("listAvailable", True)))
+
+        self._submit(lambda: _request("discoverModels", root=str(self.root), purpose=purpose, protocol=protocol,
+                                      baseUrl=base_url, apiKey=api_key, revision=revision),
+                     discovered, report_error=False)
+
     def _resume_model_action(self):
         if not self._deferred or self.savingKeys:
             return
@@ -496,7 +589,7 @@ class Workspace(QObject):
             job = next((row for row in self.jobs if row["id"] == args[0]), None)
             if not job or not job["canRetry"] or not job["retryReady"]:
                 return
-        elif (action == "import" and not self.importModelReady) or (action == "search" and not self.searchModelReady):
+        elif (action in {"import", "reparse"} and not self.importModelReady) or (action == "search" and not self.searchModelReady):
             return
         self._deferred = None
         self.deferredActionResumed.emit()
@@ -504,8 +597,14 @@ class Workspace(QObject):
             self.importFiles(*args)
         elif action == "search":
             self.search(*args)
+        elif action == "reparse":
+            self.manageTask(args[0], "reparse")
         else:
             self.retryTask(*args)
+
+    @Slot(str, bool, "QVariantList")
+    def searchScopes(self, query, keywords, identifiers):
+        self.search(query, keywords, identifiers)
 
     @Slot(str, bool, str)
     def search(self, query, keywords, series_id):
@@ -516,7 +615,9 @@ class Workspace(QObject):
             self._deferred = ("search", (query, keywords, series_id))
             self.settingsNeeded.emit("search")
             return
-        scope = [series_id] if series_id else [item["id"] for item in self.series]
+        selected = [series_id] if isinstance(series_id, str) else list(series_id)
+        selected = [identifier for identifier in selected if identifier]
+        scope = [item["id"] for item in self.series if not selected or item["id"] in selected]
         self._set("lastQuery", query)
         self._set("hits", [])
         self._set("partial", False)
@@ -547,9 +648,99 @@ class Workspace(QObject):
                      executor=self._queries)
 
     @Slot()
+    def closeEpisodeFind(self):
+        self._find_generation += 1
+        self._find_timeline = None
+        if self._find_future:
+            self._find_future.cancel()
+        self._set("episodeFind", {})
+
+    @Slot(str, bool, bool)
+    def findEpisode(self, query, visuals, smart):
+        from .episode_find import episode_matches
+
+        self._find_generation += 1
+        generation = self._find_generation
+        if self._find_future:
+            self._find_future.cancel()
+        video_id = self.playbackContext.get("videoID")
+        query = query.strip()[:500]
+        if not query or not video_id:
+            self._set("episodeFind", {})
+            return
+        self._set("episodeFind", {"loading": True})
+
+        def current():
+            return generation == self._find_generation and video_id == self.playbackContext.get("videoID")
+
+        def loaded(timeline, error):
+            if not current():
+                return
+            if error:
+                self._set("episodeFind", {"error": error})
+                return
+            self._find_timeline = (video_id, timeline)
+            missing = not timeline["text"]["ready"] or (visuals and not timeline["visual"]["ready"])
+            rows, can_search = episode_matches(timeline, query, visuals)
+            result = {"matches": rows, "missing": missing}
+
+            def interpreted(terms, error):
+                if not current():
+                    return
+                if error:
+                    recall(result | {"interpretUnavailable": True})
+                    return
+                expansions = list(dict.fromkeys(term for term in [terms["query"], *terms["synonyms"]] if term != query))
+                if not expansions:
+                    recall(result)
+                    return
+                expanded, _ = episode_matches(timeline, query, visuals, expansions=expansions)
+                self._set("episodeFind", result | {"matches": expanded, "expansions": expansions})
+
+            def recall(local):
+                if not can_search or len(query) < 2:
+                    self._set("episodeFind", local)
+                    return
+                if not self.searchModelReady:
+                    self._set("episodeFind", local | {"relatedUnavailable": True})
+                    return
+
+                def related(cues, error):
+                    if not current():
+                        return
+                    if error:
+                        self._set("episodeFind", local | {"relatedUnavailable": True})
+                        return
+                    rows, _ = episode_matches(timeline, query, visuals, cues["cues"])
+                    self._set("episodeFind", local | {"matches": rows, "relatedUnavailable": not cues["ready"]})
+
+                self._set("episodeFind", local | {"loading": True})
+                self._find_future = self._submit(lambda: _request("episodeRelated", videoID=video_id, query=query),
+                                                 related, executor=self._queries, report_error=False)
+
+            if smart and self.watchModelReady:
+                self._set("episodeFind", result | {"interpreting": True})
+                self._find_future = self._submit(lambda: _request("episodeInterpret", query=query), interpreted,
+                                                 executor=self._queries, report_error=False)
+            else:
+                recall(result | {"interpretUnavailable": True} if smart else result)
+
+        if self._find_timeline and self._find_timeline[0] == video_id:
+            loaded(self._find_timeline[1], "")
+        else:
+            self._find_future = self._submit(lambda: _request("episodeTimeline", videoID=video_id),
+                                             loaded, report_error=False)
+
+    @Slot()
     def leaveWatch(self):
         self._watch_generation += 1
         self._watch_video = None
+        if self._watch_control:
+            self._watch_control.cancel()
+            self._watch_control = None
+        self._set("watchThreadID", "")
+        self._set("watchStreamingText", "")
+        self._set("watchThreads", [])
         if self._watch_future is not None:
             self._watch_future.cancel()
             self._watch_future = None
@@ -557,8 +748,62 @@ class Workspace(QObject):
         self._set("watchError", "")
         self._set("watchMessages", [])
 
+    def _show_watch(self, view):
+        self._set("watchThreadID", view["threadID"])
+        self._set("watchThreads", view["threads"])
+        self._set("watchMessages", view["messages"])
+
+    @Slot("QVariantList")
+    def openLibraryConversation(self, selected):
+        self.leaveWatch()
+        self._watch_video = "@library"
+        self._chat_scope = [item["id"] for item in self.series if not selected or item["id"] in selected]
+        self.selectWatchThread(None, False)
+
+    @Slot()
+    def leaveLibraryConversation(self):
+        if self._watch_video == "@library":
+            self.leaveWatch()
+
+    @Slot(str, bool)
+    def selectWatchThread(self, thread, delete):
+        if self.watchBusy or not self._watch_video:
+            return
+        video = self._watch_video
+        self._watch_generation += 1
+        generation = self._watch_generation
+        self._set("watchBusy", True)
+        def loaded(view, error):
+            if generation != self._watch_generation:
+                return
+            self._set("watchBusy", False)
+            self._set("watchError", error)
+            if not error:
+                self._show_watch(view)
+        self._submit(lambda: _request("watchHistory", videoID=video, threadID=thread, delete=delete),
+                     loaded, report_error=False)
+
+    @Slot(int, str)
+    def _show_partial_watch(self, generation, text):
+        if generation != self._watch_generation or not self.watchBusy:
+            return
+        messages = list(self.watchMessages)
+        if not messages:
+            return
+        self._set("watchStreamingText", text)
+        if messages[-1]["role"] != "assistant":
+            messages.append({"role": "assistant", "text": text, "streaming": True,
+                             "positionMs": messages[-1]["positionMs"]})
+            self._set("watchMessages", messages)
+
+    @Slot()
+    def stopWatch(self):
+        if self._watch_control:
+            self._watch_control.cancel()
+
+    @Slot(str, "qlonglong", "QUrl", result=bool)
     @Slot(str, "qlonglong", result=bool)
-    def askWatch(self, question, position_ms):
+    def askWatch(self, question, position_ms, attachment=None):
         question = question.strip()
         if not self.ready or self._closing or not self._watch_video or self.watchBusy or not question:
             return False
@@ -568,26 +813,50 @@ class Workspace(QObject):
         if not self.watchModelReady:
             self.settingsNeeded.emit("watch")
             return False
+        from gateway.usage import control_model_calls
+        from .watch_control import WatchCallControl
+
         generation = self._watch_generation
+        thread_id = self.watchThreadID
+        control = self._watch_control = WatchCallControl()
+        in_library = self._watch_video == "@library"
+        reference = "" if in_library else self.playbackContext.get("sourceRef", "")
+        attachment_path = attachment.toLocalFile() if attachment else ""
         video_id = self._watch_video
-        series_id = self.playbackContext["seriesID"]
-        history = self._watch_threads.get(video_id, [])
+        series_id = self.playbackContext.get("seriesID", "")
+        scope = self._chat_scope if in_library else []
+        history = self.watchMessages
         pending = [*history, {"role": "user", "text": question, "positionMs": position_ms}]
         self._set("watchError", "")
+        self._set("watchStreamingText", "")
         self._set("watchMessages", pending)
         self._set("watchBusy", True)
 
         def answer():
-            return _request("askWatch", videoID=video_id, seriesID=series_id, question=question,
-                            positionMs=position_ms, history=history[-8:])
+            from server.desktop.watch_history import watch_updates
+            token = watch_updates.set(lambda text: self._watch_delta.emit(generation, text))
+            try:
+                with control_model_calls(control):
+                    if in_library:
+                        return _request("askLibrary", question=question, seriesIDs=scope, threadID=thread_id,
+                                        attachmentPath=attachment_path, stream=True)
+                    return _request("askWatch", videoID=video_id, seriesID=series_id, question=question,
+                                    positionMs=position_ms, history=history[-8:], sourceRef=reference,
+                                    threadID=thread_id, attachmentPath=attachment_path, stream=True)
+            finally:
+                watch_updates.reset(token)
 
         def answered(result, failure):
             if generation != self._watch_generation:
                 return
             self._watch_future = None
+            self._watch_control = None
+            if result and result.get("watch"):
+                self._show_watch(result["watch"])
+                failure = result.get("watchFailure", "")
             if failure:
-                self._set("watchError", failure)
-            else:
+                self._set("watchError", "已停止回答。" if control.cancelled else failure)
+            elif not result.get("watch"):
                 messages = [*pending, {"role": "assistant", **result}]
                 self._watch_threads[video_id] = messages
                 self._set("watchMessages", messages)
@@ -596,7 +865,7 @@ class Workspace(QObject):
         self._watch_future = self._submit(answer, answered, executor=self._watch_requests, report_error=False)
         return True
 
-    def _open_media(self, action, args, title):
+    def _open_media(self, action, args, title, *, ask_kino=False):
         if not self.ready:
             return
         self._play_request += 1
@@ -606,9 +875,14 @@ class Workspace(QObject):
             if not error and request == self._play_request:
                 self.leaveWatch()
                 self._watch_video = media["video_id"]
-                self._set("watchMessages", self._watch_threads.get(self._watch_video, []))
+                if "watch" in media:
+                    self._show_watch(media["watch"])
+                else:
+                    self._set("watchMessages", self._watch_threads.get(self._watch_video, []))
                 self._set("playbackContext", {"videoID": media["video_id"], "seriesID": media["series_id"],
-                                              "description": media["description"]})
+                                              "description": media["description"], "askKino": ask_kino,
+                                              "sourceRef": args.get("sourceRef", ""), "clipStartMs": media["start_ms"],
+                                              "clipEndMs": media["end_ms"]})
                 self.playbackReady.emit(media["path"], media["start_ms"], media["end_ms"], media["duration_ms"],
                                         title, action == "openResult")
 
@@ -621,6 +895,10 @@ class Workspace(QObject):
     @Slot(str, str)
     def openVideo(self, video_id, title):
         self._open_media("openVideo", {"videoID": video_id}, title)
+
+    @Slot(str, str)
+    def askAboutResult(self, reference, title):
+        self._open_media("openResult", {"sourceRef": reference}, title, ask_kino=True)
 
     @Slot(str, str)
     def openResult(self, reference, title):
@@ -641,6 +919,16 @@ class Workspace(QObject):
             return
         self._update_job(job_id, "retry")
 
+    @Slot(str, str)
+    def manageTask(self, job_id, action):
+        if action not in {"reparse", "deleteImport", "deleteVersion", "deleteHistory"}:
+            return
+        if action == "reparse" and not self.importModelReady:
+            self._deferred = ("reparse", (job_id,))
+            self.settingsNeeded.emit("reparse")
+            return
+        self._update_job(job_id, action)
+
     def _update_job(self, job_id, action):
         if job_id in self._working_jobs or not self.ready:
             return
@@ -650,6 +938,8 @@ class Workspace(QObject):
         args = {"version": job["version"], "leaseVersion": job["leaseVersion"]}
         if action == "pause" and job["canPause"]:
             args.update(id=job_id, paused=not job["paused"])
+        elif action in {"reparse", "deleteImport", "deleteVersion", "deleteHistory"}:
+            args.update(id=job_id)
         elif action == "retry" and job["canRetry"]:
             args.update(uploadID=job["uploadID"])
         else:
@@ -658,6 +948,11 @@ class Workspace(QObject):
 
         def updated(_, error):
             self._working_jobs.discard(job_id)
+            if not error and action == "deleteImport":
+                history = [row for row in self._history if row["videoID"] != job["videoID"]]
+                self._publish_playback(history)
+                self._watch_settings.setValue("videos", history)
+                self._set("hits", [hit for hit in self.hits if hit.get("videoID") != job["videoID"]])
             self.refresh()
 
         self._submit(lambda: _request(action, **args), updated)
@@ -667,6 +962,9 @@ class Workspace(QObject):
         if self._closing:
             return
         self._closing = True
+        self._library_tools.shutting_down()
+        if self._watch_control:
+            self._watch_control.cancel()
         self._watch_settings.sync()
         self._poll.stop()
         self._progress.stop()

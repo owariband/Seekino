@@ -37,6 +37,8 @@ Canvas {
         case "more": for(var x=5;x<=19;x+=7)circle(x,12,1.4,true); break
         case "import": path([12,3,12,14,7.5,9.5]); path([12,14,16.5,9.5]); path([4,13,4,19,5,20,19,20,20,19,20,13]); break
         case "play": path([7.5,4.8,19,12,7.5,19.2],true); break
+        case "chat": path([3,4.5,21,4.5,21,16,10,16,5,20,5,16,3,16,3,4.5]); break
+        case "stop": round(6,6,12,12,2); break
         case "pause": round(6.5,5,2.5,14,0.8); round(15,5,2.5,14,.8); break
         case "volume": case "muted":
             path([3,9.3,7,9.3,12,5.2,12,18.8,7,14.7,3,14.7,3,9.3])
@@ -55,6 +57,10 @@ Canvas {
         case "sliders": path([3,7,7,7]); path([11,7,21,7]); circle(9,7,2); path([3,17,13,17]); path([17,17,21,17]); circle(15,17,2); break
         case "arrow": path([4,12,19,12,13,6]); path([19,12,13,18]); break
         case "check": path([4.5,12,9.5,17,20,6.5]); break
+        case "help":
+            circle(12,12,9)
+            path([9.6,9.5,10.2,8.6,11.4,8,12.9,8.2,13.8,9.4,13.6,10.8,12,12,12,14])
+            circle(12,17.5,1.1,true); break
         }
     }
 }

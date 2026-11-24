@@ -51,7 +51,7 @@ uv run --locked --python 3.12.16 python deploy/desktop/verify_app.py /tmp/Seekin
 python3 deploy/desktop/build_dmg.py /tmp/Seekino.app /tmp/Seekino-macos-arm64.dmg
 ```
 
-双击 DMG，将 Seekino 拖进 Applications 后打开。用 `⌘O` 选择视频，或直接拖入窗口。在「设置 → 模型连接」选择 Ark 或 OpenAI 兼容协议，填写这项服务提供的模型 ID 和凭据。OpenAI 兼容服务还需填写 API 基址。一次连接可分别绑定画面理解、语音转写和索引向量模型，向量维度应与服务实际返回的维度一致。用工具栏打开解析任务，查看进度、暂停或重试。`⌘K` 查找台词或画面，点击结果从对应时间回看原片。`⌘⇧L` 收起或展开系列资料树，`⌘,` 打开设置。替换程序时资料库仍在 `~/Library/Application Support/Seekino/`。程序内保存的模型凭据由 macOS 钥匙串持有。
+双击 DMG，将 Seekino 拖进 Applications 后打开。用 `⌘O` 选择视频，或直接拖入窗口。在「设置 → 模型连接」选择 Ark 或 OpenAI 兼容协议，填写这项服务提供的模型 ID 和凭据。OpenAI 兼容服务还需填写 API 基址。一次连接可分别绑定画面理解、语音转写和索引向量模型，向量维度应与服务实际返回的维度一致。用工具栏打开解析任务，查看进度、暂停或重试。`⌘K` 查找台词或画面，点击结果从对应时间回看原片。`⌘⇧L` 收起或展开系列资料树，`⌘,` 打开设置。设置 → 外观可切换中文与 English，选择保存在本机；F1 或帮助菜单打开原生使用文档窗口。替换程序时资料库仍在 `~/Library/Application Support/Seekino/`。程序内保存的模型凭据由 macOS 钥匙串持有。
 
 首页可横向浏览系列。点资料树的箭头展开剧集，点系列名称打开选集。普通播放退出后，回到系列页可从「继续观看」接着看。搜索结果显示原片画面、来源和时间段，点「回看原片」定位到命中处。切换设置中的外观会立即生效，修改模型连接后点「保存配置」。[内页验收](../../docs/report/desktop/native/2026-11-23-acceptance.md#024-内页验收)
 
@@ -62,7 +62,7 @@ python3 deploy/desktop/build_dmg.py /tmp/Seekino.app /tmp/Seekino-macos-arm64.dm
 
 ## Windows x64 桌面验收包
 
-解压 ZIP 后打开 `Seekino/Seekino.exe`，保留同目录的运行库。资料库存放在 `%LOCALAPPDATA%/Seekino`，模型密钥保存在 Windows 凭据管理器。文件选择和系统窗口控件由 Windows 提供。`Ctrl+O` 导入、`Ctrl+K` 搜索。
+解压 ZIP 后打开 `Seekino/Seekino.exe`，保留同目录的运行库。资料库存放在 `%LOCALAPPDATA%/Seekino`，模型密钥保存在 Windows 凭据管理器。文件选择和系统窗口控件由 Windows 提供。`Ctrl+O` 导入、`Ctrl+K` 搜索；设置 → 外观可切换中文与 English，F1 打开使用文档。
 
 用 uv 下载 x64 Windows CPython 3.12.16，构建机安装项目 Python 依赖、Pillow、pefile 和 Zig。构建器按锁文件校验 Windows wheel，并链接 Windows GUI 入口。在有独立 RC 编译器的环境可传 `--rc` 指定。
 
