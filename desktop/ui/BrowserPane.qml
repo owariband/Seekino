@@ -42,15 +42,75 @@ Item {
     }
     onBrowsingSeriesChanged: Qt.callLater(() => page.positionViewAtBeginning())
 
-    EmptyView {
-        anchors.centerIn: parent; anchors.verticalCenterOffset: -12
-        width: Math.min(430, parent.width - 48)
+    Rectangle {
+        id: welcome
+        objectName: "firstImportArea"
+        anchors.centerIn: parent
+        anchors.verticalCenterOffset: -12
+        width: Math.min(652, parent.width - 2 * browser.gutter)
+        readonly property bool narrow: width < 492
+        readonly property int inset: narrow ? 24 : 32
+        height: copy.implicitHeight + 2 * inset
         visible: !browser.browsingSeries && workspace.series.length === 0
-        firstImport: true; needsModel: !workspace.importModelReady
-        title: "导入第一部视频"
-        message: "把视频拖到这里，或从电脑选择文件。\n解析后，就能按台词和画面找回片段。"
-        action: "导入视频"; onActivated: browser.importRequested()
-        onSettingsRequested: browser.settingsRequested()
+        radius: 14; color: Studio.mix("#edf2ee", "#131a17"); border.color: Studio.line
+
+        ColumnLayout {
+            id: copy
+            x: welcome.inset; y: welcome.inset
+            width: welcome.width - 2 * welcome.inset - (welcome.narrow ? 0 : still.width + 20)
+            spacing: 0
+            Text {
+                Layout.fillWidth: true
+                text: "把视频拖到这里"; textFormat: Text.PlainText
+                font.pixelSize: Studio.pageTitleSize; font.weight: Font.Medium
+                color: Studio.ink; wrapMode: Text.Wrap
+            }
+            Text {
+                Layout.fillWidth: true; Layout.topMargin: 7
+                text: "导入并解析后，就能按台词和画面找到片段。"
+                font.pixelSize: Studio.labelSize + 1; color: Studio.muted
+                wrapMode: Text.Wrap; lineHeightMode: Text.FixedHeight; lineHeight: 22
+            }
+            RowLayout {
+                Layout.topMargin: 22; spacing: 8
+                Tool {
+                    objectName: "emptyImport"; text: "选择视频…"; glyph: "plus"
+                    primary: true; symbolSize: 14; implicitHeight: 34; corner: 8
+                    onClicked: browser.importRequested()
+                }
+                Tool {
+                    objectName: "firstImportSettings"; visible: !workspace.importModelReady
+                    text: "配置解析模型…"; textSize: Studio.labelSize
+                    onClicked: browser.settingsRequested()
+                }
+            }
+        }
+
+        Rectangle {
+            id: still
+            visible: !welcome.narrow
+            anchors.right: parent.right; anchors.rightMargin: welcome.inset
+            anchors.verticalCenter: parent.verticalCenter
+            width: 144; height: 88; radius: 6
+            color: Studio.mix("#e1ebe4", "#1a2822"); border.color: Studio.line
+            Column {
+                anchors.centerIn: parent; spacing: still.height - 22
+                Repeater {
+                    model: 2
+                    Row {
+                        spacing: 9
+                        Repeater {
+                            model: 9
+                            Rectangle { width: 5; height: 3; radius: 1; color: Studio.mix("#b8c8bd", "#384b41") }
+                        }
+                    }
+                }
+            }
+            Kino {
+                anchors.centerIn: parent
+                width: 128; height: 56; focusPolicy: Qt.ClickFocus
+            }
+        }
     }
 
     ListView {
