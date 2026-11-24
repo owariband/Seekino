@@ -30,12 +30,47 @@ from PySide6.QtQuickControls2 import QQuickStyle
 
 class PlatformPreferences(QObject):
     changed = Signal()
+    inputIdleChanged = Signal()
+
+    _activity_events = frozenset((
+        QtCore.QEvent.Type.MouseButtonPress, QtCore.QEvent.Type.MouseMove,
+        QtCore.QEvent.Type.KeyPress, QtCore.QEvent.Type.Wheel,
+        QtCore.QEvent.Type.TouchBegin, QtCore.QEvent.Type.TouchUpdate,
+        QtCore.QEvent.Type.TabletPress, QtCore.QEvent.Type.TabletMove,
+        QtCore.QEvent.Type.WindowActivate,
+    ))
 
     def __init__(self, parent):
         super().__init__(parent)
         self._read = _motion_preference_reader()
         self._reduced = self._read()
         parent.applicationStateChanged.connect(self.refresh)
+        self._input_idle = False
+        self._idle_timer = QtCore.QTimer(self)
+        self._idle_timer.setSingleShot(True)
+        self._idle_timer.setTimerType(Qt.PreciseTimer)
+        self._idle_timer.setInterval(45_000)
+        self._idle_timer.timeout.connect(self._doze)
+
+    @Property(bool, notify=inputIdleChanged)
+    def inputIdle(self):
+        return self._input_idle
+
+    def observe_window(self, window):
+        window.installEventFilter(self)
+        self._idle_timer.start()
+
+    def eventFilter(self, watched, event):
+        if event.type() in self._activity_events:
+            self._idle_timer.start()
+            if self._input_idle:
+                self._input_idle = False
+                self.inputIdleChanged.emit()
+        return False
+
+    def _doze(self):
+        self._input_idle = True
+        self.inputIdleChanged.emit()
 
     @Property(bool, notify=changed)
     def reducedMotion(self):
@@ -122,7 +157,7 @@ def main():
     configure_interface_font(app)
     app.setApplicationName("Seekino")
     app.setOrganizationName("Seekino")
-    app.setApplicationVersion("0.2.15")
+    app.setApplicationVersion("0.2.16")
     app.setWindowIcon(QIcon(str(basedir.parent / "SeekinoLogo.png")))
     from .locale import DesktopLocale
     from .qt_player import register_player
@@ -147,6 +182,7 @@ def main():
     if not engine.rootObjects():
         return 1
     window = engine.rootObjects()[0]
+    preferences.observe_window(window)
     if sys.platform == "darwin" and app.platformName() == "cocoa":
         _unify_titlebar(window)
     window.show()

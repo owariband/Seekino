@@ -115,6 +115,10 @@ class Workspace(QObject):
     watchThreadIDChanged = Signal()
     watchThreads = _state_property("QVariantList", "watchThreads", watchThreadsChanged)
     watchThreadID = _state_property(str, "watchThreadID", watchThreadIDChanged)
+    watchTurnStarted = Signal()
+    watchTurnFinished = Signal(bool)
+    watchPhaseChanged = Signal()
+    watchPhase = _state_property(str, "watchPhase", watchPhaseChanged)
     watchBusyChanged = Signal()
     watchErrorChanged = Signal()
     watchModelReadyChanged = Signal()
@@ -136,6 +140,7 @@ class Workspace(QObject):
     playbackReady = Signal(str, "qlonglong", "qlonglong", "qlonglong", str, bool)
     _completed = Signal(object, object, object, bool)
     _watch_delta = Signal(int, str)
+    _watch_stage = Signal(int, str)
     _importing = Signal(str)
 
     ready = _state_property(bool, "ready", readyChanged)
@@ -177,7 +182,7 @@ class Workspace(QObject):
             "selectedSeries": "", "series": [], "videosBySeries": {}, "jobs": [], "hits": [],
             "modelConfig": {}, "playbackContext": {}, "watchModelReady": False,
             "episodeFind": {}, "watchMessages": [], "watchError": "", "watchBusy": False,
-            "watchThreads": [], "watchThreadID": "", "watchStreamingText": "",
+            "watchThreads": [], "watchThreadID": "", "watchStreamingText": "", "watchPhase": "",
             "usage": {}, "usageLoading": False, "usageError": "",
         }
         self._closing = self._starting = self._refresh_again = False
@@ -201,6 +206,7 @@ class Workspace(QObject):
         self._transfer = ThreadPoolExecutor(1, thread_name_prefix="SeekinoImport")
         self._queries = ThreadPoolExecutor(1, thread_name_prefix="SeekinoSearch")
         self._completed.connect(self._finish, Qt.ConnectionType.QueuedConnection)
+        self._watch_stage.connect(self._show_watch_stage, Qt.ConnectionType.QueuedConnection)
         self._watch_delta.connect(self._show_partial_watch, Qt.ConnectionType.QueuedConnection)
         self._importing.connect(self._set_import_label, Qt.ConnectionType.QueuedConnection)
         self._poll = QTimer(self, interval=1500)
@@ -738,6 +744,7 @@ class Workspace(QObject):
         if self._watch_control:
             self._watch_control.cancel()
             self._watch_control = None
+        self._set("watchPhase", "")
         self._set("watchThreadID", "")
         self._set("watchStreamingText", "")
         self._set("watchThreads", [])
@@ -784,17 +791,21 @@ class Workspace(QObject):
                      loaded, report_error=False)
 
     @Slot(int, str)
+    def _show_watch_stage(self, generation, phase):
+        if generation == self._watch_generation and self._watch_control is not None:
+            self._set("watchPhase", phase)
+
+    @Slot(int, str)
     def _show_partial_watch(self, generation, text):
-        if generation != self._watch_generation or not self.watchBusy:
-            return
-        messages = list(self.watchMessages)
-        if not messages:
+        if generation != self._watch_generation or self._watch_control is None:
             return
         self._set("watchStreamingText", text)
-        if messages[-1]["role"] != "assistant":
-            messages.append({"role": "assistant", "text": text, "streaming": True,
-                             "positionMs": messages[-1]["positionMs"]})
-            self._set("watchMessages", messages)
+        if self.watchPhase == "RESPONDING":
+            return
+        self._set("watchPhase", "RESPONDING")
+        messages = list(self.watchMessages)
+        messages[-1] = {**messages[-1], "text": text, "streaming": True}
+        self._set("watchMessages", messages)
 
     @Slot()
     def stopWatch(self):
@@ -816,6 +827,7 @@ class Workspace(QObject):
         from gateway.usage import control_model_calls
         from .watch_control import WatchCallControl
 
+        self._watch_generation += 1
         generation = self._watch_generation
         thread_id = self.watchThreadID
         control = self._watch_control = WatchCallControl()
@@ -829,11 +841,14 @@ class Workspace(QObject):
         pending = [*history, {"role": "user", "text": question, "positionMs": position_ms}]
         self._set("watchError", "")
         self._set("watchStreamingText", "")
-        self._set("watchMessages", pending)
+        self.watchTurnStarted.emit()
+        self._set("watchPhase", "QUEUED")
+        self._set("watchMessages", [*pending, {"role": "assistant", "text": "", "positionMs": position_ms}])
         self._set("watchBusy", True)
 
         def answer():
-            from server.desktop.watch_history import watch_updates
+            from server.desktop.watch_history import watch_stages, watch_updates
+            stage_token = watch_stages.set(lambda phase: self._watch_stage.emit(generation, phase))
             token = watch_updates.set(lambda text: self._watch_delta.emit(generation, text))
             try:
                 with control_model_calls(control):
@@ -845,6 +860,7 @@ class Workspace(QObject):
                                     threadID=thread_id, attachmentPath=attachment_path, stream=True)
             finally:
                 watch_updates.reset(token)
+                watch_stages.reset(stage_token)
 
         def answered(result, failure):
             if generation != self._watch_generation:
@@ -855,12 +871,18 @@ class Workspace(QObject):
                 self._show_watch(result["watch"])
                 failure = result.get("watchFailure", "")
             if failure:
-                self._set("watchError", "已停止回答。" if control.cancelled else failure)
+                error = "已停止回答。" if control.cancelled else failure
+                self._set("watchError", error)
+                if not (result and result.get("watch")):
+                    self._set("watchMessages", [*pending, {"role": "assistant", "text": error,
+                                                           "failed": True, "positionMs": position_ms}])
             elif not result.get("watch"):
                 messages = [*pending, {"role": "assistant", **result}]
                 self._watch_threads[video_id] = messages
                 self._set("watchMessages", messages)
+            self._set("watchPhase", "")
             self._set("watchBusy", False)
+            self.watchTurnFinished.emit(bool(failure))
 
         self._watch_future = self._submit(answer, answered, executor=self._watch_requests, report_error=False)
         return True

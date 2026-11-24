@@ -167,6 +167,7 @@ Event / Sub-Chunk 的实施入口是 [sub-chunk-trd.md](02-agent-harness/sub-chu
 | macOS 原生桌面应用 | [macos-desktop-app-trd.md](03-product-reassessment/macos-desktop-app-trd.md) | 原生窗口、连续播放、安装与用户验收，对应 PR #184。 |
 | 原生播放器观看问答 | [桌面观看问答](03-product-reassessment/desktop-watch-kino-trd.md) | Kino 在当前播放时间取帧，可配置独立的视觉模型。 |
 | 桌面交互延迟 | [首页封面、拖动预览与启动](03-product-reassessment/desktop-interaction-latency-trd.md) | 桌面交互延迟基线、媒体校验与回归。 |
+| 桌面 Kino 动作 | [拖动、停靠和问答气泡](03-product-reassessment/desktop-kino-motion-trd.md) | 观看入口与聊天动作、真实指针和像素对照。 |
 | 桌面与 Web 工作流 | [原生桌面交互接入](03-product-reassessment/desktop-web-workflows-trd.md) | 续看、片内查找、检索证据、问答和本地素材管理。 |
 | 项目管理工作台 | [management-workbench-trd.md](03-product-reassessment/management-workbench-trd.md) | 单文件离线管理工作台：里程碑概览、课程闭环地图、验收门槛与四列看板，统一模块、需求、任务，关联 PR/TRD 和历史证据；2026-11-02 看板版本保留在同一 TRD。 |
 

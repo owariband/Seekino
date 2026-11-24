@@ -84,6 +84,9 @@ def test_live_answer_prefix_and_stopped_history(tmp_path, monkeypatch, protocol,
             assert monotonic() < deadline, (workspace.watchBusy, workspace.watchMessages, workspace.watchError)
             sleep(.004)
 
+    phases, outcomes = [], []
+    workspace.watchPhaseChanged.connect(lambda: phases.append(workspace.watchPhase))
+    workspace.watchTurnFinished.connect(outcomes.append)
     try:
         workspace.start()
         wait(lambda: workspace.ready)
@@ -92,6 +95,7 @@ def test_live_answer_prefix_and_stopped_history(tmp_path, monkeypatch, protocol,
         assert workspace.askWatch("描述画面", 200)
         wait(lambda: len(workspace.watchMessages) == 2 and workspace.watchMessages[-1]["text"] == first)
         assert workspace.watchBusy and not release.is_set()
+        assert phases == ["QUEUED", "RETRIEVING", "EVALUATING", "RESPONDING"]
         if stop:
             workspace.stopWatch()
         else:
@@ -101,6 +105,7 @@ def test_live_answer_prefix_and_stopped_history(tmp_path, monkeypatch, protocol,
         assert last_message["text"] == (first if stop else first + last)
         assert last_message["failed"] is stop
         assert bool(workspace.watchError) is stop
+        assert phases[-1] == "" and outcomes == [stop]
     finally:
         release.set()
         workspace.shutdown()

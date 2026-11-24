@@ -53,7 +53,7 @@ Item {
         spacing: 8
         ColumnLayout {
             visible: searchPane.draft; Layout.fillWidth: true; spacing: 13
-            Kino { Layout.alignment: Qt.AlignHCenter; Layout.preferredWidth: 192; Layout.preferredHeight: 84; mood: "idle" }
+            Kino { Layout.alignment: Qt.AlignHCenter; Layout.preferredWidth: 192; Layout.preferredHeight: 84; mood: "idle"; dozeWhenIdle: true }
             Text {
                 Layout.fillWidth: true; color: Studio.muted; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.Wrap
                 text: qsTr("描述记得的画面、台词或人物关系，一起把那一刻找回来。"); font.pixelSize: 15
@@ -112,7 +112,7 @@ Item {
                     Layout.fillWidth: true; Layout.fillHeight: true
                     ColumnLayout {
                         visible: !workspace.hits.length; anchors.centerIn: parent; spacing: 8
-                        Kino { Layout.alignment: Qt.AlignHCenter; Layout.preferredWidth: 128; Layout.preferredHeight: 56; mood: workspace.searching ? "loading" : "think" }
+                        Kino { Layout.alignment: Qt.AlignHCenter; Layout.preferredWidth: 76; Layout.preferredHeight: 56; sceneWidth: 38; ground: false; interactive: false; mood: workspace.searching ? "run" : "think" }
                         Mark { Layout.alignment: Qt.AlignHCenter; text: workspace.searching ? qsTr("正在查找片段…") : workspace.searchIndexUnavailable ? qsTr("索引发布后，可再次搜索。") : workspace.partial ? qsTr("当前可检索范围内暂无命中。")
                               : workspace.series.length ? qsTr("没有找到片段，换个关键词再试试。") : qsTr("资料库里还没有视频。"); color: Studio.muted }
                     }

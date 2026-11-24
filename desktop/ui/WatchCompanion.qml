@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
+import QtQuick.Effects
 import QtCore
 import QtQuick.Dialogs
 
@@ -81,7 +82,7 @@ Item {
         property bool docked: false
         property real dockWidth: 440
         property bool leftEdge: false
-        property real entryBottom: 78
+        property real entryBottom: 84
     }
     function clamp(value, min, max) { return Math.max(min, Math.min(value, Math.max(min, max))) }
     function focusQuestion() { if (opened) { showingEpisodes = false; question.forceActiveFocus(Qt.OtherFocusReason) } }
@@ -113,72 +114,99 @@ Item {
         }
     }
 
-    component MoveGrip: MouseArea {
-        required property Item subject
-        property point pressPoint
-        property point origin
-        property point proposed
-        property bool moving: false
-        signal relocated(real left, real top)
-        signal tapped()
-        hoverEnabled: true
-        cursorShape: moving ? Qt.ClosedHandCursor : Qt.OpenHandCursor
-        onPressed: mouse => {
-            pressPoint = mapToItem(companion, mouse.x, mouse.y)
-            origin = Qt.point(subject.x, subject.y)
-            proposed = origin
-        }
-        onPositionChanged: mouse => {
-            if (!pressed) return
-            const current = mapToItem(companion, mouse.x, mouse.y)
-            const dx = current.x - pressPoint.x, dy = current.y - pressPoint.y
-            if (!moving && Math.hypot(dx, dy) < 5) return
-            proposed = Qt.point(origin.x + dx, origin.y + dy)
-            moving = true
-        }
-        onReleased: {
-            if (moving) relocated(proposed.x, proposed.y)
-            else if (containsMouse) tapped()
-            moving = false
-        }
-        onCanceled: moving = false
-    }
-
     AbstractButton {
         id: entry
         objectName: "kinoEntry"
-        visible: !companion.opened && !companion.libraryMode
-        width: 72; height: 56
-        x: entryMove.moving ? companion.clamp(entryMove.proposed.x, 0, parent.width - width)
-                            : preferences.leftEdge ? 12 : parent.width - width - 12
-        y: entryMove.moving ? companion.clamp(entryMove.proposed.y, 4, parent.height - height - 62)
-                            : companion.clamp(parent.height - height - preferences.entryBottom, 4, parent.height - height - 62)
+        readonly property int gutter: companion.width <= 580 ? 16 : 24
+        readonly property real dockX: preferences.leftEdge ? gutter : companion.width - width - gutter
+        readonly property real dockBottom: companion.clamp(preferences.entryBottom, 16, companion.height - height - 8)
+        readonly property real dockY: companion.height - height - dockBottom
+        readonly property bool emphasized: entryMove.containsMouse || activeFocus
+        enabled: !companion.opened && !companion.libraryMode
+        visible: !companion.libraryMode && opacity > 0
+        width: 64; height: 64
+        x: entryMove.moving ? entryMove.proposed.x : dockX
+        y: entryMove.moving ? entryMove.proposed.y : dockY
+        Behavior on x { enabled: !entryMove.moving && entry.visible && !Studio.reduce; NumberAnimation {
+            duration: 320; easing.type: Easing.BezierSpline; easing.bezierCurve: [.34, 1.4, .64, 1, 1, 1]
+        } }
+        Behavior on y { enabled: !entryMove.moving && entry.visible && !Studio.reduce; NumberAnimation {
+            duration: 320; easing.type: Easing.BezierSpline; easing.bezierCurve: [.34, 1.4, .64, 1, 1, 1]
+        } }
+        opacity: companion.opened ? 0 : 1
+        scale: companion.opened ? .9 : 1
+        Behavior on opacity { NumberAnimation { duration: Studio.hover } }
+        Behavior on scale { NumberAnimation { duration: Studio.hover } }
         focusPolicy: Qt.StrongFocus
-        hoverEnabled: true
         Accessible.name: qsTr("与 Kino 对话")
-        ToolTip.visible: entryMove.containsMouse && !entryMove.moving
+        ToolTip.visible: entry.enabled && entryMove.containsMouse && !entryMove.pressed
         ToolTip.text: qsTr("与 Kino 对话"); ToolTip.delay: 500
         onClicked: companion.showPanel()
-        MoveGrip {
-            id: entryMove; anchors.fill: parent; subject: entry; z: 2
-            onTapped: companion.showPanel()
-            onRelocated: (left, top) => {
-                preferences.leftEdge = left + entry.width / 2 < companion.width / 2
-                preferences.entryBottom = companion.clamp(companion.height - entry.height - top, 62, companion.height - entry.height - 4)
+        MouseArea {
+            id: entryMove; objectName: "watchEntryDrag"
+            anchors.fill: parent; z: 2; preventStealing: true; hoverEnabled: true
+            acceptedButtons: Qt.LeftButton
+            cursorShape: moving ? Qt.ClosedHandCursor : Qt.OpenHandCursor
+            property point pressPoint
+            property point origin
+            property point proposed
+            property real turnX
+            property bool facingLeft
+            property bool moving: false
+            onPressed: mouse => {
+                pressPoint = mapToItem(companion, mouse.x, mouse.y)
+                origin = Qt.point(entry.x, entry.y)
+                turnX = pressPoint.x
+                facingLeft = !preferences.leftEdge
             }
+            onPositionChanged: mouse => {
+                if (!pressed) return
+                const point = mapToItem(companion, mouse.x, mouse.y)
+                const dx = point.x - pressPoint.x, dy = point.y - pressPoint.y
+                if (!moving && Math.hypot(dx, dy) < 4) return
+                // Keep facing the same way through tiny hand tremors at each turn.
+                if (Math.abs(point.x - turnX) >= 6) facingLeft = point.x < turnX
+                if (facingLeft === (point.x < turnX)) turnX = point.x
+                proposed = Qt.point(companion.clamp(origin.x + dx, 0, companion.width - entry.width),
+                                    companion.clamp(origin.y + dy, 0, companion.height - entry.height))
+                moving = true
+            }
+            onReleased: mouse => {
+                if (!moving) {
+                    if (mouse.x >= 0 && mouse.x < width && mouse.y >= 0 && mouse.y < height) companion.showPanel()
+                    return
+                }
+                const point = mapToItem(companion, mouse.x, mouse.y)
+                const left = origin.x + point.x - pressPoint.x
+                const top = origin.y + point.y - pressPoint.y
+                preferences.leftEdge = left + entry.width / 2 < companion.width / 2
+                preferences.entryBottom = Math.round(companion.clamp(companion.height - top - entry.height,
+                                                                      16, companion.height - entry.height - 8))
+                moving = false
+                mascot.playReaction("jump")
+            }
+            onCanceled: moving = false
         }
         background: Rectangle {
-            radius: 12; color: entryMove.containsMouse ? "#8021322d" : "transparent"
+            radius: 8; color: "transparent"
             border.width: entry.visualFocus ? 2 : 0; border.color: Studio.accent
-            Behavior on color { ColorAnimation { duration: Studio.hover } }
         }
         contentItem: Item {
-            clip: true
-            // The Web idle pose occupies the middle 18 x 15 pixels of the 64 x 28 Kino sprite.
             Kino {
-                x: -49; y: -13; width: 160; height: 70
-                enabled: false; Accessible.ignored: true
-                mood: workspace.watchBusy ? "loading" : "idle"
+                id: mascot
+                objectName: "watchEntrySprite"
+                anchors.centerIn: parent
+                anchors.horizontalCenterOffset: -3
+                anchors.verticalCenterOffset: -10 + (entry.emphasized && !entryMove.moving ? -2 : 0)
+                Behavior on anchors.verticalCenterOffset { enabled: !entryMove.moving; NumberAnimation { duration: Studio.hover } }
+                sceneWidth: 38; width: sceneWidth * 3; height: 84
+                layer.enabled: GraphicsInfo.api !== GraphicsInfo.Software
+                layer.effect: MultiEffect {
+                    shadowEnabled: true; shadowBlur: .18; shadowVerticalOffset: 3; shadowOpacity: .35
+                }
+                interactive: false; ground: false; dozeWhenIdle: true
+                mood: entryMove.moving ? (entryMove.facingLeft ? "dashLeft" : "dashRight")
+                      : workspace.watchBusy ? "loading" : entry.emphasized ? "look" : "idle"
             }
         }
     }
@@ -189,18 +217,31 @@ Item {
         readonly property bool opened: companion.opened
         property real customX: -1
         property real customY: -1
-        readonly property real edgeX: preferences.leftEdge ? 12 : companion.width - width - 12
-        readonly property real edgeY: companion.clamp(companion.height - preferences.entryBottom - height, 8, companion.height - height - 8)
+        readonly property real edgeX: preferences.leftEdge ? 24 : companion.width - width - 24
+        readonly property real edgeY: companion.clamp(companion.height - entry.dockBottom - height, 24, companion.height - height - 16)
         x: companion.libraryMode || companion.compact ? 0 : !companion.floating ? companion.width - width
-           : companion.clamp(panelMove.moving ? panelMove.proposed.x : customX < 0 ? edgeX : customX, 0, companion.width - width)
+           : companion.clamp(customX < 0 ? edgeX : customX, 8, companion.width - width - 8)
         y: companion.libraryMode ? 0 : companion.compact ? companion.height - height : !companion.floating ? 0
-           : companion.clamp(panelMove.moving ? panelMove.proposed.y : customY < 0 ? edgeY : customY, 0, companion.height - height)
+           : companion.clamp(customY < 0 ? edgeY : customY, 8, companion.height - height - 8)
         readonly property real maxDockWidth: Math.min(850, Math.max(320, companion.width - 420))
         width: companion.libraryMode || companion.compact ? companion.width : companion.floating ?
-            Math.min(398, Math.max(338, Math.round(companion.width * .38))) : companion.clamp(preferences.dockWidth, 320, maxDockWidth)
+            companion.clamp(Math.round(companion.width * .25), 320, 400) : companion.clamp(preferences.dockWidth, 320, maxDockWidth)
         height: companion.libraryMode ? companion.height : companion.compact ? Math.min(companion.height - 84, Math.max(236, Math.round(companion.height*.57)))
-              : companion.floating ? Math.min(companion.height - 32, Math.max(330, Math.round(companion.height * .62))) : companion.height
+              : companion.floating ? Math.min(640, companion.height - 40, Math.round(companion.height * .62)) : companion.height
         enabled: companion.opened; visible: opacity > 0
+        readonly property bool animateFloat: companion.floating && !companion.libraryMode
+        transformOrigin: preferences.leftEdge ? Item.BottomLeft : Item.BottomRight
+        scale: animateFloat && !companion.opened ? .97 : 1
+        transform: Translate { y: panel.animateFloat && !companion.opened ? 8 : 0
+            Behavior on y { NumberAnimation { duration: Studio.hover } } }
+        Behavior on scale { NumberAnimation { duration: Studio.hover } }
+        function resetPosition() { customX = -1; customY = -1 }
+        Connections {
+            target: companion
+            function onWidthChanged() { panel.resetPosition() }
+            function onHeightChanged() { panel.resetPosition() }
+            function onFloatingChanged() { panel.resetPosition() }
+        }
         property bool idle: false
         readonly property bool canFade: companion.opened && !companion.libraryMode && companion.floating &&
                                         !panelHover.hovered && !workspace.watchBusy && !conversations.opened && !pickImage.visible
@@ -222,11 +263,21 @@ Item {
             anchors.fill: parent; anchors.margins: 1; spacing: 0
             Item {
                 Layout.fillWidth: true; Layout.preferredHeight: companion.compact ? 40 : 45
-                MoveGrip {
-                    id: panelMove; anchors.fill: parent; enabled: companion.floating; subject: panel
-                    onRelocated: (left, top) => {
-                        panel.customX = companion.clamp(left, 0, companion.width - panel.width)
-                        panel.customY = companion.clamp(top, 0, companion.height - panel.height)
+                MouseArea {
+                    id: panelMove; objectName: "watchPanelMove"
+                    anchors.fill: parent; enabled: companion.floating && !companion.libraryMode
+                    preventStealing: true; cursorShape: pressed ? Qt.ClosedHandCursor : Qt.OpenHandCursor
+                    property point offset
+                    onPressed: mouse => {
+                        const point = mapToItem(companion, mouse.x, mouse.y)
+                        offset = Qt.point(point.x - panel.x, point.y - panel.y)
+                        panel.markActivity()
+                    }
+                    onPositionChanged: mouse => {
+                        if (!pressed) return
+                        const point = mapToItem(companion, mouse.x, mouse.y)
+                        panel.customX = companion.clamp(point.x - offset.x, 8, companion.width - panel.width - 8)
+                        panel.customY = companion.clamp(point.y - offset.y, 8, companion.height - panel.height - 8)
                     }
                 }
                 RowLayout {
@@ -283,16 +334,68 @@ Item {
                     anchors.fill: parent; anchors.margins: 12
                     spacing: 10; clip: true; boundsBehavior: Flickable.StopAtBounds
                     model: workspace.watchMessages
+                    // The QVariantList is replaced when the first delta arrives and when history is
+                    // committed. Keep one actual actor outside the delegates across those replacements.
+                    currentIndex: {
+                        const rows = workspace.watchMessages
+                        for (let i = rows.length - 1; i >= 0; --i)
+                            if (rows[i].role === "assistant") return i
+                        return -1
+                    }
+                    highlightFollowsCurrentItem: false
+                    property var departure: null
+                    property int arrivalIndex: -1
+                    function arrive() {
+                        if (arrivalIndex < 0 || currentIndex !== arrivalIndex || !currentItem || !replyKino.visible) return
+                        arrivalIndex = -1
+                        if (departure) replyKino.arriveFrom(departure, contentItem)
+                        departure = null
+                    }
+                    onCurrentItemChanged: Qt.callLater(arrive)
+                    Connections {
+                        target: workspace
+                        function onWatchTurnStarted() {
+                            if (!companion.opened || !turns.visible) return
+                            const previous = replyKino.visible ? replyKino : welcomeKino
+                            turns.departure = previous.visible ? previous.capturePerch(turns.contentItem) : null
+                            turns.arrivalIndex = workspace.watchMessages.length + 1
+                        }
+                        function onWatchThreadIDChanged() {
+                            // The first live reply gets a persistent thread ID at commit time.
+                            if (!workspace.watchPhase) {
+                                turns.arrivalIndex = -1
+                                turns.departure = null
+                                replyKino.resetPose()
+                            }
+                        }
+                        function onWatchTurnFinished(failed) {
+                            if (replyKino.visible) replyKino.playReaction(failed ? "oops" : "happy")
+                        }
+                    }
+                    Kino {
+                        id: replyKino; objectName: "watchReplyKino"
+                        parent: turns.contentItem
+                        visible: companion.opened && !!turns.currentItem && turns.currentIndex >= 0
+                        interactive: false; ground: false; z: 3
+                        x: 0; y: turns.currentItem?.y ?? 0
+                        width: turns.width; height: 56
+                        sceneWidth: Math.max(38, Math.floor(turns.width / 2))
+                        readonly property var phaseMoods: ({"QUEUED":"wander", "RETRIEVING":"run", "EVALUATING":"think", "RESPONDING":"loading"})
+                        mood: phaseMoods[workspace.watchPhase] || "sleep"
+                        onVisibleChanged: if (visible) Qt.callLater(turns.arrive)
+                    }
                     onCountChanged: Qt.callLater(() => positionViewAtEnd())
                     ScrollBar.vertical: ScrollBar { }
                     delegate: Item {
                         id: turn
                         required property var modelData
+                        required property int index
+                        readonly property int perchHeight: index === turns.currentIndex && !mine ? replyKino.height : 0
                         readonly property bool mine: modelData.role === "user"
                         width: ListView.view.width; height: message.y + message.implicitHeight + citations.implicitHeight + 7
                         Tool {
                             visible: !companion.libraryMode && !turn.modelData.failed
-                            anchors.right: parent.right; anchors.top: parent.top
+                            anchors.right: parent.right; anchors.top: parent.top; anchors.topMargin: turn.perchHeight
                             text: Studio.time(Number(turn.modelData.positionMs) || 0, false); textSize: 11
                             implicitHeight: 17; implicitWidth: contentItem.implicitWidth + 6
                             hint: turn.modelData.sourceRef ? qsTr("回到引用的片段") : qsTr("回到提问时的画面")
@@ -323,7 +426,7 @@ Item {
                             id: attachmentPreview
                             source: turn.modelData.attachments?.[0]?.previewUrl || ""
                             visible: String(source).length > 0; anchors.right: parent.right
-                            y: companion.libraryMode ? 8 : 25; width: Math.min(parent.width, 132); height: visible ? 85 : 0
+                            y: turn.perchHeight + (companion.libraryMode ? 8 : 25); width: Math.min(parent.width, 132); height: visible ? 85 : 0
                             fillMode: Image.PreserveAspectFit; horizontalAlignment: Image.AlignRight
                             sourceSize.width: 264; asynchronous: true
                             Accessible.name: qsTr("参考图片")
@@ -343,6 +446,12 @@ Item {
                     visible: !turns.count && !workspace.watchBusy && !workspace.watchError
                     anchors.centerIn: parent
                     width: parent.width - 30; spacing: 5
+                    Kino {
+                        id: welcomeKino; objectName: "watchWelcomeKino"
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        sceneWidth: 64; width: 192; height: 84
+                        interactive: true; dozeWhenIdle: true
+                    }
                     Text {
                         width: parent.width; text: companion.libraryMode && workspace.watchModelReady ? qsTr("想从所选系列里找什么？") : workspace.watchModelReady ? qsTr("想了解画面里的哪一处？") : qsTr("连接视觉模型，问问当前画面。")
                         color: Studio.ink; font.pixelSize: 15; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.Wrap
@@ -358,14 +467,41 @@ Item {
                     }
                 }
             }
-            Text {
-                id: stateLabel; objectName: "watchChatError"
+            RowLayout {
+                id: statusRow
+                readonly property bool restoring: workspace.watchBusy && !workspace.watchPhase
+                readonly property bool standaloneError: !!workspace.watchError &&
+                    !workspace.watchMessages.some(turn => turn.failed && turn.text === workspace.watchError)
+                visible: stateLabel.text.length > 0
                 Layout.fillWidth: true; Layout.leftMargin: 14; Layout.rightMargin: 14; Layout.bottomMargin: 5
-                visible: !!text; text: Studio.translate(workspace.watchError) || (workspace.watchBusy ? (companion.libraryMode ? qsTr("Kino 正在查找片段…") : qsTr("Kino 正在看这一帧…")) : "")
-                textFormat: Text.PlainText; font.pixelSize: 12; color: workspace.watchError ? Studio.danger : Studio.muted
-                wrapMode: Text.Wrap; maximumLineCount: 3; elide: Text.ElideRight
-                ToolTip.visible: errorHover.hovered && truncated; ToolTip.text: text
-                HoverHandler { id: errorHover }
+                Loader {
+                    objectName: "watchStatusKino"
+                    active: companion.opened && (statusRow.standaloneError || (statusRow.restoring && turns.currentIndex < 0))
+                    visible: active
+                    Layout.preferredWidth: 76; Layout.preferredHeight: 56
+                    sourceComponent: Kino {
+                        sceneWidth: 38; interactive: false; ground: false
+                        mood: statusRow.standaloneError ? "oops" : "loading"
+                        opacity: arrival.running ? arrival.value : 1
+                        SequentialAnimation {
+                            id: arrival
+                            property real value: 0
+                            running: statusRow.restoring && !Studio.reduce
+                            PauseAnimation { duration: 300 }
+                            NumberAnimation { target: arrival; property: "value"; from: 0; to: 1; duration: 200; easing.type: Easing.OutQuad }
+                        }
+                    }
+                }
+                Text {
+                    id: stateLabel; objectName: "watchChatError"
+                    Layout.fillWidth: true
+                    text: Studio.translate(workspace.watchError) || (statusRow.restoring ? qsTr("正在恢复会话…") :
+                        workspace.watchBusy ? (companion.libraryMode ? qsTr("Kino 正在查找片段…") : qsTr("Kino 正在看这一帧…")) : "")
+                    textFormat: Text.PlainText; font.pixelSize: 12; color: workspace.watchError ? Studio.danger : Studio.muted
+                    wrapMode: Text.Wrap; maximumLineCount: 3; elide: Text.ElideRight
+                    ToolTip.visible: errorHover.hovered && truncated; ToolTip.text: text
+                    HoverHandler { id: errorHover }
+                }
             }
             Tool {
                 objectName: "watchChatRetry"; visible: !!workspace.watchError && !workspace.watchBusy && turns.count > 0
