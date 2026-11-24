@@ -1,5 +1,6 @@
 """Shared, asynchronous window model for the macOS and Windows desktop shells."""
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from html import escape
 import json
 import os
@@ -95,7 +96,7 @@ class Workspace(QObject):
     partialChanged = Signal()
     searchIndexUnavailableChanged = Signal()
     modelConfigChanged = Signal()
-    modelsDiscovered = Signal(str, object, bool)
+    modelsDiscovered = Signal(str, "QVariantList", bool)
     modelDiscoveryFailed = Signal(str, str)
     usageChanged = Signal()
     usageLoadingChanged = Signal()
@@ -131,6 +132,8 @@ class Workspace(QObject):
     watchMessages = _state_property("QVariantList", "watchMessages", watchMessagesChanged)
     settingsNeeded = Signal(str)
     deferredActionResumed = Signal()
+    serviceProfileSaved = Signal(str)
+    serviceProfileFailed = Signal(str)
     credentialsSaved = Signal()
     watchConnectionSaved = Signal()
     watchConnectionFailed = Signal(str)
@@ -293,7 +296,8 @@ class Workspace(QObject):
                 warnings.append(str(exc))
             _request("open", root=str(self.root), keys=keys)
             self._backend_opened = True
-            return _request("modelSettings", root=str(self.root)), "\n".join(dict.fromkeys(warnings)), _snapshot(set())
+            settings = self._with_services(_request("modelSettings", root=str(self.root)), warnings)
+            return settings, "\n".join(dict.fromkeys(warnings)), _snapshot(set())
 
         def opened(value, error):
             self._starting = False
@@ -522,38 +526,8 @@ class Workspace(QObject):
         self._set("savingKeys", True)
 
         def save():
-            prepared = _request("prepareWatchSettings" if watch else "prepareModelSettings", root=str(self.root), **change)
-            allowed = set(prepared["credentialNames"])
-            prior = self._read_credentials(allowed)
-            updates = {}
-            for key, value in secrets.items():
-                if not isinstance(value, str) or not value.strip():
-                    continue
-                name = prepared.get("credentialName") if key == "connection" and not retain else key
-                if name not in allowed:
-                    raise ValueError("凭据与当前服务地址不匹配，请重新打开设置")
-                if value.strip() != prior[name]:
-                    updates[name] = value.strip()
-            written = []
-            try:
-                for name, value in updates.items():
-                    self._credentials.write(name, value)
-                    written.append(name)
-                settings = _request("saveWatchSettings" if watch else "saveModelSettings", root=str(self.root), keys=prior | updates, **change)
-            except Exception:
-                rollback_failed = False
-                for name in reversed(written):
-                    try:
-                        if prior[name]:
-                            self._credentials.write(name, prior[name])
-                        else:
-                            self._credentials.delete(name)
-                    except (OSError, RuntimeError):
-                        rollback_failed = True
-                if rollback_failed:
-                    raise RuntimeError("模型设置未应用，部分凭据未能恢复。请检查系统凭据存储后重新保存。") from None
-                raise
-            return settings
+            settings = self._publish_connection(change, secrets, watch=watch, retain=retain)
+            return self._with_services(settings)
 
         def saved(settings, error):
             self._set("savingKeys", False)
@@ -571,6 +545,168 @@ class Workspace(QObject):
 
         self._submit(save, saved, report_error=not watch)
 
+    @contextmanager
+    def _vault_updates(self, previous, updates):
+        written = []
+        try:
+            for name, value in updates.items():
+                if previous[name] != value:
+                    if value:
+                        self._credentials.write(name, value)
+                    else:
+                        self._credentials.delete(name)
+                    written.append(name)
+            yield
+        except Exception:
+            failed = False
+            for name in reversed(written):
+                try:
+                    if previous[name]:
+                        self._credentials.write(name, previous[name])
+                    else:
+                        self._credentials.delete(name)
+                except (OSError, RuntimeError):
+                    failed = True
+            if failed:
+                raise RuntimeError("模型设置未应用，部分凭据未能恢复。请检查系统凭据存储后重新保存。") from None
+            raise
+
+    def _publish_connection(self, change, secrets, *, watch, retain=False, per_role=False):
+        prepared = _request("prepareWatchSettings" if watch else "prepareModelSettings", root=str(self.root), **change)
+        allowed = set(prepared["credentialNames"])
+        prior = self._read_credentials(allowed)
+        updates = {}
+        for key, value in secrets.items():
+            if not isinstance(value, str) or not value.strip():
+                continue
+            if per_role and not watch:
+                name = prepared["roleCredentialNames"][key]
+            elif key == "connection" and not retain:
+                name = prepared.get("credentialName")
+            else:
+                name = key
+            if name not in allowed:
+                raise ValueError("凭据与当前服务地址不匹配，请重新打开设置")
+            updates[name] = value.strip()
+        with self._vault_updates(prior, updates):
+            return _request("saveWatchSettings" if watch else "saveModelSettings", root=str(self.root),
+                            keys=prior | updates, **change)
+
+    def _with_services(self, settings, warnings=None):
+        from .service_profiles import ServiceProfiles
+        if "mode" not in settings:
+            return settings
+        try:
+            services = ServiceProfiles(self.root, settings)
+            keys = self._read_credentials(services.credential_names(), warnings=warnings)
+            return settings | services.view(keys)
+        except (ValueError, KeyError, TypeError, OSError, RuntimeError):
+            # A damaged optional catalogue must not prevent playback or access to the library.
+            return settings | {"servicesIssue": "服务连接文件或凭据无法读取，请检查后重新打开设置。",
+                               "serviceProfiles": [], "parseRoleServices": {}, "servicesRevision": ""}
+
+    @Slot("QVariantMap", str)
+    def saveServiceProfile(self, form, api_key):
+        self._edit_service("save", form.get("id", ""), form, api_key)
+
+    @Slot(str, str, "QVariantMap")
+    def applyServiceProfile(self, key, purpose, roles):
+        self._edit_service(purpose, key, roles, "")
+
+    @Slot(str, str)
+    def removeServiceProfile(self, key, revision):
+        self._edit_service("remove", key, {"servicesRevision": revision}, "")
+
+    def _edit_service(self, action, key, form, api_key):
+        applying = action in {"watch", "model"}
+        if not self.ready or self.savingKeys or (applying and (
+                self.busyImport or self.searching or self._working_jobs or self.watchBusy)):
+            self.serviceProfileFailed.emit("请在当前操作结束后保存模型设置")
+            return
+        self._set("savingKeys", True)
+
+        def edit():
+            from .service_profiles import ServiceProfiles, slot
+            settings = _request("modelSettings", root=str(self.root))
+            catalog = ServiceProfiles(self.root, settings)
+            catalog.check(form.get("servicesRevision"))
+            rows = catalog.rows.copy()
+            keys = self._read_credentials(catalog.credential_names())
+            # Preserve credentials of explicitly imported legacy profiles before changing a role.
+            updates = {slot(row): catalog.get_key(row, keys) for row in rows.values()
+                       if slot(row) and catalog.get_key(row, keys) and not keys.get(slot(row))}
+            selected = key
+            rotated = {}
+            if action == "save":
+                row = catalog.edit(form)
+                selected = row["id"]
+                destination = slot(row)
+                old_destination = slot(rows[key]) if key else ""
+                if old_destination and old_destination != destination:
+                    updates[old_destination] = ""
+                if destination:
+                    keys.update(self._read_credentials([destination]))
+                    secret = api_key.strip()
+                    if not secret and old_destination == destination:
+                        secret = catalog.get_key(row, keys)
+                    if not secret:
+                        raise ValueError("请为此服务填写 API Key。")
+                    updates[destination] = secret
+                    if api_key.strip() and key:
+                        rotated = {catalog.effective_slots[role]: secret for role in catalog.effective
+                                   if catalog.at_destination(row, role) and catalog.effective_slots[role]}
+                        keys.update(self._read_credentials(rotated))
+                        rotated = {k: v for k, v in rotated.items() if keys[k] != v}
+                        if rotated and (self.busyImport or self.searching or self._working_jobs or self.watchBusy):
+                            raise ValueError("请在当前操作结束后保存模型设置")
+                        updates.update(rotated)
+                rows[selected] = row
+            elif action == "remove":
+                if key in catalog.active.values():
+                    raise ValueError("请先将使用此连接的模型用途切换到其他服务。")
+                destination = slot(catalog.require(key))
+                if destination:
+                    updates[destination] = ""
+                del rows[key]
+                selected = ""
+            elif applying:
+                rows, effective, assigned = catalog.apply_form(key, action, form)
+                change = {"revision": form.get("revision"), "form": effective}
+                secrets = {role: catalog.get_key(row, keys) for role, row in assigned.items()}
+                if any(slot(row) and not secrets[role] for role, row in assigned.items()):
+                    raise ValueError("请为此服务填写 API Key。")
+            else:
+                raise ValueError("未知的模型设置目标。")
+            with self._vault_updates(keys, updates):
+                catalog.persist(rows)
+                try:
+                    if applying:
+                        settings = self._publish_connection(change, secrets, watch=action == "watch", per_role=True)
+                    elif rotated:
+                        settings = _request("rotateServiceCredentials", root=str(self.root), keys=rotated,
+                                            revision=settings["revision"], watchRevision=settings["watchRevision"])
+                except Exception:
+                    catalog.restore()
+                    raise
+            return selected, self._with_services(settings)
+
+        def finished(result, error):
+            self._set("savingKeys", False)
+            if error:
+                self.serviceProfileFailed.emit(error)
+                return
+            selected, settings = result
+            self._update_models(settings)
+            if action == "model":
+                self.credentialsSaved.emit()
+                self.refresh()
+            elif action == "watch":
+                self.watchConnectionSaved.emit()
+            else:
+                self.serviceProfileSaved.emit(selected)
+
+        self._submit(edit, finished, report_error=False)
+
     @Slot(str, str, str, str, str, str)
     def discoverModels(self, request_id, purpose, protocol, base_url, api_key, revision):
         if self._closing:
@@ -583,9 +719,24 @@ class Workspace(QObject):
                 self.modelsDiscovered.emit(request_id, value.get("modelIds") or [],
                                            bool(value.get("listAvailable", True)))
 
-        self._submit(lambda: _request("discoverModels", root=str(self.root), purpose=purpose, protocol=protocol,
-                                      baseUrl=base_url, apiKey=api_key, revision=revision),
-                     discovered, report_error=False)
+        def discover():
+            if not purpose.startswith("service:"):
+                return _request("discoverModels", root=str(self.root), purpose=purpose, protocol=protocol,
+                                baseUrl=base_url, apiKey=api_key, revision=revision)
+            from .service_profiles import ServiceProfiles
+            from server.desktop.model_catalogue import discover_at
+            from gateway.personal_endpoint import normalize_personal_endpoint
+            catalog = ServiceProfiles(self.root, _request("modelSettings", root=str(self.root)))
+            catalog.check(revision)
+            selected = purpose.removeprefix("service:")
+            saved = ""
+            url = normalize_personal_endpoint(base_url, allow_local=True)
+            if selected and not api_key.strip():
+                row = catalog.require(selected)
+                if row["protocol"] == protocol and row["baseUrl"] == url:
+                    saved = catalog.get_key(row, self._read_credentials(catalog.credential_names(row)))
+            return discover_at(protocol, url, api_key.strip(), saved)
+        self._submit(discover, discovered, report_error=False)
 
     def _resume_model_action(self):
         if not self._deferred or self.savingKeys:

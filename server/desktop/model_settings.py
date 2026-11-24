@@ -4,7 +4,6 @@ from __future__ import annotations
 from contextlib import closing
 from dataclasses import dataclass
 from hashlib import sha256
-from ipaddress import ip_address
 import json
 import os
 import sqlite3
@@ -19,7 +18,6 @@ import yaml
 from gateway.config import GatewayConfig, config_from_document, source_api_key_env_name
 from gateway.constants import ARK_OPENAI_BASE_URL
 from gateway.embedding import describe_embedding_model
-from gateway.personal_endpoint import normalize_personal_endpoint
 from server.config.storage import STORAGE_CONFIG, desktop_storage
 
 EXAMPLE = STORAGE_CONFIG.parents[1] / "deploy/cloud/models.example.yaml"
@@ -102,56 +100,65 @@ class ModelProfile:
             raise ValueError("当前 models.yaml 由部署管理。可更新其凭据，模型绑定请在原文件中修改。")
         if self.path.is_symlink():
             raise ValueError("请直接编辑符号链接指向的模型配置。")
-        protocol = form.get("protocol")
-        if protocol not in {"ark", "openai_chat"}:
-            raise ValueError("请选择 Ark 或 OpenAI 兼容协议。")
-        url = normalize_personal_endpoint(_text(form, "baseUrl"), allow_local=True)
-        if protocol == "ark" and url != ARK_OPENAI_BASE_URL:
-            raise ValueError("方舟协议使用内置的官方服务地址。")
-        host = urlsplit(url).hostname
-        name = _text(form, "name", required=False) or ("Ark" if protocol == "ark" else host)
-        try:
-            loopback = ip_address(host).is_loopback
-        except ValueError:
-            loopback = host == "localhost"
-        auth = form.get("auth", "key")
-        if auth not in {"key", "none"} or (auth == "none" and (protocol != "openai_chat" or not loopback)):
-            raise ValueError("免密连接仅适用于本机的 OpenAI 兼容服务。")
+        from .watch_settings import service_identity, validate_destination
+
+        def connection(row):
+            proto, base, auth = validate_destination(row)
+            label = _text(row, "name", required=False) or urlsplit(base).hostname
+            return dict(name=label, protocol=proto, baseUrl=base, auth=auth, **service_identity(row))
+
+        connections = form.get("roleConnections") or {}
+        if not isinstance(connections, dict):
+            raise ValueError("请检查模型用途选择。")
+        by_role = {role: connection(connections.get(role) or form)
+                   for role in ("vision", "transcription", "embedding", "rerank")}
+        protocol = by_role["vision"]["protocol"]
         vision, asr, embedding = (_text(form, key) for key in ("vision", "transcription", "embedding"))
         dims = form.get("dimensions")
         if type(dims) is not int or not 1 <= dims <= 2048:
             raise ValueError("向量维度须为 1 到 2048 之间的整数。")
         encoder = _text(form, "encoderModel", required=False)
-        if protocol == "ark" and embedding.startswith("ep-") and (not encoder or encoder.startswith("ep-")):
+        embedding_protocol = by_role["embedding"]["protocol"]
+        if embedding_protocol == "ark" and embedding.startswith("ep-") and (not encoder or encoder.startswith("ep-")):
             raise ValueError("向量接入点需要其底层模型 ID，才能识别既有索引。")
-        if encoder and (protocol != "ark" or not embedding.startswith("ep-")):
+        if encoder and (embedding_protocol != "ark" or not embedding.startswith("ep-")):
             raise ValueError("仅方舟向量接入点可指定底层模型 ID。")
         rerank = _text(form, "rerank", required=False)
-        clean = dict(name=name, protocol=protocol, baseUrl=url, vision=vision, transcription=asr, embedding=embedding,
-                     dimensions=dims, rerank=rerank, encoderModel=encoder, auth=auth)
-        source = "desktop_" + _digest(json.dumps([name, protocol, url, auth], ensure_ascii=False).encode())[:20]
+        clean = dict(**by_role["vision"], vision=vision, transcription=asr, embedding=embedding,
+                     dimensions=dims, rerank=rerank, encoderModel=encoder)
+        if connections:
+            clean["roleConnections"] = by_role
         document = yaml.safe_load(EXAMPLE.read_bytes())
         # Freeze the old source names and destinations. Saved parse jobs refer to these by name.
         if self.raw is not None:
             document["model_sources"] = yaml.safe_load(self.raw)["model_sources"]
         elif not keep_legacy:
             document["model_sources"] = {}
-        if protocol == "ark":
-            connection = {"adapter": "ark", "api_key_env": "SEEKINO_DESKTOP_MODEL_KEY"}
-        else:
-            connection = dict(adapter="chat_api", protocol=protocol, base_url=url,
-                              api_key_env="SEEKINO_DESKTOP_MODEL_KEY" if auth == "key" else None)
-        document["model_sources"][source] = connection
+        sources = {}
+        for role, row in by_role.items():
+            identity = [row[key] for key in ("name", "protocol", "baseUrl", "auth")]
+            if "serviceID" in row:
+                identity.append(row["serviceID"])
+            source = "desktop_" + _digest(json.dumps(identity, ensure_ascii=False).encode())[:20]
+            sources[role] = source
+            if row["protocol"] == "ark":
+                adapter = {"adapter": "ark", "api_key_env": "SEEKINO_DESKTOP_MODEL_KEY"}
+            else:
+                adapter = dict(adapter="chat_api", protocol="openai_chat", base_url=row["baseUrl"],
+                               api_key_env="SEEKINO_DESKTOP_MODEL_KEY" if row["auth"] == "key" else None)
+            document["model_sources"][source] = adapter
 
-        def gen(model, **options):
-            return dict(source=source, model=model, stream=False, request_timeout_seconds=600, **options)
+        def gen(model, role="vision", **options):
+            return dict(source=sources[role], model=model, stream=False, request_timeout_seconds=600, **options)
 
         document["models"] = dict(
             agent=gen(vision), supervisor=gen(vision, supports_vision_input=True),
             summarize=gen(vision, supports_vision_input=True), vision=gen(vision, supports_vision_input=True, fallback=None),
-            transcription=gen(asr, kind="transcription"), rerank=gen(rerank or vision, kind="rerank"),
-            embedding=dict(source=source, model=embedding, kind="embedding", dimensions=dims, video_fps=1.0,
-                           input_mode="multimodal" if protocol == "ark" else "text", **({"encoder_model": encoder} if encoder else {})))
+            transcription=gen(asr, role="transcription", kind="transcription"),
+            rerank=gen(rerank or vision, role="rerank", kind="rerank"),
+            embedding=dict(source=sources["embedding"], model=embedding, kind="embedding", dimensions=dims, video_fps=1.0,
+                           input_mode="multimodal" if embedding_protocol == "ark" else "text",
+                           **({"encoder_model": encoder} if encoder else {})))
         # The desktop calls parse and Event retrieval directly and has no Supervisor UI.
         if protocol == "openai_chat":
             document.pop("supervisor_harness", None)
@@ -159,7 +166,7 @@ class ModelProfile:
         document["video_parser"]["fallback"]["enabled"] = False
         document["query_hook"] = dict(enabled=False, rewriter_enabled=False)
         body = yaml.safe_dump(document, allow_unicode=True, sort_keys=False).encode()
-        meta = json.dumps(dict(source=source, form=clean, digest=_digest(body)), ensure_ascii=False)
+        meta = json.dumps(dict(source=sources["vision"], form=clean, digest=_digest(body)), ensure_ascii=False)
         return self.parse(self.path, (HEADER + meta + "\n").encode() + body)
 
     def prepare(self, args):
@@ -243,7 +250,10 @@ class ModelProfile:
             protocol, base, slot = _identity(name, src)
             bound = [{"role": key, "model": binding.model} for key, binding in roles.items() if binding.source == name]
             if mode != "new" and (mode != "managed" or name == self.source or bound):
-                rows.append(dict(name=name, label=self.form["name"] if name == self.source else name,
+                role_labels = {role: item["name"] for role, item in (self.form or {}).get("roleConnections", {}).items()}
+                label = next((role_labels[b["role"]] for b in bound if b["role"] in role_labels),
+                             self.form["name"] if name == self.source else name)
+                rows.append(dict(name=name, label=label,
                                  protocol=protocol, baseUrl=base, credentialName=slot, roles=bound))
         return dict(mode=mode, form=self.form or DEFAULT_FORM.copy(), connections=rows, revision=self.revision,
                     credentialNames=list(credentials), credentials=credentials,

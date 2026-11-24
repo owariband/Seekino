@@ -49,6 +49,12 @@ def discover(root, *, purpose, protocol, base_url, api_key, revision, keys):
     typed = api_key.strip() if isinstance(api_key, str) else ""
     # A saved key belongs to its stored destination. Only the served profile can release it.
     saved = _saved(keys, slot) if same else ""
+    return discover_at(protocol, url, typed, saved)
+
+
+def discover_at(protocol, url, typed, saved):
+    if protocol != "openai_chat":
+        raise ValueError("仅 OpenAI 兼容连接支持从服务获取模型列表。")
     key = typed or saved
     try:
         found = discover_models(protocol, url, key or None, allow_local=True)

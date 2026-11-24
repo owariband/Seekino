@@ -2,7 +2,6 @@ import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import QtQuick.Effects
-import QtCore
 import QtQuick.Dialogs
 
 Item {
@@ -68,22 +67,14 @@ Item {
     }
     readonly property bool hasPanelFocus: opened && panel.activeFocus
     readonly property bool entryFocused: entry.activeFocus
-    readonly property bool compact: width <= 800
-    readonly property bool floating: !compact && !preferences.docked
+    readonly property bool compact: (Window.window?.width ?? width) <= 800
+    readonly property bool floating: !compact && !Studio.watchPanel.docked
     readonly property real reservedWidth: opened && !compact && !floating ? panel.width : 0
     readonly property real reservedHeight: opened && compact ? panel.height : 0
     signal settingsRequested()
     signal questionSent()
     signal seekRequested(int position)
 
-    Settings {
-        id: preferences
-        category: "watch-companion"
-        property bool docked: false
-        property real dockWidth: 440
-        property bool leftEdge: false
-        property real entryBottom: 84
-    }
     function clamp(value, min, max) { return Math.max(min, Math.min(value, Math.max(min, max))) }
     function focusQuestion() { if (opened) { showingEpisodes = false; question.forceActiveFocus(Qt.OtherFocusReason) } }
     function showPanel() {
@@ -91,11 +82,13 @@ Item {
         Qt.callLater(focusQuestion)
     }
     function dismiss() {
+        watchOptions.close()
         if (libraryMode) { closeRequested(); return }
         opened = false
         entry.forceActiveFocus(Qt.OtherFocusReason)
     }
     function reset() {
+        watchOptions.close()
         opened = false
         question.clear()
         showingEpisodes = false
@@ -118,8 +111,8 @@ Item {
         id: entry
         objectName: "kinoEntry"
         readonly property int gutter: companion.width <= 580 ? 16 : 24
-        readonly property real dockX: preferences.leftEdge ? gutter : companion.width - width - gutter
-        readonly property real dockBottom: companion.clamp(preferences.entryBottom, 16, companion.height - height - 8)
+        readonly property real dockX: Studio.watchPanel.leftEdge ? gutter : companion.width - width - gutter
+        readonly property real dockBottom: companion.clamp(Studio.watchPanel.entryBottom, 16, companion.height - height - 8)
         readonly property real dockY: companion.height - height - dockBottom
         readonly property bool emphasized: entryMove.containsMouse || activeFocus
         enabled: !companion.opened && !companion.libraryMode
@@ -157,7 +150,7 @@ Item {
                 pressPoint = mapToItem(companion, mouse.x, mouse.y)
                 origin = Qt.point(entry.x, entry.y)
                 turnX = pressPoint.x
-                facingLeft = !preferences.leftEdge
+                facingLeft = !Studio.watchPanel.leftEdge
             }
             onPositionChanged: mouse => {
                 if (!pressed) return
@@ -179,8 +172,8 @@ Item {
                 const point = mapToItem(companion, mouse.x, mouse.y)
                 const left = origin.x + point.x - pressPoint.x
                 const top = origin.y + point.y - pressPoint.y
-                preferences.leftEdge = left + entry.width / 2 < companion.width / 2
-                preferences.entryBottom = Math.round(companion.clamp(companion.height - top - entry.height,
+                Studio.watchPanel.leftEdge = left + entry.width / 2 < companion.width / 2
+                Studio.watchPanel.entryBottom = Math.round(companion.clamp(companion.height - top - entry.height,
                                                                       16, companion.height - entry.height - 8))
                 moving = false
                 mascot.playReaction("jump")
@@ -217,7 +210,7 @@ Item {
         readonly property bool opened: companion.opened
         property real customX: -1
         property real customY: -1
-        readonly property real edgeX: preferences.leftEdge ? 24 : companion.width - width - 24
+        readonly property real edgeX: Studio.watchPanel.leftEdge ? 24 : companion.width - width - 24
         readonly property real edgeY: companion.clamp(companion.height - entry.dockBottom - height, 24, companion.height - height - 16)
         x: companion.libraryMode || companion.compact ? 0 : !companion.floating ? companion.width - width
            : companion.clamp(customX < 0 ? edgeX : customX, 8, companion.width - width - 8)
@@ -225,12 +218,12 @@ Item {
            : companion.clamp(customY < 0 ? edgeY : customY, 8, companion.height - height - 8)
         readonly property real maxDockWidth: Math.min(850, Math.max(320, companion.width - 420))
         width: companion.libraryMode || companion.compact ? companion.width : companion.floating ?
-            companion.clamp(Math.round(companion.width * .25), 320, 400) : companion.clamp(preferences.dockWidth, 320, maxDockWidth)
+            companion.clamp(Math.round(companion.width * .25), 320, 400) : companion.clamp(Studio.watchPanel.dockWidth, 320, maxDockWidth)
         height: companion.libraryMode ? companion.height : companion.compact ? Math.min(companion.height - 84, Math.max(236, Math.round(companion.height*.57)))
               : companion.floating ? Math.min(640, companion.height - 40, Math.round(companion.height * .62)) : companion.height
         enabled: companion.opened; visible: opacity > 0
         readonly property bool animateFloat: companion.floating && !companion.libraryMode
-        transformOrigin: preferences.leftEdge ? Item.BottomLeft : Item.BottomRight
+        transformOrigin: Studio.watchPanel.leftEdge ? Item.BottomLeft : Item.BottomRight
         scale: animateFloat && !companion.opened ? .97 : 1
         transform: Translate { y: panel.animateFloat && !companion.opened ? 8 : 0
             Behavior on y { NumberAnimation { duration: Studio.hover } } }
@@ -244,18 +237,46 @@ Item {
         }
         property bool idle: false
         readonly property bool canFade: companion.opened && !companion.libraryMode && companion.floating &&
-                                        !panelHover.hovered && !workspace.watchBusy && !conversations.opened && !pickImage.visible
+                                        Studio.preferences.kinoFadeEnabled && !panelHover.hovered && !workspace.watchBusy &&
+                                        !watchOptions.visible && !conversations.opened && !removeThread.opened && !pickImage.visible &&
+                                        !(question.activeFocus && (question.inputMethodComposing || question.text.length > 0))
         onCanFadeChanged: markActivity()
         function markActivity() { idle = false; fadeTimer.stop(); if (canFade) fadeTimer.start() }
         HoverHandler { id: panelHover }
+        Keys.onPressed: event => { markActivity(); event.accepted = false }
+        Connections {
+            target: panel.Window.window
+            function onActiveFocusItemChanged() { if (panel.activeFocus) panel.markActivity() }
+        }
         Timer { id: fadeTimer; interval: Math.max(1,Studio.preferences.kinoFadeSeconds)*1000; onTriggered: panel.idle = true }
         Connections { target: Studio.preferences; function onKinoFadeSecondsChanged() { panel.markActivity() } }
         opacity: !companion.opened ? 0 : idle ? .12 : 1
-        Behavior on opacity { NumberAnimation { duration: panel.idle && !Studio.reduce ? 900 : Studio.hover } }
+        Behavior on opacity {
+            id: fadeTransition
+            NumberAnimation { duration: fadeTransition.targetValue === .12 && !Studio.reduce ? 900 : Studio.hover }
+        }
         Rectangle {
             anchors.fill: parent; radius: companion.floating ? 14 : 0
             color: Studio.sheet; border.color: Studio.line
             CardShadow { visible: companion.floating; radius: parent.radius }
+        }
+        Popup {
+            id: watchOptions; objectName: "watchOptionsPopup"; parent: optionsButton
+            x: optionsButton.width - width; y: optionsButton.height + 4
+            width: Math.min(296, panel.width - 16); margins: 8; padding: 14
+            focus: true; closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+            onOpened: settingsControls.focusMode()
+            onClosed: if (companion.opened) optionsButton.forceActiveFocus(Qt.PopupFocusReason)
+            contentItem: ColumnLayout {
+                spacing: 8
+                WatchPreferences { id: settingsControls; compact: companion.compact; Layout.fillWidth: true }
+                Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: Studio.line }
+                Tool {
+                    objectName: "watchChatSettings"; text: qsTr("问答模型设置"); glyph: "sliders"
+                    onClicked: { watchOptions.close(); companion.settingsRequested() }
+                }
+            }
+            background: Rectangle { radius: 10; color: Studio.sheet; border.color: Studio.line; CardShadow { radius: 10 } }
         }
         // Consume pointer input on blank panel areas before it reaches the video.
         MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons }
@@ -266,7 +287,10 @@ Item {
                 MouseArea {
                     id: panelMove; objectName: "watchPanelMove"
                     anchors.fill: parent; enabled: companion.floating && !companion.libraryMode
-                    preventStealing: true; cursorShape: pressed ? Qt.ClosedHandCursor : Qt.OpenHandCursor
+                    preventStealing: true; hoverEnabled: true
+                    cursorShape: pressed ? Qt.ClosedHandCursor : Qt.OpenHandCursor
+                    ToolTip.visible: containsMouse && !pressed && !watchOptions.visible
+                    ToolTip.delay: 650; ToolTip.text: qsTr("拖动标题栏移动浮窗")
                     property point offset
                     onPressed: mouse => {
                         const point = mapToItem(companion, mouse.x, mouse.y)
@@ -281,17 +305,21 @@ Item {
                     }
                 }
                 RowLayout {
-                    anchors.fill: parent; anchors.leftMargin: 14; anchors.rightMargin: 7; spacing: 3
+                    anchors.fill: parent; anchors.leftMargin: 10; anchors.rightMargin: 7; spacing: 3
+                    Grid {
+                        visible: panelMove.enabled; columns: 2; spacing: 2; Layout.rightMargin: 4
+                        Repeater { model: 6; Rectangle { width: 3; height: 3; radius: 1.5; color: Studio.dim } }
+                    }
                     Image { source: "art/mascot-seek.png"; Layout.preferredWidth: 23; Layout.preferredHeight: 23; fillMode: Image.PreserveAspectFit }
                     Mark { text: companion.libraryMode ? qsTr("Kino 素材库问答") : qsTr("Kino 陪看"); font.pixelSize: 15; font.weight: Font.DemiBold; Layout.leftMargin: 3; Layout.fillWidth: true }
                     Tool { objectName: "watchHistory"; glyph: "library"; hint: qsTr("查看或新建对话")
                         enabled: !workspace.watchBusy; onClicked: conversations.open() }
-                    Tool { objectName: "watchChatSettings"; glyph: "sliders"; hint: qsTr("问答模型设置"); onClicked: companion.settingsRequested() }
+                    Tool { objectName: "libraryChatSettings"; visible: companion.libraryMode; glyph: "sliders"; hint: qsTr("问答模型设置"); onClicked: companion.settingsRequested() }
                     Tool {
                         objectName: "watchChatDock"; visible: !companion.libraryMode && !companion.compact
                         glyph: companion.floating ? "dockRight" : "floatWindow"
                         hint: companion.floating ? qsTr("停靠到侧栏") : qsTr("改为悬浮窗")
-                        onClicked: preferences.docked = !preferences.docked
+                        onClicked: Studio.watchPanel.docked = !Studio.watchPanel.docked
                     }
                     Tool { objectName: "watchChatClose"; glyph: "close"; hint: qsTr("关闭陪看 (Esc)"); onClicked: companion.dismiss() }
                 }
@@ -299,11 +327,17 @@ Item {
             Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: Studio.line }
             RowLayout {
                 visible: !companion.libraryMode
-                Layout.fillWidth: true; Layout.leftMargin: 10; Layout.topMargin: 6; spacing: 3
+                Layout.fillWidth: true; Layout.leftMargin: 10; Layout.rightMargin: 8; Layout.topMargin: 6; spacing: 3
                 Tool { objectName: "watchChatTab"; text: qsTr("聊天"); chosen: !companion.showingEpisodes
                     onClicked: companion.focusQuestion() }
                 Tool { objectName: "watchEpisodesTab"; text: qsTr("选集"); chosen: companion.showingEpisodes
                     onClicked: { companion.showingEpisodes = true; episodeList.forceActiveFocus(); panel.markActivity() } }
+                Item { Layout.fillWidth: true }
+                Tool {
+                    id: optionsButton; objectName: "watchOptionsButton"
+                    text: qsTr("观看设置"); glyph: "sliders"; chosen: watchOptions.visible
+                    onClicked: watchOptions.visible ? watchOptions.close() : watchOptions.open()
+                }
             }
             ListView {
                 id: episodeList; objectName: "companionEpisodeList"; visible: companion.showingEpisodes
@@ -573,7 +607,7 @@ Item {
             activeFocusOnTab: true; Accessible.role: Accessible.Splitter; Accessible.name: qsTr("调整陪看侧栏宽度")
             property real initialWidth
             property real pressX
-            function resizeTo(value) { preferences.dockWidth = companion.clamp(value, 320, panel.maxDockWidth) }
+            function resizeTo(value) { Studio.watchPanel.dockWidth = companion.clamp(value, 320, panel.maxDockWidth) }
             onPressed: mouse => { initialWidth = panel.width; pressX = mapToItem(companion,mouse.x,mouse.y).x }
             onPositionChanged: mouse => {
                 if (pressed) resizeTo(initialWidth + pressX - mapToItem(companion,mouse.x,mouse.y).x)

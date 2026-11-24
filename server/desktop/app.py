@@ -159,7 +159,10 @@ class Application:
         self.profile.check_revision(current.revision)
         candidate = current.prepare(args)
         keys = candidate.values({**self.keys, **args.get("keys", {})})
-        if candidate.form and not candidate.ready_sources(keys).get(candidate.source):
+        required = {candidate.config.resolve_model_binding(role, environ={}).source for role in
+                    ("vision", "transcription", "embedding", "rerank")} if candidate.form else set()
+        available = candidate.ready_sources(keys)
+        if any(not available.get(name) for name in required):
             raise ValueError("请为此服务填写 API Key。")
         changed = current.raw != candidate.raw
         # SQLite owns an exclusive file lock. Drain readers and workers before reopening.
@@ -184,8 +187,8 @@ class Application:
             self.library = self._open(self.profile, self.keys)
             raise
         slot = watch_view(self._root, candidate, self.keys)["watchCredentialName"]
-        if slot and self.keys.get(slot):
-            keys[slot] = self.keys[slot]
+        if slot:
+            keys[slot] = args.get("keys", {}).get(slot, self.keys.get(slot, ""))
         self.library, self.profile, self.keys = replacement, candidate, keys
         return candidate.view(keys) | watch_view(self._root, candidate, keys)
 
@@ -410,8 +413,10 @@ def _dispatch(action, args):
             return watch_credentials(prepare_watch(root, args))
         candidate = profile.prepare(args)
         slots = candidate.slots()
+        by_role = {role: slots[candidate.config.resolve_model_binding(role, environ={}).source] for role in
+                   ("vision", "transcription", "embedding", "rerank")} if candidate.form else {}
         return {"credentialName": slots.get(candidate.source, ""), "credentialNames": list(candidate.values({})),
-                "revision": profile.revision}
+                "roleCredentialNames": by_role, "revision": profile.revision}
     if action == "discoverModels":
         root = Path(args["root"]).resolve()
         keys = _application.keys if _application and _application._root.resolve() == root else {}
@@ -427,9 +432,24 @@ def _dispatch(action, args):
         return _application.profile.view(_application.keys)["credentials"]
     if _application is None:
         raise RuntimeError("资料库尚未打开")
-    if action in {"saveModelSettings", "saveWatchSettings"}:
+    if action in {"saveModelSettings", "saveWatchSettings", "rotateServiceCredentials"}:
         if args.get("root") and Path(args["root"]).resolve() != _application._root.resolve():
             raise ValueError("模型设置不属于当前资料库")
+        if action == "rotateServiceCredentials":
+            root, profile = _application._root, _application.profile
+            ModelProfile.read(root).check_revision(args.get("revision"))
+            view = watch_view(root, profile, _application.keys)
+            if view["watchRevision"] != args.get("watchRevision"):
+                raise ValueError("观看问答设置已变更，请重新打开。")
+            updates = args["keys"]
+            slots = set(profile.slots().values())
+            if not updates or not all(name and name in slots | {view["watchCredentialName"]} and
+                                      isinstance(value, str) and value for name, value in updates.items()):
+                raise ValueError("凭据与当前服务地址不匹配，请重新打开设置")
+            if slots.intersection(updates):
+                return _application.save_models({"keys": updates, "retainConfig": True, "revision": profile.revision})
+            _application.keys.update(updates)
+            return profile.view(_application.keys) | watch_view(root, profile, _application.keys)
         if action == "saveWatchSettings":
             root, profile = _application._root, _application.profile
             form = prepare_watch(root, args)
@@ -460,7 +480,7 @@ def dispatch(raw: str) -> str:
     try:
         request = json.loads(raw)
         action, args = request["action"], request["args"]
-        with _using_library(action in {"open", "close", "saveModelSettings", "saveWatchSettings", "deleteImport", "deleteVersion", "deleteHistory"}):
+        with _using_library(action in {"open", "close", "saveModelSettings", "saveWatchSettings", "rotateServiceCredentials", "deleteImport", "deleteVersion", "deleteHistory"}):
             result = _dispatch(action, args)
         return json.dumps({"value": result}, ensure_ascii=False, allow_nan=False)
     except StaleEvidenceError:

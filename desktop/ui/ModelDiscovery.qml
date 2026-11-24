@@ -13,6 +13,7 @@ ColumnLayout {
     property var targets: []
     property var models: []
     property bool listAvailable: true
+    property bool showFetchButton: true
     property bool fetched: false
     property bool fetching: false
     property string issue: ""
@@ -45,6 +46,7 @@ ColumnLayout {
     onProtocolChanged: clear()
     onBaseUrlChanged: clear()
     onApiKeyChanged: clear()
+    onPurposeChanged: clear()
     onRevisionChanged: clear()
     Connections {
         target: workspace
@@ -70,7 +72,7 @@ ColumnLayout {
     RowLayout {
         Layout.fillWidth: true; visible: discovery.protocol !== "ark"; spacing: 8
         Tool {
-            objectName: "discoverModels"
+            objectName: "discoverModels"; visible: discovery.showFetchButton
             text: discovery.fetching ? qsTr("正在获取…") : qsTr("获取模型列表")
             outlined: true; corner: 7; implicitHeight: 30
             enabled: !discovery.fetching

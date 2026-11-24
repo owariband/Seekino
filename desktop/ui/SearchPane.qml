@@ -31,6 +31,7 @@ Item {
         }
     }
     onEnabledChanged: if (!enabled) libraryChat.close()
+    function focusChat() { if (libraryChat.visible && chatLoader.item) chatLoader.item.focusQuestion() }
     function focusQuery() { query.forceActiveFocus(); query.selectAll() }
     function run() {
         if (query.text.trim().length && workspace.ready && !workspace.searching)
