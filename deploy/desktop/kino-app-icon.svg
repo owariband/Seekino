@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-labelledby="icon-title">
+  <title id="icon-title">Seekino</title>
+  <defs>
+    <clipPath id="icon-plate">
+      <rect x="8" y="8" width="240" height="240" rx="50" />
+    </clipPath>
+    <path id="body-shape" d="M30,268C23,236 23,196 28,165C31,134 59,110 93,106C107,91 122,78 134,71C139,69 142,72 143,76L148,105C156,106 165,108 170,111C201,125 223,151 228,178C232,205 222,238 215,268Z" />
+    <clipPath id="body-clip">
+      <use href="#body-shape" />
+    </clipPath>
+  </defs>
+  <rect x="8" y="8" width="240" height="240" rx="50" fill="#fff" />
+  <g clip-path="url(#icon-plate)">
+    <path fill="#74c5ba" d="M170,112C182,86 200,60 216,48C223,43 230,47 229,56C228,82 225,108 221,128C228,132 234,136 234,142C232,149 226,151 216,152Z" />
+    <use href="#body-shape" fill="#74c5ba" />
+    <g clip-path="url(#body-clip)">
+      <path fill="#349489" d="M197,124C214,155 220,205 206,270H240V110Z" />
+      <path fill="#fcfaf1" d="M0,214C12,194 30,162 66,148C100,141 136,144 162,152C182,160 196,178 202,204C207,226 206,248 202,270H0Z" />
+    </g>
+    <path fill="#74c5ba" d="M211,166C222,172 230,178 235,184C237,190 229,193 212,192C217,183 217,175 211,166Z" />
+    <g fill="#0b3b33">
+      <circle cx="63" cy="139" r="9" />
+      <circle cx="158" cy="151" r="9" />
+    </g>
+    <path d="M59,159L153,170" stroke="#0b3b33" stroke-width="6.5" stroke-linecap="round" />
+  </g>
+</svg>

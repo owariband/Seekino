@@ -359,6 +359,9 @@ class LibraryRepository:
                     SeriesPublisherState(kind="user", display_name=nickname),
                     tenant.status == "ACTIVE" and owner.status == "ACTIVE" and not owner.is_anonymous,
                 )
+        first_videos = {}
+        for video in videos:  # Already ordered by episode and video ID.
+            first_videos.setdefault(video.series_id, video)
         ready_video_ids = {
             video.video_id for video in videos
             if video.index_status == VideoIndexStatus.READY
@@ -421,6 +424,7 @@ class LibraryRepository:
                 ),
                 pending_upload_count=int(pending.get(record.id, 0)),
                 last_search=last_searches.get(record.id),
+                first_video=first_videos.get(record.id),
                 representative_video=_representative_video(
                     [video for video in videos if video.series_id == record.id]
                 ),
@@ -790,6 +794,7 @@ class LibraryRepository:
         pending_upload_count: int = 0,
         last_search: SeriesLastSearchState | None = None,
         representative_video: VideoSummaryState | None = None,
+        first_video: VideoSummaryState | None = None,
         publisher: SeriesPublisherState | None = None,
         publisher_active: bool = False,
     ) -> SeriesState:
@@ -814,6 +819,7 @@ class LibraryRepository:
             publisher=publisher,
             publisher_active=publisher_active,
             representative_video=representative_video,
+            first_video=first_video,
             videos=videos,
         )
 

@@ -20,6 +20,10 @@ static void add_path(PyConfig *config, const char *resources, const char *suffix
     PyMem_RawFree(wide);
 }
 
+#ifndef SEEKINO_ENTRY
+#define SEEKINO_ENTRY L"server.desktop.host"
+#endif
+
 int main(int argc, char **argv) {
     char executable[PATH_MAX], resolved[PATH_MAX], resources[PATH_MAX];
     uint32_t size = sizeof(executable);
@@ -42,7 +46,7 @@ int main(int argc, char **argv) {
     if (snprintf(home, sizeof(home), "%s/python", resources) >= (int)sizeof(home)) return 1;
     check(PyConfig_SetBytesString(&config, &config.home, home));
     check(PyConfig_SetBytesArgv(&config, argc, argv));
-    check(PyConfig_SetString(&config, &config.run_module, L"server.desktop.host"));
+    check(PyConfig_SetString(&config, &config.run_module, SEEKINO_ENTRY));
     check(Py_InitializeFromConfig(&config));
     PyConfig_Clear(&config);
     return Py_RunMain();

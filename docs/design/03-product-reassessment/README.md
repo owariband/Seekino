@@ -8,6 +8,8 @@
 
 2026-11-23，Seekino 桌面版确定用原生 UI 在进程内直接调用 Python 业务与 FFmpeg 库，由应用管理本地资料库。后端先交付 SQLite、检索、媒体适配和最小嵌入验收，再接原生播放器和安装包。 [后端 TRD](macos-desktop-backend-trd.md) · [PR #183](https://github.com/owariband/Seekino/pull/183)
 
+2026-11-23，桌面版用 Qt Quick 共用 Web 风格的窗口，接入 #183 的进程内后端。Mac 与 Windows 的安装及回放验证见报告。 [桌面应用 TRD](macos-desktop-app-trd.md) · [PR #184](https://github.com/owariband/Seekino/pull/184)
+
 2026-11-15，观看问答受历史时间、当前注册表与工具说明冲突影响，取帧绕行并迟答。本次补无需检索前置的单点取帧、统一JEV-only与按需委派提示，并在同一模型循环先回应目标再取证。设计见[单点取帧与较早回应TRD](chat-frame-target-and-first-response-trd.md)，实测与失败边界见[对照报告](../../report/agent/chat/frame-target-first-response-20261115/README.md)，状态由工作台CHAT-FRAME-FIRST-01维护。
 
 2026-11-15，Chat 子 Agent 原先另取全局 agent 模型，选定 Supervisor 后仍可能沿用旧 64k 静态窗口。本次让 Query 与 Supervisor 共用当前选择的模型来源、主备、effort、输出／超时／字符预算和 Gateway 动态容量解析，角色工具与原生上下文边界保留。设计与证据见[配置继承 TRD](chat-model-config-inheritance-trd.md)、[验证报告](../../report/gateway/agent_model/chat-model-config-inheritance-20261115/README.md)；dev PR #171 已合入；正式候选 main PR #172 待合并和部署，状态见工作台 `CHAT-MODEL-INHERIT-01`。

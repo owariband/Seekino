@@ -1,7 +1,6 @@
 """Edit the active YAML file under one lock shared by all settings endpoints."""
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import os
 import stat
@@ -11,6 +10,8 @@ from pathlib import Path
 
 import yaml
 from yaml.nodes import MappingNode, ScalarNode, SequenceNode
+
+from ..utils.file_lock import exclusive_lock
 
 
 class GlobalAgentSettingsConflictError(Exception):
@@ -24,8 +25,7 @@ def revision(raw: bytes) -> str:
 @contextmanager
 def document_lock(path: Path):
     # A separate inode keeps the lock valid across atomic replacement of the YAML.
-    with path.with_name("." + path.name + ".seekino.lock").open("ab") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+    with exclusive_lock(path.with_name("." + path.name + ".seekino.lock")):
         yield
 
 

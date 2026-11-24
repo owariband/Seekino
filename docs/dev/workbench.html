@@ -6172,6 +6172,46 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "url": "https://github.com/owariband/Seekino/blob/feat/macos-desktop-backend/docs/dev/problems.md#desktop-backend-01"
     }
    ]
+  },
+  {
+   "id": "DESKTOP-APP-01",
+   "title": "macOS 原生应用与安装包",
+   "category": "platform",
+   "type": "requirement",
+   "status": "verifying",
+   "priority": "unset",
+   "description": "Qt Quick 窗口保留 Seekino Web 的品牌和素材展示，macOS 适配标题栏与资料树。Mac 和 Windows 共用导入、解析、搜索和回看入口。",
+   "next": "在用户 Mac 验收布局、动效和实际模型，另验证 Windows x64 真机与签名公证后的干净 Mac。",
+   "verification": "0.2.5 已安装到本机 Mac；单一 Ark 与自选 OpenAI 兼容服务分别在固定回复下完成导入、解析、搜索和原片回看。内页复核通过，83 项定向回归通过。Windows x64 ZIP 已静态核对。",
+   "updatedAt": "2026-11-24",
+   "tags": [
+    "macOS",
+    "Qt Quick",
+    "Windows",
+    "FFmpeg"
+   ],
+   "related": [
+    "DESKTOP-BACKEND-01",
+    "MOD-PLATFORM"
+   ],
+   "branch": "feat/macos-desktop-app",
+   "links": [
+    {
+     "label": "PR #184",
+     "kind": "pr",
+     "url": "https://github.com/owariband/Seekino/pull/184"
+    },
+    {
+     "label": "桌面 TRD",
+     "kind": "trd",
+     "url": "https://github.com/owariband/Seekino/blob/feat/macos-desktop-app/docs/design/03-product-reassessment/macos-desktop-app-trd.md"
+    },
+    {
+     "label": "安装候选实测",
+     "kind": "source",
+     "url": "https://github.com/owariband/Seekino/blob/feat/macos-desktop-app/docs/report/desktop/native/2026-11-23-acceptance.md"
+    }
+   ]
   }
  ]
 }</script>

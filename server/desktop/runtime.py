@@ -1,13 +1,14 @@
 """Python entry point used by the native host. All operations use one local library."""
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from contextlib import ExitStack
 from dataclasses import dataclass
 from datetime import timedelta
 from functools import wraps
 from hashlib import file_digest, sha256
 import os
+import sys
 from pathlib import Path
 from threading import Condition
 from uuid import uuid4
@@ -41,6 +42,10 @@ class PlaybackRange:
     path: Path
     start_ms: int
     end_ms: int
+    duration_ms: int = 0
+    video_id: str = ""
+    series_id: str = ""
+    description: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,8 +81,9 @@ def _while_open(method):
 
 
 class DesktopLibrary:
-    def __init__(self, video: VideoServices, resources: ExitStack):
+    def __init__(self, video: VideoServices, resources: ExitStack, consumer=None):
         self._video = video
+        self._consumer = consumer
         self._resources = resources
         self._closed = False
         self._closing = False
@@ -105,6 +111,10 @@ class DesktopLibrary:
                 self._lifetime.notify_all()
 
     @_while_open
+    def start_processing(self):
+        self._consumer.start()
+
+    @_while_open
     def create_series(self, name: str):
         return self._video.library.create_series(name=name, tenant_id=DEFAULT_LOCAL_TENANT_ID)
 
@@ -114,8 +124,39 @@ class DesktopLibrary:
                                                offset=offset, limit=limit)
 
     @_while_open
+    def series(self, series_id: str):
+        return self._video.library.get_series(series_id, tenant_id=DEFAULT_LOCAL_TENANT_ID)
+
+    @_while_open
+    def list_tasks(self, *, offset: int = 0, limit: int = 100):
+        return self._video.jobs.list_video_parse_tasks(
+            tenant_id=DEFAULT_LOCAL_TENANT_ID, offset=offset, limit=limit,
+        )
+
+    @_while_open
+    def video(self, video_id: str):
+        return self._video.library.get_video(video_id, tenant_id=DEFAULT_LOCAL_TENANT_ID)
+
+    @_while_open
+    def thumbnail(self, video):
+        image = self._video.media.thumbnail_view(video.video_id, tenant_id=DEFAULT_LOCAL_TENANT_ID, video=video)
+        if image is None:
+            return None
+        try:
+            return self._video.media.get_image(image.image_id, tenant_id=DEFAULT_LOCAL_TENANT_ID).path
+        except FileNotFoundError:
+            return None
+
+    @_while_open
+    def open_video(self, video_id: str) -> PlaybackRange:
+        video = self._video.library.get_video(video_id, tenant_id=DEFAULT_LOCAL_TENANT_ID)
+        original = self._video.media.get_original(video_id, tenant_id=DEFAULT_LOCAL_TENANT_ID, video=video)
+        return PlaybackRange(original.path, 0, video.duration_seconds, video.duration_seconds,
+                             video.video_id, video.series_id)
+
+    @_while_open
     def import_file(self, path: Path, *, series_id: str, episode_order: int,
-                    idempotency_key: str):
+                    idempotency_key: str, on_progress: Callable[[int, int], None] | None = None):
         """Use a stable request key to retry an interrupted or completed upload."""
         path = Path(path)
         types = {".mp4": "video/mp4", ".mov": "video/quicktime", ".avi": "video/x-msvideo"}
@@ -136,6 +177,9 @@ class DesktopLibrary:
             )
             if state.status != "COMPLETED":
                 detail = uploads.get_detail(state.upload_session_id, tenant_id=DEFAULT_LOCAL_TENANT_ID)
+                transferred = detail.session.uploaded_size_bytes
+                if on_progress:
+                    on_progress(transferred, size)
                 for number in detail.missing_segment_numbers:
                     start = number * state.preferred_segment_size_bytes
                     source.seek(start)
@@ -143,6 +187,9 @@ class DesktopLibrary:
                     uploads.upload_segment(state.upload_session_id, number, data, tenant_id=DEFAULT_LOCAL_TENANT_ID,
                                            checksum_sha256=sha256(data).hexdigest(), start_byte=start,
                                            end_byte_exclusive=start + len(data), total_size_bytes=size)
+                    if on_progress:
+                        transferred += len(data)
+                        on_progress(transferred, size)
         return uploads.complete(state.upload_session_id, tenant_id=DEFAULT_LOCAL_TENANT_ID)
 
     @_while_open
@@ -198,17 +245,19 @@ class DesktopLibrary:
         evidence = ref.resolve(self._video.persistence, tenant_id=DEFAULT_LOCAL_TENANT_ID)
         event = evidence.all_time_events[ref.timeline_index]
         original = self._video.media.get_original(evidence.video_id, tenant_id=DEFAULT_LOCAL_TENANT_ID, video=evidence)
-        return PlaybackRange(original.path, event["start_seconds"], event["end_seconds"])
+        return PlaybackRange(original.path, event["start_seconds"], event["end_seconds"], evidence.duration_seconds,
+                             evidence.video_id, evidence.series_id, event["description"])
 
 
-def open_library(library_root: Path | str) -> DesktopLibrary:
+def open_library(library_root: Path | str, *, gateway_config=None, gateway_environ=None,
+                 start_consumer=True) -> DesktopLibrary:
     root = Path(library_root).expanduser().resolve()
     storage = desktop_storage()
     # Operators may configure model connections for this library. Storage always comes from the bundle.
     models = root / "models.yaml"
     if not models.is_file():
         models = STORAGE_CONFIG.parents[1] / "deploy" / "cloud" / "models.example.yaml"
-    config = load_config(models)
+    config = gateway_config if gateway_config is not None else load_config(models)
     supported = {"ark", "openai", "chat_api", "openai_audio", "openai_vision", "ollama_embedding"}
     for source in config.model_sources.values():
         if source.adapter not in supported:
@@ -222,7 +271,7 @@ def open_library(library_root: Path | str) -> DesktopLibrary:
     upload, images = UploadServiceConfig(), ImageUploadConfig()
     limits = AgentServiceConfig(**config.agent_runtime)
     dimensions = config.resolve_embedding_binding().dimensions
-    media = PyAVMedia()
+    media = PyAVMedia(video_encoder="libx264") if sys.platform == "win32" else PyAVMedia()
     defaults = ParseConfig.from_defaults(runtime=runtime, gateway=config, upload=upload, images=images,
                                          embedding_model=None, embedding_dimensions=dimensions, embedding_fps=None, mq=mq,
                                          preprocessing=media.preprocessing)
@@ -236,7 +285,7 @@ def open_library(library_root: Path | str) -> DesktopLibrary:
         index = SQLiteSearchIndex(database.session_factory, semantic_dimensions=dimensions,
                                   vision_dimensions=dimensions, vision_enabled=defaults.embedding.input_mode == "multimodal",
                                   index_name="desktop_events")
-        gateway = GatewayClient(config, enable_supervisor=False, allow_local_endpoints=True)
+        gateway = GatewayClient(config, environ=gateway_environ, enable_supervisor=False, allow_local_endpoints=True)
         cleanup.callback(gateway.close)
         artifacts = build_artifact_storage(root / "media", environment=DatabaseEnvironment.PRODUCTION)
         video = build_video_services(
@@ -251,5 +300,6 @@ def open_library(library_root: Path | str) -> DesktopLibrary:
         cleanup.callback(consumer.close)
         video.uploads.reconcile_completed_staging()
         video.uploads.reconcile_deletions()
-        consumer.start()
-        return DesktopLibrary(video, cleanup.pop_all())
+        if start_consumer:
+            consumer.start()
+        return DesktopLibrary(video, cleanup.pop_all(), consumer)
