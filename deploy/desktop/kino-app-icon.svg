@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024" role="img">
+  <title>Seekino</title>
+  <rect x="40" y="40" width="944" height="944" rx="205" fill="#fff" stroke="#e0e5e2" stroke-width="2" />
+  <g transform="translate(60.88 63.07) scale(3.53955)">
+    <title id="seekino-title">Seekino 鲸鲨吉祥物</title>
+    <defs>
+      <clipPath id="body-clip">
+        <path d="M30 158C27 114 58 84 108 80C152 77 197 92 214 124C228 152 221 188 193 203C166 216 120 216 82 211C47 206 32 186 30 158Z" />
+      </clipPath>
+      <clipPath id="belly-clip">
+        <path d="M18 134C48 114 108 108 154 120C186 130 202 168 192 232H18Z" />
+      </clipPath>
+      <radialGradient id="ground">
+        <stop offset="0" stop-color="#0b3b33" stop-opacity="0.20" />
+        <stop offset="0.65" stop-color="#0b3b33" stop-opacity="0.08" />
+        <stop offset="1" stop-color="#0b3b33" stop-opacity="0" />
+      </radialGradient>
+      <radialGradient id="foot-contact">
+        <stop offset="0" stop-color="#0b3b33" stop-opacity="0.26" />
+        <stop offset="1" stop-color="#0b3b33" stop-opacity="0" />
+      </radialGradient>
+      <linearGradient id="dorsal-root" gradientUnits="userSpaceOnUse" x1="0" y1="87" x2="0" y2="64">
+        <stop offset="0" stop-color="#349489" stop-opacity="0.7" />
+        <stop offset="1" stop-color="#349489" stop-opacity="0" />
+      </linearGradient>
+      <linearGradient id="tail-root" gradientUnits="userSpaceOnUse" x1="182" y1="102" x2="202" y2="80">
+        <stop offset="0" stop-color="#349489" stop-opacity="0.7" />
+        <stop offset="1" stop-color="#349489" stop-opacity="0" />
+      </linearGradient>
+      <linearGradient id="fin-left-root" gradientUnits="userSpaceOnUse" x1="33" y1="0" x2="20" y2="0">
+        <stop offset="0" stop-color="#349489" stop-opacity="0.6" />
+        <stop offset="1" stop-color="#349489" stop-opacity="0" />
+      </linearGradient>
+    </defs>
+    <g id="seekino" stroke="none">
+      <g id="ground-shadow">
+        <ellipse cx="122" cy="224" rx="84" ry="8" fill="url(#ground)" />
+        <ellipse cx="72.5" cy="223.5" rx="13" ry="3.6" fill="url(#foot-contact)" />
+        <ellipse cx="166.5" cy="228.5" rx="13" ry="3.6" fill="url(#foot-contact)" />
+      </g>
+      <g id="feet" fill="#fcfaf1" stroke="#349489" stroke-width="3.5">
+        <rect id="foot-left" x="63" y="197" width="19" height="26" rx="8.5" />
+        <rect id="foot-right" x="157" y="199" width="19" height="29" rx="8.5" />
+      </g>
+      <g id="tail">
+        <path fill="#74c5ba" d="M164 92C174 62 198 36 220 29C230 50 227 80 214 101L233 113C225 119 217 122 208 125Z" />
+        <path fill="url(#tail-root)" d="M164 92C174 62 198 36 220 29C230 50 227 80 214 101L233 113C225 119 217 122 208 125Z" />
+      </g>
+      <g id="fin-left">
+        <path fill="#74c5ba" d="M34 134C26 137 19 142 14 148C20 153 27 157 33 159Z" />
+        <path fill="url(#fin-left-root)" d="M34 134C26 137 19 142 14 148C20 153 27 157 33 159Z" />
+      </g>
+      <g id="dorsal">
+        <path fill="#74c5ba" d="M90 88C104 70 120 55 136 48C137 61 140 74 146 87Z" />
+        <path fill="url(#dorsal-root)" d="M90 88C104 70 120 55 136 48C137 61 140 74 146 87Z" />
+      </g>
+      <g id="body">
+        <path id="body-fill" fill="#74c5ba" d="M30 158C27 114 58 84 108 80C152 77 197 92 214 124C228 152 221 188 193 203C166 216 120 216 82 211C47 206 32 186 30 158Z" />
+        <g clip-path="url(#body-clip)">
+          <path id="shade" fill="#349489" d="M196 122C212 152 210 192 186 230H240V110Z" />
+          <path id="belly" fill="#fcfaf1" d="M18 134C48 114 108 108 154 120C186 130 202 168 192 232H18Z" />
+          <g clip-path="url(#belly-clip)">
+            <path id="belly-wrap" fill="none" stroke="#74c5ba" stroke-width="12" stroke-linejoin="round" d="M30 158C27 114 58 84 108 80C152 77 197 92 214 124C228 152 221 188 193 203C166 216 120 216 82 211C47 206 32 186 30 158Z" />
+          </g>
+          <path id="fin-right-shadow" fill="#0b3b33" fill-opacity="0.2" transform="translate(-1 3.5)" d="M204 138C216 142 228 150 234 157C226 161 214 162 205 162Z" />
+        </g>
+      </g>
+      <path id="fin-right" fill="#74c5ba" d="M204 138C216 142 228 150 234 157C226 161 214 162 205 162Z" />
+      <g id="face">
+        <g id="eyes" fill="#0b3b33">
+          <circle id="eye-left" cx="65" cy="113" r="5" />
+          <circle id="eye-right" cx="155" cy="125" r="5" />
+        </g>
+        <path id="mouth" fill="none" stroke="#0b3b33" stroke-width="3.6" stroke-linecap="round" d="M61 130L151 140" />
+      </g>
+    </g>
+  </g>
+</svg>
