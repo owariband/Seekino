@@ -18,9 +18,16 @@ FocusScope {
     property bool cinema: false
     property int previousVisibility: Window.Windowed
     property bool controlsAwake: true
+    readonly property bool chatOpen: companion.opened
+    readonly property bool chatHasFocus: companion.hasPanelFocus
+    readonly property bool chatEntryFocused: companion.entryFocused
+    property bool modalOpen: false
+    signal settingsRequested()
+    function focusChat() { if (companion.opened) companion.focusQuestion() }
     readonly property color timelineColor: "#89d6c8"
 
     function open(path, start, end, duration, caption, isHit) {
+        companion.reset()
         title = caption; startMs = start; endMs = end; hit = isHit
         surface.open(path, start, duration)
         reveal()
@@ -28,6 +35,8 @@ FocusScope {
     }
     function close() {
         if (cinema) toggleCinema()
+        companion.reset()
+        workspace.leaveWatch()
         hideControls.stop()
         surface.close()
     }
@@ -62,15 +71,21 @@ FocusScope {
             if (player.cinema && visibility !== Window.FullScreen) player.cinema = false
         }
     }
-    Shortcut { sequence: "Escape"; enabled: player.cinema; onActivated: player.toggleCinema() }
+    Shortcut {
+        sequence: "Escape"; enabled: player.enabled && !player.modalOpen && (player.chatOpen || player.cinema)
+        onActivated: player.chatOpen ? companion.dismiss() : player.toggleCinema()
+    }
+    Shortcut {
+        sequence: "F"; autoRepeat: false; enabled: player.enabled && !player.modalOpen && !player.chatHasFocus
+        onActivated: player.toggleCinema()
+    }
     Keys.onPressed: event => {
-        if (event.modifiers !== Qt.NoModifier) return
+        if (player.chatHasFocus || player.modalOpen || event.modifiers !== Qt.NoModifier) return
         switch (event.key) {
         case Qt.Key_Left: skip(-10000); break
         case Qt.Key_Right: skip(10000); break
         case Qt.Key_K: playPause(); break
         case Qt.Key_M: toggleMute(); break
-        case Qt.Key_F: if (!event.isAutoRepeat) toggleCinema(); break
         default: return
         }
         event.accepted = true
@@ -115,10 +130,13 @@ FocusScope {
     }
 
     Rectangle {
-        id: stage
+        id: stage; objectName: "videoStage"
         parent: player.cinema ? player.Overlay.overlay : player
         anchors.fill: parent
-        anchors.bottomMargin: player.hit ? evidence.height : 0
+        anchors.bottomMargin: (player.hit ? evidence.height : 0) + companion.reservedHeight
+        anchors.rightMargin: companion.reservedWidth
+        Behavior on anchors.rightMargin { NumberAnimation { duration: Studio.panel; easing.type: Easing.OutCubic } }
+        Behavior on anchors.bottomMargin { NumberAnimation { duration: Studio.panel; easing.type: Easing.OutCubic } }
         z: player.cinema ? 100 : 0
         clip: true
         color: "#090c0b"
@@ -221,7 +239,7 @@ FocusScope {
                             border.width: gain.visualFocus ? 1 : 0; border.color: "white"
                         }
                     }
-                    PlayerButton { objectName: "fullscreenButton"; text: player.cinema ? "退出" : "全屏"; hint: player.cinema ? "退出全屏 (Esc)" : "全屏播放 (F)"; onClicked: player.toggleCinema() }
+                    PlayerButton { objectName: "fullscreenButton"; symbol: player.cinema ? "exitFullscreen" : "fullscreen"; symbolSize: 20; hint: player.cinema ? "退出全屏 (Esc)" : "全屏播放 (F)"; onClicked: player.toggleCinema() }
                 }
             }
         }
@@ -230,6 +248,19 @@ FocusScope {
             width: parent.width - 40; text: surface.error; visible: text.length > 0
             color: "#ffc5c5"; wrapMode: Text.Wrap; horizontalAlignment: Text.AlignHCenter
         }
+    }
+
+    WatchCompanion {
+        id: companion
+        parent: player.cinema ? player.Overlay.overlay : player
+        anchors.fill: parent
+        anchors.bottomMargin: player.hit ? evidence.height : 0
+        z: player.cinema ? 102 : 2
+        videoTitle: player.title
+        positionMs: player.positionMs
+        onSettingsRequested: player.settingsRequested()
+        onSeekRequested: position => { surface.seek(position); player.reveal() }
+        onQuestionSent: if (surface.playing) surface.setPlaying(false)
     }
 
     Rectangle {

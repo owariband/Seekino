@@ -28,8 +28,13 @@ def copy_business_files(resources: Path) -> None:
                 continue
             if rel.as_posix() in {"server/main.py", "server/cli.py", "server/bootstrap.py"}:
                 continue
+            if rel.parts[:2] == ("agent", "chat") and rel.as_posix() not in {
+                "agent/chat/__init__.py", "agent/chat/common/__init__.py", "agent/chat/common/errors.py",
+                "agent/chat/video_search/__init__.py", "agent/chat/video_search/frame_evidence.py",
+            }:
+                continue
             if rel.parts[:2] in {
-                ("agent", "chat"), ("gateway", "bridge"), ("gateway", "codex"), ("gateway", "claude_code"),
+                ("gateway", "bridge"), ("gateway", "codex"), ("gateway", "claude_code"),
                 ("server", "caller"), ("server", "api"), ("server", "router"), ("server", "skills"),
             } or (rel.parts[:2] == ("server", "storage") and src.stem.startswith("elasticsearch")):
                 continue

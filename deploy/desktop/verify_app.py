@@ -64,6 +64,46 @@ def seed(app, work):
         print("fixed-model import, V2, keyword and semantic search: passed", flush=True)
 
 
+def verify_watch(app, library):
+    # -I -S keeps unshipped development SDKs out of this process. Imports below
+    # must work with the installed product's packages and no application server.
+    resources = app / "Contents/Resources"
+    sys.path[:0] = [str(resources), str(resources / "site-packages")]
+    import httpx
+    from server.desktop.app import dispatch
+
+    def request(action, **args):
+        reply = json.loads(dispatch(json.dumps({"action": action, "args": args})))
+        if "error" in reply:
+            raise RuntimeError(f"{action}: {reply['error']}")
+        return reply["value"]
+
+    def fixed_reply(transport, req):
+        assert req.url.host == "localhost" and req.url.path == "/v1/chat/completions"
+        payload = json.loads(req.content)
+        assert payload["model"] == "qa-vision"
+        assert any(part.get("type") == "image_url" and part["image_url"]["url"].startswith("data:image/")
+                   for msg in payload["messages"] for part in msg["content"] if isinstance(part, dict))
+        return httpx.Response(200, json={"id": "local", "created": 0, "model": "qa-vision",
+                              "object": "chat.completion", "choices": [{"index": 0, "finish_reason": "stop",
+                              "message": {"role": "assistant", "content": '{"answer":"frame received"}'}}]})
+
+    httpx.HTTPTransport.handle_request = fixed_reply
+    request("open", root=str(library))
+    try:
+        revision = request("modelSettings", root=str(library))["watchRevision"]
+        request("saveWatchSettings", root=str(library), revision=revision,
+                form={"protocol": "openai_chat", "baseUrl": "http://localhost:7890/v1",
+                      "auth": "none", "model": "qa-vision"})
+        series, = request("seriesList")
+        answer = request("askWatch", videoID=series["firstVideoID"], seriesID=series["id"],
+                         positionMs=500, question="What is in the frame?", history=[])
+        assert answer == {"text": "frame received", "positionMs": 500}, answer
+    finally:
+        request("close")
+    print("packaged watch model, source frame and HTTP contract: passed", flush=True)
+
+
 def verify(app):
     with TemporaryDirectory(prefix="seekino-desktop-qa-") as name:
         work = Path(name).resolve()
@@ -74,6 +114,9 @@ def verify(app):
         moved = work / "Moved Seekino.app"
         shutil.copytree(app, moved, symlinks=True)
         subprocess.run(["codesign", "--verify", "--deep", "--strict", moved], check=True)
+        subprocess.run([sys.executable, "-B", "-I", "-S", __file__, str(moved), "--watch", str(work / "library")],
+                       env={"DYLD_LIBRARY_PATH": str(moved / "Contents/Frameworks"), "HOME": str(work)},
+                       cwd=work, check=True, timeout=45)
         observer = work / "verify_process"
         subprocess.run(["clang", "-Wall", "-Werror", ROOT / "deploy/desktop/verify_process.c", "-o", observer], check=True)
         positive = subprocess.run([observer, "/bin/sh", "-c", "/usr/bin/true & wait"])
@@ -88,8 +131,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("app", type=Path, help="absolute path to Seekino.app")
     parser.add_argument("--seed", type=Path, help="only seed a new isolated QA library")
+    parser.add_argument("--watch", type=Path, help="verify a seeded library with only the bundled modules")
     args = parser.parse_args()
-    if args.seed is None:
+    if args.watch is not None:
+        verify_watch(args.app.resolve(strict=True), args.watch)
+    elif args.seed is None:
         verify(args.app.resolve(strict=True))
     else:
         seed(args.app.resolve(strict=True), args.seed)

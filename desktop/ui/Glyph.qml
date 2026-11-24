@@ -42,6 +42,14 @@ Canvas {
             path([3,9.3,7,9.3,12,5.2,12,18.8,7,14.7,3,14.7,3,9.3])
             if(name === "volume") { c.beginPath(); c.arc(11,12,6,-.85,.85); c.stroke(); c.beginPath(); c.arc(11,12,9.8,-.74,.74); c.stroke() }
             else {path([16,9,21,15]); path([21,9,16,15])} break
+        case "fullscreen":
+            path([9,4,4,4,4,9]); path([15,4,20,4,20,9])
+            path([4,15,4,20,9,20]); path([15,20,20,20,20,15]); break
+        case "exitFullscreen":
+            path([4,9,9,9,9,4]); path([15,4,15,9,20,9])
+            path([4,15,9,15,9,20]); path([15,20,15,15,20,15]); break
+        case "dockRight": round(2.5,4.5,19,15,2.5); path([14.5,5,14.5,19]); break
+        case "floatWindow": round(3,4,18,15,2.5); round(10,10,8,6,1); break
         case "close": path([6,6,18,18]); path([18,6,6,18]); break
         case "up": path([12,20,12,4.5,5,11.5]); path([12,4.5,19,11.5]); break
         case "sliders": path([3,7,7,7]); path([11,7,21,7]); circle(9,7,2); path([3,17,13,17]); path([17,17,21,17]); circle(15,17,2); break

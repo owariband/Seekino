@@ -362,3 +362,70 @@ def test_switching_managed_endpoints_and_updating_custom_credentials(tmp_path, m
         assert vault["DEEPSEEK_API_KEY"] == "legacy-official-endpoint-only"
     finally:
         workspace.shutdown()
+
+
+def test_watch_discards_old_video_completions_and_restores_conversation(tmp_path, monkeypatch):
+    from threading import Event
+    from desktop import qt_controller
+
+    app = QCoreApplication.instance() or QCoreApplication([])
+    workspace = Workspace(tmp_path)
+    workspace._set("ready", True)
+    entered, release = Event(), Event()
+    calls = []
+
+    def request(action, **args):
+        if action == "openVideo":
+            return dict(video_id=args["videoID"], series_id="series", start_ms=0, end_ms=5000,
+                        duration_ms=5000, description="", path="/fixture")
+        assert action == "askWatch"
+        calls.append(args)
+        if args["question"] == "等待":
+            entered.set()
+            assert release.wait(5)
+        if args["question"] == "失败":
+            raise RuntimeError("模型服务拒绝了请求")
+        return {"text": "收到" + args["question"], "positionMs": args["positionMs"]}
+
+    def wait(predicate):
+        timeout = monotonic() + 5
+        while not predicate():
+            app.processEvents()
+            assert monotonic() < timeout
+            sleep(0.005)
+
+    monkeypatch.setattr(qt_controller, "_request", request)
+    try:
+        workspace.openVideo("one", "一")
+        wait(lambda: workspace.playbackContext.get("videoID") == "one")
+        settings = []
+        workspace.settingsNeeded.connect(settings.append)
+        assert not workspace.askWatch("草稿", 500) and settings == ["watch"]
+        assert not workspace.watchMessages and not calls
+        workspace._set("watchModelReady", True)
+        assert workspace.askWatch("第一问", 500)
+        wait(lambda: not workspace.watchBusy)
+        first_turn = workspace.watchMessages
+        assert [t["role"] for t in first_turn] == ["user", "assistant"]
+        assert workspace.askWatch("等待", 700)
+        wait(entered.is_set)
+        workspace.leaveWatch()
+        workspace.openVideo("two", "二")
+        wait(lambda: workspace.playbackContext.get("videoID") == "two")
+        assert not workspace.watchMessages and not workspace.watchBusy
+        release.set()
+        assert workspace.askWatch("失败", 800)
+        wait(lambda: bool(workspace.watchError))
+        assert workspace.watchError == "模型服务拒绝了请求" and not workspace.error
+        assert not calls[-1]["history"]
+        assert all(turn["text"] != "收到等待" for turn in workspace.watchMessages)
+        workspace.openVideo("one", "一")
+        wait(lambda: workspace.playbackContext.get("videoID") == "one")
+        assert workspace.watchMessages == first_turn and not workspace.watchError
+        assert workspace.askWatch("继续", 1000)
+        wait(lambda: not workspace.watchBusy)
+        assert calls[-1]["history"] == first_turn
+        assert workspace.watchMessages[-1]["text"] == "收到继续"
+    finally:
+        release.set()
+        workspace.shutdown()

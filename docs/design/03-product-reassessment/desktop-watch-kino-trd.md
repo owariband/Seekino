@@ -1,6 +1,6 @@
 # 1. 问题与现状
 
-2026-11-24，Seekino 0.2.11 的原生播放器用“全屏 / 退出”文字表示全屏，观看时没有可以点开的 Kino。[桌面首版](macos-desktop-app-trd.md)将 Chat 留给了后续版本。[Web 观看页](watch-kino-entry-trd.md)已经能在播放位置打开陪看窗。此次将本地原片与提问接进同一播放器，分支为 `feat/desktop-watch-kino`，依赖 [桌面 PR #184](https://github.com/owariband/Seekino/pull/184) 的原生宿主和资料库，先集成上游。
+2026-11-24，Seekino 0.2.11 的原生播放器用“全屏 / 退出”文字表示全屏，观看时没有可以点开的 Kino。[桌面首版](macos-desktop-app-trd.md)将 Chat 留给了后续版本。[Web 观看页](watch-kino-entry-trd.md)已经能在播放位置打开陪看窗。此次将本地原片与提问接进同一播放器，分支为 `feat/desktop-watch-kino`（[PR #185](https://github.com/owariband/Seekino/pull/185)），依赖 [桌面 PR #184](https://github.com/owariband/Seekino/pull/184) 的原生宿主和资料库，先集成上游。
 
 # 2. 影响因素、假设与评价指标
 
@@ -25,4 +25,4 @@ Qt Quick 负责播放器和 Kino 的焦点、窗口布局、全屏状态。Pytho
 
 # 6. 结果验收与闭环
 
-初稿阶段。最终以可安装版本中的入口、实际请求和播放器截图验收，记录未覆盖的环境。
+0.2.12 在 macOS 上用 MyGO 原片验收。浮窗展开时保持 1080 点画幅，手动停靠时画幅缩窄。640 × 440 点窗口改用底部抽屉。播放器、模型地址录入、提交和切片隔离的实测见[安装候选记录](../../report/desktop/native/2026-11-23-acceptance.md)。真实模型输出质量、Windows 窗口和签名公证后的干净系统仍待验收。
