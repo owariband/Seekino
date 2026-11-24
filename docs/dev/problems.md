@@ -2998,3 +2998,5 @@ micrograd v5 共 146 块，整集 90 分 04.884 秒。调度反复锁取候选�
 0.2.15 可拖动观看入口，却从按下到松手一直播放待机动作。0.2.16 将 Web 像素时间线接回桌面手势和新回答气泡。[手势对照与原生验收](../report/desktop/native/2026-11-24-kino-motion.md)
 
 0.2.16 在 960 点宽窗口展开资料树后，播放器把可用的 778 点误当成整个窗口宽度，右侧栏开关消失。观看设置还分散在应用和播放器的两个模型表单。0.2.17 从实际窗口复核悬浮、停靠、拖动和淡化，并在同一个连接编辑器中验证 Ark 与 OpenAI 兼容服务的保存和应用。[问题复现与验收](../design/03-product-reassessment/desktop-provider-panel-settings-trd.md)
+
+0.2.17 的陪看空状态沿用完整对话高度，macOS 文件菜单缺少「关闭窗口」。0.2.18 缩小首次连接的浮窗，并复测 ⌘W 在设置、帮助、播放器内的关闭目标和普通剧集的进度保存。[同帧对照与快捷键验收](../design/03-product-reassessment/desktop-companion-window-close-trd.md)

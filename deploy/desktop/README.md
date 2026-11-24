@@ -57,7 +57,7 @@ python3 deploy/desktop/build_dmg.py /tmp/Seekino.app /tmp/Seekino-macos-arm64.dm
 
 首页可横向浏览系列。点资料树的箭头展开剧集，点系列名称打开选集。普通播放退出后，回到系列页可从「继续观看」接着看。搜索结果显示原片画面、来源和时间段，点「回看原片」定位到命中处。[内页验收](../../docs/report/desktop/native/2026-11-23-acceptance.md#024-内页验收)
 
-播放时点 Kino，打开陪看面板里的「观看设置」。选择「右侧栏」给视频和问答各留一块空间，选择「悬浮窗」可按住标题栏移动整个对话。可以指定鼠标移开几秒后淡化，或关闭自动淡化。窗口宽度不超过 800 点时，对话显示在播放器下方。
+播放时点 Kino，点击面板标题栏上的滑杆图标打开「观看设置」。选择「右侧栏」给视频和问答各留一块空间，选择「悬浮窗」可按住标题栏移动整个对话。可以指定鼠标移开几秒后淡化，或关闭自动淡化。窗口宽度不超过 800 点时，对话显示在播放器下方。macOS 的「文件 → 关闭窗口」和 `⌘W` 可以关闭当前窗口。
 
 在 macOS 活动监视器中按 Seekino 过滤也会显示系统为该应用提供的服务。使用系统文件选择框时可以看到 Open and Save Panel Service 和 QuickLookUIService，系统自动填充也可单列一行。Python、SQLite 与媒体解码库加载在 Seekino 主进程内；衡量整个操作的内存占用时，需同时核对归属于应用的系统服务。 [Apple 文件选择框说明](https://developer.apple.com/documentation/appkit/nsopenpanel)
 

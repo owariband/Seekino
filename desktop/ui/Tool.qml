@@ -4,6 +4,7 @@ import QtQuick.Controls.Basic
 Button {
     id: button
     property string glyph: ""
+    property bool trailingGlyph: false
     property string hint: ""
     property bool chosen: false
     property bool primary: false
@@ -28,6 +29,7 @@ Button {
         implicitWidth: row.implicitWidth
         Row {
             id: row
+            layoutDirection: button.trailingGlyph ? Qt.RightToLeft : Qt.LeftToRight
             anchors.centerIn: parent
             spacing: 7
             Glyph { width: button.symbolSize; height: width; anchors.verticalCenter: parent.verticalCenter; visible: button.glyph !== ""; name: button.glyph; ink: button.contentColor }
