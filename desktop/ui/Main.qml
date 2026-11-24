@@ -67,7 +67,7 @@ ApplicationWindow {
     Shortcut { enabled: !nativeMenus.active; sequence: "Ctrl+,"; onActivated: prefs.openSettings() }
     Shortcut { sequence: "F1"; onActivated: window.openHelp() }
     Shortcut { sequence: "Alt+Left"; enabled: window.page !== "library"; onActivated: window.back() }
-    Shortcut { sequence: "Space"; enabled: window.page === "player" && !watch.episodeFindOpen && !watch.chatHasFocus && !watch.chatEntryFocused && !watchModels.visible && !prefs.opened && !createDialog.opened && !alertDialog.opened; onActivated: watch.playPause() }
+    Shortcut { sequence: "Space"; enabled: window.page === "player" && !watch.episodeFindOpen && !watch.chatHasFocus && !watch.chatEntryFocused && !prefs.opened && !createDialog.opened && !alertDialog.opened; onActivated: watch.playPause() }
     FileDialog {
         id: files; title: qsTr("导入视频"); fileMode: FileDialog.OpenFiles
         nameFilters: [qsTr("视频 (*.mp4 *.mov *.avi *.MP4 *.MOV *.AVI)")]
@@ -76,7 +76,7 @@ ApplicationWindow {
     Connections {
         target: workspace
         function onSettingsNeeded(purpose) {
-            if (purpose === "watch") watchModels.openSettings()
+            if (purpose === "watch") prefs.openSettings("watch")
             else prefs.openSettings(purpose, true)
         }
         function onSeriesCreated(id) { window.showSeries(id) }
@@ -208,7 +208,7 @@ ApplicationWindow {
                     Behavior on opacity { NumberAnimation { duration: Studio.quick; easing.type: Easing.OutCubic } }
                     onOpenHit: (ref,title) => workspace.openResult(ref,title)
                     onJobsRequested: window.go("jobs")
-                    onWatchSettingsRequested: watchModels.openSettings()
+                    onWatchSettingsRequested: prefs.openSettings("watch")
                     onSettingsRequested: prefs.openSettings("search")
                     onImportRequested: window.choose()
                 }
@@ -221,8 +221,8 @@ ApplicationWindow {
                 }
                 WatchPane {
                     id: watch
-                    modalOpen: watchModels.visible || prefs.visible || createDialog.visible || alertDialog.visible
-                    onSettingsRequested: watchModels.openSettings()
+                    modalOpen: prefs.visible || createDialog.visible || alertDialog.visible
+                    onSettingsRequested: prefs.openSettings("watch")
                     anchors.fill: parent; enabled: window.page === "player"; opacity: enabled ? 1 : 0; visible: opacity > 0
                     Behavior on opacity { NumberAnimation { duration: Studio.panel; easing.type: Easing.OutCubic } }
                 }
@@ -252,8 +252,8 @@ ApplicationWindow {
     }
     ImportSheet { id: importPlan; onFinished: series => window.showSeries(series) }
     SeriesTools { id: seriesTools }
-    WatchModelSettings { id: watchModels; z: 210; onClosed: watch.focusChat() }
-    Preferences { id: prefs; objectName: "preferences"; toolbarHeight: toolbar.height }
+    Preferences { id: prefs; objectName: "preferences"; z: 210; toolbarHeight: window.visibility === Window.FullScreen ? 0 : toolbar.height
+        onClosed: if (purpose === "watch") { if (window.page === "player") watch.focusChat(); else if (window.page === "search") search.focusChat() } }
     HelpWindow { id: help; mainWindow: window }
     Sheet {
         id: createDialog; objectName: "createSeriesSheet"

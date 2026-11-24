@@ -16,6 +16,8 @@ FocusScope {
     readonly property string hitStatus: insideHit ? qsTr("命中区间内") : positionMs < startMs ? qsTr("命中区间前") : qsTr("已过命中区间")
     readonly property color rangeColor: "#f0c97b"
     property bool cinema: false
+    // Full-screen playback covers the application chrome. Keep Qt's popup overlay above it.
+    readonly property Item playbackHost: cinema ? player.Window.window.contentItem : player
     property int previousVisibility: Window.Windowed
     property bool controlsAwake: true
     readonly property bool chatOpen: companion.opened
@@ -151,7 +153,7 @@ FocusScope {
 
     Rectangle {
         id: stage; objectName: "videoStage"
-        parent: player.cinema ? player.Overlay.overlay : player
+        parent: player.playbackHost
         anchors.fill: parent
         anchors.bottomMargin: (player.hit ? evidence.height : 0) + companion.reservedHeight
         anchors.rightMargin: companion.reservedWidth
@@ -327,7 +329,7 @@ FocusScope {
 
     WatchCompanion {
         id: companion
-        parent: player.cinema ? player.Overlay.overlay : player
+        parent: player.playbackHost
         anchors.fill: parent
         anchors.bottomMargin: player.hit ? evidence.height : 0
         z: player.cinema ? 102 : 2
@@ -352,7 +354,7 @@ FocusScope {
 
     Rectangle {
         id: evidence; objectName: "hitEvidenceBar"
-        parent: player.cinema ? player.Overlay.overlay : player
+        parent: player.playbackHost
         anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom
         z: player.cinema ? 101 : 1; visible: player.hit; height: details.implicitHeight + 20
         color: player.cinema ? "#171c1a" : Studio.sheet

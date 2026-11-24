@@ -26,7 +26,10 @@ def _read(root):
 def _slot(form):
     if not form or form["auth"] == "none":
         return ""
-    destination = json.dumps([form["protocol"], form["baseUrl"]]).encode()
+    identity = [form["protocol"], form["baseUrl"]]
+    if form.get("serviceID"):
+        identity.append(form["serviceID"])
+    destination = json.dumps(identity).encode()
     return "SEEKINO_WATCH_" + sha256(destination).hexdigest()[:32].upper()
 
 
@@ -42,13 +45,28 @@ def _parse(form):
         raise ValueError("请填写观看问答连接。")
     if form.get("inherit") is True:
         return {}
+    protocol, base, auth = validate_destination(form)
+    model = str(form.get("model") or "").strip()
+    if not model or len(model) > 255:
+        raise ValueError("请填写支持图片输入的模型 ID。")
+    service = service_identity(form)
+    return {"protocol": protocol, "baseUrl": base, "model": model, "auth": auth, **service}
+
+
+def service_identity(form):
+    key = form.get("serviceID")
+    if key is None:
+        return {}
+    if not isinstance(key, str) or len(key) != 32 or any(c not in "0123456789abcdef" for c in key):
+        raise ValueError("服务连接标识无效。")
+    return {"serviceID": key}
+
+
+def validate_destination(form):
     protocol = form.get("protocol")
     if protocol not in {"ark", "openai_chat"}:
         raise ValueError("请选择 Ark 或 OpenAI 兼容协议。")
     base = normalize_personal_endpoint(str(form.get("baseUrl") or ""), allow_local=True)
-    model = str(form.get("model") or "").strip()
-    if not model or len(model) > 255:
-        raise ValueError("请填写支持图片输入的模型 ID。")
     if protocol == "ark" and base != ARK_OPENAI_BASE_URL:
         raise ValueError("Ark 协议使用内置的服务地址。")
     host = urlsplit(base).hostname
@@ -59,7 +77,8 @@ def _parse(form):
     auth = form.get("auth", "key")
     if auth not in {"none", "key"} or (auth == "none" and (protocol != "openai_chat" or not local)):
         raise ValueError("免密连接仅适用于本机 OpenAI 兼容服务。")
-    return {"protocol": protocol, "baseUrl": base, "model": model, "auth": auth}
+    return protocol, base, auth
+
 
 
 def watch_credentials(form):

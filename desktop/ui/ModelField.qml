@@ -11,6 +11,7 @@ ColumnLayout {
     property alias readOnly: entry.readOnly
     property alias validator: entry.validator
     property string inputName: ""
+    function fieldFocus() { entry.forceActiveFocus(Qt.OtherFocusReason) }
     signal edited()
     signal focused(var item)
     spacing: 6

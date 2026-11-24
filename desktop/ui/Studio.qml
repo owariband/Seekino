@@ -8,9 +8,18 @@ QtObject {
         property string appearance: "system"
         property bool pauseOnSend: true
         property bool episodeVisualFind: true
-        property int kinoFadeSeconds: 8
+        property real kinoFadeSeconds: 8
+        property bool kinoFadeEnabled: true
         // -1 follows the presence of materials until the user chooses a layout.
         property int treeVisibility: -1
+    }
+    // Keep the existing native preference keys when opening a library from 0.2.16.
+    property Settings watchPanel: Settings {
+        category: "watch-companion"
+        property bool docked: false
+        property real dockWidth: 440
+        property bool leftEdge: false
+        property real entryBottom: 84
     }
     readonly property int pageTitleSize: Qt.platform.os === "windows" ? 24 : 22
     readonly property int labelSize: Qt.platform.os === "windows" ? 14 : 13
