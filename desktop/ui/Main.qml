@@ -54,7 +54,7 @@ ApplicationWindow {
     Shortcut { enabled: !nativeMenus.active; sequence: "Ctrl+Shift+L"; onActivated: window.toggleTree() }
     Shortcut { enabled: !nativeMenus.active; sequence: "Ctrl+,"; onActivated: prefs.openSettings() }
     Shortcut { sequence: "Alt+Left"; enabled: window.page !== "library"; onActivated: window.back() }
-    Shortcut { sequence: "Space"; enabled: window.page === "player" && !prefs.opened && !createDialog.opened && !alertDialog.opened; onActivated: watch.playPause() }
+    Shortcut { sequence: "Space"; enabled: window.page === "player" && !watch.chatHasFocus && !watch.chatEntryFocused && !watchModels.visible && !prefs.opened && !createDialog.opened && !alertDialog.opened; onActivated: watch.playPause() }
     FileDialog {
         id: files; title: "导入视频"; fileMode: FileDialog.OpenFiles
         nameFilters: ["视频 (*.mp4 *.mov *.avi *.MP4 *.MOV *.AVI)"]
@@ -62,7 +62,10 @@ ApplicationWindow {
     }
     Connections {
         target: workspace
-        function onSettingsNeeded(purpose) { prefs.openSettings(purpose, true) }
+        function onSettingsNeeded(purpose) {
+            if (purpose === "watch") watchModels.openSettings()
+            else prefs.openSettings(purpose, true)
+        }
         function onSeriesCreated(id) { window.showSeries(id) }
         function onPlaybackReady(path,startMs,endMs,durationMs,title,hit) {
             if (window.page === "player") window.rememberPlayback()
@@ -196,7 +199,10 @@ ApplicationWindow {
                     onInspectVideo: (id,title) => window.play(id,title)
                 }
                 WatchPane {
-                    id: watch; anchors.fill: parent; enabled: window.page === "player"; opacity: enabled ? 1 : 0; visible: opacity > 0
+                    id: watch
+                    modalOpen: watchModels.visible || prefs.visible || createDialog.visible || alertDialog.visible
+                    onSettingsRequested: watchModels.openSettings()
+                    anchors.fill: parent; enabled: window.page === "player"; opacity: enabled ? 1 : 0; visible: opacity > 0
                     Behavior on opacity { NumberAnimation { duration: Studio.panel; easing.type: Easing.OutCubic } }
                 }
                 EmptyView {
@@ -223,6 +229,7 @@ ApplicationWindow {
             Behavior on opacity { NumberAnimation { duration: Studio.hover } }
         }
     }
+    WatchModelSettings { id: watchModels; z: 210; onClosed: watch.focusChat() }
     Preferences { id: prefs; objectName: "preferences"; toolbarHeight: toolbar.height }
     Sheet {
         id: createDialog; objectName: "createSeriesSheet"

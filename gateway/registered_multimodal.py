@@ -11,7 +11,7 @@ from pydantic import SecretStr
 from .agent_model.errors import QueryModelIncompleteError
 from .agent_model.multimodal import _chat_content, _encode_inputs, generate_with_tools
 from .personal_endpoint import PersonalModelTarget, personal_http_client
-from .personal_models import _PersonalChatModel
+from .personal_chat import _PersonalChatModel
 from .usage import track_model_call
 
 

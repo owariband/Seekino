@@ -81,8 +81,9 @@ def _while_open(method):
 
 
 class DesktopLibrary:
-    def __init__(self, video: VideoServices, resources: ExitStack, consumer=None):
+    def __init__(self, video: VideoServices, resources: ExitStack, consumer=None, *, artifacts=None):
         self._video = video
+        self._artifacts = artifacts
         self._consumer = consumer
         self._resources = resources
         self._closed = False
@@ -153,6 +154,11 @@ class DesktopLibrary:
         original = self._video.media.get_original(video_id, tenant_id=DEFAULT_LOCAL_TENANT_ID, video=video)
         return PlaybackRange(original.path, 0, video.duration_seconds, video.duration_seconds,
                              video.video_id, video.series_id)
+
+    @_while_open
+    def ask_watch(self, connection, **turn):
+        from .watch import answer_watch
+        return answer_watch(self._video, self._artifacts, connection, **turn)
 
     @_while_open
     def import_file(self, path: Path, *, series_id: str, episode_order: int,
@@ -302,4 +308,4 @@ def open_library(library_root: Path | str, *, gateway_config=None, gateway_envir
         video.uploads.reconcile_deletions()
         if start_consumer:
             consumer.start()
-        return DesktopLibrary(video, cleanup.pop_all(), consumer)
+        return DesktopLibrary(video, cleanup.pop_all(), consumer, artifacts=artifacts)

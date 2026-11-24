@@ -15,6 +15,7 @@ from ..service.parse_control import ACTIVE_STATUSES, is_paused
 from .host import enforce_single_process
 from .runtime import open_library
 from .model_settings import ModelProfile, LEGACY_KEYS
+from .watch_settings import prepare_watch, save_watch, watch_credentials, watch_view
 
 MODEL_KEYS = LEGACY_KEYS
 
@@ -122,6 +123,9 @@ class Application:
         self._transfer_progress = None
         self.profile = ModelProfile.read(self._root)
         self.keys = self.profile.values(keys)
+        slot = watch_view(self._root, self.profile, self.keys)["watchCredentialName"]
+        if slot and keys.get(slot):
+            self.keys[slot] = keys[slot]
         self.library = self._open(self.profile, self.keys)
 
     def _open(self, profile, keys, *, start=True):
@@ -160,12 +164,24 @@ class Application:
                     current.persist()
             self.library = self._open(self.profile, self.keys)
             raise
+        slot = watch_view(self._root, candidate, self.keys)["watchCredentialName"]
+        if slot and self.keys.get(slot):
+            keys[slot] = self.keys[slot]
         self.library, self.profile, self.keys = replacement, candidate, keys
-        return candidate.view(keys)
+        return candidate.view(keys) | watch_view(self._root, candidate, keys)
 
     def call(self, action, args):
         library = self.library
         match action:
+            case "askWatch":
+                from .watch_settings import watch_connection
+                connection = watch_connection(self._root, self.profile, self.keys)
+                if connection is None:
+                    raise ValueError("请先配置 Kino 观看问答使用的视觉模型。")
+                return library.ask_watch(
+                    connection, video_id=args["videoID"], series_id=args["seriesID"],
+                    position_ms=args["positionMs"], question=args["question"], history=args.get("history", []),
+                )
             case "close":
                 library.close()
                 return None
@@ -285,12 +301,14 @@ def _using_library(exclusive):
 
 def _dispatch(action, args):
     global _application
-    if action in {"modelSettings", "prepareModelSettings"}:
+    if action in {"modelSettings", "prepareModelSettings", "prepareWatchSettings"}:
         root = Path(args["root"]).resolve()
         profile = ModelProfile.read(root)
         keys = _application.keys if _application and _application._root.resolve() == root else {}
         if action == "modelSettings":
-            return profile.view(keys)
+            return profile.view(keys) | watch_view(root, profile, keys)
+        if action == "prepareWatchSettings":
+            return watch_credentials(prepare_watch(root, args))
         candidate = profile.prepare(args)
         slots = candidate.slots()
         return {"credentialName": slots.get(candidate.source, ""), "credentialNames": list(candidate.values({})),
@@ -304,9 +322,19 @@ def _dispatch(action, args):
         return _application.profile.view(_application.keys)["credentials"]
     if _application is None:
         raise RuntimeError("资料库尚未打开")
-    if action == "saveModelSettings":
+    if action in {"saveModelSettings", "saveWatchSettings"}:
         if args.get("root") and Path(args["root"]).resolve() != _application._root.resolve():
             raise ValueError("模型设置不属于当前资料库")
+        if action == "saveWatchSettings":
+            root, profile = _application._root, _application.profile
+            form = prepare_watch(root, args)
+            slot = watch_credentials(form)["credentialName"]
+            keys = profile.values(_application.keys)
+            if slot:
+                keys[slot] = (args.get("keys", {}).get(slot) or _application.keys.get(slot) or "").strip()
+            save_watch(root, form, keys)
+            _application.keys = keys
+            return profile.view(keys) | watch_view(root, profile, keys)
         return _application.save_models(args)
     result = _application.call(action, args)
     if action == "close":
@@ -319,7 +347,7 @@ def dispatch(raw: str) -> str:
     try:
         request = json.loads(raw)
         action, args = request["action"], request["args"]
-        with _using_library(action in {"open", "close", "saveModelSettings"}):
+        with _using_library(action in {"open", "close", "saveModelSettings", "saveWatchSettings"}):
             result = _dispatch(action, args)
         return json.dumps({"value": result}, ensure_ascii=False, allow_nan=False)
     except StaleEvidenceError:

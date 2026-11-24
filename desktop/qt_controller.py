@@ -101,14 +101,24 @@ class Workspace(QObject):
     videosBySeriesChanged = Signal()
     jobsChanged = Signal()
     hitsChanged = Signal()
+    watchBusyChanged = Signal()
+    watchErrorChanged = Signal()
+    watchModelReadyChanged = Signal()
+    watchMessagesChanged = Signal()
+    watchBusy = _state_property(bool, "watchBusy", watchBusyChanged)
+    watchModelReady = _state_property(bool, "watchModelReady", watchModelReadyChanged)
+    watchError = _state_property(str, "watchError", watchErrorChanged)
+    watchMessages = _state_property("QVariantList", "watchMessages", watchMessagesChanged)
     settingsNeeded = Signal(str)
     deferredActionResumed = Signal()
     credentialsSaved = Signal()
+    watchConnectionSaved = Signal()
+    watchConnectionFailed = Signal(str)
     seriesCreated = Signal(str)
     playbackContextChanged = Signal()
     playbackContext = _state_property("QVariantMap", "playbackContext", playbackContextChanged)
     playbackReady = Signal(str, "qlonglong", "qlonglong", "qlonglong", str, bool)
-    _completed = Signal(object, object, object)
+    _completed = Signal(object, object, object, bool)
     _importing = Signal(str)
 
     ready = _state_property(bool, "ready", readyChanged)
@@ -141,7 +151,8 @@ class Workspace(QObject):
             "ready": False, "busyImport": False, "importLabel": "", "importProgress": -1.0,
             "searching": False, "lastQuery": "", "partial": False, "searchIndexUnavailable": False, "importModelReady": False, "searchModelReady": False, "error": "",
             "selectedSeries": "", "series": [], "videosBySeries": {}, "jobs": [], "hits": [],
-            "modelConfig": {}, "playbackContext": {},
+            "modelConfig": {}, "playbackContext": {}, "watchModelReady": False,
+            "watchMessages": [], "watchError": "", "watchBusy": False,
         }
         self._closing = self._starting = self._refresh_again = False
         self._watch_settings = QSettings(str(self.root / "watch-history.ini"), QSettings.Format.IniFormat)
@@ -150,6 +161,11 @@ class Workspace(QObject):
         self._working_jobs = set()
         self._play_request = 0
         self._deferred = None
+        self._watch_requests = ThreadPoolExecutor(1, thread_name_prefix="SeekinoWatch")
+        self._watch_generation = 0
+        self._watch_video = None
+        self._watch_future = None
+        self._watch_threads = {}
         self._requests = ThreadPoolExecutor(1, thread_name_prefix="SeekinoLibrary")
         self._transfer = ThreadPoolExecutor(1, thread_name_prefix="SeekinoImport")
         self._queries = ThreadPoolExecutor(1, thread_name_prefix="SeekinoSearch")
@@ -165,7 +181,7 @@ class Workspace(QObject):
             self._state[key] = value
             getattr(self, key + "Changed").emit()
 
-    def _submit(self, work, done, *, executor=None):
+    def _submit(self, work, done, *, executor=None, report_error=True):
         if self._closing:
             return
 
@@ -173,16 +189,16 @@ class Workspace(QObject):
             try:
                 value = work()
             except Exception as exc:
-                self._completed.emit(done, None, str(exc) or type(exc).__name__)
+                self._completed.emit(done, None, str(exc) or type(exc).__name__, report_error)
             else:
-                self._completed.emit(done, value, "")
+                self._completed.emit(done, value, "", report_error)
 
-        (executor or self._requests).submit(run)
+        return (executor or self._requests).submit(run)
 
-    @Slot(object, object, object)
-    def _finish(self, done, value, error):
+    @Slot(object, object, object, bool)
+    def _finish(self, done, value, error, report_error):
         if not self._closing:
-            if error:
+            if error and report_error:
                 self._set("error", error)
             done(value, error)
 
@@ -214,6 +230,7 @@ class Workspace(QObject):
         self._set("modelConfig", settings)
         self._set("importModelReady", settings["importReady"])
         self._set("searchModelReady", settings["searchReady"])
+        self._set("watchModelReady", settings.get("watchReady", False))
 
     @Slot()
     def start(self):
@@ -226,7 +243,10 @@ class Workspace(QObject):
             keys = {}
             warnings = []
             try:
-                keys = self._read_credentials(settings["credentialNames"], warnings=warnings)
+                names = list(settings["credentialNames"])
+                if settings.get("watchCredentialName"):
+                    names.append(settings["watchCredentialName"])
+                keys = self._read_credentials(names, warnings=warnings)
             except (OSError, RuntimeError) as exc:
                 warnings.append(str(exc))
             _request("open", root=str(self.root), keys=keys)
@@ -394,21 +414,32 @@ class Workspace(QObject):
 
     @Slot("QVariantMap", "QVariantMap")
     def saveModelConfig(self, draft, secrets):
+        self._save_connection(draft, secrets, watch=False)
+
+    @Slot("QVariantMap", str)
+    def saveWatchConnection(self, draft, key):
+        self._save_connection(draft, {"connection": key}, watch=True)
+
+    def _save_connection(self, draft, secrets, *, watch):
         if not self.ready or self.savingKeys or self.busyImport or self.searching or self._working_jobs:
-            self._set("error", "请在当前操作结束后保存模型设置")
+            message = "请在当前操作结束后保存模型设置"
+            if watch:
+                self.watchConnectionFailed.emit(message)
+            else:
+                self._set("error", message)
             return
         draft = dict(draft)
         # QML Number arrives in a QVariantMap as a double even for whole dimensions.
         dimensions = draft.get("dimensions")
         if isinstance(dimensions, float) and dimensions.is_integer():
             draft["dimensions"] = int(dimensions)
-        revision = draft.pop("revision", self.modelConfig.get("revision"))
+        revision = draft.pop("revision", self.modelConfig.get("watchRevision" if watch else "revision"))
         retain = draft.pop("retainConfig", False)
         change = {"revision": revision, **({"retainConfig": True} if retain else {"form": draft})}
         self._set("savingKeys", True)
 
         def save():
-            prepared = _request("prepareModelSettings", root=str(self.root), **change)
+            prepared = _request("prepareWatchSettings" if watch else "prepareModelSettings", root=str(self.root), **change)
             allowed = set(prepared["credentialNames"])
             prior = self._read_credentials(allowed)
             updates = {}
@@ -425,7 +456,7 @@ class Workspace(QObject):
                 for name, value in updates.items():
                     self._credentials.write(name, value)
                     written.append(name)
-                settings = _request("saveModelSettings", root=str(self.root), keys=prior | updates, **change)
+                settings = _request("saveWatchSettings" if watch else "saveModelSettings", root=str(self.root), keys=prior | updates, **change)
             except Exception:
                 rollback_failed = False
                 for name in reversed(written):
@@ -444,13 +475,18 @@ class Workspace(QObject):
         def saved(settings, error):
             self._set("savingKeys", False)
             if error:
+                if watch:
+                    self.watchConnectionFailed.emit(error)
                 return
             self._update_models(settings)
+            if watch:
+                self.watchConnectionSaved.emit()
+                return
             self.credentialsSaved.emit()
             # Retry readiness belongs to the original task's frozen model contract.
             self.refresh()
 
-        self._submit(save, saved)
+        self._submit(save, saved, report_error=not watch)
 
     def _resume_model_action(self):
         if not self._deferred or self.savingKeys:
@@ -510,6 +546,56 @@ class Workspace(QObject):
         self._submit(lambda: _request("search", query=query, seriesIDs=scope, keywords=keywords), searched,
                      executor=self._queries)
 
+    @Slot()
+    def leaveWatch(self):
+        self._watch_generation += 1
+        self._watch_video = None
+        if self._watch_future is not None:
+            self._watch_future.cancel()
+            self._watch_future = None
+        self._set("watchBusy", False)
+        self._set("watchError", "")
+        self._set("watchMessages", [])
+
+    @Slot(str, "qlonglong", result=bool)
+    def askWatch(self, question, position_ms):
+        question = question.strip()
+        if not self.ready or self._closing or not self._watch_video or self.watchBusy or not question:
+            return False
+        if len(question) > 4000:
+            self._set("watchError", "问题请控制在 4000 字以内。")
+            return False
+        if not self.watchModelReady:
+            self.settingsNeeded.emit("watch")
+            return False
+        generation = self._watch_generation
+        video_id = self._watch_video
+        series_id = self.playbackContext["seriesID"]
+        history = self._watch_threads.get(video_id, [])
+        pending = [*history, {"role": "user", "text": question, "positionMs": position_ms}]
+        self._set("watchError", "")
+        self._set("watchMessages", pending)
+        self._set("watchBusy", True)
+
+        def answer():
+            return _request("askWatch", videoID=video_id, seriesID=series_id, question=question,
+                            positionMs=position_ms, history=history[-8:])
+
+        def answered(result, failure):
+            if generation != self._watch_generation:
+                return
+            self._watch_future = None
+            if failure:
+                self._set("watchError", failure)
+            else:
+                messages = [*pending, {"role": "assistant", **result}]
+                self._watch_threads[video_id] = messages
+                self._set("watchMessages", messages)
+            self._set("watchBusy", False)
+
+        self._watch_future = self._submit(answer, answered, executor=self._watch_requests, report_error=False)
+        return True
+
     def _open_media(self, action, args, title):
         if not self.ready:
             return
@@ -518,6 +604,9 @@ class Workspace(QObject):
 
         def opened(media, error):
             if not error and request == self._play_request:
+                self.leaveWatch()
+                self._watch_video = media["video_id"]
+                self._set("watchMessages", self._watch_threads.get(self._watch_video, []))
                 self._set("playbackContext", {"videoID": media["video_id"], "seriesID": media["series_id"],
                                               "description": media["description"]})
                 self.playbackReady.emit(media["path"], media["start_ms"], media["end_ms"], media["duration_ms"],
@@ -581,7 +670,7 @@ class Workspace(QObject):
         self._watch_settings.sync()
         self._poll.stop()
         self._progress.stop()
-        for executor in (self._transfer, self._queries, self._requests):
+        for executor in (self._transfer, self._queries, self._watch_requests, self._requests):
             executor.shutdown(wait=True, cancel_futures=True)
         if self._backend_opened:
             _request("close")

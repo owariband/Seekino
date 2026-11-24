@@ -32,10 +32,12 @@ class VideoFrameReader:
     def __init__(
         self, persistence: VideoParsePersistenceService, artifacts: ArtifactStore,
         get_video: Callable[..., Any] | None = None,
+        *, point_extractor: Callable | None = None,
     ) -> None:
         self._persistence = persistence
         self._artifacts = artifacts
         self._get_video = get_video
+        self._point_extractor = point_extractor
 
     def __call__(
         self, request: FrameReadRequest, cached: FrameInspection | None = None,
@@ -168,9 +170,11 @@ class VideoFrameReader:
 
     def read_point(
         self, request: PointFrameReadRequest, cached: FrameInspection | None = None,
+        *, output_store: ArtifactStore | None = None,
     ) -> FrameInspection:
         """Read one source frame by absolute time without a retrieved Chunk."""
 
+        outputs = self._artifacts if output_store is None else output_store
         timeout = request.timeout_seconds
         if timeout is not None and (isinstance(timeout, bool) or not math.isfinite(timeout)):
             raise FrameReadError("INVALID_FRAME_REQUEST", "Frame timeout must be finite.")
@@ -219,7 +223,7 @@ class VideoFrameReader:
             if cache_hit:
                 for frame in frames:
                     remaining()
-                    stored = self._artifacts.fingerprint(frame["artifact_uri"])
+                    stored = outputs.fingerprint(frame["artifact_uri"])
                     if (stored.sha256 != frame["sha256"]
                             or stored.size_bytes != frame["size_bytes"]):
                         raise FrameReadError(
@@ -236,7 +240,8 @@ class VideoFrameReader:
             else:
                 with tempfile.TemporaryDirectory(prefix="seekino-frame-point-") as directory:
                     # Each extraction consumes the same deadline, including prior DB and I/O work.
-                    extracted = extract_video_frames(
+                    extract_point = self._point_extractor or extract_video_frames
+                    extracted = extract_point(
                         source, [request.timestamp_ms], output_dir=Path(directory),
                         max_height=request.max_height, timeout_seconds=remaining(),
                     )
@@ -252,7 +257,7 @@ class VideoFrameReader:
                             "FRAME_SOURCE_CHANGED",
                             "Source video changed during this Kick; request a new Chat turn.",
                         )
-                    stored = self._artifacts.publish_video_artifact(
+                    stored = outputs.publish_video_artifact(
                         extracted[0][1], series_id=current.series_id, video_id=current.video_id,
                         category="keyframes", filename=f"point-{request.inspection_id}.jpg",
                     )
@@ -264,7 +269,7 @@ class VideoFrameReader:
                     })
             remaining()
             artifact = ToolImageArtifact.from_paths([
-                (self._artifacts.resolve(frame["artifact_uri"]),
+                (outputs.resolve(frame["artifact_uri"]),
                  f"Source-video frame requested at {frame['requested_timestamp_ms']} ms.")
                 for frame in frames
             ])
@@ -288,7 +293,7 @@ class VideoFrameReader:
             with tempfile.TemporaryDirectory(prefix="seekino-frame-point-manifest-") as directory:
                 manifest_path = Path(directory) / "manifest.json"
                 manifest_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
-                manifest = self._artifacts.publish_video_artifact(
+                manifest = outputs.publish_video_artifact(
                     manifest_path, series_id=current.series_id, video_id=current.video_id,
                     category="keyframes", filename=f"point-{request.inspection_id}.json",
                 )
