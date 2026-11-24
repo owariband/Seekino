@@ -22,6 +22,11 @@ SETTINGS_KEY = "interface/language"
 MESSAGES: dict[str, str] = {
     # Navigation, menus and window chrome.
     "资料库": "Library",
+    "继续上次的故事": "Continue watching",
+    "上次看到 %1": "Watched to %1",
+    "故事还在继续，回到上次停下的那一刻。": "Pick up the story where you left off.",
+    "%1 部作品": "%1 series",
+    "%1 集 · 查看系列": "%1 episodes · View series",
     "搜索片段": "Find a moment",
     "解析任务": "Parsing tasks",
     "视频系列": "Series",

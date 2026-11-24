@@ -114,6 +114,16 @@ def test_import_search_and_open_hit_through_window_model(tmp_path, monkeypatch):
             assert provider.requestImage(invalid, QSize(), QSize()).isNull()
         poster = PosterProvider().requestImage(series["posterID"], QSize(), QSize())
         assert poster.size() == QSize(128, 96)
+        # History artwork must use the original at the saved position even with a thumbnail.
+        def home_picture(surface, position):
+            return provider.requestImage(f"{surface}/{series['posterID']}/{position}", QSize(), QSize())
+        early = home_picture("hero", 100)
+        later = home_picture("hero", 1400)
+        assert early.size() == later.size() == QSize(128, 96)
+        assert later.pixelColor(40, 40).red() - early.pixelColor(40, 40).red() > 65
+        assert home_picture("hero", -1).size() == QSize(128, 96)
+        assert home_picture("shelf", -1).size() == QSize(128, 96)
+        assert home_picture("hero", "bad").isNull()
         media = []
         workspace.playbackReady.connect(lambda *args: media.append(args))
         workspace.openResult(hit["sourceRef"], hit["title"])

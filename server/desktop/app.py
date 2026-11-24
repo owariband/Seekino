@@ -296,11 +296,21 @@ class Application:
                 video = library.video(video_id)
                 if _poster_id(video) != args["posterID"]:
                     raise ValueError("视频封面已更新")
-                thumbnail = library.thumbnail(video)
-                if thumbnail:
-                    return {"image": str(thumbnail)}
+                surface = args.get("surface", "card")
+                at = args.get("atMs", -1)
+                if surface not in {"card", "hero", "shelf"} or type(at) is not int or at < -1:
+                    raise ValueError("无效的视频预览")
+                if at == -1:
+                    thumbnail = library.thumbnail(video)
+                    if thumbnail:
+                        return {"image": str(thumbnail)}
                 source = library.open_video(video_id)
-                return {"original": str(source.path), "atMs": min(10000, source.duration_ms // 10)}
+                if at == -1:
+                    if surface == "shelf":
+                        at = round(source.duration_ms * .35)
+                    else:
+                        at = min(30000 if surface == "hero" else 10000, source.duration_ms // 10)
+                return {"original": str(source.path), "atMs": max(0, min(at, source.duration_ms - 1))}
             case "openResult" | "openVideo":
                 playback = (library.open_result(args["sourceRef"]) if action == "openResult"
                             else library.open_video(args["videoID"]))

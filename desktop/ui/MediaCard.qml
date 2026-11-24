@@ -6,27 +6,38 @@ AbstractButton {
     id: card
     property string title: ""
     property string cover: ""
+    property string coverFallback: ""
+    property bool compactShelf: false
     property string detail: ""
     property string badge: ""
     property bool episode: false
-    implicitHeight: Math.ceil(width * (episode ? 9/16 : 10/16)) + 55
+    implicitHeight: Math.ceil(width * (episode ? 9/16 : 10/16)) + (episode ? 55 : 86)
     padding: 0; focusPolicy: Qt.StrongFocus
     hoverEnabled: true; Accessible.name: [title,detail].join("，")
     contentItem: ColumnLayout {
-        spacing: 5
+        spacing: card.episode ? 5 : 0
         Item {
             id: art
             Layout.fillWidth: true; Layout.preferredHeight: Math.round(card.width*(card.episode ? 9/16 : 10/16))
             transform: Translate { y: card.down && !Studio.reduce ? 1 : card.hovered && !Studio.reduce ? -2 : 0; Behavior on y { NumberAnimation { duration: Studio.hover; easing.type: Easing.OutCubic } } }
             Rectangle { anchors.fill: parent; radius: card.episode ? 4 : 14; color: Studio.surfaceMuted; border.color: card.visualFocus ? Studio.accent : Studio.line }
             CardShadow { radius: card.episode ? 4 : 14; opacity: card.hovered ? 1 : 0; Behavior on opacity { NumberAnimation { duration: Studio.hover } } }
-            Glyph { anchors.centerIn: parent; width: 30; height: 30; name: "film"; ink: Studio.actionBg }
+            Glyph { anchors.centerIn: parent; width: 30; height: 30; name: "film"; ink: Studio.actionBg; visible: card.episode }
+            Column { visible: !card.episode; anchors.centerIn: parent; width: parent.width - 32; spacing: 15
+                Glyph { anchors.horizontalCenter: parent.horizontalCenter; width: 30; height: 30; name: "film"; ink: Studio.actionBg }
+                Mark { width: parent.width; text: card.title; textFormat: Text.PlainText; color: Studio.actionBg; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.Wrap; maximumLineCount: 3; font.pixelSize: 18; font.weight: Font.DemiBold }
+            }
             Image {
-                anchors.fill: parent; source: card.cover; asynchronous: true; mipmap: true
+                anchors.fill: parent; visible: coverImage.status !== Image.Ready; source: coverImage.status === Image.Error ? card.coverFallback : ""
+                asynchronous: true; mipmap: true; fillMode: Image.PreserveAspectCrop; clip: true
+            }
+            Image {
+                id: coverImage; anchors.fill: parent; source: card.cover; asynchronous: true; mipmap: true
                 fillMode: Image.PreserveAspectCrop; clip: true
                 opacity: status === Image.Ready ? 1 : 0
                 Behavior on opacity { NumberAnimation { duration: Studio.hover } }
             }
+            Rectangle { anchors.fill: parent; color: "#29000000"; visible: !card.episode && Studio.dark && coverImage.status === Image.Ready }
             Canvas {
                 anchors.fill: parent
                 property color paper: Studio.paper
@@ -60,7 +71,8 @@ AbstractButton {
                 Mark { id: duration; anchors.centerIn: parent; text: card.badge; font.pixelSize: 11; color: "#f3f8f5" }
             }
         }
-        Mark { Layout.fillWidth: true; Layout.topMargin: 3; text: card.title; color: card.hovered || card.visualFocus ? Studio.actionBg : Studio.ink; textFormat: Text.PlainText; font.pixelSize: 15; font.weight: Font.DemiBold }
-        Mark { Layout.fillWidth: true; textFormat: Text.PlainText; text: card.detail; color: Studio.muted; font.pixelSize: 12 }
+        Mark { Layout.fillWidth: true; Layout.topMargin: card.episode ? 3 : 14; text: card.title; color: card.hovered || card.visualFocus ? Studio.actionBg : Studio.ink; textFormat: Text.PlainText; font.pixelSize: card.episode ? 15 : card.compactShelf ? 14 : 16; font.weight: Font.DemiBold; wrapMode: Text.Wrap; maximumLineCount: card.episode ? 1 : 2 }
+        Mark { Layout.fillWidth: true; Layout.topMargin: card.episode ? 0 : 7; textFormat: Text.PlainText; text: card.detail; color: Studio.muted; font.pixelSize: 12 }
+        Item { visible: !card.episode; Layout.fillHeight: true }
     }
 }

@@ -17,7 +17,9 @@ Item {
     readonly property string playTitle: resumeVideo?.title || hero?.firstVideoTitle || ""
     readonly property var featured: resumeVideo || members.find(video => video.id === playID)
         || workspace.jobs.find(job => job.latest && job.videoID === playID)
-    readonly property int gutter: width < 580 ? 16 : 24
+    readonly property real gutter: !browsingSeries && hero ? Math.min(96, Math.max(20, width * .05)) : width < 580 ? 16 : 24
+    readonly property real shelfGutter: Math.max(0,(width - 1920) / 2) + gutter
+    readonly property real shelfTitleSize: Math.min(36, Math.max(25.6, width * .022))
     readonly property int columns: Math.max(1, Math.floor((page.width - 2 * gutter + gap) / (190 + gap)))
     readonly property int gap: width < 580 ? 12 : 16
     readonly property real cellWidth: (page.width - 2 * gutter - gap * (columns-1)) / columns
@@ -34,8 +36,8 @@ Item {
         page.forceLayout()
         Qt.callLater(() => page.itemAtIndex(row)?.focusCard(index % columns))
     }
-    // Verify the history's video still belongs to this library before offering to resume it.
-    readonly property bool loadHomeHistory: workspace.ready && !browsingSeries && !!recent && !!heroID
+    // Resolve the featured episode and verify any saved position against this library.
+    readonly property bool loadHomeHistory: workspace.ready && !browsingSeries && !!heroID
     onLoadHomeHistoryChanged: if (loadHomeHistory) workspace.ensureSeriesLoaded(heroID)
     onHeroIDChanged: {
         if (loadHomeHistory) workspace.ensureSeriesLoaded(heroID)
@@ -121,6 +123,12 @@ Item {
         boundsBehavior: Flickable.StopAtBounds
         ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
         model: browser.browsingSeries ? Math.ceil(browser.videos.length / browser.columns) : 0
+        function revealItem(item) {
+            const top = item.mapToItem(contentItem, 0, 0).y
+            const bottom = top + item.height
+            if (top < contentY || item.height > height) contentY = top
+            else if (bottom > contentY + height) contentY = bottom - height
+        }
         Keys.onPressed: event => {
             if (event.key === Qt.Key_PageDown) contentY = Math.min(originY + Math.max(0,contentHeight - height),contentY + height * .85)
             else if (event.key === Qt.Key_PageUp) contentY = Math.max(originY,contentY - height * .85)
@@ -130,25 +138,45 @@ Item {
 
         header: Column {
             width: page.width
-            BrowserHero {
-                width: parent.width; series: browser.hero; featured: browser.featured
-                positionMs: browser.resumeVideo ? browser.recent.positionMs : 0
-                durationMs: browser.resumeVideo ? browser.recent.durationMs : 0
-                seriesPage: browser.browsingSeries; gutter: browser.gutter
-                onPlayRequested: browser.openVideo(browser.playID, browser.playTitle)
-                onBrowseRequested: {
-                    if (browser.browsingSeries && browser.videos.length) browser.focusEpisode(0)
-                    else if (!browser.browsingSeries && browser.hero) browser.openSeries(browser.hero.id)
+            Loader {
+                width: parent.width
+                sourceComponent: browser.browsingSeries ? seriesHero : homeHero
+                Component {
+                    id: homeHero
+                    HomeHero {
+                        series: browser.hero; featured: browser.featured; gutter: browser.gutter
+                        hasHistory: !!browser.resumeVideo
+                        positionMs: hasHistory ? browser.recent.positionMs : 0
+                        durationMs: hasHistory ? browser.recent.durationMs : 0
+                        onPlayRequested: browser.openVideo(browser.playID, browser.playTitle)
+                        onBrowseRequested: if (browser.hero) browser.openSeries(browser.hero.id)
+                        onShowFocusedItem: item => page.revealItem(item)
+                    }
                 }
-                onImportRequested: browser.importRequested()
+                Component {
+                    id: seriesHero
+                    BrowserHero {
+                        series: browser.hero; featured: browser.featured; seriesPage: true; gutter: browser.gutter
+                        positionMs: browser.resumeVideo ? browser.recent.positionMs : 0
+                        durationMs: browser.resumeVideo ? browser.recent.durationMs : 0
+                        onPlayRequested: browser.openVideo(browser.playID, browser.playTitle)
+                        onBrowseRequested: if (browser.videos.length) browser.focusEpisode(0)
+                        onImportRequested: browser.importRequested()
+                    }
+                }
             }
             Item {
-                width: parent.width; height: browser.width < 580 ? 60 : 78
+                width: parent.width
+                height: browser.browsingSeries ? (browser.width < 580 ? 60 : 78)
+                    : 16 + Math.max(browser.shelfTitleSize * 1.3, rail.overflow ? 36 : 0) + 24
                 RowLayout {
-                    anchors.fill: parent; anchors.leftMargin: browser.gutter; anchors.rightMargin: browser.gutter
-                    spacing: 10
-                    Mark { text: browser.browsingSeries ? qsTr("选集") : qsTr("视频系列"); font.pixelSize: Studio.pageTitleSize; font.weight: Font.DemiBold }
-                    Mark { text: browser.browsingSeries ? qsTr("%1 集").arg(browser.videos.length) : qsTr("%1 个系列").arg(workspace.series.length); font.pixelSize: 12; secondary: true }
+                    anchors.fill: parent; anchors.leftMargin: browser.browsingSeries ? browser.gutter : browser.shelfGutter
+                    anchors.rightMargin: anchors.leftMargin
+                    anchors.topMargin: browser.browsingSeries ? 0 : 16; anchors.bottomMargin: browser.browsingSeries ? 0 : 24
+                    spacing: browser.browsingSeries ? 10 : 12
+                    Mark { text: browser.browsingSeries ? qsTr("选集") : qsTr("视频系列"); font.pixelSize: browser.browsingSeries ? Studio.pageTitleSize : Math.round(browser.shelfTitleSize)
+                        font.weight: Font.DemiBold; objectName: "shelfHeading" }
+                    Mark { text: browser.browsingSeries ? qsTr("%1 集").arg(browser.videos.length) : qsTr("%1 部作品").arg(workspace.series.length); font.pixelSize: 12; secondary: true }
                     Item { Layout.fillWidth: true }
                     Tool { objectName:"seriesActions"; visible: browser.browsingSeries; text:qsTr("系列操作"); glyph:"more"
                         onClicked: menu.open()
@@ -158,19 +186,21 @@ Item {
                             MenuItem { text:qsTr("导出解析结果…"); enabled: browser.videos.length>0; onTriggered: browser.manageSeries(browser.heroID,"export") }
                         }
                     }
-                    Tool { visible: rail.visible && rail.contentWidth > rail.width; outlined: true; glyph: "left"; hint: qsTr("上一组系列"); enabled: !rail.atXBeginning; onClicked: rail.moveByPage(-1) }
-                    Tool { visible: rail.visible && rail.contentWidth > rail.width; outlined: true; glyph: "chevron"; hint: qsTr("下一组系列"); enabled: !rail.atXEnd; onClicked: rail.moveByPage(1) }
+                    Tool { visible: rail.overflow; outlined: true; corner: 18; implicitWidth: 36; implicitHeight: 36; glyph: "left"; hint: qsTr("上一组系列"); enabled: !rail.atXBeginning; onClicked: rail.moveByPage(-1) }
+                    Tool { visible: rail.overflow; outlined: true; corner: 18; implicitWidth: 36; implicitHeight: 36; glyph: "chevron"; hint: qsTr("下一组系列"); enabled: !rail.atXEnd; onClicked: rail.moveByPage(1) }
                 }
             }
             ListView {
                 id: rail
                 objectName: "seriesShelf"
-                x: browser.gutter; width: parent.width - 2 * x
+                x: browser.shelfGutter; width: parent.width - 2 * x
                 visible: !browser.browsingSeries
-                readonly property real cardWidth: Math.min(width,Math.min(340,Math.max(214,width * .34)))
-                height: visible ? Math.ceil(cardWidth * 10 / 16) + 68 : 0
+                readonly property real cardWidth: browser.width <= 580 ? width * .76 : Math.min(400, Math.max(240, width * .28))
+                readonly property bool overflow: visible && contentWidth > width + 1
+                height: visible ? Math.ceil(cardWidth * 10 / 16) + 100 : 0
                 model: visible ? workspace.series : []
-                orientation: ListView.Horizontal; spacing: browser.gap
+                orientation: ListView.Horizontal; spacing: browser.width <= 580 ? 16 : Math.max(18, Math.min(32, browser.width * .016))
+                snapMode: ListView.SnapToItem
                 boundsBehavior: Flickable.StopAtBounds; clip: true
                 property bool waitingForFirstCard: true
                 onCountChanged: {
@@ -181,10 +211,15 @@ Item {
                     }
                 }
                 function moveByPage(direction) {
-                    const steps = Math.max(1,Math.floor(width / (cardWidth + spacing)))
-                    const first = Math.round((contentX - originX) / (cardWidth + spacing))
-                    focusCard(Math.max(0, Math.min(count-1, first + direction * steps)), true)
+                    const stride = cardWidth + spacing
+                    const offset = Math.round((contentX - originX + direction * width * .85) / stride) * stride
+                    const dest = originX + Math.max(0, Math.min(contentWidth - width, offset))
+                    shelfSlide.stop()
+                    if (Studio.reduce) contentX = dest
+                    else { shelfSlide.from = contentX; shelfSlide.to = dest; shelfSlide.start() }
                 }
+                NumberAnimation { id: shelfSlide; target: rail; property: "contentX"; duration: Studio.panel; easing.type: Easing.OutCubic }
+                onDraggingChanged: if (dragging) shelfSlide.stop()
                 function focusCard(index, alignStart) {
                     if (index < 0 || index >= count) return
                     positionViewAtIndex(index, alignStart ? ListView.Beginning : ListView.Contain)
@@ -195,10 +230,18 @@ Item {
                     required property var modelData
                     required property int index
                     width: rail.cardWidth; height: implicitHeight
-                    title: modelData.title; cover: modelData.cover || ""
-                    detail: qsTr("%1 集").arg(modelData.count); objectName: "seriesCard_" + modelData.id
+                    readonly property var history: workspace.recentPlayback[modelData.id]
+                    readonly property var saved: history ? (workspace.videosBySeries[modelData.id] || []).find(v => v.id === history.videoID) : null
+                    onHistoryChanged: if (history) workspace.ensureSeriesLoaded(modelData.id)
+                    title: modelData.title
+                    cover: saved?.posterID ? "image://posters/shelf/" + saved.posterID + "/" + history.positionMs
+                        : modelData.posterID ? "image://posters/shelf/" + modelData.posterID + "/-1" : (modelData.cover || "")
+                    coverFallback: modelData.cover || ""
+                    compactShelf: browser.width <= 580
+                    detail: qsTr("%1 集 · 查看系列").arg(modelData.count); objectName: "seriesCard_" + modelData.id
                     onClicked: browser.openSeries(modelData.id)
                     onActiveFocusChanged: if (activeFocus) rail.positionViewAtIndex(index, ListView.Contain)
+                    onVisualFocusChanged: if (visualFocus) page.revealItem(this)
                     Keys.onLeftPressed: rail.focusCard(index - 1,false)
                     Keys.onRightPressed: rail.focusCard(index + 1,false)
                 }
@@ -238,6 +281,6 @@ Item {
                 }
             }
         }
-        footer: Item { width: page.width; height: 24 }
+        footer: Item { width: page.width; height: browser.browsingSeries ? 24 : 64 }
     }
 }
