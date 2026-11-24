@@ -148,6 +148,7 @@ hypnos 于 **2026-04-27 入职实习**，到这次面试复盘时已接近半年
 - [桌面交互延迟](desktop-interaction-latency-trd.md)记录返回首页、拖动原片、打开搜索和启动资料库的对照方法与实测。
 - [桌面 Kino 动作](desktop-kino-motion-trd.md)记录观看入口的拖动、跨回答飞跃和原生动作验收。
 - [观看设置与模型连接](desktop-provider-panel-settings-trd.md)记录对话面板在原生窗口中的布局、淡化行为，以及统一连接编辑器和按用途绑定模型的规则。
+- [陪看浮窗与原生窗口关闭](desktop-companion-window-close-trd.md)记录播放器中空对话的尺寸、控件和 macOS 关闭命令。
 - [桌面与 Web 工作流](desktop-web-workflows-trd.md)记录原生应用对导入、检索、回看和任务管理的接入验收。
 - [视频内文字查找](watch-text-find-trd.md) 记录当前一集的台词、画面文字和播放器毫秒跳转。[PR #105](https://github.com/owariband/Seekino/pull/105)
 - [片内画面查找](watch-visual-find-trd.md) 记录单集出镜、场景查询和独立开关。

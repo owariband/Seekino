@@ -3,6 +3,7 @@ import QtQuick
 import QtCore
 
 QtObject {
+    property var openSheets: []
     property Settings preferences: Settings {
         category: "workspace"
         property string appearance: "system"

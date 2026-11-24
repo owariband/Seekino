@@ -9,6 +9,8 @@ Native.MenuBar {
         title: qsTr("文件")
         Native.MenuItem { text: qsTr("导入视频…"); shortcut: StandardKey.Open; enabled: workspace.ready && !workspace.busyImport; onTriggered: bar.owner.choose() }
         Native.MenuItem { text: qsTr("新建系列…"); enabled: workspace.ready; onTriggered: bar.owner.newFolder() }
+        Native.MenuItem { text: qsTr("关闭窗口"); shortcut: StandardKey.Close
+            enabled: bar.owner?.canCloseCurrentWindow ?? false; onTriggered: bar.owner.closeCurrentWindow() }
         Native.MenuItem { text: qsTr("设置…"); role: Native.MenuItem.PreferencesRole; shortcut: "Ctrl+,"; onTriggered: bar.owner.openSettings() }
     }
     Native.Menu {

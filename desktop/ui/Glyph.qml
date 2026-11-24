@@ -38,6 +38,9 @@ Canvas {
         case "import": path([12,3,12,14,7.5,9.5]); path([12,14,16.5,9.5]); path([4,13,4,19,5,20,19,20,20,19,20,13]); break
         case "play": path([7.5,4.8,19,12,7.5,19.2],true); break
         case "chat": path([3,4.5,21,4.5,21,16,10,16,5,20,5,16,3,16,3,4.5]); break
+        case "history":
+            c.beginPath(); c.arc(12.5,12,8.5,-2.45,2.55); c.stroke()
+            path([3.5,4.5,3.5,9.5,8.5,9.5]); path([12.5,7.5,12.5,12,16,14]); break
         case "stop": round(6,6,12,12,2); break
         case "pause": round(6.5,5,2.5,14,0.8); round(15,5,2.5,14,.8); break
         case "volume": case "muted":

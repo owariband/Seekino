@@ -108,26 +108,35 @@ def verify_watch(app, library):
 
 
 def verify(app):
+    # Only the driver imports the watchdog. The relocated --watch subprocess
+    # runs with -I -S and must continue to use only the packaged runtime.
+    if __package__:
+        from .run_probe import run_probe
+    else:
+        from run_probe import run_probe
+
+    def check_probe(command, **settings):
+        status = run_probe(command, **settings)
+        if status:
+            raise subprocess.CalledProcessError(status, command)
+
     with TemporaryDirectory(prefix="seekino-desktop-qa-") as name:
         work = Path(name).resolve()
         # The seed process imports the exact wheel files but has its own CPython.
-        subprocess.run([sys.executable, "-B", __file__, str(app), "--seed", str(work)],
-                       env={**os.environ, "DYLD_LIBRARY_PATH": str(app / "Contents/Frameworks")},
-                       check=True, timeout=90)
+        check_probe([sys.executable, "-B", __file__, str(app), "--seed", str(work)],
+                    env={**os.environ, "DYLD_LIBRARY_PATH": str(app / "Contents/Frameworks")}, timeout=90)
         moved = work / "Moved Seekino.app"
         shutil.copytree(app, moved, symlinks=True)
         subprocess.run(["codesign", "--verify", "--deep", "--strict", moved], check=True)
-        subprocess.run([sys.executable, "-B", "-I", "-S", __file__, str(moved), "--watch", str(work / "library")],
-                       env={"DYLD_LIBRARY_PATH": str(moved / "Contents/Frameworks"), "HOME": str(work)},
-                       cwd=work, check=True, timeout=45)
+        check_probe([sys.executable, "-B", "-I", "-S", __file__, str(moved), "--watch", str(work / "library")],
+                    env={"DYLD_LIBRARY_PATH": str(moved / "Contents/Frameworks"), "HOME": str(work)},
+                    cwd=work, timeout=45)
         observer = work / "verify_process"
         subprocess.run(["clang", "-Wall", "-Werror", ROOT / "deploy/desktop/verify_process.c", "-o", observer], check=True)
-        positive = subprocess.run([observer, "/bin/sh", "-c", "/usr/bin/true & wait"])
-        if positive.returncode != 86:
+        if run_probe([observer, "/bin/sh", "-c", "/usr/bin/true & wait"], timeout=10) != 86:
             raise RuntimeError("macOS observer missed its positive control")
-        subprocess.run([observer, moved / "Contents/MacOS/Seekino", "--verify-library", work / "library", "红旗"],
-                       cwd=work, env={"PATH": "/nonexistent", "HOME": str(work), "LANG": "en_US.UTF-8"},
-                       check=True, timeout=30)
+        check_probe([observer, moved / "Contents/MacOS/Seekino", "--verify-library", work / "library", "红旗"],
+                    cwd=work, env={"PATH": "/nonexistent", "HOME": str(work), "LANG": "en_US.UTF-8"}, timeout=30)
 
 
 if __name__ == "__main__":

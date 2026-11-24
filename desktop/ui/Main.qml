@@ -42,6 +42,16 @@ ApplicationWindow {
     function toggleTree() { Studio.preferences.treeVisibility = treeShown ? 0 : 1 }
     function openSettings() { prefs.openSettings() }
     function openHelp() { help.open() }
+    readonly property var frontSheet: Studio.openSheets.reduce((front, sheet) =>
+        !front || sheet.z >= front.z ? sheet : front, null)
+    readonly property bool canCloseCurrentWindow: help.active || (window.active &&
+        (!frontSheet || (frontSheet.closePolicy & Popup.CloseOnEscape)))
+    function closeCurrentWindow() {
+        if (!canCloseCurrentWindow) return
+        if (help.active) help.close()
+        else if (frontSheet) frontSheet.close()
+        else window.close()
+    }
     Loader {
         id: nativeMenus; objectName: "nativeMenuLoader"; active: window.mac && Qt.platform.pluginName === "cocoa"
         source: "MacMenu.qml"
