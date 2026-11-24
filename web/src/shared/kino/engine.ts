@@ -713,7 +713,10 @@ export function staticFrame(state: MascotState, width: number, from?: Partial<Cu
   if (state === "run") return { state, pose: "run", flip: false, x: cursor.x };
   if (state === "loading") return buildTimeline("loading", cursor, width).loop[4]!;
   if (state === "think") return buildTimeline("think", cursor, width).loop[0]!;
-  if (state === "oops") return buildTimeline("oops", cursor, width).intro.at(-1)!;
+  if (state === "oops") {
+    const { intro } = buildTimeline("oops", cursor, width);
+    return intro[intro.length - 1]!;
+  }
   return { state, pose: "front", flip: false, x: cursor.x };
 }
 

@@ -145,6 +145,7 @@ MESSAGES: dict[str, str] = {
     "连接视觉模型，问问当前画面。": "Connect a visual model to ask about this frame.",
     "解释一下这帧画面": "Explain this frame",
     "配置问答模型…": "Configure Q&A model…",
+    "正在恢复会话…": "Restoring conversation…",
     "Kino 正在看这一帧…": "Kino is looking at this frame…",
     "重新提问": "Ask again",
     "问问 Kino…": "Ask Kino…",

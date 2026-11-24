@@ -4,7 +4,7 @@ from time import monotonic
 from engine.rag.retrieval.contracts import EventIndexNotReadyError, SeriesNotReadyError
 from server.service.mcp_evidence import StaleEvidenceError
 
-from .watch_history import LIBRARY_CHAT, watch_updates
+from .watch_history import LIBRARY_CHAT, watch_stages, watch_updates
 from .watch_settings import watch_connection
 
 
@@ -22,6 +22,9 @@ def answer_turn(application, action, args):
     store = library.watch_history
     thread = args.get("threadID", "")
     turns = store.view(owner, thread)["messages"] if thread else ([] if "threadID" in args else args.get("history", []))
+    publish_stage = watch_stages.get()
+    if publish_stage:
+        publish_stage("RETRIEVING")
     sources = []
     source_views = []
     if in_library:
@@ -42,6 +45,8 @@ def answer_turn(application, action, args):
                 if turn.get("sources") and not turn.get("failed"):
                     refs.extend(item["sourceRef"] for item in turn["sources"] if item["seriesID"] in scope)
                     break
+        if refs and publish_stage:
+            publish_stage("EVALUATING")
         for ref in dict.fromkeys(refs):
             try:
                 clip = library.open_result(ref)
@@ -65,6 +70,8 @@ def answer_turn(application, action, args):
         video, series, position = owner, args["seriesID"], args["positionMs"]
         scope = [series]
         original = library.open_video(video)
+        if publish_stage:
+            publish_stage("EVALUATING")
         if (original.series_id != series or type(position) is not int or not 0 <= position <= original.duration_ms):
             raise ValueError("提问的系列或播放位置无效。")
         evidence = library.open_result(reference) if reference else None

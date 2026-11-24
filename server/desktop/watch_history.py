@@ -15,6 +15,7 @@ from server.service.agent_attachments import AgentAttachmentService
 
 LIBRARY_CHAT = "@library"
 watch_updates = ContextVar("watch_updates", default=None)
+watch_stages = ContextVar("watch_stages", default=None)
 
 
 def now_ms():
