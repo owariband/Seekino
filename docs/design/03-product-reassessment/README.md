@@ -145,6 +145,7 @@ hypnos 于 **2026-04-27 入职实习**，到这次面试复盘时已接近半年
 - [游客观看问答的执行预算](guest-chat-turn-budget-trd.md) 记录第五次模型调用中断的复现，以及按 IP 计数的独立验收。
 - [观看页 Kino 入口与悬浮陪看窗](watch-kino-entry-trd.md) 记录桌面浮窗、停靠、全屏和手机抽屉的实测。
 - [原生播放器观看问答](desktop-watch-kino-trd.md)记录 Qt 播放器的 Kino 入口、原片取帧和单独配置视觉模型的验收。
+- [桌面交互延迟](desktop-interaction-latency-trd.md)记录返回首页、拖动原片、打开搜索和启动资料库的对照方法与实测。
 - [桌面与 Web 工作流](desktop-web-workflows-trd.md)记录原生应用对导入、检索、回看和任务管理的接入验收。
 - [视频内文字查找](watch-text-find-trd.md) 记录当前一集的台词、画面文字和播放器毫秒跳转。[PR #105](https://github.com/owariband/Seekino/pull/105)
 - [片内画面查找](watch-visual-find-trd.md) 记录单集出镜、场景查询和独立开关。

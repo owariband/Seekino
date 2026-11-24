@@ -9,6 +9,7 @@ from PySide6.QtGui import QImage, QImageReader
 from PySide6.QtQuick import QQuickImageProvider
 
 from .qt_controller import _request
+from .qt_player import playback_frame as _playback_frame
 
 
 @lru_cache(maxsize=64)
@@ -27,22 +28,16 @@ def _hit_image(path, at_ms, identity):
     return _playback_frame(path, at_ms, QSize(384, 216))
 
 
-def _playback_frame(path, at_ms, bounds):
-    # Use the same PTS and rotation rules as playback, including between-frame seeks.
-    from server.desktop.playback import PlaybackDecoder
+# Different bounds keep the two large hero frames from evicting the shelf.
+# At 32 bits per pixel the combined cache is at most 55 MiB.
+@lru_cache(maxsize=2)
+def _hero_image(path, at_ms, identity):
+    return _playback_frame(path, at_ms, QSize(2560, 1440))
 
-    decoder = PlaybackDecoder(path, rgb=True, video_only=True)
-    try:
-        decoder.seek(at_ms)
-        while (sample := decoder.next_sample()) is not None:
-            if sample[0] == 0:
-                _, _, width, height, rgb, stride = sample
-                source = QImage(rgb, width, height, stride, QImage.Format.Format_RGB888)
-                target = source.size().boundedTo(source.size().scaled(bounds, Qt.KeepAspectRatio))
-                return source.scaled(target, Qt.KeepAspectRatio, Qt.SmoothTransformation).copy()
-        raise ValueError("该命中位置没有可预览画面")
-    finally:
-        decoder.close()
+
+@lru_cache(maxsize=12)
+def _shelf_image(path, at_ms, identity):
+    return _playback_frame(path, at_ms, QSize(960, 600))
 
 
 class PosterProvider(QQuickImageProvider):
@@ -65,10 +60,16 @@ class PosterProvider(QQuickImageProvider):
                 poster_id, position = remaining.rsplit("/", 1)
                 if not re.fullmatch(r"-1|[0-9]{1,15}", position):
                     raise ValueError("无效的观看位置")
-                bounds = QSize(2560, 1440) if kind == "hero" else QSize(960, 600)
                 source = _request("posterSource", posterID=poster_id, surface=kind, atMs=int(position))
-                image = (self._read_image(source["image"], bounds) if "image" in source else
-                         _playback_frame(source["original"], source["atMs"], bounds))
+                if "image" in source:
+                    bounds = QSize(2560, 1440) if kind == "hero" else QSize(960, 600)
+                    image = self._read_image(source["image"], bounds)
+                else:
+                    path = source["original"]
+                    stat = Path(path).stat()
+                    identity = (poster_id, stat.st_ino, stat.st_size, stat.st_mtime_ns)
+                    cached_frame = _hero_image if kind == "hero" else _shelf_image
+                    image = cached_frame(path, source["atMs"], identity)
             else:
                 image = self._cover(id)
         except (EOFError, RuntimeError, OSError, ValueError):

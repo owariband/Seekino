@@ -1,0 +1,299 @@
+{
+  "build": "0.2.15",
+  "baseline": "0.2.14",
+  "mac": "arm64, native Cocoa with Metal, 1080x700 logical points at 2x, 120 Hz",
+  "startAndHome": {
+    "new1": {
+      "libraryReadyMs": 4097.53,
+      "fourHomeVisitsMs": [
+        203.55,
+        52.18,
+        50.2,
+        41.77
+      ],
+      "decodesPerVisit": [
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "new2": {
+      "libraryReadyMs": 3496.52,
+      "fourHomeVisitsMs": [
+        199.96,
+        41.69,
+        50.31,
+        57.64
+      ],
+      "decodesPerVisit": [
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "old1": {
+      "libraryReadyMs": 5335.24,
+      "fourHomeVisitsMs": [
+        370.61,
+        220.1,
+        266.8,
+        203.22
+      ],
+      "decodesPerVisit": [
+        4,
+        4,
+        4,
+        4
+      ]
+    },
+    "old2": {
+      "libraryReadyMs": 5609.72,
+      "fourHomeVisitsMs": [
+        348.79,
+        232.61,
+        224.86,
+        224.34
+      ],
+      "decodesPerVisit": [
+        4,
+        4,
+        4,
+        4
+      ]
+    }
+  },
+  "searchOld": {
+    "clickDispatch": {
+      "n": 5,
+      "median": 1.94,
+      "p95": 6.18,
+      "max": 6.18
+    },
+    "focus": [
+      9.08,
+      1.96,
+      0.9,
+      1.04,
+      2.05
+    ],
+    "fadeAlmostOpaque": {
+      "n": 5,
+      "median": 293.86,
+      "p95": 361.42,
+      "max": 361.42
+    },
+    "delivered": [
+      36,
+      36,
+      36,
+      36,
+      36
+    ],
+    "keyDispatch": {
+      "n": 180,
+      "median": 0.59,
+      "p95": 0.91,
+      "max": 1.76
+    },
+    "keyToSwap": {
+      "n": 180,
+      "median": 5.27,
+      "p95": 8.86,
+      "max": 11.18
+    }
+  },
+  "searchNew": {
+    "clickDispatch": {
+      "n": 5,
+      "median": 0.94,
+      "p95": 1.53,
+      "max": 1.53
+    },
+    "focus": [
+      1.54,
+      0.83,
+      1.06,
+      0.81,
+      0.94
+    ],
+    "fadeAlmostOpaque": {
+      "n": 5,
+      "median": 98.47,
+      "p95": 99.22,
+      "max": 99.22
+    },
+    "delivered": [
+      36,
+      36,
+      36,
+      36,
+      36
+    ],
+    "keyDispatch": {
+      "n": 180,
+      "median": 0.37,
+      "p95": 0.62,
+      "max": 1.16
+    },
+    "keyToSwap": {
+      "n": 180,
+      "median": 5.17,
+      "p95": 8.49,
+      "max": 10.12
+    }
+  },
+  "scrub": {
+    "drags": [
+      {
+        "playing": true,
+        "firstPreviewMs": 99.1,
+        "framesDuringDrag": 16,
+        "mouseMoves": 110,
+        "previewDecodes": 18,
+        "releaseTarget": 46318,
+        "committed": 46318
+      },
+      {
+        "playing": false,
+        "firstPreviewMs": 94.5,
+        "framesDuringDrag": 10,
+        "mouseMoves": 110,
+        "previewDecodes": 12,
+        "releaseTarget": 46318,
+        "committed": 46318
+      }
+    ],
+    "stalePreviewAfterSwitch": false,
+    "quickTapMs": 20321,
+    "volumeMuteRatePreserved": true
+  },
+  "posterWhilePlaying": {
+    "savedMs": [
+      9973,
+      19973
+    ],
+    "hiddenRequests": 0,
+    "hiddenDecodes": 0,
+    "newHeroMs": 22357
+  },
+  "kino": {
+    "ark": {
+      "openHit": [
+        3300,
+        5200,
+        3310
+      ],
+      "episodeFindMs": 4250,
+      "answerCitesClip": [
+        4250,
+        true
+      ],
+      "citedRange": [
+        3300,
+        5200,
+        true
+      ],
+      "libraryCitation": [
+        3300,
+        5200,
+        true
+      ],
+      "requests": [
+        {
+          "path": "/api/v3/responses",
+          "images": 2,
+          "evidence": true,
+          "libraryEvidence": false
+        },
+        {
+          "path": "/api/v3/responses",
+          "images": 1,
+          "evidence": false,
+          "libraryEvidence": true
+        }
+      ]
+    },
+    "openaiCompatible": {
+      "openHit": [
+        3300,
+        5200,
+        3326
+      ],
+      "episodeFindMs": 4250,
+      "answerCitesClip": [
+        4250,
+        true
+      ],
+      "citedRange": [
+        3300,
+        5200,
+        true
+      ],
+      "libraryCitation": [
+        3300,
+        5200,
+        true
+      ],
+      "requests": [
+        {
+          "path": "/v1/chat/completions",
+          "images": 2,
+          "evidence": true,
+          "libraryEvidence": false
+        },
+        {
+          "path": "/v1/chat/completions",
+          "images": 1,
+          "evidence": false,
+          "libraryEvidence": true
+        }
+      ]
+    }
+  },
+  "fullscreen": {
+    "platform": "offscreen",
+    "states": [
+      {
+        "window": "Windowed",
+        "icon": "fullscreen",
+        "text": "",
+        "positionMs": 4250,
+        "playing": false,
+        "videoID": "8ef2cc88-d4cc-579f-84af-6394bccd51c6"
+      },
+      {
+        "window": "FullScreen",
+        "icon": "exitFullscreen",
+        "text": "",
+        "positionMs": 4250,
+        "playing": false,
+        "videoID": "8ef2cc88-d4cc-579f-84af-6394bccd51c6"
+      },
+      {
+        "window": "Windowed",
+        "icon": "fullscreen",
+        "text": "",
+        "positionMs": 4250,
+        "playing": false,
+        "videoID": "8ef2cc88-d4cc-579f-84af-6394bccd51c6"
+      }
+    ]
+  },
+  "windows": {
+    "sha256": "ff8491e001ecafe4c1ced3416e841e34ff9453e5f69c1e096de6c9263aef8186",
+    "files": 34616,
+    "crc": "pass",
+    "extractedFiles": 34616,
+    "newCheckedHashPyc": 1095,
+    "previousPyc": 0,
+    "freshCompileMatches": 1095,
+    "cacheMagic": "cb0d0d0a",
+    "nativeHost": "AMD64 PE32+ GUI / UTF16 desktop.main / Py_Main, earlier EXE identical",
+    "bundleParity": "final macOS and Windows ZIP",
+    "businessFiles": 383,
+    "qmlFiles": 35,
+    "nativeWindowsRun": false
+  }
+}

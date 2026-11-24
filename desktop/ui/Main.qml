@@ -34,7 +34,7 @@ ApplicationWindow {
     }
     onClosing: { help.close(); rememberPlayback() }
     Timer { interval: 10000; running: window.page === "player" && !watch.hit; repeat: true; onTriggered: window.rememberPlayback() }
-    function searchPage() { go("search"); Qt.callLater(search.focusQuery) }
+    function searchPage() { go("search"); search.focusQuery() }
     function back() { go(page === "player" ? priorPage : "library") }
     function choose() { if (workspace.ready && !workspace.busyImport) files.open() }
     function destination() { return page === "series" || page === "player" && priorPage === "series" ? workspace.selectedSeries : "" }
@@ -201,8 +201,11 @@ ApplicationWindow {
                 }
                 SearchPane {
                     id: search; anchors.fill: parent
-                    enabled: workspace.ready && window.page === "search"; opacity: enabled ? 1 : 0; visible: opacity > 0
-                    Behavior on opacity { NumberAnimation { duration: Studio.page; easing.type: Easing.OutCubic } }
+                    enabled: workspace.ready && window.page === "search"
+                    visible: enabled || opacity > 0
+                    z: enabled ? 1 : 0
+                    opacity: enabled ? 1 : 0
+                    Behavior on opacity { NumberAnimation { duration: Studio.quick; easing.type: Easing.OutCubic } }
                     onOpenHit: (ref,title) => workspace.openResult(ref,title)
                     onJobsRequested: window.go("jobs")
                     onWatchSettingsRequested: watchModels.openSettings()

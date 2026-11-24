@@ -11,6 +11,7 @@ from tempfile import TemporaryDirectory
 from PIL import Image
 
 from build_host import ROOT, build as build_host
+from startup_bytecode import compile_startup_bytecode
 from qt_bundle import collect, copy_frontend, install_qt
 
 MINIMUM_MACOS = "15.0"
@@ -115,6 +116,7 @@ def build(destination, wheel, version, identity):
         qt_wheels = stage / "qt"
         install_qt(qt_wheels)
         libraries += collect(qt_wheels, resources / "site-packages", frameworks)
+        compile_startup_bytecode(resources, windows=False)
         _run("xcrun", "clang", "-arch", "arm64", f"-mmacosx-version-min={MINIMUM_MACOS}",
              "-O2", "-Wall", "-Werror", "-I", sysconfig.get_path("include"),
              '-DSEEKINO_ENTRY=L"desktop.main"', ROOT / "deploy/desktop/host.c",
@@ -133,7 +135,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("destination", type=Path)
     parser.add_argument("--media-wheel", required=True, type=Path)
-    parser.add_argument("--version", default="0.2.14")
+    parser.add_argument("--version", default="0.2.15")
     parser.add_argument("--identity", default="-", help="Developer ID Application identity for release signing")
     options = parser.parse_args()
     build(options.destination, options.media_wheel, options.version, options.identity)

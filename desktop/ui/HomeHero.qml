@@ -62,12 +62,15 @@ Item {
         width: hero.width; height: hero.compact ? Math.max(0, hero.height - 130) : hero.height * 1.22
         Image {
             anchors.fill: parent; asynchronous: true; mipmap: true; fillMode: Image.PreserveAspectCrop
-            source: hero.posterSource; visible: frame.status !== Image.Ready
+            Binding on source { when: hero.enabled; delayed: true; value: hero.posterSource; restoreMode: Binding.RestoreNone }
+            visible: frame.status !== Image.Ready
         }
         Image {
             id: frame; objectName: "homeHeroFrame"
             anchors.fill: parent; asynchronous: true; mipmap: true; fillMode: Image.PreserveAspectCrop
-            source: hero.artworkSource; opacity: status === Image.Ready ? 1 : 0
+            // Keep the outgoing image for the fade. Hidden pages resume at the latest position.
+            Binding on source { when: hero.enabled; delayed: true; value: hero.artworkSource; restoreMode: Binding.RestoreNone }
+            opacity: status === Image.Ready ? 1 : 0
             Behavior on opacity { NumberAnimation { duration: Studio.hover } }
         }
         Rectangle { anchors.fill: parent; color: "#29000000"; visible: Studio.dark }
