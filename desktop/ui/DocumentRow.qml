@@ -12,11 +12,11 @@ Button {
     property string preview: ""
     readonly property bool compact: width < 500
     readonly property int thumbWidth: compact ? 104 : 168
-    implicitHeight: Math.max(compact ? 102 : 118, body.implicitHeight + 22)
+    implicitHeight: Math.max(compact ? 102 : 118, body.implicitHeight + 24)
     height: implicitHeight
-    leftPadding: 10; rightPadding: compact ? 10 : 16; topPadding: 10; bottomPadding: 10
+    leftPadding: 16; rightPadding: 12; topPadding: 12; bottomPadding: 12
     hoverEnabled: true; activeFocusOnTab: true
-    Accessible.name: [title, timeRange, sourceLabel, filename, "回看原片"].join("，")
+    Accessible.name: [title, sourceLabel, timeRange, filename, "回看原片"].filter(Boolean).join("，")
     SequentialAnimation {
         id: entry
         ParallelAnimation {
@@ -35,6 +35,36 @@ Button {
     contentItem: RowLayout {
         transform: Translate { id: slide }
         spacing: card.compact ? 10 : 14
+        Column {
+            id: body
+            Layout.fillWidth: true; Layout.minimumWidth: 0; Layout.preferredWidth: 0
+            spacing: 4
+            Text {
+                width: body.width; maximumLineCount: 2; wrapMode: Text.Wrap; elide: Text.ElideRight
+                color: Studio.ink; font.pixelSize: 15
+                lineHeightMode: Text.FixedHeight; lineHeight: 23
+                textFormat: card.markedTitle ? Text.StyledText : Text.PlainText
+                // The controller escaped all source text and inserted only <b> markers.
+                text: card.markedTitle ? card.markedTitle.replace(/<b>/g, '<b><font color="' + (Studio.dark ? Studio.accent : Studio.actionBg) + '">').replace(/<\/b>/g,"</font></b>") : card.title
+            }
+            Row {
+                spacing: 6
+                Mark {
+                    visible: !!text; text: card.sourceLabel || card.filename
+                    width: Math.min(implicitWidth, Math.max(0, body.width - timestamp.implicitWidth - 20))
+                    textFormat: Text.PlainText; secondary: true; font.pixelSize: 12
+                }
+                Mark { visible: !!(card.sourceLabel || card.filename) && !!card.timeRange; text: "·"; secondary: true; font.pixelSize: 12 }
+                Mark {
+                    id: timestamp
+                    text: card.timeRange; secondary: true; font.pixelSize: 12; font.features: ({ "tnum": 1 })
+                }
+            }
+            Mark {
+                width: body.width; visible: !!card.sourceLabel && !!text && text !== card.sourceLabel
+                textFormat: Text.PlainText; text: card.filename; color: Studio.dim; font.pixelSize: 12
+            }
+        }
         Rectangle {
             Layout.preferredWidth: card.thumbWidth; Layout.preferredHeight: Math.round(card.thumbWidth*9/16)
             radius: 8; color: Studio.surfaceMuted; clip: true
@@ -48,31 +78,19 @@ Button {
                 Glyph { anchors.horizontalCenter: parent.horizontalCenter; width: 20; height: 20; name: "film"; ink: Studio.muted }
                 Mark { anchors.horizontalCenter: parent.horizontalCenter; text: thumb.status === Image.Loading ? "载入画面…" : "暂无预览"; secondary: true; font.pixelSize: 11 }
             }
-        }
-        ColumnLayout {
-            id: body; Layout.fillWidth: true; spacing: 5
-            Mark {
-                Layout.fillWidth: true; color: Studio.dark ? Studio.accent : Studio.actionBg
-                font.pixelSize: 12; font.weight: Font.DemiBold; text: card.timeRange
+            Rectangle {
+                anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.margins: 4
+                height: 22; radius: height/2; color: "#d0192320"
+                width: label.visible ? label.implicitWidth + 29 : height
+                Behavior on width { NumberAnimation { duration: Studio.hover; easing.type: Easing.OutCubic } }
+                clip: true
+                Glyph { x: 5; anchors.verticalCenter: parent.verticalCenter; width: 12; height: 12; name: "play"; ink: "#f3f8f5" }
+                Mark {
+                    id: label; x: 22; anchors.verticalCenter: parent.verticalCenter
+                    visible: card.hovered || card.visualFocus
+                    text: "回看原片"; color: "#f3f8f5"; font.pixelSize: 11
+                }
             }
-            Text {
-                Layout.fillWidth: true; maximumLineCount: 2; wrapMode: Text.Wrap; elide: Text.ElideRight
-                color: Studio.ink; font.pixelSize: card.compact ? 14 : 15; font.weight: Font.Medium
-                textFormat: Text.StyledText
-                // The controller escaped all source text and inserted only <b> markers.
-                text: card.markedTitle.replace(/<b>/g, '<b><font color="' + (Studio.dark ? Studio.accent : Studio.actionBg) + '">').replace(/<\/b>/g,"</font></b>")
-            }
-            Mark { Layout.fillWidth: true; visible: !!card.sourceLabel; textFormat: Text.PlainText; text: card.sourceLabel; secondary: true; font.pixelSize: 12 }
-            RowLayout {
-                Layout.fillWidth: true; visible: !!card.filename; spacing: 5
-                Glyph { Layout.preferredWidth: 12; Layout.preferredHeight: 12; name: "film"; ink: Studio.muted }
-                Mark { Layout.fillWidth: true; textFormat: Text.PlainText; text: card.filename; secondary: true; font.pixelSize: 12 }
-            }
-        }
-        Row {
-            spacing: 5
-            Glyph { anchors.verticalCenter: parent.verticalCenter; width: 15; height: 15; name: "play"; ink: Studio.dark ? Studio.accent : Studio.actionBg }
-            Mark { visible: !card.compact; text: "回看原片"; font.pixelSize: 12; color: Studio.dark ? Studio.accent : Studio.actionBg }
         }
     }
     Keys.onReturnPressed: click()

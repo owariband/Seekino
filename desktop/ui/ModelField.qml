@@ -13,10 +13,10 @@ ColumnLayout {
     property string inputName: ""
     signal edited()
     signal focused(var item)
-    spacing: 4
+    spacing: 6
     RowLayout {
         Layout.fillWidth: true
-        Mark { text: field.label; font.weight: Font.Medium; Layout.fillWidth: true }
+        Mark { text: field.label; Layout.fillWidth: true }
         Mark { text: field.caption; visible: !!text; secondary: true; font.pixelSize: 12 }
     }
     Entry {

@@ -26,10 +26,10 @@ Item {
         ScrollBar.vertical: ScrollBar { policy: viewport.interactive ? ScrollBar.AsNeeded : ScrollBar.AlwaysOff }
         ColumnLayout {
         id: content
-        width: Math.min(viewport.width - Math.max(32,Math.min(84,viewport.width*.10)),760)
+        width: Math.min(viewport.width - (viewport.width < 580 ? 32 : 48), 760)
         x: (viewport.width-width)/2
-        y: searchPane.draft ? Math.max(15,(viewport.height-height)/2) : 14
-        height: searchPane.draft ? implicitHeight : viewport.height-32
+        y: searchPane.draft ? Math.max(16,(viewport.height-height)/2) : 16
+        height: searchPane.draft ? implicitHeight : viewport.height - 2*y
         spacing: 8
         ColumnLayout {
             visible: searchPane.draft; Layout.fillWidth: true; spacing: 13
@@ -64,7 +64,7 @@ Item {
             Layout.fillHeight: true; visible: !searchPane.draft
             ColumnLayout {
                 anchors.fill: parent; spacing: 10
-                Mark { Layout.fillWidth: true; font.pixelSize: 18; font.weight: Font.DemiBold; text: workspace.searching ? "正在搜索…" : "“" + workspace.lastQuery + "”" }
+                Mark { Layout.fillWidth: true; font.pixelSize: Studio.pageTitleSize; font.weight: Font.DemiBold; text: workspace.searching ? "正在搜索…" : "“" + workspace.lastQuery + "”" }
                 Mark { visible: !workspace.searching && !workspace.searchIndexUnavailable; text: workspace.hits.length + " 个片段"; secondary: true; font.pixelSize: 12 }
                 Rectangle {
                     visible: workspace.partial && !workspace.searching
@@ -105,7 +105,7 @@ Item {
                             objectName: "searchHit_" + modelData.sourceRef
                             width: ListView.view.width; title: modelData.description || modelData.title
                             markedTitle: modelData.highlighted
-                            sourceLabel: [modelData.seriesTitle, "第 " + modelData.episode + " 集"].filter(Boolean).join("  ·  ")
+                            sourceLabel: [modelData.seriesTitle, modelData.episode ? "第 " + modelData.episode + " 集" : ""].filter(Boolean).join(" · ")
                             filename: modelData.filename
                             timeRange: Studio.time(modelData.startMs, true) + " – " + Studio.time(modelData.endMs, true)
                             preview: modelData.cover || ""; onClicked: searchPane.openHit(modelData.sourceRef,modelData.title)

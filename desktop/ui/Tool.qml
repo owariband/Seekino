@@ -12,7 +12,7 @@ Button {
     property color fillColor: primary ? Studio.actionBg : (outlined ? Studio.sidebar : "transparent")
     property color contentColor: primary ? Studio.actionFg : (chosen ? Studio.actionBg : Studio.muted)
     property int symbolSize: 17
-    property int textSize: 13
+    property int textSize: Studio.labelSize
     hoverEnabled: true
     focusPolicy: Qt.StrongFocus
     implicitWidth: text.length ? contentItem.implicitWidth + (primary ? 34 : 22) : 30

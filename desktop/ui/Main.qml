@@ -10,7 +10,7 @@ ApplicationWindow {
     visible: true; color: Studio.paper
     topPadding: 0; bottomPadding: 0; leftPadding: 0; rightPadding: 0
     title: page === "player" ? watch.title + " — Seekino" : "Seekino"
-    font.pixelSize: 13
+    font.pixelSize: Studio.labelSize
     readonly property bool mac: Qt.platform.os === "osx"
     property string page: "library"
     property string priorPage: "library"

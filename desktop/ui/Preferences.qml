@@ -42,7 +42,7 @@ Sheet {
     y: parent ? Math.round(toolbarHeight + (parent.height - toolbarHeight - height)/2) : 0
     height: Math.min(implicitHeight, parent ? parent.height - toolbarHeight - 24 : implicitHeight)
     Behavior on height { NumberAnimation { duration: prefs.opened ? Studio.panel : 0; easing.type: Easing.OutCubic } }
-    padding: compact ? 16 : 23
+    padding: compact ? 16 : 24
     closePolicy: workspace.savingKeys ? Popup.NoAutoClose : Popup.CloseOnEscape
 
     function isLoopbackUrl(value) {
@@ -125,27 +125,31 @@ Sheet {
         Accessible.role: Accessible.RadioButton; Accessible.checked: chosen
     }
     contentItem: ColumnLayout {
-        spacing: prefs.compact ? 9 : 10
+        spacing: prefs.compact ? 8 : 12
         RowLayout {
             Layout.fillWidth: true
-            Mark { text: "设置"; font.pixelSize: 22; font.weight: Font.DemiBold; Layout.fillWidth: true }
-            Tool { glyph: "close"; hint: "关闭设置"; enabled: !workspace.savingKeys; onClicked: prefs.close() }
-        }
-        RowLayout {
-            Layout.fillWidth: true; spacing: 5
-            Choice { id: modelTab; objectName: "modelTab"; text: "模型连接"; chosen: !prefs.appearance; onClicked: { prefs.appearance=false; scroll.contentY=0 } }
-            Choice { objectName: "appearanceTab"; text: "外观"; chosen: prefs.appearance; onClicked: { prefs.appearance=true; scroll.contentY=0 } }
+            Mark { text: "设置"; font.pixelSize: Studio.pageTitleSize; font.weight: Font.DemiBold }
             Item { Layout.fillWidth: true }
+            RowLayout {
+                spacing: 5
+                Choice { id: modelTab; objectName: "modelTab"; text: "模型连接"; chosen: !prefs.appearance; onClicked: { prefs.appearance=false; scroll.contentY=0 } }
+                Choice { objectName: "appearanceTab"; text: "外观"; chosen: prefs.appearance; onClicked: { prefs.appearance=true; scroll.contentY=0 } }
+            }
+            Item { Layout.fillWidth: true }
+            Tool { glyph: "close"; hint: "关闭设置"; enabled: !workspace.savingKeys; onClicked: prefs.close() }
         }
         Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: Studio.line }
         Flickable {
             id: scroll; objectName: "settingsScroll"; Layout.fillWidth: true; Layout.fillHeight: true
             implicitHeight: fields.implicitHeight; contentWidth: width; contentHeight: fields.implicitHeight
-            clip: true; boundsBehavior: Flickable.StopAtBounds; ScrollBar.vertical: ScrollBar { }
+            clip: true; boundsBehavior: Flickable.StopAtBounds
+            ScrollBar.vertical: ScrollBar {
+                policy: scroll.contentHeight > scroll.height ? ScrollBar.AlwaysOn : ScrollBar.AlwaysOff
+            }
             ColumnLayout {
-                id: fields; width: scroll.width - (scroll.contentHeight > scroll.height ? 12 : 0); spacing: 10
+                id: fields; width: scroll.width - (scroll.contentHeight > scroll.height ? 12 : 0); spacing: prefs.compact ? 16 : 24
                 ColumnLayout {
-                    visible: prefs.appearance; Layout.fillWidth: true; spacing: 7
+                    visible: prefs.appearance; Layout.fillWidth: true; spacing: 8
                     Heading { text: "外观" }
                     RowLayout {
                         Repeater {
@@ -162,7 +166,7 @@ Sheet {
                     Note { text: "外观更改立即生效。" }
                 }
                 ColumnLayout {
-                    visible: !prefs.appearance; Layout.fillWidth: true; spacing: 6
+                    visible: !prefs.appearance; Layout.fillWidth: true; spacing: 8
                     Heading { text: prefs.retain ? "已配置的模型服务" : "选择模型服务" }
                     Note {
                         objectName: "settingsPurpose"
@@ -174,7 +178,7 @@ Sheet {
                             : "用自己的模型服务解析视频、建立索引和检索画面。"
                     }
                     RowLayout {
-                        visible: !prefs.retain; Layout.topMargin: 2; spacing: 7
+                        visible: !prefs.retain; spacing: 8
                         Repeater {
                             model: prefs.providers
                             Choice {
@@ -187,9 +191,9 @@ Sheet {
                 }
                 ColumnLayout {
                     visible: !prefs.appearance && !prefs.retain && !!prefs.protocol
-                    Layout.fillWidth: true; spacing: 7; enabled: !prefs.busy
+                    Layout.fillWidth: true; spacing: 8; enabled: !prefs.busy
                     RowLayout {
-                        Layout.fillWidth: true; spacing: 10
+                        Layout.fillWidth: true; spacing: 12
                         Field {
                             id: address; inputName: "serviceUrl"; Layout.preferredWidth: 2
                             label: "服务地址"; caption: prefs.protocol === "ark" ? "北京" : ""
@@ -202,8 +206,8 @@ Sheet {
                         }
                     }
                     RowLayout {
-                        visible: prefs.localEndpoint; Layout.fillWidth: true; spacing: 6
-                        Mark { text: "鉴权"; font.weight: Font.Medium }
+                        visible: prefs.localEndpoint; Layout.fillWidth: true; Layout.topMargin: prefs.compact ? 8 : 12; spacing: 8
+                        Mark { text: "鉴权" }
                         Choice {
                             objectName: "authKey"; text: "使用密钥"; chosen: !prefs.keyless
                             onClicked: { prefs.keyless=false; prefs.justSaved=false }
@@ -215,13 +219,14 @@ Sheet {
                     }
                     Field {
                         id: key; inputName: "connectionKey"; visible: !prefs.anonymous
+                        Layout.topMargin: prefs.localEndpoint ? 0 : prefs.compact ? 8 : 12
                         label: "API Key"; caption: prefs.hasSavedKey ? "此地址已保存密钥" : ""
                         placeholder: prefs.hasSavedKey ? "留空保留当前密钥" : "输入此服务的 API Key"
                         secret: TextInput.Password
                     }
-                    Heading { Layout.topMargin: 3; text: "模型 ID" }
+                    Heading { Layout.topMargin: prefs.compact ? 8 : 16; text: "模型 ID" }
                     GridLayout {
-                        Layout.fillWidth: true; columns: 2; columnSpacing: 10; rowSpacing: 8
+                        Layout.fillWidth: true; columns: 2; columnSpacing: 12; rowSpacing: 12
                         Field {
                             id: vision; inputName: "visionModel"
                             label: "视频理解"; placeholder: "支持视频输入的模型 ID"
@@ -250,7 +255,7 @@ Sheet {
                     }
                 }
                 ColumnLayout {
-                    visible: !prefs.appearance && prefs.retain; Layout.fillWidth: true; spacing: 10
+                    visible: !prefs.appearance && prefs.retain; Layout.fillWidth: true; spacing: 16
                     Repeater {
                         model: prefs.retain ? prefs.config.connections || [] : []
                         ColumnLayout {

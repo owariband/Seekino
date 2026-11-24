@@ -23,7 +23,7 @@ if sys.platform == "win32":
 
 from PySide6 import QtCore
 from PySide6.QtCore import QObject, Property, Signal, Qt, QUrl
-from PySide6.QtGui import QGuiApplication, QIcon
+from PySide6.QtGui import QFontDatabase, QFontInfo, QGuiApplication, QIcon
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuickControls2 import QQuickStyle
 
@@ -46,6 +46,22 @@ class PlatformPreferences(QObject):
         if value != self._reduced:
             self._reduced = value
             self.changed.emit()
+
+
+def configure_interface_font(app):
+    font = app.font()
+    system_family = QFontInfo(font).family()
+    if sys.platform == "darwin":
+        families = [system_family, "PingFang SC"]
+    elif sys.platform == "win32":
+        latin = next((family for family in ("Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI")
+                      if QFontDatabase.hasFamily(family)), system_family)
+        families = [latin, "Microsoft YaHei UI"]
+    else:
+        return
+    # Match both scripts at the requested weight in mixed Chinese/Latin labels.
+    font.setFamilies(families)
+    app.setFont(font)
 
 
 def _cocoa_messages():
@@ -103,9 +119,10 @@ def main():
         os.environ["QT_QUICK_BACKEND"] = "software"
     QQuickStyle.setStyle("Basic")
     app = QGuiApplication([sys.argv[0]])
+    configure_interface_font(app)
     app.setApplicationName("Seekino")
     app.setOrganizationName("Seekino")
-    app.setApplicationVersion("0.2.9")
+    app.setApplicationVersion("0.2.10")
     app.setWindowIcon(QIcon(str(basedir.parent / "SeekinoLogo.png")))
     from .qt_player import register_player
     register_player()

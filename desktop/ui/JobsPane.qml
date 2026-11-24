@@ -77,13 +77,13 @@ Item {
     ListModel { id: rows }
     ColumnLayout {
         anchors.fill: parent
-        anchors.leftMargin: pane.width < 540 ? 18 : 30
+        anchors.leftMargin: pane.width < 580 ? 16 : 24
         anchors.rightMargin: anchors.leftMargin
-        anchors.topMargin: pane.height < 480 ? 16 : 28
+        anchors.topMargin: pane.height < 480 ? 16 : 24
         spacing: 0
         RowLayout {
             Layout.fillWidth: true
-            Mark { Layout.fillWidth: true; text: "解析任务"; font.pixelSize: 26; font.weight: Font.DemiBold }
+            Mark { Layout.fillWidth: true; text: "解析任务"; font.pixelSize: Studio.pageTitleSize; font.weight: Font.DemiBold }
             Tool {
                 objectName: "refreshJobs"; Layout.preferredWidth: 72
                 text: pane.manualRefresh ? "刷新中…" : "刷新"
@@ -125,7 +125,7 @@ Item {
                     objectName: "taskFilter_" + modelData.key
                     text: modelData.label + " " + pane.count(modelData.key)
                     textSize: 12; corner: 5; Layout.preferredHeight: 34
-                    Layout.preferredWidth: Math.min(implicitWidth, (pane.width - (pane.width < 540 ? 40 : 64)) / 5)
+                    Layout.preferredWidth: Math.min(implicitWidth, tabs.width / pane.filters.length)
                     contentColor: selected ? Studio.ink : Studio.muted
                     Accessible.role: Accessible.PageTab
                     Accessible.selected: selected

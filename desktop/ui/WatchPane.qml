@@ -201,6 +201,7 @@ FocusScope {
                     PlayerButton { text: "+10s"; hint: "前进 10 秒 (→)"; onClicked: player.skip(10000) }
                     Text {
                         Layout.leftMargin: 5; color: "#c6d0ce"; font.pixelSize: 12
+                        font.features: ({ "tnum": 1 })
                         text: Studio.time(seek.pressed ? seek.value : surface.positionMs, player.hit) + " / " + Studio.time(surface.durationMs, false)
                     }
                     Item { Layout.fillWidth: true }
@@ -249,7 +250,12 @@ FocusScope {
                     Layout.fillWidth: true; spacing: 7
                     Rectangle { implicitWidth: 12; implicitHeight: 3; radius: 1; color: evidence.labelColor }
                     Text { text: player.hitStatus; color: evidence.labelColor; font.weight: Font.DemiBold; font.pixelSize: 12 }
-                    Text { Layout.fillWidth: true; font.pixelSize: 12; color: evidence.secondary; text: Studio.time(player.startMs, true) + " – " + Studio.time(player.endMs, true); elide: Text.ElideRight }
+                    Text {
+                        Layout.fillWidth: true; font.pixelSize: 12; color: evidence.secondary
+                        font.features: ({ "tnum": 1 })
+                        text: Studio.time(player.startMs, true) + " – " + Studio.time(player.endMs, true)
+                        elide: Text.ElideRight
+                    }
                 }
                 Text {
                     Layout.fillWidth: true; text: player.hitDescription; textFormat: Text.PlainText

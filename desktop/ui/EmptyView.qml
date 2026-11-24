@@ -34,17 +34,19 @@ ColumnLayout {
     }
     Text {
         Layout.fillWidth: true; Layout.topMargin: 12; text: empty.title; color: Studio.ink
-        font.pixelSize: empty.firstImport ? 27 : 22; font.weight: Font.DemiBold
+        font.pixelSize: empty.firstImport ? Studio.pageTitleSize + 4 : Studio.pageTitleSize
+        font.weight: Font.DemiBold
         horizontalAlignment: Text.AlignHCenter; wrapMode: Text.Wrap
     }
     Text {
         Layout.fillWidth: true; Layout.topMargin: 8; text: empty.message; visible: text.length > 0
-        color: Studio.muted; font.pixelSize: 14; lineHeight: 1.45
+        color: Studio.muted; font.pixelSize: 15
+        lineHeightMode: Text.FixedHeight; lineHeight: 23
         horizontalAlignment: Text.AlignHCenter; wrapMode: Text.Wrap
     }
     Tool {
         objectName: empty.firstImport ? "emptyImport" : "emptyAction"
-        Layout.alignment: Qt.AlignHCenter; Layout.topMargin: empty.firstImport ? 22 : 20
+        Layout.alignment: Qt.AlignHCenter; Layout.topMargin: empty.firstImport ? 24 : 16
         visible: empty.action.length > 0; glyph: "import"; text: empty.action
         primary: true; onClicked: empty.activated()
     }

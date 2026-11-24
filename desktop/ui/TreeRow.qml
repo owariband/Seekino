@@ -44,7 +44,7 @@ Button {
             }
         }
         Glyph { Layout.preferredWidth: 15; Layout.preferredHeight: 15; name: rowButton.branch ? "folder" : "film"; ink: rowButton.current ? Studio.ink : Studio.muted }
-        Mark { Layout.fillWidth: true; text: rowButton.text; font.pixelSize: 13; color: Studio.ink }
+        Mark { Layout.fillWidth: true; text: rowButton.text; font.pixelSize: Studio.labelSize; color: Studio.ink }
         Mark { visible: rowButton.branch && rowButton.count > 0; text: rowButton.count; font.pixelSize: 11; color: Studio.muted; Layout.rightMargin: 4 }
     }
     leftPadding: 2; rightPadding: 4
@@ -58,5 +58,5 @@ Button {
     ToolTip.visible: hovered && contentItem.width < fontMetrics.advanceWidth(text) + 56
     ToolTip.text: text
     ToolTip.delay: 550
-    FontMetrics { id: fontMetrics; font.pixelSize: 13 }
+    FontMetrics { id: fontMetrics; font.pixelSize: Studio.labelSize }
 }

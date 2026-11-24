@@ -9,6 +9,8 @@ QtObject {
         // -1 follows the presence of materials until the user chooses a layout.
         property int treeVisibility: -1
     }
+    readonly property int pageTitleSize: Qt.platform.os === "windows" ? 24 : 22
+    readonly property int labelSize: Qt.platform.os === "windows" ? 14 : 13
     readonly property bool dark: preferences.appearance === "dark" ||
         (preferences.appearance === "system" && Application.styleHints.colorScheme === Qt.Dark)
     readonly property bool reduce: desktopPlatform?.reducedMotion ?? true

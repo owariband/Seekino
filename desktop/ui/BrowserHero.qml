@@ -8,7 +8,7 @@ Item {
     property bool seriesPage: false
     property int positionMs: 0
     property int durationMs: 0
-    property int gutter: 32
+    property int gutter: 24
     readonly property bool compact: width < 580
     readonly property bool quietSize: width < 700
     readonly property string cover: positionMs > 0 && featured?.cover ? featured.cover : series?.cover || ""
@@ -25,8 +25,8 @@ Item {
         id: action
         property bool trailing: false
         primary: true
-        implicitHeight: hero.quietSize ? 40 : 48
-        implicitWidth: contentItem.implicitWidth + (hero.quietSize ? 30 : 48)
+        implicitHeight: hero.quietSize ? 36 : 40
+        implicitWidth: contentItem.implicitWidth + (hero.quietSize ? 28 : 32)
         fillColor: trailing ? "#203a31" : "#8cd4c2"
         contentColor: trailing ? "#f3f8f5" : "#10251f"
         contentItem: Item {
@@ -105,10 +105,12 @@ Item {
             text: hero.seriesPage ? "视频系列" : hero.positionMs > 0 ? "上次观看" : "从这里开始"
         }
         Text {
-            Layout.fillWidth: true; Layout.topMargin: hero.compact ? 5 : 10
+            objectName: "heroTitle"
+            Layout.fillWidth: true; Layout.topMargin: 8
             text: hero.series?.title || ""; textFormat: Text.PlainText; color: "#f3f8f5"
-            font.pixelSize: hero.compact ? 32 : Math.min(62, Math.max(36, (hero.Window.window?.width || hero.width) * .05))
-            font.weight: Font.Bold; font.letterSpacing: -1
+            font.pixelSize: copy.width >= 448 ? 32 : Qt.platform.os === "windows" ? 28 : 26
+            font.weight: Font.DemiBold
+            lineHeightMode: Text.FixedHeight; lineHeight: font.pixelSize + 8
             wrapMode: Text.Wrap; maximumLineCount: 2; elide: Text.ElideRight
         }
         RowLayout {
@@ -130,7 +132,7 @@ Item {
                 Layout.fillWidth: true; Layout.preferredHeight: 3; radius: 2; color: "#385347"
                 Rectangle { height: parent.height; width: parent.width * Math.min(1, hero.positionMs / Math.max(1,hero.durationMs)); radius: 2; color: "#8cd4c2" }
             }
-            Mark { text: "已看至 " + Studio.time(hero.positionMs,hero.positionMs < 1000); color: "#c8d8d0"; font.pixelSize: 11 }
+            Mark { text: "已看至 " + Studio.time(hero.positionMs,hero.positionMs < 1000); color: "#c8d8d0"; font.pixelSize: 12; font.features: ({ "tnum": 1 }) }
         }
         Flow {
             id: actions

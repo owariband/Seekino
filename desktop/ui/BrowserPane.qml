@@ -17,9 +17,9 @@ Item {
     readonly property string playTitle: resumeVideo?.title || hero?.firstVideoTitle || ""
     readonly property var featured: resumeVideo || members.find(video => video.id === playID)
         || workspace.jobs.find(job => job.latest && job.videoID === playID)
-    readonly property int gutter: Math.round(Math.max(20, Math.min(64, width * .048)))
+    readonly property int gutter: width < 580 ? 16 : 24
     readonly property int columns: Math.max(1, Math.floor((page.width - 2 * gutter + gap) / (190 + gap)))
-    readonly property int gap: width < 580 ? 14 : 20
+    readonly property int gap: width < 580 ? 12 : 16
     readonly property real cellWidth: (page.width - 2 * gutter - gap * (columns-1)) / columns
     signal openSeries(string id)
     signal openVideo(string id, string title)
@@ -86,7 +86,7 @@ Item {
                 RowLayout {
                     anchors.fill: parent; anchors.leftMargin: browser.gutter; anchors.rightMargin: browser.gutter
                     spacing: 10
-                    Mark { text: browser.browsingSeries ? "选集" : "视频系列"; font.pixelSize: browser.width < 580 ? 21 : 25; font.weight: Font.DemiBold }
+                    Mark { text: browser.browsingSeries ? "选集" : "视频系列"; font.pixelSize: Studio.pageTitleSize; font.weight: Font.DemiBold }
                     Mark { text: browser.browsingSeries ? browser.videos.length + " 集" : workspace.series.length + " 个系列"; font.pixelSize: 12; secondary: true }
                     Item { Layout.fillWidth: true }
                     Tool { visible: rail.visible && rail.contentWidth > rail.width; outlined: true; glyph: "left"; hint: "上一组系列"; enabled: !rail.atXBeginning; onClicked: rail.moveByPage(-1) }
@@ -103,9 +103,17 @@ Item {
                 model: visible ? workspace.series : []
                 orientation: ListView.Horizontal; spacing: browser.gap
                 boundsBehavior: Flickable.StopAtBounds; clip: true
+                property bool waitingForFirstCard: true
+                onCountChanged: {
+                    if (!count) waitingForFirstCard = true
+                    else if (waitingForFirstCard) {
+                        waitingForFirstCard = false
+                        Qt.callLater(() => { forceLayout(); positionViewAtBeginning() })
+                    }
+                }
                 function moveByPage(direction) {
                     const steps = Math.max(1,Math.floor(width / (cardWidth + spacing)))
-                    const first = Math.round(contentX / (cardWidth + spacing))
+                    const first = Math.round((contentX - originX) / (cardWidth + spacing))
                     focusCard(Math.max(0, Math.min(count-1, first + direction * steps)), true)
                 }
                 function focusCard(index, alignStart) {
