@@ -81,9 +81,11 @@ def _while_open(method):
 
 
 class DesktopLibrary:
-    def __init__(self, video: VideoServices, resources: ExitStack, consumer=None, *, artifacts=None):
+    def __init__(self, video: VideoServices, resources: ExitStack, consumer=None, *, artifacts=None, sessions=None, watch_history=None):
         self._video = video
+        self.watch_history = watch_history
         self._artifacts = artifacts
+        self._sessions = sessions
         self._consumer = consumer
         self._resources = resources
         self._closed = False
@@ -112,8 +114,19 @@ class DesktopLibrary:
                 self._lifetime.notify_all()
 
     @_while_open
+    def identify_unconfigured_samples(self):
+        from .library_management import identify_unconfigured_samples
+        identify_unconfigured_samples(self._sessions)
+
+    @_while_open
     def start_processing(self):
-        self._consumer.start()
+        from .library_management import start_with_deferred_uploads
+        start_with_deferred_uploads(self._sessions, self._video.uploads, self._consumer.start)
+
+    @_while_open
+    def manage(self, action, args):
+        from .library_management import manage
+        return manage(self._video, action, args)
 
     @_while_open
     def create_series(self, name: str):
@@ -139,6 +152,11 @@ class DesktopLibrary:
         return self._video.library.get_video(video_id, tenant_id=DEFAULT_LOCAL_TENANT_ID)
 
     @_while_open
+    def usage_overview(self, task_id=None):
+        scope = {"run_id": task_id, "include_parse_segments": True} if task_id is not None else {}
+        return self._video.usage.overview(tenant_id=DEFAULT_LOCAL_TENANT_ID, **scope)
+
+    @_while_open
     def thumbnail(self, video):
         image = self._video.media.thumbnail_view(video.video_id, tenant_id=DEFAULT_LOCAL_TENANT_ID, video=video)
         if image is None:
@@ -156,9 +174,35 @@ class DesktopLibrary:
                              video.video_id, video.series_id)
 
     @_while_open
+    def episode_timeline(self, video_id):
+        tenant = DEFAULT_LOCAL_TENANT_ID
+        media = self._video.media
+        return {"text": media.video_text_timeline(video_id, tenant_id=tenant).model_dump(by_alias=False),
+                "visual": media.video_visual_timeline(video_id, tenant_id=tenant).model_dump(by_alias=False)}
+
+    @_while_open
+    def episode_related(self, video_id, query):
+        tenant = DEFAULT_LOCAL_TENANT_ID
+        video = self._video.library.get_video(video_id, tenant_id=tenant)
+        retrieval = self._video.event_retrieval
+        if retrieval is None:
+            return {"ready": False, "cues": []}
+        return retrieval.search_visuals(query, tenant_id=tenant, series_id=video.series_id,
+                                        video_id=video.video_id).model_dump(by_alias=False)
+
+    @_while_open
     def ask_watch(self, connection, **turn):
         from .watch import answer_watch
         return answer_watch(self._video, self._artifacts, connection, **turn)
+
+    @_while_open
+    def transfer_token(self, upload_id):
+        from ..model.upload import UploadSession
+        with self._sessions() as session:
+            upload = session.get(UploadSession, upload_id)
+            if upload is None or upload.tenant_id != DEFAULT_LOCAL_TENANT_ID:
+                raise ValueError("上传会话已失效。")
+            return upload.idempotency_key
 
     @_while_open
     def import_file(self, path: Path, *, series_id: str, episode_order: int,
@@ -220,6 +264,13 @@ class DesktopLibrary:
     @_while_open
     def delete_import(self, upload_id: str):
         return self._video.uploads.delete_session(upload_id, tenant_id=DEFAULT_LOCAL_TENANT_ID)
+
+    @_while_open
+    def delete_parse_history(self, *, task_id=None, version=None, video_id=None):
+        return self._video.jobs.delete_video_parse_task(
+            tenant_id=DEFAULT_LOCAL_TENANT_ID, video_parse_task_id=task_id,
+            expected_job_version=version, video_id=video_id,
+        )
 
     @_while_open
     def rebuild_index(self, task_id: str) -> tuple[str, ...]:
@@ -307,5 +358,10 @@ def open_library(library_root: Path | str, *, gateway_config=None, gateway_envir
         video.uploads.reconcile_completed_staging()
         video.uploads.reconcile_deletions()
         if start_consumer:
-            consumer.start()
-        return DesktopLibrary(video, cleanup.pop_all(), consumer, artifacts=artifacts)
+            from .library_management import start_with_deferred_uploads
+            start_with_deferred_uploads(database.session_factory, video.uploads, consumer.start)
+        from .watch_history import WatchHistory
+        watch_history = WatchHistory(database.session_factory, artifacts, images)
+        watch_history.recover()
+        return DesktopLibrary(video, cleanup.pop_all(), consumer, artifacts=artifacts,
+                              sessions=database.session_factory, watch_history=watch_history)

@@ -24,11 +24,11 @@ Rectangle {
         RowLayout {
             Layout.fillWidth: true; Layout.leftMargin: 14; Layout.rightMargin: 8; spacing: 4
             Tool {
-                text: "资料库"; hint: "查看全部系列"; textSize: 12; onClicked: tree.libraryRequested()
+                text: qsTr("资料库"); hint: qsTr("查看全部系列"); textSize: 12; onClicked: tree.libraryRequested()
                 implicitWidth: contentItem.implicitWidth + 5
             }
             Item { Layout.fillWidth: true }
-            Tool { objectName: "createSeriesButton"; glyph: "plus"; symbolSize: 14; hint: "新建系列"; enabled: workspace.ready; onClicked: tree.newSeriesRequested() }
+            Tool { objectName: "createSeriesButton"; glyph: "plus"; symbolSize: 14; hint: qsTr("新建系列"); enabled: workspace.ready; onClicked: tree.newSeriesRequested() }
         }
         ListView {
             Layout.fillHeight: true; Layout.fillWidth: true; Layout.leftMargin: 5; Layout.rightMargin: 5
@@ -68,13 +68,13 @@ Rectangle {
             }
             Mark {
                 visible: workspace.ready && workspace.series.length === 0
-                x: 13; y: 10; text: "暂无系列"; font.pixelSize: 12; color: Studio.dim
+                x: 13; y: 10; text: qsTr("暂无系列"); font.pixelSize: 12; color: Studio.dim
             }
         }
         Mark {
             Layout.leftMargin: 16; Layout.topMargin: 8; Layout.bottomMargin: 12
             font.pixelSize: 11; color: Studio.dim
-            text: workspace.series.length + " 个系列"
+            text: qsTr("%1 个系列").arg(workspace.series.length)
         }
     }
     Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: Studio.line }

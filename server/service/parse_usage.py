@@ -23,7 +23,7 @@ from ..model.dto.taskDTO import (
 )
 from ..model.dto.parseUsageDTO import (
     ModelUsageState,
-    UsageCostSummary, UsageModelRow, UsageOverviewState, UsageRunRow, UsageTotals,
+    UsageCostSummary, UsageModelRow, UsageOverviewState, UsageRunRow, UsageSegmentRow, UsageTotals,
 )
 from ..config.usage import ModelPricingConfig
 from ..constants.parse import RUNTIME_DETAIL_KEY
@@ -166,13 +166,15 @@ class ParseUsageService:
         self, *, tenant_id: str, from_start_time: int | None = None,
         to_start_time: int | None = None, series_id: str | None = None,
         run_id: str | None = None,
-        actor_user_id: str | None = None,
+        actor_user_id: str | None = None, include_parse_segments: bool = False,
     ) -> UsageOverviewState:
         tenant_id = require_nonempty_text(tenant_id, "tenant_id", maximum=64)
         if series_id is not None:
             series_id = require_nonempty_text(series_id, "series_id", maximum=64)
         if run_id is not None:
             run_id = require_nonempty_text(run_id, "run_id", maximum=256)
+        if include_parse_segments and not run_id:
+            raise ValueError("parse segment usage requires a run_id")
         if actor_user_id is not None:
             actor_user_id = require_nonempty_text(actor_user_id, "actor_user_id", maximum=64)
         fetched_at = datetime_to_unix_time_ms(self._clock())
@@ -186,6 +188,7 @@ class ParseUsageService:
             batch = self._repository.query(
                 tenant_id=tenant_id, from_start_time=start, to_start_time=end,
                 series_id=series_id, run_id=run_id,
+                **({"task_type": "video_parse"} if include_parse_segments else {}),
                 **({"actor_user_id": actor_user_id} if actor_user_id is not None else {}),
             )
         except SQLAlchemyError as error:
@@ -209,10 +212,13 @@ class ParseUsageService:
                 records.append(_model_usage(state, state.metadata["model_name"], state.usage["tokens"], self._pricing))
         models: dict[tuple, list[dict]] = {}
         runs: dict[tuple[str, str], list[dict]] = {}
+        segments: dict[int | None, list[dict]] = {}
         for record in records:
             key = tuple(record[name] for name in ("provider", "model", "category", "operation", "src"))
             models.setdefault(key, []).append(record)
             runs.setdefault((record["task_type"], record["run_id"]), []).append(record)
+            if include_parse_segments:
+                segments.setdefault(record["sequence_no"], []).append(record)
         model_rows = tuple(
             UsageModelRow(**_total_fields(_totals(group, truncated=batch.truncated)),
                           provider=key[0], model=key[1], category=key[2], operation=key[3], src=key[4])
@@ -227,6 +233,8 @@ class ParseUsageService:
             status="available", message=None, from_start_time=from_start_time,
             to_start_time=to_start_time, fetched_at=fetched_at, truncated=batch.truncated,
             totals=_totals(records, truncated=batch.truncated), models=model_rows, runs=run_rows,
+            segments=tuple(UsageSegmentRow(**_total_fields(_totals(group, truncated=batch.truncated)), sequence_no=n)
+                           for n, group in sorted(segments.items(), key=lambda item: (item[0] is None, item[0]))),
         )
 
 
@@ -253,6 +261,7 @@ def _model_usage(
         "call_id": state.call_id, "provider": _text(metadata["provider"]), "model": _text(model),
         "src": _text(metadata.get("src")),
         "category": _text(context.get("category")), "operation": _text(metadata["operation"]),
+        "sequence_no": context.get("sequence_no") if type(context.get("sequence_no")) is int and context["sequence_no"] >= 0 else None,
         "run_id": state.run_id, "task_type": state.task_type,
         "series_id": series_id, "video_id": _text(context.get("video_id")),
         **{name: getattr(usage, name) if usage is not None else None for name in _TOKEN_FIELDS},

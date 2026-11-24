@@ -1,0 +1,642 @@
+"""Interface language selection for the native desktop window.
+
+QML uses qsTr() for static interface text. A source translator looks the
+Chinese source string up in MESSAGES, so the desktop keeps working without a
+generated .qm file and the wording stays aligned with web/src/shared/messages.ts.
+Python-originated text (server errors and import states) goes through
+DesktopLocale.translate() from QML.
+"""
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+from PySide6.QtCore import QCoreApplication, QObject, Property, QSettings, QTranslator, Signal, Slot
+
+LANGUAGES = ("zh", "en")
+DEFAULT_LANGUAGE = "zh"
+SETTINGS_KEY = "interface/language"
+
+# Chinese source -> English. Entries shared with the web client follow
+# web/src/shared/messages.ts; desktop-only wording follows the same voice.
+MESSAGES: dict[str, str] = {
+    # Navigation, menus and window chrome.
+    "资料库": "Library",
+    "搜索片段": "Find a moment",
+    "解析任务": "Parsing tasks",
+    "视频系列": "Series",
+    "系列": "Series",
+    "选集": "Episodes",
+    "返回": "Back",
+    "显示或隐藏资料树": "Show or hide the library tree",
+    "更多操作": "More actions",
+    "导入视频": "Import videos",
+    "导入视频…": "Import videos…",
+    "新建系列": "New series",
+    "新建系列…": "New series…",
+    "设置": "Settings",
+    "设置…": "Settings…",
+    "取消": "Cancel",
+    "创建": "Create",
+    "好": "OK",
+    "操作未完成": "Action not completed",
+    "系列名称": "Series name",
+    "资料库未打开": "Library not open",
+    "正在打开资料库…": "Opening library…",
+    "重新打开": "Reopen",
+    "文件": "File",
+    "显示": "View",
+    "隐藏资料树": "Hide library tree",
+    "显示资料树": "Show library tree",
+    "帮助": "Help",
+    "使用文档": "Docs",
+    "使用文档…": "Docs…",
+    "使用文档 — Seekino": "Docs — Seekino",
+    "在浏览器中打开用户文档": "Open user documentation in browser",
+    "关闭": "Close",
+    "关闭设置": "Close settings",
+    "语言": "Language",
+    "界面语言": "Interface language",
+    "语言更改立即生效，并保存在此设备。": "Language changes apply immediately and are saved on this device.",
+    "简体中文": "Simplified Chinese",
+    "视频 (*.mp4 *.mov *.avi *.MP4 *.MOV *.AVI)": "Videos (*.mp4 *.mov *.avi *.MP4 *.MOV *.AVI)",
+    # Appearance and model connections.
+    "外观": "Appearance",
+    "外观更改立即生效。": "Appearance changes apply immediately.",
+    "跟随系统": "Use system setting",
+    "浅色": "Light",
+    "深色": "Dark",
+    "模型连接": "Model connections",
+    "已配置的模型服务": "Configured model services",
+    "选择模型服务": "Choose a model service",
+    "导入并解析视频需要视频理解、语音转录和向量模型。": "Importing and parsing videos requires visual, transcription and embedding models.",
+    "描述检索使用资料库当前的向量模型。已建索引的关键词检索可直接使用。": "Descriptive search uses the library's current embedding model. Keyword search over an existing index works without it.",
+    "重试任务将使用这里保存的模型和凭据。": "Retried tasks use the models and credentials saved here.",
+    "当前连接来自资料库的模型配置，可在这里更新对应的 API Key。": "This connection comes from the library's model settings. You can update its API key here.",
+    "用自己的模型服务解析视频、建立索引和检索画面。": "Use your own model service to parse videos, build indexes and search visuals.",
+    "火山方舟 Ark": "Volcengine Ark",
+    "火山方舟": "Volcengine Ark",
+    "OpenAI 兼容": "OpenAI compatible",
+    "服务地址": "Service address",
+    "北京": "Beijing",
+    "连接名称": "Connection name",
+    "为连接命名": "Name this connection",
+    "鉴权": "Authentication",
+    "使用密钥": "Use API key",
+    "本机免密": "No key for local service",
+    "此地址已保存密钥": "A key is saved for this address",
+    "留空保留当前密钥": "Leave blank to keep the current key",
+    "输入此服务的 API Key": "Enter this service's API key",
+    "模型 ID": "Model IDs",
+    "视频理解": "Visual understanding",
+    "支持视频输入的模型 ID": "Model ID that supports video input",
+    "语音转录": "Transcription",
+    "支持音频输入的模型 ID": "Model ID that supports audio input",
+    "向量嵌入": "Embeddings",
+    "嵌入模型 ID": "Embedding model ID",
+    "向量维度": "Vector dimensions",
+    "底层嵌入模型": "Base embedding model",
+    "接入点对应的实际模型 ID": "Actual model ID behind the endpoint",
+    "重排模型": "Reranking model",
+    "可选，默认使用视频理解模型": "Optional. Defaults to the visual model.",
+    "重排": "Reranking",
+    "文字识别": "OCR",
+    "摘要": "Summarization",
+    "通用模型": "General model",
+    "复核": "Review",
+    "说话人识别": "Speaker recognition",
+    "备用视频理解": "Fallback visual understanding",
+    "待填写": "Not set",
+    "改用新的模型连接…": "Use a new model connection…",
+    "保存新连接会替换资料库当前的模型配置。": "Saving a new connection replaces the library's current model settings.",
+    "正在保存…": "Saving…",
+    "已保存。服务连通性尚未测试。": "Saved. Service connectivity has not been tested.",
+    "当前操作结束后可保存": "Save after the current operation finishes",
+    "请补齐必填模型信息": "Complete the required model fields",
+    "请补齐密钥和必填模型信息": "Complete the key and required model fields",
+    "此本机连接使用免密访问。": "This local connection uses keyless access.",
+    "密钥保存在本机。": "The key is saved on this device.",
+    "保存配置": "Save settings",
+    "完成": "Done",
+    # Watch companion and player.
+    "观看问答模型": "Watch Q&A model",
+    "沿用资料库": "Use library setting",
+    "资料库尚未配置视觉模型。": "No visual model is configured in the library.",
+    "视觉模型 ID": "Visual model ID",
+    "支持图片输入的模型": "Model that supports image input",
+    "本机服务无需 API Key": "Local service does not require an API key",
+    "已保存，留空可继续使用": "Saved. Leave blank to keep using it.",
+    "提问时，Kino 会把当前画面和问题发送给所选模型。": "When you ask, Kino sends the current frame and your question to the selected model.",
+    "保存中…": "Saving…",
+    "保存": "Save",
+    "与 Kino 对话": "Chat with Kino",
+    "Kino 陪看": "Kino companion",
+    "问答模型设置": "Q&A model settings",
+    "停靠到侧栏": "Dock to side",
+    "改为悬浮窗": "Float window",
+    "关闭陪看 (Esc)": "Close companion (Esc)",
+    "回到提问时的画面": "Return to the frame when asked",
+    "想了解画面里的哪一处？": "What would you like to know about this frame?",
+    "连接视觉模型，问问当前画面。": "Connect a visual model to ask about this frame.",
+    "解释一下这帧画面": "Explain this frame",
+    "配置问答模型…": "Configure Q&A model…",
+    "Kino 正在看这一帧…": "Kino is looking at this frame…",
+    "重新提问": "Ask again",
+    "问问 Kino…": "Ask Kino…",
+    "向 Kino 提问": "Ask Kino",
+    "发送问题": "Send question",
+    "命中区间内": "Inside the hit range",
+    "命中区间前": "Before the hit range",
+    "已过命中区间": "Past the hit range",
+    "%1，命中 %2 至 %3": "%1, hit %2 to %3",
+    "播放 (K)": "Play (K)",
+    "暂停 (K)": "Pause (K)",
+    "播放位置": "Playback position",
+    "后退 10 秒 (←)": "Rewind 10s (←)",
+    "前进 10 秒 (→)": "Forward 10s (→)",
+    "打开声音 (M)": "Unmute (M)",
+    "静音 (M)": "Mute (M)",
+    "音量": "Volume",
+    "退出全屏 (Esc)": "Exit fullscreen (Esc)",
+    "全屏播放 (F)": "Fullscreen (F)",
+    "回到命中处": "Back to hit",
+    "从命中片段开头播放": "Play from the start of the hit clip",
+    # Search.
+    "下雨天有人在门口等待的画面": "A scene of someone waiting at a doorway in the rain",
+    "乐队第一次站上舞台演出": "The band's first performance on stage",
+    "两个人在天台吵架的那一段": "The scene where two people argue on a rooftop",
+    "描述记得的画面、台词或人物关系，一起把那一刻找回来。": "Describe a scene, line, or relationship you remember, and find that moment again.",
+    "正在搜索…": "Searching…",
+    "%1 个片段": "%1 clips",
+    "所选范围暂无可检索的索引": "No searchable index in the selected scope",
+    "本次搜索覆盖不完整": "Incomplete search coverage",
+    "查看解析任务": "View parsing tasks",
+    "正在查找片段…": "Finding clips…",
+    "索引发布后，可再次搜索。": "Search again after the index is published.",
+    "当前可检索范围内暂无命中。": "No matches in the currently searchable scope.",
+    "没有找到片段，换个关键词再试试。": "No clips found. Try another keyword.",
+    "资料库里还没有视频。": "There are no videos in your library yet.",
+    "第 %1 集": "Episode %1",
+    "第 %1 集%2": "Episode %1%2",
+    "输入一句台词，或切换到描述搜索…": "Enter a line, or switch to descriptive search…",
+    "描述一个画面，找回那一刻…": "Describe a scene. Find that moment…",
+    "搜索内容": "Search content",
+    "关键词": "Keywords",
+    "描述搜索": "Descriptive search",
+    "切换关键词与描述搜索": "Switch between keyword and descriptive search",
+    "搜索": "Search",
+    "全部视频系列": "All video series",
+    "选择搜索范围": "Choose search scope",
+    "配置模型": "Configure models",
+    # Library browsing and tasks.
+    "把视频拖到这里": "Drop videos here",
+    "导入并解析后，就能按台词和画面找到片段。": "After importing and parsing, find clips by dialogue and visuals.",
+    "选择视频…": "Choose videos…",
+    "配置解析模型…": "Configure parsing models…",
+    "%1 集": "%1 episodes",
+    "%1 个系列": "%1 series",
+    "上一组系列": "Previous series",
+    "下一组系列": "Next series",
+    " · 可搜索": " · Searchable",
+    "这个系列还没有视频。": "This series has no videos yet.",
+    "上次观看": "Last watched",
+    "从这里开始": "Start here",
+    "共 %1 集": "%1 episodes in total",
+    "选一集开始观看，也可以一起寻找故事里的名场面。": "Choose an episode to watch, or discover memorable moments together.",
+    "导入视频，开始这个系列。": "Import videos to start this series.",
+    "已看至 %1": "Watched to %1",
+    "继续观看": "Continue watching",
+    "开始观看": "Start watching",
+    "播放本集": "Play episode",
+    "查看剧集": "Browse episodes",
+    "查看系列": "View series",
+    "全部": "All",
+    "排队中": "Queued",
+    "处理中": "Processing",
+    "需处理": "Needs attention",
+    "已完成": "Completed",
+    "本次查看期间已更新": "Updated while you were viewing",
+    "刷新中…": "Refreshing…",
+    "刷新": "Refresh",
+    "重新读取本机任务状态": "Reload local task status",
+    "显示范围": "Show",
+    "全部解析版本": "All parse versions",
+    "每集最新版本": "Latest version per episode",
+    "选择任务的解析版本范围": "Choose the parse version scope",
+    "没有符合筛选条件的任务": "No tasks match the filters",
+    "暂无解析任务": "No parsing tasks yet",
+    "导入视频后，可在这里查看解析和索引进度。": "Import videos to track parsing and indexing progress here.",
+    "查看全部系列": "View all series",
+    "暂无系列": "No series yet",
+    "等待自动开始解析": "Waiting to start parsing automatically",
+    "准备中": "Preparing",
+    "准备视频和音轨": "Preparing video and audio",
+    "解析中": "Parsing",
+    "解析画面与对白": "Analyzing visuals and dialogue",
+    "建索引中": "Indexing",
+    "将片段写入检索索引": "Writing clips to the search index",
+    "片段已可搜索": "Clips are searchable",
+    "解析失败": "Parsing failed",
+    "视频解析未完成": "Video parsing did not finish",
+    "索引失败": "Indexing failed",
+    "尚未发布检索索引": "Search index has not been published",
+    "状态未知": "Unknown status",
+    "已暂停": "Paused",
+    "任务暂停在“%1”阶段": "Task paused during “%1”",
+    "最新版本": "Latest version",
+    "历史版本": "Historical version",
+    "处理用时 %1": "Took %1",
+    "任务总进度 %1": "Overall task progress %1",
+    "继续任务": "Resume task",
+    "暂缓开始": "Hold start",
+    "暂停任务": "Pause task",
+    "配置模型凭据": "Configure model credentials",
+    "检查原片": "Check source video",
+    "重试": "Retry",
+    "上次尝试 · %1": "Last attempt · %1",
+    "回看原片": "Watch original",
+    "载入画面…": "Loading frame…",
+    "暂无预览": "No preview",
+    "收起": "Collapse",
+    "展开": "Expand",
+    "戳一戳 Kino": "Poke Kino",
+    "Seekino 首页": "Seekino home",
+    # Native help window.
+    "Seekino 把视频变成可以搜索的素材库。说出你记得的画面或想弄懂的概念，它把你直接送到原片里的那一秒。": "Seekino turns videos into a searchable library. Describe the scene you remember or the idea you want to understand, and it takes you straight to that second.",
+    "三步找回片段": "Find a moment in three steps",
+    "说出你要找的": "Say what you're looking for",
+    "按 ⌘K（Windows 上是 Ctrl+K），像问朋友一样描述。不用记得原话，也不用知道在第几集。": "Press ⌘K (Ctrl+K on Windows) and describe it as you would to a friend. You don't need the exact words or episode.",
+    "点开时间，直接看": "Open the time and watch",
+    "每条结果都带着原片和精确到秒的时间范围。点一下，视频从那一秒开始播放，不用再前后拖。": "Every result includes the original video and a time range precise to the second. Open it to play from that moment without scrubbing.",
+    "看不懂，就接着问": "Ask as you watch",
+    "播放时打开右侧的助手，问“刚才这段在讲什么”。它知道你看到了哪里，回答里的每个片段都能点开核对。": "Open the assistant while watching and ask what just happened. It knows where you are, and every clip in the answer can be opened for verification.",
+    "导入与解析": "Import and parse",
+    "把视频拖入窗口，或按 ⌘O 选择文件。首次使用先在设置中配置模型服务；解析完成后就可以搜索。桌面版把视频、索引和播放记录保存在本机。": "Drop videos into the window, or press ⌘O to choose files. Configure a model service in Settings on first use; search works once parsing finishes. The desktop app keeps videos, indexes and playback history on this device.",
+    "快捷键": "Keyboard shortcuts",
+    "导入": "Import",
+    "资料树": "Library tree",
+    "更多资料": "More documentation",
+    "桌面版与浏览器版共用同一套用户文档。完整使用说明、部署方式和版本差异见仓库。": "The desktop and browser versions share the same user documentation. See the repository for the full guide, deployment, and version differences.",
+    "已知 Token 小计": "Known tokens",
+    "累计 Token": "Total tokens",
+    "记录不完整，不能代表总消耗。": "Some calls have incomplete usage records.",
+    "仅包含已记录调用。": "Recorded calls only.",
+    "输入 / 输出：": "Input / output: ",
+    "已计价 API 小计": "Priced API subtotal",
+    "API 预估费用": "Estimated API cost",
+    "按配置单价估算，人民币显示，不含 Codex 订阅费用。": "Estimated in CNY using configured rates. Codex subscriptions are excluded.",
+    "已记录调用": "Recorded calls",
+    "仅统计已记录调用；历史未记录用量无法还原。": "Usage covers calls recorded in this library.",
+    "未计价": "Unpriced",
+    "不适用（Codex 订阅）": "N/A (Codex subscription)",
+    "（小计）": " (subtotal)",
+    "对白识别": "Speech recognition",
+    "时间线解析": "Timeline parsing",
+    "视觉核验": "Visual verification",
+    "备用时间线解析": "Fallback timeline parsing",
+    "文本向量化": "Text embedding",
+    "视频向量化": "Video embedding",
+    "理解": "Understanding",
+    "索引发布": "Index publishing",
+    "原生 Agent 执行": "Native agent run",
+    "未知用途": "Unknown operation",
+    "解析": "Parsing",
+    "向量化": "Embedding",
+    "未分类": "Uncategorized",
+    "模型消耗": "Model usage",
+    "正在读取…": "Loading…",
+    "刷新用量": "Refresh usage",
+    "本机已记录用量 · 最近 30 天 · 解析、向量化与 Chat": "Local usage · Last 30 days · Parsing, embeddings and chat",
+    "统计窗口：": "Reporting period: ",
+    " 至 ": " to ",
+    " · 读取于 ": " · Updated ",
+    "正在读取模型消耗…": "Loading model usage…",
+    "打开用量后读取模型消耗。": "Open Usage to load records.",
+    " 以下保留上次读取的状态与记录。": " Showing the last available records.",
+    "模型消耗暂时无法读取，请稍后刷新重试。": "Could not load usage. Try refreshing.",
+    " 条调用记录缺少完整 Token 用量，显示已知小计。": " calls have incomplete token counts. Showing the known subtotal.",
+    "已达到本次读取上限，当前结果被截断，不能代表统计窗口内的全部消耗。": "The record limit was reached. Totals cover the displayed records only.",
+    "当前窗口暂无已记录调用。已记录的模型调用会显示在这里；未记录的历史用量不会补记为零。": "No calls recorded for this period. New recorded calls will appear here.",
+    "按模型": "By model",
+    "未知模型": "Unknown model",
+    " 次 · ": " calls · ",
+    "未知服务商": "Unknown provider",
+    " · 总 Token ": " · Total tokens ",
+    "（已知 ": " (known ",
+    "任务与 Chat": "Tasks and chat",
+    " 次": " calls",
+    "无视频系列": "No series",
+    "仅统计已记录调用；观看问答等未记录调用不计入，未知细项显示为 —，历史用量无法还原。": "Only logged calls are included. Unrecorded watch Q&A usage is excluded. Missing values appear as —.",
+    "请先填写服务地址。": "Enter the service URL first.",
+    "方舟使用推理接入点 ID，请手动填写模型 ID。": "Enter your Ark inference endpoint ID.",
+    "正在获取…": "Fetching…",
+    "获取模型列表": "Fetch models",
+    "正在获取模型列表…": "Fetching model list…",
+    "可从服务读取模型 ID，或手动填写。": "Fetch model IDs from the service or enter them manually.",
+    "未获取到模型 ID，可手动填写。": "No model IDs returned. You can enter one manually.",
+    "该服务不提供模型列表，请手动填写模型 ID。": "This service does not list models. Enter the model ID manually.",
+    "获取到 ": "Found ",
+    " 个模型，点击用途填入。": " models. Select a role to use one.",
+    "聊天": "Chat",
+    "调整陪看侧栏宽度": "Resize watch sidebar",
+    "这个视频已经在该系列中。可在系列页调整集号。": "This video is already in the series. Change its episode number in series details.",
+    "参考图片": "Reference image",
+    "添加参考图片": "Add reference image",
+    "参考图片 (*.jpg *.jpeg *.png *.webp *.JPG *.JPEG *.PNG *.WEBP)": "Reference images (*.jpg *.jpeg *.png *.webp *.JPG *.JPEG *.PNG *.WEBP)",
+    "素材库对话": "Library conversations",
+    "本片对话": "Video conversations",
+    "新对话": "New conversation",
+    "删除对话": "Delete conversation",
+    "还没有对话": "No conversations yet",
+    "删除这段对话和其中的所有消息？": "Delete this conversation and all its messages?",
+    "删除": "Delete",
+    "Kino 素材库问答": "Ask Kino about your library",
+    "查看或新建对话": "Show conversations",
+    "回到引用的片段": "Go to cited moment",
+    "回看这个参考片段": "Play reference clip",
+    "〔参考图片〕\n": "[Reference image]\n",
+    "想从所选系列里找什么？": "What would you like to find in these series?",
+    "找出有人在门口等待的片段": "Find moments where someone waits by a door",
+    "Kino 正在查找片段…": "Kino is looking for moments…",
+    "已引用片段 ": "Referenced moment ",
+    "移除参考图片": "Remove reference image",
+    "停止生成": "Stop generating",
+    "我的素材": "My videos",
+    "集号重复或已被占用，请修改后导入。": "Choose an unused episode number for each file.",
+    "目标系列": "Destination series",
+    "集号": "Episode",
+    "待导入": "Queued",
+    "已导入": "Imported",
+    "已取消": "Canceled",
+    "未完成": "Incomplete",
+    "移除文件": "Remove file",
+    "继续": "Resume",
+    "暂停": "Pause",
+    "视频入库后即可播放，配置模型后开始解析。": "Videos are ready to watch after import. Set up a model to parse them.",
+    "开始导入": "Import",
+    "已选 ": "Selected ",
+    " 个系列": " series",
+    "问 Kino": "Ask Kino",
+    "查找本集 (/)": "Find in episode (/)",
+    "上一集": "Previous episode",
+    "下一集": "Next episode",
+    "第 ": "Episode ",
+    " 集 · ": " · ",
+    "播放倍速": "Playback speed",
+    "任务操作": "Task actions",
+    "开始解析…": "Start parsing…",
+    "整集重新解析…": "Reparse episode…",
+    "删除视频…": "Delete video…",
+    "删除此历史版本…": "Delete this version…",
+    "清理全部历史版本…": "Clear version history…",
+    "引用并问 Kino": "Ask Kino about this moment",
+    "引用这个片段向 Kino 提问": "Use this clip in a question for Kino",
+    "观看模型": "Watch Q&A model",
+    "填入观看问答": "Use for watch Q&A",
+    "在本集查找台词、画面文字或画面": "Find dialogue, on-screen text or a scene in this episode",
+    "在本集查找": "Find in episode",
+    "上一个匹配": "Previous match",
+    "下一个匹配": "Next match",
+    "关闭本集查找": "Close find",
+    "包括画面": "Include visuals",
+    "包括画面和相关画面": "Include visuals and related scenes",
+    "智能搜索": "Smart find",
+    "用 Kino 模型纠正搜索词": "Use Kino to interpret the search term",
+    "查找中…": "Searching…",
+    " 处匹配": " matches",
+    "本集解析结果尚未就绪": "This episode has not finished parsing",
+    "没有匹配的结果": "No matches",
+    "正在理解搜索词…": "Interpreting search…",
+    "智能搜索暂不可用，已按原词查找": "Smart find is unavailable. Showing literal matches.",
+    "纠正 · ": "Interpreted · ",
+    "台词": "Dialogue",
+    "画面文字": "On-screen text",
+    "画面": "Visuals",
+    "相关画面": "Related scenes",
+    "相关画面检索暂不可用": "Related scenes are currently unavailable",
+    "用量": "Usage",
+    "观看与 Kino": "Playback and Kino",
+    "发问时暂停，返回播放时继续": "Pause when asking and resume on return",
+    "Kino 浮窗闲置后淡化": "Fade Kino after",
+    "秒": "sec",
+    "填入视频理解": "Use for video understanding",
+    "填入语音转录": "Use for transcription",
+    "填入向量嵌入": "Use for embeddings",
+    "填入检索重排": "Use for reranking",
+    "系列操作": "Series actions",
+    "编辑系列资料…": "Edit series details…",
+    "编辑集号…": "Edit episode number…",
+    "导出解析结果…": "Export parsed events…",
+    " 集": " ",
+    "  ·  已看至 ": "  ·  Watched to ",
+    "  ·  可搜索": "  ·  Searchable",
+    "开始解析": "Start parsing",
+    "整集重新解析": "Reparse episode",
+    "删除视频": "Delete video",
+    "删除此历史版本": "Delete this version",
+    "清理全部历史版本": "Clear version history",
+    "将从本资料库移除导入的视频、解析记录和检索索引。": "Remove the imported copy, parse records and search index from this library.",
+    "将按当前解析配置运行，可能产生模型调用费用。": "Parsing uses the current model settings and may incur API charges.",
+    "将清除所选的历史解析记录和对应索引；保留原片与当前版本。": "Remove the selected historical records and their indexes. Keep the original and current version.",
+    "集号已保存": "Episode number saved",
+    "选择背景参考图": "Choose reference image",
+    "参考图 (*.png *.jpg *.jpeg *.webp)": "Images (*.png *.jpg *.jpeg *.webp)",
+    "导出解析结果": "Export parsed events",
+    "解析结果 (*.jsonl)": "Parsed events (*.jsonl)",
+    "编辑集号": "Edit episode number",
+    "编辑系列资料": "Edit series details",
+    "显示名称": "Display name",
+    "系列简介": "Series description",
+    "ASR 原文语言": "Spoken language (ASR)",
+    "例如 ja、zh 或 en": "e.g. ja, zh or en",
+    "背景资料": "Background notes",
+    "插入参考图…": "Insert reference image…",
+    "人物关系、别名或剧情背景": "Relationships, aliases or story background",
+    "视频": "Video",
+    "事件类型": "Event types",
+    "对白": "Dialogue",
+    "动作": "Action",
+    "场景": "Scene",
+    "情绪": "Emotion",
+    "导出 JSONL…": "Export JSONL…",
+    "%1 次 · %2 Token · %3": "%1 calls · %2 tokens · %3",
+    "任务详情": "Task details",
+    "分段用量": "Usage by segment",
+    "固定切片": "Fixed segments",
+    "完成单元": "Completed units",
+    "已知 %1": "Known %1",
+    "更新于": "Updated",
+    "有效解析时长": "Active parsing time",
+    "未关联单个切片": "Unassigned to a segment",
+    "本次任务 · 最近 30 天已记录调用": "This task · Recorded calls in the last 30 days",
+    "来源 %1  ·  输入 %2  ·  输出 %3  ·  缓存读取 %4  ·  缓存写入 %5  ·  推理 %6": "Source %1  ·  Input %2  ·  Output %3  ·  Cache read %4  ·  Cache write %5  ·  Reasoning %6",
+    "查看任务详情…": "View task details…",
+    "第 %1 段": "Segment %1",
+    "解析进度": "Parsing progress",
+    "上一页": "Previous page",
+    "下一页": "Next page",
+}
+
+# Messages returned by server/desktop code and shown in the native window.
+MESSAGES.update({
+    "请选择 MP4、MOV 或 AVI 视频": "Choose MP4, MOV, or AVI videos",
+    "准备导入": "Preparing import",
+    "请在当前操作结束后保存模型设置": "Save model settings after the current operation finishes",
+    "凭据与当前服务地址不匹配，请重新打开设置": "The credentials do not match the current service address. Reopen settings.",
+    "模型设置未应用，部分凭据未能恢复。请检查系统凭据存储后重新保存。": "Model settings were not applied and some credentials could not be restored. Check the system credential store and save again.",
+    "问题请控制在 4000 字以内。": "Keep questions under 4,000 characters.",
+    "此处没有可读取的视频帧。": "No readable video frame is available here.",
+    "模型服务拒绝了请求，请检查观看问答的 API Key 和模型权限。": "The model service rejected the request. Check the watch Q&A API key and model permissions.",
+    "模型服务暂时限流，请稍后重试。": "The model service is rate limiting requests. Try again shortly.",
+    "模型响应超时，请重试。": "The model response timed out. Try again.",
+    "无法连接模型服务，请检查服务地址和网络。": "Could not connect to the model service. Check the service address and network.",
+    "模型未能回答，请检查服务地址、模型 ID 及图片输入支持后重试。": "The model could not answer. Check the service address, model ID, and image input support, then try again.",
+    "请输入 1 至 4000 字的问题。": "Enter a question between 1 and 4,000 characters.",
+    "问答记录格式有误。": "The Q&A history format is invalid.",
+    "当前视频不属于选中的系列。": "This video does not belong to the selected series.",
+    "提问时间超出了原片范围。": "The question time is outside the source video.",
+    "请选择支持图片输入的 Ark 或 OpenAI 兼容模型。": "Choose an Ark or OpenAI-compatible model that supports image input.",
+    "模型返回了空回答，请重试。": "The model returned an empty answer. Try again.",
+    "缺少模型凭据。请在设置中补齐后重试。": "Model credentials are missing. Complete them in Settings and try again.",
+    "服务拒绝了当前凭据。请核对密钥后重试。": "The service rejected the current credentials. Check the key and try again.",
+    "媒体无法解码。请检查原片能否播放。": "The media could not be decoded. Check that the source video plays.",
+    "处理所需的文件未找到。请先检查原片。": "A required file was not found. Check the source video first.",
+    "模型请求超时。请稍后重试。": "The model request timed out. Try again shortly.",
+    "连接模型服务失败。请检查网络后重试。": "Could not connect to the model service. Check the network and try again.",
+    "模型网络请求失败。请检查网络后重试。": "The model network request failed. Check the network and try again.",
+    "模型服务网关超时。请稍后重试。": "The model service gateway timed out. Try again shortly.",
+    "模型服务暂不可用。请稍后重试。": "The model service is temporarily unavailable. Try again shortly.",
+    "模型输出被截断。请重新运行解析。": "The model output was truncated. Run parsing again.",
+    "模型返回的结果格式异常。请重试。": "The model returned an invalid result format. Try again.",
+    "已达到模型调用次数上限。请重试。": "The model call limit was reached. Try again.",
+    "模型未提交所需结果。请重试。": "The model did not submit the required result. Try again.",
+    "检索索引未能发布，尚无具体原因。请重试。": "The search index could not be published. Try again.",
+    "未获得具体失败原因。请确认原片可播放后重试。": "No specific failure reason was available. Check that the source video plays and try again.",
+    "请为此服务填写 API Key。": "Enter an API key for this service.",
+    "请先配置 Kino 观看问答使用的视觉模型。": "Configure a visual model for Kino watch Q&A first.",
+    "请先配置视频解析所需的模型服务。": "Configure the model service required for video parsing first.",
+    "请先配置用于描述搜索的向量模型。": "Configure the embedding model used for descriptive search first.",
+    "搜索预览不属于当前资料库": "The search preview does not belong to the current library",
+    "视频封面已更新": "The video cover has been updated",
+    "未知的桌面应用操作": "Unknown desktop application action",
+    "资料库尚未打开": "The library is not open yet",
+    "模型设置不属于当前资料库": "The model settings do not belong to the current library",
+    "来源版本已变化，请重新搜索。": "The source version changed. Search again.",
+    "观看问答设置文件无法读取，请重新保存连接。": "Could not read the watch Q&A settings file. Save the connection again.",
+    "观看问答设置已变更，请重新打开。": "The watch Q&A settings changed. Reopen them.",
+    "请填写观看问答连接。": "Fill in the watch Q&A connection.",
+    "请选择 Ark 或 OpenAI 兼容协议。": "Choose Ark or OpenAI-compatible as the protocol.",
+    "请填写支持图片输入的模型 ID。": "Enter a model ID that supports image input.",
+    "Ark 协议使用内置的服务地址。": "The Ark protocol uses its built-in service address.",
+    "免密连接仅适用于本机 OpenAI 兼容服务。": "Keyless connections are only available for local OpenAI-compatible services.",
+    "免密连接仅适用于本机的 OpenAI 兼容服务。": "Keyless connections are only available for local OpenAI-compatible services.",
+    "请填写这个服务地址的 API Key。": "Enter the API key for this service address.",
+    "模型配置文件无效，请检查 models.yaml 的模型、协议和维度。": "Invalid model configuration. Check the models, protocols, and dimensions in models.yaml.",
+    "模型设置已变更，请重新打开设置。": "Model settings changed. Reopen settings.",
+    "当前 models.yaml 由部署管理。可更新其凭据，模型绑定请在原文件中修改。": "models.yaml is managed by the deployment. Credentials can be updated here; change model bindings in the original file.",
+    "请直接编辑符号链接指向的模型配置。": "Edit the model configuration that the symlink points to.",
+    "请选择 Ark 或 OpenAI 兼容协议。": "Choose the Volcengine Ark or OpenAI-compatible protocol.",
+    "方舟协议使用内置的官方服务地址。": "The Ark protocol uses its built-in official service address.",
+    "向量维度须为 1 到 2048 之间的整数。": "Vector dimensions must be an integer between 1 and 2048.",
+    "向量接入点需要其底层模型 ID，才能识别既有索引。": "The embedding endpoint needs its base model ID to recognize the existing index.",
+    "仅方舟向量接入点可指定底层模型 ID。": "Only Ark embedding endpoints accept a base model ID.",
+    "请填写模型服务。": "Fill in the model service.",
+    "资料库已有视频、上传任务或索引。向量模型、服务地址、维度或编码方式与原配置不一致。请保留原配置，或为新模型使用新的资料库。": "The library already has videos, uploads, or an index. The embedding model, service address, dimensions, or encoding differ from the existing configuration. Keep the original configuration or use a new library for the new model.",
+    "没有可保存的模型配置": "There are no model settings to save",
+    "所选时间附近没有可显示的视频帧": "No video frame is available near the selected time",
+    "无法打开系统音频输出设备": "Could not open the system audio output device",
+})
+
+
+class SourceTranslator(QTranslator):
+    """Return MESSAGES for qsTr() lookups while English is selected."""
+
+    def __init__(self):
+        super().__init__()
+        self.source_language = DEFAULT_LANGUAGE
+
+    def translate(self, context, source_text, disambiguation=None, n=-1):
+        if self.source_language != "en":
+            return ""
+        return MESSAGES.get(source_text, "")
+
+    def isEmpty(self):
+        # The base translator never loads a .qm file, but qsTr() still routes
+        # through translate(); keep Qt from treating the catalog as empty.
+        return self.source_language != "en"
+
+
+def _english(source: str) -> str:
+    translated = MESSAGES.get(source)
+    if translated is not None:
+        return translated
+    # Import errors are returned as "filename · reason"; keep the filename.
+    head, separator, tail = source.partition(" · ")
+    if separator and tail in MESSAGES:
+        return head + separator + MESSAGES[tail]
+    return source
+
+
+class DesktopLocale(QObject):
+    languageChanged = Signal()
+    retranslate = Signal()
+
+    def __init__(self, parent=None, *, settings=None):
+        super().__init__(parent)
+        self._settings = settings if settings is not None else QSettings()
+        stored = str(self._settings.value(SETTINGS_KEY, DEFAULT_LANGUAGE) or DEFAULT_LANGUAGE)
+        self._language = stored if stored in LANGUAGES else DEFAULT_LANGUAGE
+        self._translator = SourceTranslator()
+        self._translator.source_language = self._language
+        self._installed = False
+        self._apply()
+
+    @Property(str, notify=languageChanged)
+    def language(self):
+        return self._language
+
+    @Slot(str)
+    def setLanguage(self, language):
+        language = language if language in LANGUAGES else DEFAULT_LANGUAGE
+        if language == self._language:
+            return
+        self._language = language
+        self._translator.source_language = language
+        self._settings.setValue(SETTINGS_KEY, language)
+        self._settings.sync()
+        self._apply()
+        self.languageChanged.emit()
+        self.retranslate.emit()
+
+    @Slot(str, result=str)
+    def translate(self, source):
+        if self._language != "en" or not source:
+            return source
+        return "\n".join(_english(line) for line in source.splitlines())
+
+    def _apply(self):
+        application = QCoreApplication.instance()
+        if application is None:
+            return
+        if self._language == "en" and not self._installed:
+            application.installTranslator(self._translator)
+            self._installed = True
+        elif self._language != "en" and self._installed:
+            application.removeTranslator(self._translator)
+            self._installed = False
+
+
+_QS_TR = re.compile(r'qsTr\(\s*"((?:[^"\\]|\\.)*)"')
+
+
+def source_strings(ui_dir: Path) -> set[str]:
+    """Collect literal qsTr() sources from the desktop QML tree."""
+    found = set()
+    for path in sorted(ui_dir.rglob("*.qml")):
+        for match in _QS_TR.finditer(path.read_text(encoding="utf-8")):
+            found.add(match.group(1).replace('\\"', '"').replace("\\n", "\n"))
+    return found
+
+
+def missing_translations(ui_dir: Path) -> list[str]:
+    return sorted(source for source in source_strings(ui_dir) if source not in MESSAGES)

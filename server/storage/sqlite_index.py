@@ -76,6 +76,33 @@ def _keys(keys: Sequence[tuple[str, str]]) -> str:
 _KEY_ROWS = "SELECT json_extract(value,'$[0]'),json_extract(value,'$[1]') FROM json_each(:keys)"
 
 
+# Imports made before the user's first model choice have no executable model
+# contract yet. All ordinary uploads, historical tasks and projections stay frozen.
+DEFERRED_UPLOAD_PREFIX = "await-model:"
+UNBOUND_UPLOAD = f"""(u.idempotency_key GLOB '{DEFERRED_UPLOAD_PREFIX}*'
+    OR COALESCE(json_extract(u.detail, '$.desktop_models_bound'), 1) = 0)
+    AND COALESCE(json_extract(u.detail, '$.desktop_models_bound'), 0) = 0"""
+_FROZEN_BUSINESS = f"""EXISTS(SELECT 1 FROM upload_session u WHERE u.status IN ('UPLOADING','COMPLETING') AND NOT ({UNBOUND_UPLOAD}))
+    OR EXISTS(SELECT 1 FROM video v WHERE NOT EXISTS
+        (SELECT 1 FROM upload_session u WHERE u.video_id=v.id AND {UNBOUND_UPLOAD}))
+    OR EXISTS(SELECT 1 FROM video_parse_task t WHERE t.status<>'PENDING' OR t.attempt_count<>0
+        OR t.lease_owner IS NOT NULL OR NOT EXISTS (SELECT 1 FROM upload_session u
+        WHERE u.initial_task_id=t.id AND {UNBOUND_UPLOAD}))"""
+
+
+def frozen_library_predicate(existing_tables):
+    """Protect projections and any executable work, including during first initialization."""
+    tables = set(existing_tables)
+    business = {"video", "video_parse_task", "upload_session"}
+    checks = ["EXISTS(SELECT 1 FROM local_chunks)"] if "local_chunks" in tables else []
+    if business.issubset(tables):
+        checks.append(_FROZEN_BUSINESS)
+    else:
+        # A partial schema cannot prove that an existing record is unbound.
+        checks.extend(f"EXISTS(SELECT 1 FROM {table})" for table in sorted(business & tables))
+    return " OR ".join(checks) or "0"
+
+
 class SQLiteSearchIndex:
     """Publish both projections together and search the authorized Event sources."""
 
@@ -126,14 +153,13 @@ class SQLiteSearchIndex:
             if create:
                 # An empty library can adopt the user's first model choice. An in-flight
                 # upload has already frozen the contract, even before its Video exists.
-                session.execute(text("""INSERT INTO local_index_contract(singleton,name,contract_id)
+                tables = session.scalars(text("SELECT name FROM sqlite_schema WHERE type='table'"))
+                frozen = frozen_library_predicate(tables)
+                session.execute(text(f"""INSERT INTO local_index_contract(singleton,name,contract_id)
                     VALUES (1,:name,:contract)
                     ON CONFLICT(singleton) DO UPDATE SET contract_id=excluded.contract_id
                     WHERE name=excluded.name AND contract_id<>excluded.contract_id
-                      AND NOT EXISTS (SELECT 1 FROM video)
-                      AND NOT EXISTS (SELECT 1 FROM video_parse_task)
-                      AND NOT EXISTS (SELECT 1 FROM local_chunks)
-                      AND NOT EXISTS (SELECT 1 FROM upload_session WHERE status IN ('UPLOADING','COMPLETING'))
+                      AND NOT ({frozen})
                     """), {"name": self.index_name, "contract": contract.contract_id})
             self._check_contract(session, contract.contract_id)
         self._contract = contract

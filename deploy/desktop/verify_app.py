@@ -15,10 +15,13 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def seed(app, work):
-    # Use the app's wheel versions with checkout-only test helpers and pytest.
-    sys.path[:0] = [str(app / "Contents/Resources/site-packages"), str(ROOT)]
+    # Load the packaged business code and wheels. Only the fixture and pytest need the checkout.
+    resources = app / "Contents/Resources"
+    sys.path[:0] = [str(resources), str(resources / "site-packages"), str(ROOT)]
     import pytest
-    from server.desktop.app import dispatch
+    from server.desktop import app as desktop_app
+    assert Path(desktop_app.__file__).is_relative_to(resources)
+    dispatch = desktop_app.dispatch
 
     spec = importlib.util.spec_from_file_location("pipeline", ROOT / "tests/server/test_desktop_pipeline.py")
     pipeline = importlib.util.module_from_spec(spec)

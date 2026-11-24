@@ -18,7 +18,7 @@ ApplicationWindow {
     property string activeSeries: ""
     property string openFailure: ""
     readonly property string currentName: page === "player" ? watch.title : page === "series" ?
-        (browser.selected?.title || "系列") : page === "search" ? "搜索片段" : page === "jobs" ? "解析任务" : "资料库"
+        (browser.selected?.title || qsTr("系列")) : page === "search" ? qsTr("搜索片段") : page === "jobs" ? qsTr("解析任务") : qsTr("资料库")
     readonly property int treeWidth: Math.round(Math.max(170,Math.min(210,width*.19)))
     readonly property bool treeShown: Studio.preferences.treeVisibility < 0 ? workspace.series.length > 0 : Studio.preferences.treeVisibility === 1
     function go(next) {
@@ -32,7 +32,7 @@ ApplicationWindow {
         if (page === "player" && !watch.hit && watch.hasFrame)
             workspace.rememberPlayback(activeSeries, activeVideo, watch.positionMs, watch.endMs)
     }
-    onClosing: rememberPlayback()
+    onClosing: { help.close(); rememberPlayback() }
     Timer { interval: 10000; running: window.page === "player" && !watch.hit; repeat: true; onTriggered: window.rememberPlayback() }
     function searchPage() { go("search"); Qt.callLater(search.focusQuery) }
     function back() { go(page === "player" ? priorPage : "library") }
@@ -41,24 +41,37 @@ ApplicationWindow {
     function newFolder() { seriesName.clear(); createDialog.open(); seriesName.forceActiveFocus() }
     function toggleTree() { Studio.preferences.treeVisibility = treeShown ? 0 : 1 }
     function openSettings() { prefs.openSettings() }
+    function openHelp() { help.open() }
     Loader {
         id: nativeMenus; objectName: "nativeMenuLoader"; active: window.mac && Qt.platform.pluginName === "cocoa"
         source: "MacMenu.qml"
         onLoaded: item.owner = window
     }
+    Connections {
+        target: desktopLocale
+        // Native menu items are not part of the scene; rebuild them so every
+        // label takes the newly selected language.
+        function onLanguageChanged() {
+            Qt.callLater(() => {
+                if (nativeMenus.active) { nativeMenus.active = false; nativeMenus.active = true }
+            })
+        }
+    }
     Component.onCompleted: workspace.start()
 
     Shortcut { enabled: !nativeMenus.active; sequences: [StandardKey.Open]; onActivated: window.choose() }
     Shortcut { enabled: !nativeMenus.active; sequence: "Ctrl+K"; onActivated: window.searchPage() }
-    Shortcut { sequences: [StandardKey.Find]; onActivated: window.searchPage() }
+    Shortcut { sequences: [StandardKey.Find]; enabled: !watch.modalOpen
+        onActivated: window.page === "player" ? watch.openFind() : window.searchPage() }
     Shortcut { enabled: !nativeMenus.active; sequence: "Ctrl+Shift+L"; onActivated: window.toggleTree() }
     Shortcut { enabled: !nativeMenus.active; sequence: "Ctrl+,"; onActivated: prefs.openSettings() }
+    Shortcut { sequence: "F1"; onActivated: window.openHelp() }
     Shortcut { sequence: "Alt+Left"; enabled: window.page !== "library"; onActivated: window.back() }
-    Shortcut { sequence: "Space"; enabled: window.page === "player" && !watch.chatHasFocus && !watch.chatEntryFocused && !watchModels.visible && !prefs.opened && !createDialog.opened && !alertDialog.opened; onActivated: watch.playPause() }
+    Shortcut { sequence: "Space"; enabled: window.page === "player" && !watch.episodeFindOpen && !watch.chatHasFocus && !watch.chatEntryFocused && !watchModels.visible && !prefs.opened && !createDialog.opened && !alertDialog.opened; onActivated: watch.playPause() }
     FileDialog {
-        id: files; title: "导入视频"; fileMode: FileDialog.OpenFiles
-        nameFilters: ["视频 (*.mp4 *.mov *.avi *.MP4 *.MOV *.AVI)"]
-        onAccepted: workspace.importFiles(selectedFiles,window.destination())
+        id: files; title: qsTr("导入视频"); fileMode: FileDialog.OpenFiles
+        nameFilters: [qsTr("视频 (*.mp4 *.mov *.avi *.MP4 *.MOV *.AVI)")]
+        onAccepted: importPlan.openFiles(selectedFiles,window.destination())
     }
     Connections {
         target: workspace
@@ -74,10 +87,11 @@ ApplicationWindow {
             window.activeVideo = context.videoID
             window.activeSeries = context.seriesID
             tree.setExpanded(context.seriesID, true)
-            const recent = workspace.recentPlayback[context.seriesID]
-            const resume = !hit && recent?.videoID === context.videoID && recent.positionMs < durationMs
+            const recent = workspace.playbackByVideo[context.videoID]
+            const resume = !hit && recent?.videoID === context.videoID && recent.positionMs < durationMs - Math.min(15000, durationMs * 0.05)
             watch.open(path, resume ? recent.positionMs : startMs, endMs, durationMs, title, hit)
             window.page="player"
+            if (context.askKino) Qt.callLater(() => watch.openChat())
         }
         function onErrorChanged() {
             if (workspace.error) {
@@ -102,9 +116,9 @@ ApplicationWindow {
             Row {
                 id: navigation
                 x: window.mac && window.visibility !== Window.FullScreen ? 80 : 9; anchors.verticalCenter: parent.verticalCenter; spacing: 3
-                Tool { objectName: "toggleSidebar"; glyph: "sidebar"; hint: "显示或隐藏资料树"; onClicked: window.toggleTree() }
+                Tool { objectName: "toggleSidebar"; glyph: "sidebar"; hint: qsTr("显示或隐藏资料树"); onClicked: window.toggleTree() }
                 Brand { objectName: "homeWordmark"; anchors.verticalCenter: parent.verticalCenter; onClicked: window.go("library") }
-                Tool { visible: window.page !== "library"; glyph: "left"; hint: "返回"; onClicked: window.back() }
+                Tool { visible: window.page !== "library"; glyph: "left"; hint: qsTr("返回"); onClicked: window.back() }
             }
             Row {
                 id: caption
@@ -119,7 +133,7 @@ ApplicationWindow {
                 id: quickSearch; objectName: "searchButton"
                 visible: window.page === "library" && window.width >= 790
                 anchors.centerIn: parent; width: Math.min(360,window.width*.33); height: window.mac ? 32 : 36; hoverEnabled: true
-                Accessible.name: "搜索片段"; onClicked: window.searchPage()
+                Accessible.name: qsTr("搜索片段"); onClicked: window.searchPage()
                 background: Rectangle {
                     radius: height/2; color: Studio.sheet; border.color: (quickSearch.hovered || quickSearch.visualFocus) ? Studio.strongLine : Studio.line
                     Behavior on border.color { ColorAnimation { duration: Studio.hover } }
@@ -127,28 +141,30 @@ ApplicationWindow {
                 contentItem: RowLayout {
                     spacing: 8
                     Glyph { Layout.leftMargin: 13; Layout.preferredWidth: 17; Layout.preferredHeight: 17; name: "search"; ink: Studio.dim }
-                    Mark { Layout.fillWidth: true; text: "描述一个画面，找回那一刻…"; color: Studio.dim; font.pixelSize: 13 }
+                    Mark { Layout.fillWidth: true; text: qsTr("描述一个画面，找回那一刻…"); color: Studio.dim; font.pixelSize: 13 }
                     Mark { Layout.rightMargin: 12; text: window.mac ? "⌘ K" : "Ctrl K"; color: Studio.dim; font.pixelSize: 10 }
                 }
             }
             Row {
                 id: toolbarButtons
                 anchors.right: parent.right; anchors.rightMargin: 9; anchors.verticalCenter: parent.verticalCenter; spacing: 2
-                Tool { objectName: "searchIconButton"; visible: !quickSearch.visible; glyph: "search"; hint: "搜索片段"; chosen: window.page === "search"; onClicked: window.searchPage() }
+                Tool { objectName: "searchIconButton"; visible: !quickSearch.visible; glyph: "search"; hint: qsTr("搜索片段"); chosen: window.page === "search"; onClicked: window.searchPage() }
                 Tool {
-                    objectName: "taskButton"; glyph: "activity"; hint: "解析任务"; chosen: window.page === "jobs"; onClicked: window.go(window.page === "jobs" ? "library" : "jobs")
+                    objectName: "taskButton"; glyph: "activity"; hint: qsTr("解析任务"); chosen: window.page === "jobs"; onClicked: window.go(window.page === "jobs" ? "library" : "jobs")
                     Rectangle { visible: workspace.jobs.some(task => task.latest && !task.paused && ["PENDING","PREPARING","PARSING","INDEXING"].includes(task.status)); x: parent.width-7; y: 3; width: 5; height: 5; radius: 3; color: Studio.accent }
                 }
-                Tool { objectName: "importButton"; glyph: "import"; hint: "导入视频"; visible: workspace.series.length > 0 && !(window.page === "series" && browser.videos.length === 0); enabled: workspace.ready && !workspace.busyImport; onClicked: window.choose() }
+                Tool { objectName: "importButton"; glyph: "import"; hint: qsTr("导入视频"); visible: workspace.series.length > 0 && !(window.page === "series" && browser.videos.length === 0); enabled: workspace.ready && !workspace.busyImport; onClicked: window.choose() }
+                Tool { objectName: "helpButton"; glyph: "help"; hint: qsTr("使用文档"); onClicked: window.openHelp() }
                 Tool {
-                    id: more; objectName: "settingsButton"; glyph: "more"; hint: "更多操作"; onClicked: actions.open()
+                    id: more; objectName: "settingsButton"; glyph: "more"; hint: qsTr("更多操作"); onClicked: actions.open()
                     Popup {
                         id: actions; x: more.width-width; y: more.height+4; width: 156; padding: 5; focus: true; modal: true; dim: false
                         enter: Transition { NumberAnimation { property: "opacity"; from: 0; to: 1; duration: Studio.quick } }
                         background: Rectangle { color: Studio.sheet; border.color: Studio.line; radius: 6 }
                         contentItem: Column {
-                            Tool { text: "新建系列…"; glyph: "folder"; width: parent.width; enabled: workspace.ready; onClicked: { actions.close(); window.newFolder() } }
-                            Tool { text: "设置…"; glyph: "more"; width: parent.width; onClicked: { actions.close(); prefs.openSettings() } }
+                            Tool { text: qsTr("新建系列…"); glyph: "folder"; width: parent.width; enabled: workspace.ready; onClicked: { actions.close(); window.newFolder() } }
+                            Tool { text: qsTr("使用文档…"); glyph: "help"; width: parent.width; onClicked: { actions.close(); window.openHelp() } }
+                            Tool { text: qsTr("设置…"); glyph: "more"; width: parent.width; onClicked: { actions.close(); prefs.openSettings() } }
                         }
                     }
                 }
@@ -177,6 +193,7 @@ ApplicationWindow {
                     anchors.fill: parent; browsingSeries: window.page === "series"
                     enabled: workspace.ready && ["library","series"].includes(window.page); visible: opacity > 0
                     opacity: enabled ? 1 : 0; Behavior on opacity { NumberAnimation { duration: Studio.page; easing.type: Easing.OutCubic } }
+                    onManageSeries: (id,section) => seriesTools.openFor(id, section)
                     onOpenSeries: id => window.showSeries(id)
                     onOpenVideo: (id,title) => window.play(id,title)
                     onImportRequested: window.choose()
@@ -188,6 +205,7 @@ ApplicationWindow {
                     Behavior on opacity { NumberAnimation { duration: Studio.page; easing.type: Easing.OutCubic } }
                     onOpenHit: (ref,title) => workspace.openResult(ref,title)
                     onJobsRequested: window.go("jobs")
+                    onWatchSettingsRequested: watchModels.openSettings()
                     onSettingsRequested: prefs.openSettings("search")
                     onImportRequested: window.choose()
                 }
@@ -207,41 +225,44 @@ ApplicationWindow {
                 }
                 EmptyView {
                     visible: !workspace.ready; anchors.centerIn: parent; width: Math.min(400,parent.width-32)
-                    glyph: "library"; title: window.openFailure ? "资料库未打开" : "正在打开资料库…"
-                    action: window.openFailure ? "重新打开" : ""; onActivated: { window.openFailure = ""; workspace.start() }
+                    glyph: "library"; title: window.openFailure ? qsTr("资料库未打开") : qsTr("正在打开资料库…")
+                    action: window.openFailure ? qsTr("重新打开") : ""; onActivated: { window.openFailure = ""; workspace.start() }
                 }
             }
         }
         Rectangle {
             Layout.fillWidth: true; Layout.preferredHeight: workspace.busyImport ? 32 : 0; color: Studio.sidebar; clip: true
             Behavior on Layout.preferredHeight { NumberAnimation { duration: Studio.panel; easing.type: Easing.OutCubic } }
-            Mark { x: 15; anchors.verticalCenter: parent.verticalCenter; text: workspace.importLabel + (workspace.importProgress >= 0 ? "   " + Math.round(workspace.importProgress*100) + "%" : ""); font.pixelSize: 12 }
+            Mark { x: 15; anchors.verticalCenter: parent.verticalCenter; text: Studio.translate(workspace.importLabel) + (workspace.importProgress >= 0 ? "   " + Math.round(workspace.importProgress*100) + "%" : ""); font.pixelSize: 12 }
             Rectangle { anchors.bottom: parent.bottom; width: parent.width*Math.max(0,workspace.importProgress); height: 2; color: Studio.accent; Behavior on width { NumberAnimation { duration: Studio.hover } } }
         }
     }
     DropArea {
         anchors.fill: parent; enabled: workspace.ready && !workspace.busyImport && !prefs.opened && !createDialog.opened && !alertDialog.opened
         onEntered: drag => { drag.accepted=drag.hasUrls }
-        onDropped: drop => { if(drop.hasUrls) { workspace.importFiles(drop.urls,window.destination()); drop.acceptProposedAction() } }
+        onDropped: drop => { if(drop.hasUrls) { importPlan.openFiles(drop.urls,window.destination()); drop.acceptProposedAction() } }
         Rectangle {
             anchors.fill: parent; anchors.margins: 5; radius: 7; color: Qt.alpha(Studio.accent,.08)
             border.width: 2; border.color: Studio.accent; opacity: parent.containsDrag ? 1 : 0
             Behavior on opacity { NumberAnimation { duration: Studio.hover } }
         }
     }
+    ImportSheet { id: importPlan; onFinished: series => window.showSeries(series) }
+    SeriesTools { id: seriesTools }
     WatchModelSettings { id: watchModels; z: 210; onClosed: watch.focusChat() }
     Preferences { id: prefs; objectName: "preferences"; toolbarHeight: toolbar.height }
+    HelpWindow { id: help; mainWindow: window }
     Sheet {
         id: createDialog; objectName: "createSeriesSheet"
         contentItem: ColumnLayout {
             spacing: 12
-            Mark { text: "新建系列"; font.pixelSize: 18; font.weight: Font.DemiBold }
-            Entry { id: seriesName; objectName: "seriesName"; Layout.fillWidth: true; placeholderText: "系列名称"; Accessible.name: "系列名称"; onAccepted: if (create.enabled) create.clicked() }
+            Mark { text: qsTr("新建系列"); font.pixelSize: 18; font.weight: Font.DemiBold }
+            Entry { id: seriesName; objectName: "seriesName"; Layout.fillWidth: true; placeholderText: qsTr("系列名称"); Accessible.name: qsTr("系列名称"); onAccepted: if (create.enabled) create.clicked() }
             RowLayout {
                 Layout.fillWidth: true
                 Item { Layout.fillWidth: true }
-                Tool { text: "取消"; onClicked: createDialog.close() }
-                Tool { id: create; objectName: "createSeriesConfirm"; primary: true; text: "创建"; enabled: !!seriesName.text.trim(); onClicked: { workspace.createSeries(seriesName.text.trim()); createDialog.close() } }
+                Tool { text: qsTr("取消"); onClicked: createDialog.close() }
+                Tool { id: create; objectName: "createSeriesConfirm"; primary: true; text: qsTr("创建"); enabled: !!seriesName.text.trim(); onClicked: { workspace.createSeries(seriesName.text.trim()); createDialog.close() } }
             }
         }
     }
@@ -250,9 +271,9 @@ ApplicationWindow {
         onClosed: workspace.clearError()
         contentItem: ColumnLayout {
             spacing: 12
-            Mark { text: "操作未完成"; font.pixelSize: 17; font.weight: Font.DemiBold }
-            Text { Layout.fillWidth: true; text: workspace.error; color: Studio.ink; wrapMode: Text.Wrap; font.pixelSize: 13 }
-            Tool { Layout.alignment: Qt.AlignRight; text: "好"; primary: true; onClicked: alertDialog.close() }
+            Mark { text: qsTr("操作未完成"); font.pixelSize: 17; font.weight: Font.DemiBold }
+            Text { Layout.fillWidth: true; text: Studio.translate(workspace.error); color: Studio.ink; wrapMode: Text.Wrap; font.pixelSize: 13 }
+            Tool { Layout.alignment: Qt.AlignRight; text: qsTr("好"); primary: true; onClicked: alertDialog.close() }
         }
     }
 }

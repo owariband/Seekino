@@ -1,0 +1,4 @@
+TSCharacters is derived from opencc-data as distributed in opencc-js 1.4.2.
+Each dictionary entry has been placed on its own line for the native player.
+Source: https://github.com/nk2028/opencc-data
+License: Apache License 2.0 (see LICENSE).

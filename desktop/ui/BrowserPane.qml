@@ -7,11 +7,11 @@ Item {
     property bool browsingSeries: false
     readonly property var selected: workspace.series.find(item => item.id === workspace.selectedSeries)
     readonly property var videos: workspace.videosBySeries[workspace.selectedSeries] || []
-    readonly property var hero: browsingSeries ? selected : workspace.series[0]
+    readonly property var hero: browsingSeries ? selected : (workspace.series.find(item => item.id === workspace.lastWatchedSeries) || workspace.series[0])
     readonly property string heroID: hero?.id || ""
     readonly property var members: workspace.videosBySeries[heroID] || []
     readonly property var recent: workspace.recentPlayback?.[heroID]
-    readonly property var resumeVideo: recent?.positionMs > 0 && recent.positionMs < recent.durationMs
+    readonly property var resumeVideo: !!recent && recent.durationMs > 0
         ? members.find(video => video.id === recent.videoID) : null
     readonly property string playID: resumeVideo?.id || hero?.firstVideoID || ""
     readonly property string playTitle: resumeVideo?.title || hero?.firstVideoTitle || ""
@@ -21,6 +21,7 @@ Item {
     readonly property int columns: Math.max(1, Math.floor((page.width - 2 * gutter + gap) / (190 + gap)))
     readonly property int gap: width < 580 ? 12 : 16
     readonly property real cellWidth: (page.width - 2 * gutter - gap * (columns-1)) / columns
+    signal manageSeries(string id, string section)
     signal openSeries(string id)
     signal openVideo(string id, string title)
     signal importRequested()
@@ -61,26 +62,26 @@ Item {
             spacing: 0
             Text {
                 Layout.fillWidth: true
-                text: "把视频拖到这里"; textFormat: Text.PlainText
+                text: qsTr("把视频拖到这里"); textFormat: Text.PlainText
                 font.pixelSize: Studio.pageTitleSize; font.weight: Font.Medium
                 color: Studio.ink; wrapMode: Text.Wrap
             }
             Text {
                 Layout.fillWidth: true; Layout.topMargin: 7
-                text: "导入并解析后，就能按台词和画面找到片段。"
+                text: qsTr("导入并解析后，就能按台词和画面找到片段。")
                 font.pixelSize: Studio.labelSize + 1; color: Studio.muted
                 wrapMode: Text.Wrap; lineHeightMode: Text.FixedHeight; lineHeight: 22
             }
             RowLayout {
                 Layout.topMargin: 22; spacing: 8
                 Tool {
-                    objectName: "emptyImport"; text: "选择视频…"; glyph: "plus"
+                    objectName: "emptyImport"; text: qsTr("选择视频…"); glyph: "plus"
                     primary: true; symbolSize: 14; implicitHeight: 34; corner: 8
                     onClicked: browser.importRequested()
                 }
                 Tool {
                     objectName: "firstImportSettings"; visible: !workspace.importModelReady
-                    text: "配置解析模型…"; textSize: Studio.labelSize
+                    text: qsTr("配置解析模型…"); textSize: Studio.labelSize
                     onClicked: browser.settingsRequested()
                 }
             }
@@ -146,11 +147,19 @@ Item {
                 RowLayout {
                     anchors.fill: parent; anchors.leftMargin: browser.gutter; anchors.rightMargin: browser.gutter
                     spacing: 10
-                    Mark { text: browser.browsingSeries ? "选集" : "视频系列"; font.pixelSize: Studio.pageTitleSize; font.weight: Font.DemiBold }
-                    Mark { text: browser.browsingSeries ? browser.videos.length + " 集" : workspace.series.length + " 个系列"; font.pixelSize: 12; secondary: true }
+                    Mark { text: browser.browsingSeries ? qsTr("选集") : qsTr("视频系列"); font.pixelSize: Studio.pageTitleSize; font.weight: Font.DemiBold }
+                    Mark { text: browser.browsingSeries ? qsTr("%1 集").arg(browser.videos.length) : qsTr("%1 个系列").arg(workspace.series.length); font.pixelSize: 12; secondary: true }
                     Item { Layout.fillWidth: true }
-                    Tool { visible: rail.visible && rail.contentWidth > rail.width; outlined: true; glyph: "left"; hint: "上一组系列"; enabled: !rail.atXBeginning; onClicked: rail.moveByPage(-1) }
-                    Tool { visible: rail.visible && rail.contentWidth > rail.width; outlined: true; glyph: "chevron"; hint: "下一组系列"; enabled: !rail.atXEnd; onClicked: rail.moveByPage(1) }
+                    Tool { objectName:"seriesActions"; visible: browser.browsingSeries; text:qsTr("系列操作"); glyph:"more"
+                        onClicked: menu.open()
+                        Menu { id: menu; y: parent.height
+                            MenuItem { text:qsTr("编辑系列资料…"); onTriggered: browser.manageSeries(browser.heroID,"edit") }
+                            MenuItem { text:qsTr("编辑集号…"); enabled: browser.videos.length>0; onTriggered: browser.manageSeries(browser.heroID,"episode") }
+                            MenuItem { text:qsTr("导出解析结果…"); enabled: browser.videos.length>0; onTriggered: browser.manageSeries(browser.heroID,"export") }
+                        }
+                    }
+                    Tool { visible: rail.visible && rail.contentWidth > rail.width; outlined: true; glyph: "left"; hint: qsTr("上一组系列"); enabled: !rail.atXBeginning; onClicked: rail.moveByPage(-1) }
+                    Tool { visible: rail.visible && rail.contentWidth > rail.width; outlined: true; glyph: "chevron"; hint: qsTr("下一组系列"); enabled: !rail.atXEnd; onClicked: rail.moveByPage(1) }
                 }
             }
             ListView {
@@ -187,7 +196,7 @@ Item {
                     required property int index
                     width: rail.cardWidth; height: implicitHeight
                     title: modelData.title; cover: modelData.cover || ""
-                    detail: modelData.count + " 集"; objectName: "seriesCard_" + modelData.id
+                    detail: qsTr("%1 集").arg(modelData.count); objectName: "seriesCard_" + modelData.id
                     onClicked: browser.openSeries(modelData.id)
                     onActiveFocusChanged: if (activeFocus) rail.positionViewAtIndex(index, ListView.Contain)
                     Keys.onLeftPressed: rail.focusCard(index - 1,false)
@@ -197,7 +206,7 @@ Item {
             Mark {
                 x: browser.gutter; width: parent.width - 2*x
                 visible: browser.browsingSeries && !!browser.hero && !browser.hero.count
-                text: "这个系列还没有视频。"; color: Studio.muted
+                text: qsTr("这个系列还没有视频。"); color: Studio.muted
             }
         }
         delegate: Item {
@@ -217,7 +226,8 @@ Item {
                         width: browser.cellWidth; height: implicitHeight; episode: true
                         title: video?.title || ""; cover: video?.cover || ""; objectName: "episodeCard_" + (video?.id || "")
                         badge: video?.durationMs > 0 ? Studio.time(video.durationMs,false) : ""
-                        detail: video ? "第 " + video.episode + " 集" + (["READY","INDEXED"].includes(video.indexStatus) ? "  ·  可搜索" : "") : ""
+                        readonly property var progress: video ? workspace.playbackByVideo[video.id] : null
+                        detail: video ? qsTr("第 ") + video.episode + qsTr(" 集") + (progress ? qsTr("  ·  已看至 ") + Studio.time(progress.positionMs, false) : "") + (["READY","INDEXED"].includes(video.indexStatus) ? qsTr("  ·  可搜索") : "") : ""
                         onClicked: if (video) browser.openVideo(video.id, video.title)
                         onActiveFocusChanged: if (activeFocus) page.positionViewAtIndex(episodeRow.index, ListView.Contain)
                         Keys.onLeftPressed: browser.focusEpisode(entryIndex-1)

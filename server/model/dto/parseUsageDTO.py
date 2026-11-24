@@ -87,6 +87,11 @@ class UsageRunRow(UsageTotals):
 
 
 @dataclass(frozen=True, slots=True)
+class UsageSegmentRow(UsageTotals):
+    sequence_no: int | None
+
+
+@dataclass(frozen=True, slots=True)
 class UsageOverviewState:
     status: Literal["available", "unavailable"]
     message: str | None
@@ -97,3 +102,4 @@ class UsageOverviewState:
     totals: UsageTotals
     models: tuple[UsageModelRow, ...]
     runs: tuple[UsageRunRow, ...]
+    segments: tuple[UsageSegmentRow, ...] = ()

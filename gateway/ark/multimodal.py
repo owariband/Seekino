@@ -219,7 +219,13 @@ class ArkMultimodalModel:
         return Ark.volc(**options)
 
     def stream_text(self, inputs: Sequence[MultimodalInput]) -> Iterator[str]:
-        content = text_only_inputs(inputs, input_type="input_text")
+        yield from self._stream_content(text_only_inputs(inputs, input_type="input_text"), stream=self._stream)
+
+    def stream_media_text(self, inputs: Sequence[MultimodalInput]) -> Iterator[str]:
+        from gateway.agent_model.multimodal import _encode_inputs
+        yield from self._stream_content(_encode_inputs(inputs, self.provider_name), stream=True)
+
+    def _stream_content(self, content, *, stream):
         request: dict[str, Any] = {
             "model": self.model_name,
             "temperature": self.temperature,
@@ -245,7 +251,7 @@ class ArkMultimodalModel:
                     else lambda: None
                 )
                 try:
-                    if self._stream:
+                    if stream:
                         yield from request_sse_text(client.responses, usage_call=call, **request)
                     else:
                         _, text = request_response(client.responses, stream=False, usage_call=call, **request)

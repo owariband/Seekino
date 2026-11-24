@@ -9,6 +9,8 @@ import json
 import os
 import sqlite3
 from pathlib import Path
+
+from server.storage.sqlite_index import frozen_library_predicate
 from tempfile import NamedTemporaryFile
 from urllib.parse import urlsplit
 
@@ -102,12 +104,12 @@ class ModelProfile:
             raise ValueError("请直接编辑符号链接指向的模型配置。")
         protocol = form.get("protocol")
         if protocol not in {"ark", "openai_chat"}:
-            raise ValueError("请选择火山方舟或 OpenAI 兼容协议。")
+            raise ValueError("请选择 Ark 或 OpenAI 兼容协议。")
         url = normalize_personal_endpoint(_text(form, "baseUrl"), allow_local=True)
         if protocol == "ark" and url != ARK_OPENAI_BASE_URL:
             raise ValueError("方舟协议使用内置的官方服务地址。")
         host = urlsplit(url).hostname
-        name = _text(form, "name", required=False) or ("火山方舟" if protocol == "ark" else host)
+        name = _text(form, "name", required=False) or ("Ark" if protocol == "ark" else host)
         try:
             loopback = ip_address(host).is_loopback
         except ValueError:
@@ -172,9 +174,8 @@ class ModelProfile:
         frozen = False
         if path.is_file():
             with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as db:
-                frozen = bool(db.execute("""SELECT EXISTS(SELECT 1 FROM video)
-                    OR EXISTS(SELECT 1 FROM video_parse_task) OR EXISTS(SELECT 1 FROM local_chunks)
-                    OR EXISTS(SELECT 1 FROM upload_session WHERE status IN ('UPLOADING', 'COMPLETING'))""").fetchone()[0])
+                tables = (row[0] for row in db.execute("SELECT name FROM sqlite_schema WHERE type='table'"))
+                frozen = bool(db.execute("SELECT " + frozen_library_predicate(tables)).fetchone()[0])
         candidate = self.candidate(form, keep_legacy=frozen)
         if frozen and self.encoder_contract() != candidate.encoder_contract():
             raise ValueError("资料库已有视频、上传任务或索引。向量模型、服务地址、维度或编码方式与原配置不一致。请保留原配置，或为新模型使用新的资料库。")

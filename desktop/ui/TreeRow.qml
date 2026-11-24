@@ -52,7 +52,7 @@ Button {
         visible: rowButton.hasDisclosure
         objectName: "disclose_" + rowButton.objectName
         width: 22; height: parent.height; focusPolicy: Qt.NoFocus
-        Accessible.name: (rowButton.expanded ? "收起" : "展开") + rowButton.text
+        Accessible.name: (rowButton.expanded ? qsTr("收起") : qsTr("展开")) + rowButton.text
         onClicked: rowButton.disclose()
     }
     ToolTip.visible: hovered && contentItem.width < fontMetrics.advanceWidth(text) + 56

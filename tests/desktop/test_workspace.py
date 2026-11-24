@@ -12,7 +12,7 @@ pytest.importorskip("sqlite_vec")
 from PySide6.QtCore import QCoreApplication, QSize, QUrl
 
 from desktop.posters import PosterProvider
-from desktop.qt_controller import Workspace, _highlight_description
+from desktop.qt_controller import Workspace, _highlight_description, _request
 from tests.server.test_desktop_pipeline import _fixed_model_responses, _fixture_movie
 
 
@@ -75,8 +75,11 @@ def test_import_search_and_open_hit_through_window_model(tmp_path, monkeypatch):
         series_id = workspace.selectedSeries
         settings = []
         workspace.settingsNeeded.connect(settings.append)
-        workspace.importFiles([QUrl.fromLocalFile(str(source))], series_id)
-        assert settings == ["import"] and not workspace.busyImport
+        workspace.libraryTools.transfer(0, str(source), series_id, 1)
+        wait(lambda: not workspace.busyImport and workspace.videosBySeries.get(series_id))
+        assert not settings and workspace.jobs[0]["status"] == "PENDING"
+        video_id = workspace.videosBySeries[series_id][0]["id"]
+        assert Path(_request("openVideo", videoID=video_id)["path"]).read_bytes() == source.read_bytes()
         assert workspace.modelConfig["mode"] == "new"
         workspace.saveModelConfig({
             "name": "验收模型", "protocol": "ark", "baseUrl": "https://ark.cn-beijing.volces.com/api/v3",
@@ -119,7 +122,8 @@ def test_import_search_and_open_hit_through_window_model(tmp_path, monkeypatch):
         wait(lambda: media)
         assert media[0][1:3] == (300, 1000) and media[0][-1] is True
         assert workspace.playbackContext == {"videoID": hit["videoID"], "seriesID": series_id,
-                                             "description": hit["description"]}
+                                             "description": hit["description"], "sourceRef": hit["sourceRef"],
+                                         "askKino": False, "clipStartMs": 300, "clipEndMs": 1000}
         workspace.openVideo(hit["videoID"], hit["title"])
         wait(lambda: len(media) == 2)
         assert len(media) == 2
@@ -152,7 +156,7 @@ def test_import_search_and_open_hit_through_window_model(tmp_path, monkeypatch):
         wait(lambda: series_id in workspace.videosBySeries)
         assert workspace.selectedSeries == ""
         workspace.rememberPlayback(series_id, hit["videoID"], 2000, 2000)
-        assert series_id not in workspace.recentPlayback
+        assert workspace.recentPlayback[series_id]["positionMs"] == 2000
     finally:
         workspace.shutdown()
 

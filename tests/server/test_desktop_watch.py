@@ -93,3 +93,85 @@ assert 'gateway.agent_model.deepagents' not in sys.modules
 assert 'gateway.personal_models' not in sys.modules
 """
     subprocess.run([sys.executable, "-c", probe], check=True, timeout=30)
+
+
+def test_persist_images_turns_and_recover_interrupted_answer(tmp_path, monkeypatch):
+    from server.desktop.app import Application
+    from server.desktop.watch_settings import save_watch
+
+    source = tmp_path / "scene.mp4"
+    _fixture_movie(source)
+    root = tmp_path / "library"
+    root.mkdir()
+    save_watch(root, {"protocol": "openai_chat", "auth": "none", "model": "vision",
+                      "baseUrl": "http://localhost:7878/v1"}, {})
+    image = tmp_path / "reference.png"
+    Image.new("RGB", (25, 20), "blue").save(image)
+    received = []
+
+    def reply(_transport, request):
+        parts = json.loads(request.content)["messages"][-1]["content"]
+        received.append(parts)
+        return httpx.Response(200, json={"choices": [{"message": {"role": "assistant",
+                              "content": '{"answer":"红色画面与蓝色附件。"}'}}]})
+
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", reply)
+    app = Application(root, {})
+    try:
+        series = app.library.create_series("片库").series_id
+        video = app.library.import_file(source, series_id=series, episode_order=1, idempotency_key="first").video_id
+        alternate = source.with_name("alternate.mp4")
+        alternate.write_bytes(source.read_bytes() + bytes.fromhex("0000000866726565"))  # Empty MP4 free atom.
+        second = app.library.import_file(alternate, series_id=series, episode_order=2, idempotency_key="second").video_id
+        turn = dict(videoID=video, seriesID=series, positionMs=300, question="比较两张画面", threadID="",
+                    attachmentPath=str(image))
+        initial = app.call("askWatch", turn)["watch"]
+        assert len(initial["messages"]) == 2 and initial["messages"][0]["attachments"][0]["previewUrl"].startswith("file:")
+        assert sum(part["type"] == "image_url" for part in received[0]) == 2
+        thread = initial["threadID"]
+        result = app.call("askWatch", turn | {"question": "上一轮说了什么？", "attachmentPath": "", "threadID": thread})
+        assert len(result["watch"]["messages"]) == 4 and "蓝色附件" in received[1][0]["text"]
+        with pytest.raises(ValueError, match="不属于当前视频"):
+            app.call("watchHistory", {"videoID": second, "threadID": thread})
+        app.library.watch_history.start(video, [series], thread, "未完成", 600, "", "", "vision")
+    finally:
+        app.call("close", {})
+
+    app = Application(root, {})
+    try:
+        recovered = app.call("watchHistory", {"videoID": video})
+        assert recovered["threadID"] == thread
+        assert recovered["messages"][:4] == result["watch"]["messages"]
+        assert recovered["messages"][-1]["failed"] and "中断" in recovered["messages"][-1]["text"]
+        assert app.call("watchHistory", {"videoID": video, "threadID": thread, "delete": True})["messages"] == []
+        assert not app.library.watch_history.artifacts.list_attachment_conversations()
+    finally:
+        app.call("close", {})
+
+
+def test_stop_cancels_active_provider_and_rejects_late_result():
+    from threading import Event, Thread
+
+    from desktop.watch_control import WatchCallControl
+    from gateway.usage import ModelCallCancelledError, control_model_calls, track_model_call
+
+    control = WatchCallControl()
+    entered, stopped = Event(), Event()
+    result = []
+
+    def provider():
+        with control_model_calls(control):
+            try:
+                with track_model_call(provider="fixture", model="test", operation="watch_answer") as call:
+                    call.add_cancel_callback(stopped.set)
+                    entered.set()
+                    assert stopped.wait(3)
+            except ModelCallCancelledError:
+                result.append("stopped")
+
+    worker = Thread(target=provider)
+    worker.start()
+    assert entered.wait(3)
+    control.cancel()
+    worker.join(3)
+    assert result == ["stopped"] and not worker.is_alive()

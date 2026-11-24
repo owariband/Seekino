@@ -13,7 +13,7 @@ FocusScope {
     readonly property alias hasFrame: surface.hasFrame
     readonly property string hitDescription: hit ? (workspace?.playbackContext?.description || "") : ""
     readonly property bool insideHit: hit && positionMs >= startMs && positionMs < endMs
-    readonly property string hitStatus: insideHit ? "命中区间内" : positionMs < startMs ? "命中区间前" : "已过命中区间"
+    readonly property string hitStatus: insideHit ? qsTr("命中区间内") : positionMs < startMs ? qsTr("命中区间前") : qsTr("已过命中区间")
     readonly property color rangeColor: "#f0c97b"
     property bool cinema: false
     property int previousVisibility: Window.Windowed
@@ -22,19 +22,38 @@ FocusScope {
     readonly property bool chatHasFocus: companion.hasPanelFocus
     readonly property bool chatEntryFocused: companion.entryFocused
     property bool modalOpen: false
+    property bool resumeAfterQuestion: false
+    readonly property bool episodeFindOpen: finder.visible
+    readonly property var episodes: workspace.videosBySeries[workspace.playbackContext.seriesID || ""] || []
+    readonly property int episodeIndex: episodes.findIndex(episode => episode.id === workspace.playbackContext.videoID)
+    function openChat() { if (finder.visible) finder.dismiss(); companion.showPanel() }
+    function openFind() {
+        if (companion.opened) companion.dismiss()
+        finder.openFind()
+        reveal()
+    }
+    function playEpisode(index) {
+        if (index >= 0 && index < episodes.length && index !== episodeIndex)
+            workspace.openVideo(episodes[index].id, episodes[index].title || episodes[index].filename)
+    }
     signal settingsRequested()
     function focusChat() { if (companion.opened) companion.focusQuestion() }
     readonly property color timelineColor: "#89d6c8"
 
     function open(path, start, end, duration, caption, isHit) {
+        resumeAfterQuestion = false
+        if (finder.visible) finder.dismiss()
         companion.reset()
         title = caption; startMs = start; endMs = end; hit = isHit
+        if (workspace.playbackContext.seriesID) workspace.ensureSeriesLoaded(workspace.playbackContext.seriesID)
         surface.open(path, start, duration)
         reveal()
         Qt.callLater(() => { if (player.enabled) player.forceActiveFocus() })
     }
     function close() {
         if (cinema) toggleCinema()
+        resumeAfterQuestion = false
+        if (finder.visible) finder.dismiss()
         companion.reset()
         workspace.leaveWatch()
         hideControls.stop()
@@ -72,16 +91,17 @@ FocusScope {
         }
     }
     Shortcut {
-        sequence: "Escape"; enabled: player.enabled && !player.modalOpen && (player.chatOpen || player.cinema)
-        onActivated: player.chatOpen ? companion.dismiss() : player.toggleCinema()
+        sequence: "Escape"; enabled: player.enabled && !player.modalOpen && (finder.visible || player.chatOpen || player.cinema)
+        onActivated: finder.visible ? finder.dismiss() : player.chatOpen ? companion.dismiss() : player.toggleCinema()
     }
     Shortcut {
-        sequence: "F"; autoRepeat: false; enabled: player.enabled && !player.modalOpen && !player.chatHasFocus
+        sequence: "F"; autoRepeat: false; enabled: player.enabled && !player.modalOpen && !finder.visible && !player.chatHasFocus
         onActivated: player.toggleCinema()
     }
     Keys.onPressed: event => {
-        if (player.chatHasFocus || player.modalOpen || event.modifiers !== Qt.NoModifier) return
+        if (player.chatHasFocus || player.modalOpen || finder.visible || event.modifiers !== Qt.NoModifier) return
         switch (event.key) {
+        case Qt.Key_Slash: openFind(); break
         case Qt.Key_Left: skip(-10000); break
         case Qt.Key_Right: skip(10000); break
         case Qt.Key_K: playPause(); break
@@ -135,7 +155,7 @@ FocusScope {
         anchors.fill: parent
         anchors.bottomMargin: (player.hit ? evidence.height : 0) + companion.reservedHeight
         anchors.rightMargin: companion.reservedWidth
-        Behavior on anchors.rightMargin { NumberAnimation { duration: Studio.panel; easing.type: Easing.OutCubic } }
+        Behavior on anchors.rightMargin { enabled: !companion.resizing; NumberAnimation { duration: Studio.panel; easing.type: Easing.OutCubic } }
         Behavior on anchors.bottomMargin { NumberAnimation { duration: Studio.panel; easing.type: Easing.OutCubic } }
         z: player.cinema ? 100 : 0
         clip: true
@@ -157,7 +177,7 @@ FocusScope {
         PlayerButton {
             objectName: "centerPlayButton"
             anchors.centerIn: parent
-            circle: true; symbol: "play"; symbolSize: 30; hint: "播放 (K)"
+            circle: true; symbol: "play"; symbolSize: 30; hint: qsTr("播放 (K)")
             visible: !surface.playing && !surface.error && surface.hasFrame
             onClicked: player.playPause()
         }
@@ -183,8 +203,8 @@ FocusScope {
                 Slider {
                     id: seek; objectName: "seekSlider"; Layout.fillWidth: true; implicitHeight: 21
                     from: 0; to: Math.max(1,surface.durationMs); leftPadding: 0; rightPadding: 0
-                    hoverEnabled: true; activeFocusOnTab: true; Accessible.name: "播放位置"
-                    Accessible.description: player.hit ? player.hitStatus + "，命中 " + Studio.time(player.startMs,true) + " 至 " + Studio.time(player.endMs,true) : ""
+                    hoverEnabled: true; activeFocusOnTab: true; Accessible.name: qsTr("播放位置")
+                    Accessible.description: player.hit ? qsTr("%1，命中 %2 至 %3").arg(player.hitStatus).arg(Studio.time(player.startMs,true)).arg(Studio.time(player.endMs,true)) : ""
                     Binding { target: seek; property: "value"; value: surface.positionMs; when: !seek.pressed }
                     onPressedChanged: { player.reveal(); if (!pressed) surface.seek(Math.round(value)) }
                     Keys.onLeftPressed: player.skip(-10000)
@@ -214,19 +234,60 @@ FocusScope {
                 }
                 RowLayout {
                     id: row; Layout.fillWidth: true; Layout.preferredHeight: 40; spacing: 3
-                    PlayerButton { objectName: "playPauseButton"; symbol: surface.playing ? "pause" : "play"; hint: surface.playing ? "暂停 (K)" : "播放 (K)"; onClicked: player.playPause() }
-                    PlayerButton { text: "−10s"; hint: "后退 10 秒 (←)"; onClicked: player.skip(-10000) }
-                    PlayerButton { text: "+10s"; hint: "前进 10 秒 (→)"; onClicked: player.skip(10000) }
+                    PlayerButton { objectName: "playPauseButton"; symbol: surface.playing ? "pause" : "play"; hint: surface.playing ? qsTr("暂停 (K)") : qsTr("播放 (K)"); onClicked: player.playPause() }
+                    PlayerButton { visible: stage.width > 560; text: "−10s"; hint: qsTr("后退 10 秒 (←)"); onClicked: player.skip(-10000) }
+                    PlayerButton { visible: stage.width > 560; text: "+10s"; hint: qsTr("前进 10 秒 (→)"); onClicked: player.skip(10000) }
                     Text {
                         Layout.leftMargin: 5; color: "#c6d0ce"; font.pixelSize: 12
                         font.features: ({ "tnum": 1 })
                         text: Studio.time(seek.pressed ? seek.value : surface.positionMs, player.hit) + " / " + Studio.time(surface.durationMs, false)
                     }
                     Item { Layout.fillWidth: true }
-                    PlayerButton { objectName: "muteButton"; symbol: surface.muted || surface.volume === 0 ? "muted" : "volume"; hint: surface.muted || surface.volume === 0 ? "打开声音 (M)" : "静音 (M)"; onClicked: player.toggleMute() }
+                    PlayerButton { objectName: "episodeFindButton"; symbol: "search"; hint: qsTr("查找本集 (/)")
+                        onClicked: player.openFind() }
+                    PlayerButton {
+                        id: episodeButton; objectName: "episodeMenuButton"
+                        symbol: "library"; hint: qsTr("选集"); visible: player.episodes.length > 1
+                        onClicked: episodeMenu.open()
+                        Menu {
+                            id: episodeMenu; y: -height; x: Math.min(0, stage.width - episodeButton.mapToItem(stage,0,0).x - width)
+                            width: Math.min(280, stage.width-16); height: Math.min(implicitHeight, stage.height-72)
+                            palette.window: Studio.sidebar; palette.text: Studio.ink; palette.windowText: Studio.ink
+                            MenuItem { text: qsTr("上一集"); enabled: player.episodeIndex > 0; onTriggered: player.playEpisode(player.episodeIndex-1) }
+                            MenuItem { text: qsTr("下一集"); enabled: player.episodeIndex >= 0 && player.episodeIndex + 1 < player.episodes.length
+                                onTriggered: player.playEpisode(player.episodeIndex+1) }
+                            MenuSeparator {}
+                            Instantiator {
+                                model: player.episodes
+                                MenuItem { required property int index; required property var modelData
+                                    text: qsTr("第 ") + modelData.episode + qsTr(" 集 · ") + modelData.title
+                                    checkable: true; checked: index === player.episodeIndex
+                                    onTriggered: player.playEpisode(index) }
+                                onObjectAdded: (index, object) => episodeMenu.insertItem(index+3,object)
+                                onObjectRemoved: (index, object) => episodeMenu.removeItem(object)
+                            }
+                        }
+                    }
+                    PlayerButton {
+                        objectName: "playbackRateButton"; text: surface.playbackRate + "×"; hint: qsTr("播放倍速")
+                        onClicked: rates.open()
+                        Menu {
+                            id: rates; y: -height; width: 92
+                            palette.window: Studio.sidebar; palette.text: Studio.ink; palette.windowText: Studio.ink
+                            Instantiator {
+                                model: [0.5, 0.75, 1, 1.25, 1.5, 2]
+                                MenuItem { required property real modelData; text: modelData + "×"
+                                    checkable: true; checked: modelData === surface.playbackRate
+                                    onTriggered: surface.playbackRate = modelData }
+                                onObjectAdded: (index, object) => rates.insertItem(index,object)
+                                onObjectRemoved: (index, object) => rates.removeItem(object)
+                            }
+                        }
+                    }
+                    PlayerButton { objectName: "muteButton"; symbol: surface.muted || surface.volume === 0 ? "muted" : "volume"; hint: surface.muted || surface.volume === 0 ? qsTr("打开声音 (M)") : qsTr("静音 (M)"); onClicked: player.toggleMute() }
                     Slider {
-                        id: gain; objectName: "volumeSlider"; visible: stage.width > 580; Layout.preferredWidth: 70
-                        from: 0; to: 1; stepSize: .05; leftPadding: 0; rightPadding: 0; Accessible.name: "音量"
+                        id: gain; objectName: "volumeSlider"; visible: stage.width > 770; Layout.preferredWidth: 70
+                        from: 0; to: 1; stepSize: .05; leftPadding: 0; rightPadding: 0; Accessible.name: qsTr("音量")
                         value: surface.muted ? 0 : surface.volume
                         onMoved: { player.reveal(); surface.volume = value; surface.muted = value === 0 }
                         background: Rectangle {
@@ -239,15 +300,24 @@ FocusScope {
                             border.width: gain.visualFocus ? 1 : 0; border.color: "white"
                         }
                     }
-                    PlayerButton { objectName: "fullscreenButton"; symbol: player.cinema ? "exitFullscreen" : "fullscreen"; symbolSize: 20; hint: player.cinema ? "退出全屏 (Esc)" : "全屏播放 (F)"; onClicked: player.toggleCinema() }
+                    PlayerButton { objectName: "fullscreenButton"; symbol: player.cinema ? "exitFullscreen" : "fullscreen"; symbolSize: 20; hint: player.cinema ? qsTr("退出全屏 (Esc)") : qsTr("全屏播放 (F)"); onClicked: player.toggleCinema() }
                 }
             }
         }
         Text {
             anchors.top: parent.top; anchors.horizontalCenter: parent.horizontalCenter; anchors.topMargin: 15
-            width: parent.width - 40; text: surface.error; visible: text.length > 0
+            width: parent.width - 40; text: Studio.translate(surface.error); visible: text.length > 0
             color: "#ffc5c5"; wrapMode: Text.Wrap; horizontalAlignment: Text.AlignHCenter
         }
+    }
+
+    EpisodeFind {
+        id: finder
+        parent: stage
+        anchors.top: parent.top; anchors.right: parent.right; anchors.margins: 12
+        z: 15
+        onSeekRequested: position => { surface.seek(position); player.reveal() }
+        onDismissed: player.forceActiveFocus()
     }
 
     WatchCompanion {
@@ -256,11 +326,23 @@ FocusScope {
         anchors.fill: parent
         anchors.bottomMargin: player.hit ? evidence.height : 0
         z: player.cinema ? 102 : 2
+        episodes: player.episodes; currentEpisode: player.episodeIndex
+        onEpisodeRequested: index => player.playEpisode(index)
         videoTitle: player.title
         positionMs: player.positionMs
         onSettingsRequested: player.settingsRequested()
         onSeekRequested: position => { surface.seek(position); player.reveal() }
-        onQuestionSent: if (surface.playing) surface.setPlaying(false)
+        onOpenedChanged: {
+            if (opened && finder.visible) finder.dismiss()
+            if (!opened && player.resumeAfterQuestion) {
+                player.resumeAfterQuestion = false
+                surface.setPlaying(true)
+            }
+        }
+        onQuestionSent: if (Studio.preferences.pauseOnSend && surface.playing) {
+            player.resumeAfterQuestion = true
+            surface.setPlaying(false)
+        }
     }
 
     Rectangle {
@@ -295,7 +377,7 @@ FocusScope {
                 }
             }
             Tool {
-                objectName: "returnToHit"; contentColor: evidence.ink; text: "回到命中处"; hint: "从命中片段开头播放"; textSize: 12
+                objectName: "returnToHit"; contentColor: evidence.ink; text: qsTr("回到命中处"); hint: qsTr("从命中片段开头播放"); textSize: 12
                 onClicked: { surface.seek(player.startMs); surface.setPlaying(true); player.reveal() }
             }
         }

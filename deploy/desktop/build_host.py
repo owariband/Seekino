@@ -30,6 +30,7 @@ def copy_business_files(resources: Path) -> None:
                 continue
             if rel.parts[:2] == ("agent", "chat") and rel.as_posix() not in {
                 "agent/chat/__init__.py", "agent/chat/common/__init__.py", "agent/chat/common/errors.py",
+                "agent/chat/common/state.py",
                 "agent/chat/video_search/__init__.py", "agent/chat/video_search/frame_evidence.py",
             }:
                 continue

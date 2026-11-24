@@ -36,17 +36,27 @@ class FindQueryUnavailable(RuntimeError):
 
 
 def interpret_video_find_query(query: str, settings: ModelSettings) -> VideoFindTerms:
-    raw = query.strip()
-    # Ignore spaces between Han characters while preserving words in other scripts.
-    model_query = re.sub(r"(?<=[\u3400-\u9fff])\s+(?=[\u3400-\u9fff])", "", raw)
     try:
         catalog = settings.catalog()
         selection = catalog.find(catalog.new_chat_id())
         if selection is None:
             raise FindQueryUnavailable("No default chat model")
-        binding = selection.binding.model_copy(update={"fallback": None})
-        with closing(GatewayClient(selection.config, environ=settings.environ,
-                                   allow_local_endpoints=settings.allow_local)) as gateway:
+    except FindQueryUnavailable:
+        raise
+    except Exception as exc:
+        _logger.warning("video_find_query_failed exception_type=%s", type(exc).__name__)
+        raise FindQueryUnavailable("No default chat model") from None
+    return interpret_with_binding(query, selection.config, selection.binding, environ=settings.environ,
+                                  allow_local=settings.allow_local)
+
+
+def interpret_with_binding(query, config, binding, *, environ, allow_local):
+    raw = query.strip()
+    # Ignore spaces between Han characters while preserving words in other scripts.
+    model_query = re.sub(r"(?<=[\u3400-\u9fff])\s+(?=[\u3400-\u9fff])", "", raw)
+    binding = binding.model_copy(update={"fallback": None})
+    try:
+        with closing(GatewayClient(config, environ=environ, allow_local_endpoints=allow_local, enable_supervisor=False)) as gateway:
             model = gateway.create_generative_model(binding, mcp=False)
             with model_call_context({"stage": "video_find_query"}):
                 terms = model.generate(

@@ -1,6 +1,9 @@
 """Play verified local originals on the PyAV source timeline in a Qt Quick item."""
 
 from collections import deque
+from fractions import Fraction
+
+import av
 from queue import Empty, Full, Queue
 from threading import Event, Thread
 from time import monotonic
@@ -17,7 +20,53 @@ _RATE = 48_000
 _BYTES_PER_FRAME = 4  # Interleaved, signed little-endian stereo PCM16.
 
 
-def _decode(path, target, packets, cancelled):
+class _AudioTempo:
+    """Keep output PCM at device rate and preserve pitch with libavfilter atempo."""
+    def __init__(self, rate):
+        self.rate = rate
+        self.graph = None
+        self.next_source = None
+        self.cursor = 0
+
+    def push(self, pts, frames, pcm):
+        if self.graph is None or abs(pts - self.next_source) > 2:
+            yield from self.finish()
+            self.graph = av.filter.Graph()
+            self.graph.threads = 1
+            self.source = self.graph.add_abuffer(sample_rate=_RATE, format="s16", layout="stereo",
+                                                 time_base=Fraction(1, _RATE))
+            tempo = self.graph.add("atempo", str(self.rate))
+            self.sink = self.graph.add("abuffersink")
+            self.graph.link_nodes(self.source, tempo, self.sink)
+            self.graph.configure()
+            self.cursor = round(pts / self.rate)
+        frame = av.AudioFrame(format="s16", layout="stereo", samples=frames)
+        frame.sample_rate = _RATE
+        frame.time_base = Fraction(1, _RATE)
+        frame.pts = pts
+        frame.planes[0].update(bytes(pcm))
+        self.next_source = pts + frames
+        self.source.push(frame)
+        yield from self._drain()
+
+    def _drain(self):
+        while True:
+            try:
+                output = self.sink.pull()
+            except (av.error.BlockingIOError, av.error.EOFError):
+                return
+            length = output.samples * _BYTES_PER_FRAME
+            yield ("audio", self.cursor, output.samples, bytes(memoryview(output.planes[0])[:length]))
+            self.cursor += output.samples
+
+    def finish(self):
+        if self.graph is not None:
+            self.source.push(None)
+            yield from self._drain()
+            self.graph = None
+
+
+def _decode(path, target, packets, cancelled, rate=1.0):
     """One owner per container. Backpressure limits decoded image memory."""
     def send(packet):
         while not cancelled.is_set():
@@ -30,10 +79,14 @@ def _decode(path, target, packets, cancelled):
     try:
         decoder = PlaybackDecoder(path, rgb=True)
         try:
+            tempo = None if rate == 1.0 else _AudioTempo(rate)
             decoder.seek(target)
             while not cancelled.is_set():
                 sample = decoder.next_sample()
                 if sample is None:
+                    if tempo is not None:
+                        for packet in tempo.finish():
+                            send(packet)
                     send(("end",))
                     return
                 if sample[0] == 0:
@@ -43,7 +96,11 @@ def _decode(path, target, packets, cancelled):
                     send(("video", pts, frame.copy()))
                 else:
                     _, pts, frames, pcm = sample
-                    send(("audio", pts, frames, bytes(pcm)))
+                    if tempo is None:
+                        send(("audio", pts, frames, bytes(pcm)))
+                    else:
+                        for packet in tempo.push(pts, frames, pcm):
+                            send(packet)
         finally:
             decoder.close()
     except Exception as exc:
@@ -56,6 +113,7 @@ class VideoSurface(QQuickPaintedItem):
     playingChanged = Signal()
     frameChanged = Signal()
     errorChanged = Signal()
+    playbackRateChanged = Signal()
     volumeChanged = Signal()
     mutedChanged = Signal()
 
@@ -71,6 +129,7 @@ class VideoSurface(QQuickPaintedItem):
         self._playing = self._has_frame = False
         self._muted = False
         self._volume = 1.0
+        self._rate = 1.0
         self._error = ""
         self._image = QImage()
         self._videos = deque()
@@ -88,6 +147,17 @@ class VideoSurface(QQuickPaintedItem):
     playing = Property(bool, lambda self: self._playing, notify=playingChanged)
     hasFrame = Property(bool, lambda self: self._has_frame, notify=frameChanged)
     error = Property(str, lambda self: self._error, notify=errorChanged)
+
+    @Property(float, notify=playbackRateChanged)
+    def playbackRate(self):
+        return self._rate
+
+    @playbackRate.setter
+    def playbackRate(self, rate):
+        if rate in (0.5, 0.75, 1.0, 1.25, 1.5, 2.0) and rate != self._rate:
+            self._rate = rate
+            self.playbackRateChanged.emit()
+            self.seek(self._position)
 
     @Property(bool, notify=mutedChanged)
     def muted(self):
@@ -128,6 +198,7 @@ class VideoSurface(QQuickPaintedItem):
     @Slot(str, int, int)
     def open(self, path, start, duration):
         self.close()
+        self.playbackRate = 1.0
         self._path = path
         self._duration = max(0, duration)
         self.durationChanged.emit()
@@ -146,7 +217,7 @@ class VideoSurface(QQuickPaintedItem):
         self._cancel = Event()
         self._packets = Queue(maxsize=3)
         self._thread = Thread(target=_decode, name="Seekino media", daemon=True,
-                              args=(self._path, self._position, self._packets, self._cancel))
+                              args=(self._path, self._position, self._packets, self._cancel, self._rate))
         self._thread.start()
         self._timer.start()
 
@@ -202,7 +273,7 @@ class VideoSurface(QQuickPaintedItem):
         self._clock = None
 
     def _anchor(self):
-        self._clock = monotonic() - self._position / 1000
+        self._clock = monotonic() - self._position / (1000 * self._rate)
 
     def _set_position(self, value):
         if self._position != value:
@@ -235,13 +306,13 @@ class VideoSurface(QQuickPaintedItem):
         if self._playing and self._clock is None and (self._videos or self._has_frame):
             self._anchor()
         if self._clock is not None:
-            position = (monotonic() - self._clock) * 1000
+            position = (monotonic() - self._clock) * 1000 * self._rate
             # The device is master while it consumes queued PCM. Reanchor the
             # monotonic clock so silence after the last audio sample also plays.
             if self._sink and self._sink.state() == QtAudio.State.ActiveState:
-                position = min(self._audio_start_ms + self._sink.processedUSecs() / 1000,
-                               self._audio_cursor * 1000 / _RATE)
-                self._clock = monotonic() - position / 1000
+                position = min(self._audio_start_ms + self._sink.processedUSecs() / 1000 * self._rate,
+                               self._audio_cursor * 1000 * self._rate / _RATE)
+                self._clock = monotonic() - position / (1000 * self._rate)
             self._set_position(min(self._duration, max(self._position, int(position))))
 
         frame = None
@@ -293,7 +364,7 @@ class VideoSurface(QQuickPaintedItem):
             # the source clock after the device is ready, preserving the first frame.
             self._anchor()
             self._audio_start_ms = self._position
-            self._audio_cursor = round(self._position * _RATE / 1000)
+            self._audio_cursor = round(self._position * _RATE / (1000 * self._rate))
 
         while self._audio:
             _, pts, frames, data = self._audio[0]

@@ -122,9 +122,11 @@ def main():
     configure_interface_font(app)
     app.setApplicationName("Seekino")
     app.setOrganizationName("Seekino")
-    app.setApplicationVersion("0.2.12")
+    app.setApplicationVersion("0.2.13")
     app.setWindowIcon(QIcon(str(basedir.parent / "SeekinoLogo.png")))
+    from .locale import DesktopLocale
     from .qt_player import register_player
+    locale = DesktopLocale(app)
     register_player()
     if args.verify_library:
         from .qt_verification import run
@@ -139,6 +141,8 @@ def main():
     engine.addImportPath(str(qt / "qml"))
     engine.rootContext().setContextProperty("workspace", workspace)
     engine.rootContext().setContextProperty("desktopPlatform", preferences)
+    engine.rootContext().setContextProperty("desktopLocale", locale)
+    locale.retranslate.connect(engine.retranslate)
     engine.load(QUrl.fromLocalFile(str(basedir / "ui/Main.qml")))
     if not engine.rootObjects():
         return 1

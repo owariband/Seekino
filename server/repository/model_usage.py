@@ -125,7 +125,7 @@ class ModelUsageRepository:
         self, *, tenant_id: str, from_start_time: datetime,
         to_start_time: datetime, series_id: str | None = None,
         run_id: str | None = None,
-        actor_user_id: str | None = None,
+        actor_user_id: str | None = None, task_type: str | None = None,
     ) -> ModelCallUsageBatch:
         require_nonempty_text(tenant_id, "tenant_id", maximum=64)
         start = require_utc_datetime(from_start_time, "from_start_time")
@@ -137,6 +137,8 @@ class ModelUsageRepository:
             ModelUsage.start_time >= start,
             ModelUsage.start_time < end,
         ]
+        if task_type is not None:
+            filters.append(ModelUsage.task_type == task_type)
         if actor_user_id is not None:
             require_nonempty_text(actor_user_id, "actor_user_id", maximum=64)
             filters.append(ModelUsage.user_id == actor_user_id)

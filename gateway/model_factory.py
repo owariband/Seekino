@@ -132,6 +132,18 @@ class GenerativeModel:
         self._closed = False
         self._lock = Lock()
 
+    @property
+    def supports_media_text_stream(self):
+        return callable(getattr(self._delegate, "stream_media_text", None)) and (
+            not isinstance(self._source, ChatAPISourceConfig) or self._source.protocol == "openai_chat"
+        )
+
+    def stream_media_text(self, inputs: Sequence[MultimodalInput]):
+        self._validate_inputs(inputs)
+        if not self.supports_media_text_stream:
+            raise ValueError("This model adapter has no multimodal text stream")
+        yield from self._delegate.stream_media_text(inputs)
+
     def _validate_inputs(self, inputs: Sequence[MultimodalInput]) -> None:
         for item in inputs:
             if isinstance(item, TextInput):

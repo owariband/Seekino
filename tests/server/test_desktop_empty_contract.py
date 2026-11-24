@@ -50,3 +50,15 @@ def test_reject_an_encoder_change_when_library_has_frozen_work(tmp_path, saved):
         with pytest.raises(IndexSchemaError, match="differs"):
             _store(db.session_factory).bind_contract(changed, create=True)
         _store(db.session_factory).bind_contract(initial)
+
+
+def test_metadata_only_index_before_library_bootstrap():
+    import sqlite3
+    from server.storage.sqlite_index import frozen_library_predicate
+
+    with closing(sqlite3.connect(":memory:")) as db:
+        db.execute("CREATE TABLE local_chunks (id INTEGER PRIMARY KEY)")
+        predicate = frozen_library_predicate(["local_chunks"])
+        assert db.execute("SELECT " + predicate).fetchone() == (0,)
+        db.execute("INSERT INTO local_chunks VALUES (1)")
+        assert db.execute("SELECT " + predicate).fetchone() == (1,)

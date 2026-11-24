@@ -5,6 +5,7 @@ import QtQuick.Controls.Basic
 Button {
     id: card
     property string title: ""
+    signal ask()
     property string markedTitle: ""
     property string sourceLabel: ""
     property string filename: ""
@@ -16,7 +17,7 @@ Button {
     height: implicitHeight
     leftPadding: 16; rightPadding: 12; topPadding: 12; bottomPadding: 12
     hoverEnabled: true; activeFocusOnTab: true
-    Accessible.name: [title, sourceLabel, timeRange, filename, "回看原片"].filter(Boolean).join("，")
+    Accessible.name: [title, sourceLabel, timeRange, filename, qsTr("回看原片")].filter(Boolean).join("，")
     SequentialAnimation {
         id: entry
         ParallelAnimation {
@@ -60,6 +61,12 @@ Button {
                     text: card.timeRange; secondary: true; font.pixelSize: 12; font.features: ({ "tnum": 1 })
                 }
             }
+            Tool {
+                objectName: "askHit"
+                text: qsTr("引用并问 Kino"); hint: qsTr("引用这个片段向 Kino 提问")
+                textSize: 12; implicitHeight: 25; contentColor: Studio.accent
+                onClicked: card.ask()
+            }
             Mark {
                 width: body.width; visible: !!card.sourceLabel && !!text && text !== card.sourceLabel
                 textFormat: Text.PlainText; text: card.filename; color: Studio.dim; font.pixelSize: 12
@@ -76,7 +83,7 @@ Button {
             Column {
                 visible: thumb.status !== Image.Ready; anchors.centerIn: parent; spacing: 4
                 Glyph { anchors.horizontalCenter: parent.horizontalCenter; width: 20; height: 20; name: "film"; ink: Studio.muted }
-                Mark { anchors.horizontalCenter: parent.horizontalCenter; text: thumb.status === Image.Loading ? "载入画面…" : "暂无预览"; secondary: true; font.pixelSize: 11 }
+                Mark { anchors.horizontalCenter: parent.horizontalCenter; text: thumb.status === Image.Loading ? qsTr("载入画面…") : qsTr("暂无预览"); secondary: true; font.pixelSize: 11 }
             }
             Rectangle {
                 anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.margins: 4
@@ -88,7 +95,7 @@ Button {
                 Mark {
                     id: label; x: 22; anchors.verticalCenter: parent.verticalCenter
                     visible: card.hovered || card.visualFocus
-                    text: "回看原片"; color: "#f3f8f5"; font.pixelSize: 11
+                    text: qsTr("回看原片"); color: "#f3f8f5"; font.pixelSize: 11
                 }
             }
         }

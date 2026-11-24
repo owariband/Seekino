@@ -122,6 +122,12 @@ class UploadService:
         if not 0 < total_size_bytes <= self._config.maximum_upload_size_bytes:
             raise ValueError("total_size_bytes is outside the configured upload limit")
 
+    def default_parse_snapshot(self) -> dict:
+        snapshot = self._resolve_parse_config(self._parse_defaults)
+        return snapshot.model_copy(update={
+            "auto_content_kind": snapshot.profile == "content" and snapshot.content_kind is None,
+        }).model_dump(mode="json")
+
     def create_session(
         self,
         *,
@@ -161,10 +167,9 @@ class UploadService:
             raise ValueError("content_sha256 must be 64 lowercase hex characters")
 
         def resolve_config() -> dict:
-            snapshot = self._resolve_parse_config(parse_config or self._parse_defaults)
-            return snapshot.model_copy(update={
-                "auto_content_kind": parse_config is None and snapshot.profile == "content" and snapshot.content_kind is None,
-            }).model_dump(mode="json")
+            if parse_config is None:
+                return self.default_parse_snapshot()
+            return self._resolve_parse_config(parse_config).model_copy(update={"auto_content_kind": False}).model_dump(mode="json")
 
         # Fingerprint the submitted form; normalized execution settings may change
         # independently, but a replay must return the original accepted snapshot.
