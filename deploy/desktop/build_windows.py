@@ -10,6 +10,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 from pefile import PE, RESOURCE_TYPE
 from PIL import Image
 from build_host import ROOT, copy_business_files
+from qwen_runtime import install_qwen_runtime
 from startup_bytecode import compile_startup_bytecode
 from qt_bundle import collect, copy_frontend, install_qt
 
@@ -47,6 +48,7 @@ def build(destination, python, zig, rc=None):
         qt = stage / "qt"
         install_qt(qt, windows=True)
         collect(qt, packages)
+        install_qwen_runtime(app, app / "qwen-runtime", windows=True, zig=zig)
         compile_startup_bytecode(app, windows=True)
         icon = stage / "Seekino.ico"
         with Image.open(app / "SeekinoLogo.png") as image:

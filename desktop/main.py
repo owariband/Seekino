@@ -157,7 +157,7 @@ def main():
     configure_interface_font(app)
     app.setApplicationName("Seekino")
     app.setOrganizationName("Seekino")
-    app.setApplicationVersion("0.2.19")
+    app.setApplicationVersion("0.2.20")
     app.setWindowIcon(QIcon(str(basedir.parent / "SeekinoLogo.png")))
     from .locale import DesktopLocale
     from .qt_player import register_player
@@ -167,13 +167,18 @@ def main():
         from .qt_verification import run
         root, query = args.verify_library
         return run(app, Path(root), query)
+    from .embedding_download import EmbeddingDownload
     from .qt_controller import Workspace
     workspace = Workspace(args.library)
+    download = EmbeddingDownload(app)
+    download.ready.connect(workspace.refreshLocalEmbedding)
+    app.aboutToQuit.connect(download.shutdown)
     preferences = PlatformPreferences(app)
     from .posters import PosterProvider
     engine = QQmlApplicationEngine()
     engine.addImageProvider("posters", PosterProvider())
     engine.addImportPath(str(qt / "qml"))
+    engine.rootContext().setContextProperty("embeddingDownload", download)
     engine.rootContext().setContextProperty("workspace", workspace)
     engine.rootContext().setContextProperty("desktopPlatform", preferences)
     engine.rootContext().setContextProperty("desktopLocale", locale)

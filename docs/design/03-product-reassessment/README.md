@@ -6,6 +6,8 @@
 
 ## 本阶段的提出背景
 
+2026-11-25，桌面向量模型原先需要服务地址，本机使用也要另外启动服务。模型用途页增加按需下载 Qwen3 的入口，已有 API 资料库沿用其编码配置。[桌面向量嵌入 TRD](desktop-local-embedding-trd.md) · [PR #191](https://github.com/owariband/Seekino/pull/191)
+
 2026-11-23，Seekino 桌面版确定用原生 UI 在进程内直接调用 Python 业务与 FFmpeg 库，由应用管理本地资料库。后端先交付 SQLite、检索、媒体适配和最小嵌入验收，再接原生播放器和安装包。 [后端 TRD](macos-desktop-backend-trd.md) · [PR #183](https://github.com/owariband/Seekino/pull/183)
 
 2026-11-23，桌面版用 Qt Quick 共用 Web 风格的窗口，接入 #183 的进程内后端。Mac 与 Windows 的安装及回放验证见报告。 [桌面应用 TRD](macos-desktop-app-trd.md) · [PR #184](https://github.com/owariband/Seekino/pull/184)
@@ -148,6 +150,7 @@ hypnos 于 **2026-04-27 入职实习**，到这次面试复盘时已接近半年
 - [桌面交互延迟](desktop-interaction-latency-trd.md)记录返回首页、拖动原片、打开搜索和启动资料库的对照方法与实测。
 - [桌面 Kino 动作](desktop-kino-motion-trd.md)记录观看入口的拖动、跨回答飞跃和原生动作验收。
 - [观看设置与模型连接](desktop-provider-panel-settings-trd.md)记录对话面板在原生窗口中的布局、淡化行为，以及统一连接编辑器和按用途绑定模型的规则。
+- [桌面向量嵌入](desktop-local-embedding-trd.md)记录两种来源的选择、共享权重校验、文档与问题的编码约定，以及已有索引的保护。
 - [陪看浮窗与原生窗口关闭](desktop-companion-window-close-trd.md)记录播放器中空对话的尺寸、控件和 macOS 关闭命令。
 - [桌面与 Web 工作流](desktop-web-workflows-trd.md)记录原生应用对导入、检索、回看和任务管理的接入验收。
 - [视频内文字查找](watch-text-find-trd.md) 记录当前一集的台词、画面文字和播放器毫秒跳转。[PR #105](https://github.com/owariband/Seekino/pull/105)

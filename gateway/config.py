@@ -173,6 +173,13 @@ class LlamaCppEmbeddingSourceConfig(BaseModel):
     base_url: _AudioBaseUrl
 
 
+class LocalQwenSourceConfig(BaseModel):
+    """Pinned, in-process desktop encoder. The application owns its weights."""
+    model_config = ConfigDict(extra="forbid")
+    adapter: Literal["local_qwen"] = "local_qwen"
+    provider: Literal["local_qwen"] = "local_qwen"
+
+
 class OpenAIAudioSourceConfig(ChatSourceCredentials):
     """Audio Transcriptions protocol, independent of Chat Completions."""
 
@@ -282,6 +289,7 @@ ModelSourceConfig = (
     | CampPlusModelSourceConfig
     | OllamaEmbeddingSourceConfig
     | LlamaCppEmbeddingSourceConfig
+    | LocalQwenSourceConfig
 )
 _ModelSourceConfigField = Annotated[
     ModelSourceConfig,
@@ -731,7 +739,12 @@ class GatewayConfig(BaseModel):
         if kind == "embedding" and not isinstance(binding, EmbeddingModelBinding):
             raise ValueError(f"{ref} embedding binding requires dimensions and video_fps")
         if isinstance(binding, EmbeddingModelBinding):
-            if isinstance(source, (OllamaEmbeddingSourceConfig, LlamaCppEmbeddingSourceConfig, ChatAPISourceConfig)):
+            if isinstance(source, LocalQwenSourceConfig):
+                from gateway.local.qwen_assets import DIMENSIONS, MODEL_ID, QUERY_INSTRUCTION
+                if (binding.model != MODEL_ID or binding.dimensions != DIMENSIONS or binding.input_mode != "text"
+                        or binding.query_instruction != QUERY_INSTRUCTION or binding.encoder_model not in (None, MODEL_ID)):
+                    raise ValueError("local_qwen requires the bundled Qwen3 model and its fixed encoding contract")
+            elif isinstance(source, (OllamaEmbeddingSourceConfig, LlamaCppEmbeddingSourceConfig, ChatAPISourceConfig)):
                 if binding.input_mode != "text":
                     raise ValueError(f"{source.adapter} requires input_mode=text")
             elif binding.query_instruction is not None:

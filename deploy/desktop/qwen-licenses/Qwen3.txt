@@ -1,0 +1,8 @@
+Qwen3-Embedding-0.6B, Qwen Team, Alibaba Cloud. Licensed under Apache 2.0.
+Model and model card: https://huggingface.co/Qwen/Qwen3-Embedding-0.6B
+On-demand weights: Q8_0 GGUF from the Ollama qwen3-embedding distribution
+https://ollama.com/library/qwen3-embedding:0.6b
+SHA-256: 06507c7b42688469c4e7298b0a1e16deff06caf291cf0a5b278c308249c3e439
+
+llama.cpp b12283 by the ggml authors, MIT license.
+https://github.com/ggml-org/llama.cpp/releases/tag/b12283

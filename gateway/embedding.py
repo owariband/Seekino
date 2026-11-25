@@ -68,12 +68,17 @@ def describe_embedding_model(
 ) -> EmbeddingModelInfo:
     """Describe the configured encoder without allocating a client or reading keys."""
     from gateway.ark.embedding import DOUBAO_MULTIMODAL_EMBEDDING_REVISION
-    from gateway.config import ArkModelSourceConfig, ChatAPISourceConfig, OllamaEmbeddingSourceConfig, LlamaCppEmbeddingSourceConfig
+    from gateway.config import (ArkModelSourceConfig, ChatAPISourceConfig, LlamaCppEmbeddingSourceConfig,
+                                LocalQwenSourceConfig, OllamaEmbeddingSourceConfig)
 
     if isinstance(source, OllamaEmbeddingSourceConfig):
         from gateway.local.embedding import ollama_encoder_revision
 
         revision = ollama_encoder_revision(binding.query_instruction)
+    elif isinstance(source, LocalQwenSourceConfig):
+        from gateway.local.qwen_assets import MODEL_SHA256
+        from gateway.local.llama_cpp_embedding import llama_cpp_encoder_revision
+        revision = f"b12283:{MODEL_SHA256}:{llama_cpp_encoder_revision(binding.query_instruction)}"
     elif isinstance(source, LlamaCppEmbeddingSourceConfig):
         from gateway.local.llama_cpp_embedding import llama_cpp_encoder_revision
 
@@ -144,7 +149,16 @@ def build_embedding_model(
         DOUBAO_MULTIMODAL_EMBEDDING_REVISION,
         DoubaoMultimodalEmbedder,
     )
-    from gateway.config import ArkModelSourceConfig, ChatAPISourceConfig, OllamaEmbeddingSourceConfig, LlamaCppEmbeddingSourceConfig
+    from gateway.config import (ArkModelSourceConfig, ChatAPISourceConfig, LlamaCppEmbeddingSourceConfig,
+                                LocalQwenSourceConfig, OllamaEmbeddingSourceConfig)
+
+    if isinstance(source, LocalQwenSourceConfig):
+        from gateway.local.inprocess_embedding import LocalQwenEmbedder
+        from gateway.local.qwen_assets import verified_model_path
+
+        delegate = LocalQwenEmbedder(verified_model_path())
+        return _OwnedEmbeddingModel(delegate, delegate, binding=binding, source=source,
+                                    encoder_revision=describe_embedding_model(binding, source).encoder_revision)
 
     from gateway.personal_endpoint import endpoint_http_client
     if isinstance(source, ChatAPISourceConfig) and source.protocol == "openai_chat":

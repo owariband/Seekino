@@ -315,7 +315,7 @@ def open_library(library_root: Path | str, *, gateway_config=None, gateway_envir
     if not models.is_file():
         models = STORAGE_CONFIG.parents[1] / "deploy" / "cloud" / "models.example.yaml"
     config = gateway_config if gateway_config is not None else load_config(models)
-    supported = {"ark", "openai", "chat_api", "openai_audio", "openai_vision", "ollama_embedding"}
+    supported = {"ark", "openai", "chat_api", "openai_audio", "openai_vision", "ollama_embedding", "local_qwen"}
     for source in config.model_sources.values():
         if source.adapter not in supported:
             raise ValueError(f"desktop video processing requires an in-process model SDK: {source.adapter}")

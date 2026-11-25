@@ -57,10 +57,14 @@ class ServiceProfiles:
         if settings.get("mode") == "managed":
             form = settings["form"]
             for role in ("vision", "transcription", "embedding", "rerank"):
+                if role == "embedding" and form.get("embeddingMode") == "local":
+                    continue
                 connection = form.get("roleConnections", {}).get(role, form)
                 record = next((row for row in settings["connections"] if
                                any(b["role"] == role for b in row["roles"])), {})
                 selected = {**form, **connection}
+                if form.get("embeddingMode") == "local":
+                    selected.update(embedding="", dimensions=DEFAULT_FORM["dimensions"], encoderModel="")
                 self._project(role, selected, record.get("credentialName", ""))
         watch = settings.get("watchSettings")
         if watch:
@@ -161,20 +165,24 @@ class ServiceProfiles:
         selected = roles.get("roleServices") or {role: key for role in ("vision", "transcription", "embedding", "rerank")}
         if not isinstance(selected, dict) or selected.get("vision") != key:
             raise ValueError("请检查模型用途选择。")
-        assigned = {role: self.require(selected.get(role)) for role in ("vision", "transcription", "embedding")}
+        mode = roles.get("embeddingMode", "api")
+        required_roles = ("vision", "transcription") if mode == "local" else ("vision", "transcription", "embedding")
+        assigned = {role: self.require(selected.get(role)) for role in required_roles}
         assigned["rerank"] = self.require(selected.get("rerank") or key)
         form = {}
         for role, target in assigned.items():
             model = _text(roles, role, required=role != "rerank" or bool(selected.get("rerank") and selected["rerank"] != key))
             form[role] = model
             rows[target["id"]] = {**rows[target["id"]], role: model}
-        embedding = assigned["embedding"]
-        dims = roles.get("dimensions", embedding["dimensions"])
-        encoder = roles.get("encoderModel", "")
-        rows[embedding["id"]] = {**rows[embedding["id"]], "dimensions": dims, "encoderModel": encoder}
+        if mode != "local":
+            embedding = assigned["embedding"]
+            dims = roles.get("dimensions", embedding["dimensions"])
+            encoder = roles.get("encoderModel", "")
+            rows[embedding["id"]] = {**rows[embedding["id"]], "dimensions": dims, "encoderModel": encoder}
+            form.update(dimensions=int(dims), encoderModel=encoder)
         for target in assigned.values():
             rows[target["id"]] = {"id": target["id"], **clean(rows[target["id"]])}
         connections = {role: {"serviceID": target["id"], **{k: target[k] for k in
                        ("name", "protocol", "baseUrl", "auth")}} for role, target in assigned.items()}
-        return rows, {**connections["vision"], **form, "dimensions": int(dims), "encoderModel": encoder,
+        return rows, {**connections["vision"], **form, "embeddingMode": mode,
                       "roleConnections": connections}, assigned

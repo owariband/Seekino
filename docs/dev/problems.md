@@ -3002,3 +3002,10 @@ micrograd v5 共 146 块，整集 90 分 04.884 秒。调度反复锁取候选�
 0.2.17 的陪看空状态沿用完整对话高度，macOS 文件菜单缺少「关闭窗口」。0.2.18 缩小首次连接的浮窗，并复测 ⌘W 在设置、帮助、播放器内的关闭目标和普通剧集的进度保存。[同帧对照与快捷键验收](../design/03-product-reassessment/desktop-companion-window-close-trd.md)
 
 0.2.18 把陪看框缩成短卡片后，聊天和选集不能同时看见。0.2.19 恢复 Web 的完整浮窗，删去重复表头、配置提示和普通播放中的片名。旧快捷键脚本在隐藏 Qt 窗口时卡住，已回收该进程，并为 macOS 桌面验收增加超时和进程组清理。[问题现场与修复验证](../design/03-product-reassessment/desktop-companion-window-close-trd.md)
+
+<a id="desktop-embed-01"></a>
+### DESKTOP-EMBED-01　桌面向量模型需要用户另起服务，装好应用仍无法在本机编码
+
+2026-11-25。0.2.19 的「向量嵌入」要求选择一个服务连接。希望在自己电脑完成向量检索的人还需安装、启动并维护推理端点。资料库会固定编码模型，切换来源还可能让新问题与原有视频使用不同的向量空间。
+
+验收覆盖两个入口。旧 API 配置升级后能继续解析和搜索。选择本机模型后能在应用里下载并校验 Qwen3，重开后继续使用同一份权重；缺少权重时仍可播放，重新下载后恢复处理。最终用安装包从真实视频走到索引、描述搜索及命中回看，并观察是否启动推理子进程。[设计与验收](../design/03-product-reassessment/desktop-local-embedding-trd.md) · [决策记录](devlog.md#devlog-desktop-local-embedding-20261125) · [工作台](workbench.html)

@@ -60,6 +60,9 @@ _ADAPTER_CAPABILITIES = {
     "campplus": AdapterCapabilities(
         speaker_embedding=True, supports_reasoning_effort=False, supports_output_limit=False,
     ),
+    "local_qwen": AdapterCapabilities(
+        embedding=True, supports_reasoning_effort=False, supports_output_limit=False,
+    ),
     "llama_cpp_embedding": AdapterCapabilities(
         embedding=True, supports_reasoning_effort=False, supports_output_limit=False,
     ),

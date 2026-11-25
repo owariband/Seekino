@@ -18,6 +18,7 @@ import yaml
 from gateway.config import GatewayConfig, config_from_document, source_api_key_env_name
 from gateway.constants import ARK_OPENAI_BASE_URL
 from gateway.embedding import describe_embedding_model
+from gateway.local import qwen_assets
 from server.config.storage import STORAGE_CONFIG, desktop_storage
 
 EXAMPLE = STORAGE_CONFIG.parents[1] / "deploy/cloud/models.example.yaml"
@@ -95,6 +96,10 @@ class ModelProfile:
         if not isinstance(revision, str) or self.revision != revision:
             raise ValueError("模型设置已变更，请重新打开设置。")
 
+    def local_embedding(self):
+        binding = self.config.resolve_embedding_binding(environ={})
+        return self.config.source(binding.source).adapter == "local_qwen"
+
     def candidate(self, form, *, keep_legacy=False):
         if self.raw is not None and self.form is None:
             raise ValueError("当前 models.yaml 由部署管理。可更新其凭据，模型绑定请在原文件中修改。")
@@ -110,22 +115,32 @@ class ModelProfile:
         connections = form.get("roleConnections") or {}
         if not isinstance(connections, dict):
             raise ValueError("请检查模型用途选择。")
-        by_role = {role: connection(connections.get(role) or form)
-                   for role in ("vision", "transcription", "embedding", "rerank")}
+        mode = form.get("embeddingMode", "api")
+        if mode not in ("api", "local"):
+            raise ValueError("请选择向量嵌入来源。")
+        roles = ("vision", "transcription", "rerank") if mode == "local" else ("vision", "transcription", "embedding", "rerank")
+        by_role = {role: connection(connections.get(role) or form) for role in roles}
         protocol = by_role["vision"]["protocol"]
-        vision, asr, embedding = (_text(form, key) for key in ("vision", "transcription", "embedding"))
-        dims = form.get("dimensions")
-        if type(dims) is not int or not 1 <= dims <= 2048:
-            raise ValueError("向量维度须为 1 到 2048 之间的整数。")
-        encoder = _text(form, "encoderModel", required=False)
-        embedding_protocol = by_role["embedding"]["protocol"]
-        if embedding_protocol == "ark" and embedding.startswith("ep-") and (not encoder or encoder.startswith("ep-")):
-            raise ValueError("向量接入点需要其底层模型 ID，才能识别既有索引。")
-        if encoder and (embedding_protocol != "ark" or not embedding.startswith("ep-")):
-            raise ValueError("仅方舟向量接入点可指定底层模型 ID。")
+        vision, asr = (_text(form, key) for key in ("vision", "transcription"))
+        if mode == "local":
+            embedding, dims, encoder = qwen_assets.MODEL_ID, qwen_assets.DIMENSIONS, ""
+            embedding_protocol = "local_qwen"
+        else:
+            embedding = _text(form, "embedding")
+            dims = form.get("dimensions")
+            if type(dims) is not int or not 1 <= dims <= 2048:
+                raise ValueError("向量维度须为 1 到 2048 之间的整数。")
+            encoder = _text(form, "encoderModel", required=False)
+            embedding_protocol = by_role["embedding"]["protocol"]
+            if embedding_protocol == "ark" and embedding.startswith("ep-") and (not encoder or encoder.startswith("ep-")):
+                raise ValueError("向量接入点需要其底层模型 ID，才能识别既有索引。")
+            if encoder and (embedding_protocol != "ark" or not embedding.startswith("ep-")):
+                raise ValueError("仅方舟向量接入点可指定底层模型 ID。")
         rerank = _text(form, "rerank", required=False)
         clean = dict(**by_role["vision"], vision=vision, transcription=asr, embedding=embedding,
                      dimensions=dims, rerank=rerank, encoderModel=encoder)
+        if mode == "local":
+            clean["embeddingMode"] = mode
         if connections:
             clean["roleConnections"] = by_role
         document = yaml.safe_load(EXAMPLE.read_bytes())
@@ -148,6 +163,10 @@ class ModelProfile:
                                api_key_env="SEEKINO_DESKTOP_MODEL_KEY" if row["auth"] == "key" else None)
             document["model_sources"][source] = adapter
 
+        if mode == "local":
+            sources["embedding"] = "desktop_local_qwen"
+            document["model_sources"][sources["embedding"]] = {"adapter": "local_qwen"}
+
         def gen(model, role="vision", **options):
             return dict(source=sources[role], model=model, stream=False, request_timeout_seconds=600, **options)
 
@@ -158,7 +177,8 @@ class ModelProfile:
             rerank=gen(rerank or vision, role="rerank", kind="rerank"),
             embedding=dict(source=sources["embedding"], model=embedding, kind="embedding", dimensions=dims, video_fps=1.0,
                            input_mode="multimodal" if embedding_protocol == "ark" else "text",
-                           **({"encoder_model": encoder} if encoder else {})))
+                           **({"encoder_model": encoder} if encoder else {}),
+                           **({"query_instruction": qwen_assets.QUERY_INSTRUCTION} if mode == "local" else {})))
         # The desktop calls parse and Event retrieval directly and has no Supervisor UI.
         if protocol == "openai_chat":
             document.pop("supervisor_harness", None)
@@ -186,7 +206,24 @@ class ModelProfile:
         candidate = self.candidate(form, keep_legacy=frozen)
         if frozen and self.encoder_contract() != candidate.encoder_contract():
             raise ValueError("资料库已有视频、上传任务或索引。向量模型、服务地址、维度或编码方式与原配置不一致。请保留原配置，或为新模型使用新的资料库。")
+        candidate.verify_local_embedding()
         return candidate
+
+    def verify_local_embedding(self):
+        if self.local_embedding():
+            try:
+                qwen_assets.verified_model_path()
+            except FileNotFoundError as exc:
+                raise ValueError("请先在模型设置中下载本机 Qwen3 向量模型。") from exc
+
+    def can_start_processing(self, keys):
+        # A partially configured API profile can still retry jobs with their original credentials.
+        available = self.ready_sources(keys)
+        if self.local_embedding():
+            return qwen_assets.local_model_ready()
+        # Previously selected local weights can remain available for frozen jobs. They
+        # are never a credential for an active API profile.
+        return any(ready for name, ready in available.items() if self.config.source(name).adapter != "local_qwen")
 
     def encoder_contract(self):
         binding = self.config.resolve_embedding_binding(environ={})
@@ -229,8 +266,14 @@ class ModelProfile:
 
     def ready_sources(self, keys):
         values = self.values(keys)
-        return {name: bool(values.get(slot) or getattr(self.config.model_sources[name], "encrypted_api_key", None) or not slot)
-                for name, slot in self.slots().items()}
+        available = {}
+        for name, slot in self.slots().items():
+            source = self.config.source(name)
+            if source.adapter == "local_qwen":
+                available[name] = qwen_assets.local_model_ready()
+            else:
+                available[name] = bool(values.get(slot) or getattr(source, "encrypted_api_key", None) or not slot)
+        return available
 
     def view(self, keys):
         available = self.ready_sources(keys)
@@ -247,6 +290,8 @@ class ModelProfile:
                 else "legacy" if any(credentials.values()) else "new")
         rows = []
         for name, src in self.config.model_sources.items():
+            if src.adapter == "local_qwen":
+                continue
             protocol, base, slot = _identity(name, src)
             bound = [{"role": key, "model": binding.model} for key, binding in roles.items() if binding.source == name]
             if mode != "new" and (mode != "managed" or name == self.source or bound):
@@ -255,7 +300,10 @@ class ModelProfile:
                              self.form["name"] if name == self.source else name)
                 rows.append(dict(name=name, label=label,
                                  protocol=protocol, baseUrl=base, credentialName=slot, roles=bound))
-        return dict(mode=mode, form=self.form or DEFAULT_FORM.copy(), connections=rows, revision=self.revision,
+        form = dict(self.form or DEFAULT_FORM, embeddingMode="local" if self.local_embedding() else "api")
+        if form["embeddingMode"] == "local":
+            form.update(embedding=qwen_assets.MODEL_ID, dimensions=qwen_assets.DIMENSIONS, encoderModel="")
+        return dict(mode=mode, form=form, connections=rows, revision=self.revision,
                     credentialNames=list(credentials), credentials=credentials,
                     parseReady=parse_ready, importReady=parse_ready, indexReady=index_ready, searchReady=index_ready,
                     ready=parse_ready and index_ready)
