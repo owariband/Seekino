@@ -157,7 +157,7 @@ def main():
     configure_interface_font(app)
     app.setApplicationName("Seekino")
     app.setOrganizationName("Seekino")
-    app.setApplicationVersion("0.2.20")
+    app.setApplicationVersion("0.2.21")
     app.setWindowIcon(QIcon(str(basedir.parent / "SeekinoLogo.png")))
     from .locale import DesktopLocale
     from .qt_player import register_player
