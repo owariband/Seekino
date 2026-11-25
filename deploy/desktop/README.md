@@ -53,7 +53,11 @@ python3 deploy/desktop/build_dmg.py /tmp/Seekino.app /tmp/Seekino-macos-arm64.dm
 
 在 macOS 用 `python3 deploy/desktop/run_probe.py --timeout 75 -- <命令及参数>` 运行临时 Qt 验收脚本。监督程序会等待脚本及其窗口退出，截图提前写出不会结束计时。如果脚本卡住、被中断，或提前返回并留下同组子进程，监督程序向本次验收的进程组发送 TERM，留出一秒退出时间后再用 KILL 清理。正常完成时保留脚本退出码，超时返回 124。
 
-双击 DMG，将 Seekino 拖进 Applications 后打开。用 `⌘O` 选择视频，或直接拖入窗口。用 `⌘,` 打开设置，在「模型服务 → 添加连接」填写名称，在同一表单选择 Ark 或 OpenAI 兼容协议并填写凭据。OpenAI 兼容连接可自填服务地址，可保存多个同类型连接。在「模型用途」分别给视频理解、语音转写、向量检索与观看问答选连接和模型，点「应用」。向量维度应与服务实际返回的维度一致。观看问答也可以沿用视频理解。
+双击 DMG，将 Seekino 拖进 Applications 后打开。用 `⌘O` 选择视频，或直接拖入窗口。用 `⌘,` 打开设置，在「模型服务 → 添加连接」填写名称，在同一表单选择 Ark 或 OpenAI 兼容协议并填写凭据。OpenAI 兼容连接可自填服务地址，可保存多个同类型连接。在「模型用途」给视频理解、语音转写和观看问答选连接和模型。观看问答也可以沿用视频理解。
+
+「模型用途 → 解析与检索 → 向量嵌入」提供两种选择。**使用 API** 时选已有连接，填写服务提供的模型 ID 和实际输出维度。**本机模型** 可下载 Qwen3-Embedding-0.6B（Q8_0，639 MB，1024 维）。下载可取消或重试，校验成功后显示「已下载」。配置其余必需用途后点「应用」。应用在第一次编码时加载权重，多座资料库共用同一份下载。已有视频或索引锁定了编码合同时，设置会阻止不兼容的切换。
+
+构建器从 llama.cpp b12283 下载并校验目标平台的库和对应版本的头文件，缓存在构建机的 `~/.cache/seekino-build/llama.cpp/`。macOS 用 Xcode 工具链、Windows x64 用 Zig 编译进程内调用的接口。用户首次选择本机模型时下载权重到 macOS 的 `~/Library/Application Support/Seekino/models/` 或 Windows 的 `%LOCALAPPDATA%/Seekino/models/`。
 
 从工具栏打开解析任务，可以查看进度、暂停或重试。`⌘K` 查找台词或画面，点击结果从对应时间回看原片。`⌘⇧L` 收起或展开系列资料树。设置 → 外观可切换中文与 English，选择保存在本机。F1 或帮助菜单打开原生使用文档窗口。替换程序时资料库仍在 `~/Library/Application Support/Seekino/`。程序内保存的模型凭据由 macOS 钥匙串持有。
 

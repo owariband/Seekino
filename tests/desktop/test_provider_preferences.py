@@ -16,15 +16,20 @@ def test_provider_preferences(tmp_path):
 
 
 def exercise(src, tmp):
+    from contextlib import ExitStack
+    import hashlib
+    import io
     from PySide6.QtCore import QEvent, QEventLoop, QPointF, QSettings, Qt, QTimer, QUrl
     from PySide6.QtGui import QGuiApplication, QKeyEvent, QMouseEvent
     from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent
     from PySide6.QtQuickControls2 import QQuickStyle
     from desktop.locale import DesktopLocale
+    from desktop.embedding_download import EmbeddingDownload
     from desktop.main import PlatformPreferences, configure_interface_font
     from desktop.posters import PosterProvider
     from desktop.qt_controller import Workspace
     from desktop.qt_player import register_player
+    from gateway.local import qwen_assets
     from unittest.mock import patch
     import httpx
 
@@ -54,6 +59,11 @@ def exercise(src, tmp):
     platform = PlatformPreferences(app)
     locale = DesktopLocale(app)
     workspace = Workspace(tmp / "library", credentials=Credentials())
+    model_file = tmp / "models" / qwen_assets.MODEL_FILENAME
+    asset_patches = ExitStack()
+    asset_patches.enter_context(patch.object(qwen_assets, "model_path", return_value=model_file))
+    downloader = EmbeddingDownload()
+    engine.rootContext().setContextProperty("embeddingDownload", downloader)
     for key, obj in (("workspace", workspace), ("desktopPlatform", platform), ("desktopLocale", locale)):
         engine.rootContext().setContextProperty(key, obj)
     component = QQmlComponent(engine, QUrl.fromLocalFile(str(src / "desktop/ui/Main.qml")))
@@ -131,6 +141,12 @@ def exercise(src, tmp):
         window.openSettings()
         until(lambda: item("addService"), "open unified settings")
         wait(160)
+        click("settingsNav_roles")
+        assert item("embeddingUseApi").property("chosen")
+        click("embeddingUseLocal")
+        assert item("localEmbeddingDownloadAction").isEnabled()
+        assert not item("applyRole").isEnabled()
+        click("settingsNav_services")
         click("addService")
         type_in("connectionName", "Studio A")
         select("providerType", 1)
@@ -175,6 +191,42 @@ def exercise(src, tmp):
         shot("provider-roles")
         click("applyRole")
         until(lambda: workspace.modelConfig["parseRoleServices"].get("embedding") == compatible, "apply roles")
+        # Only the downloaded bytes are fixtures. The dialog, controller, checksum and save are real.
+        click("embeddingUseLocal")
+        assert not item("embeddingModel") and not item("embeddingDimensions")
+        assert not item("applyRole").isEnabled()
+        click("embeddingUseApi")
+        assert item("embeddingModel").property("text") == "embed-v1"
+        click("embeddingUseLocal")
+        payload = b"isolated model download fixture"
+        asset_patches.enter_context(patch.object(qwen_assets, "MODEL_BYTES", len(payload)))
+        asset_patches.enter_context(patch.object(qwen_assets, "MODEL_SHA256", hashlib.sha256(payload).hexdigest()))
+        with patch("desktop.embedding_download.urlopen", return_value=io.BytesIO(b"truncated")):
+            click("localEmbeddingDownloadAction")
+            until(lambda: downloader.state == "error", "reject a truncated download")
+        assert item("localEmbeddingDownloadAction").property("text") == "重试"
+        assert not model_file.exists() and not item("applyRole").isEnabled()
+        with patch("desktop.embedding_download.urlopen", return_value=io.BytesIO(payload)):
+            click("localEmbeddingDownloadAction")
+            until(lambda: downloader.state == "ready", "verify the retried download")
+        assert model_file.read_bytes() == payload and not item("localEmbeddingDownloadAction")
+        click("applyRole")
+        until(lambda: workspace.modelConfig["form"].get("embeddingMode") == "local", "save local embedding")
+        assert "embedding" not in workspace.modelConfig["parseRoleServices"]
+        click("settingsDone")
+        wait(180)
+        window.openSettings()
+        click("settingsNav_roles")
+        assert item("embeddingUseLocal").property("chosen")
+        assert "1024" in item("localEmbeddingStatus").property("text")
+        assert item("visionModel").property("text") == "video-v1"
+        assert item("transcriptionModel").property("text") == "asr-v1"
+        click("embeddingUseApi")
+        select("roleService_embedding", 1)
+        type_in("embeddingModel", "embed-v1")
+        type_in("embeddingDimensions", "8")
+        click("applyRole")
+        until(lambda: workspace.modelConfig["parseRoleServices"].get("embedding") == compatible, "restore API")
         click("watchRole")
         select("roleConnection", 2)
         type_in("watchModelId", "watch-v1")
@@ -207,6 +259,8 @@ def exercise(src, tmp):
         click("settingsDone")
         print("PASS: shared protocol editor, searchable registry, per-role and watch assignments, pending reapply, narrow window", flush=True)
     finally:
+        downloader.shutdown()
+        asset_patches.close()
         workspace.shutdown()
         window.close()
 

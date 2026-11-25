@@ -316,6 +316,22 @@ class Workspace(QObject):
         self._submit(open_library, opened)
 
     @Slot()
+    def refreshLocalEmbedding(self):
+        if not self._starting and (not self.ready or self.modelConfig.get("form", {}).get("embeddingMode") != "local"):
+            return
+
+        # The serial library executor also covers downloads that finish while opening.
+        def refresh_models():
+            return self._with_services(_request("refreshLocalEmbedding", root=str(self.root)))
+
+        def updated(settings, error):
+            if not error and settings["revision"] == self.modelConfig.get("revision"):
+                self._update_models(settings)
+                self.refresh()
+
+        self._submit(refresh_models, updated)
+
+    @Slot()
     def refresh(self):
         if not self.ready:
             self.start()

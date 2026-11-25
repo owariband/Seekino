@@ -9,6 +9,8 @@ ColumnLayout {
     required property var profiles
     required property var effective
     required property string revision
+    property Component headingControl
+    property bool showConnection: true
     property bool optional: false
     property string serviceId: ""
     property alias modelId: entry.text
@@ -28,12 +30,13 @@ ColumnLayout {
     RowLayout {
         Layout.fillWidth: true
         Mark { text: field.label; font.weight: Font.DemiBold; Layout.fillWidth: true }
-        Tool { visible: !!field.selected.id && field.selected.protocol !== "ark"; objectName: "chooseModel_" + field.roleKey
+        Loader { active: !!field.headingControl; visible: active; sourceComponent: field.headingControl }
+        Tool { visible: field.showConnection && !!field.selected.id && field.selected.protocol !== "ark"; objectName: "chooseModel_" + field.roleKey
             text: qsTr("获取模型列表"); textSize: 12; chosen: field.expanded
             onClicked: { field.expanded = !field.expanded; if (field.expanded) discovery.fetchModels() } }
     }
     RowLayout {
-        Layout.fillWidth: true; spacing: 8
+        visible: field.showConnection; Layout.fillWidth: true; spacing: 8
         Picker {
             id: picker; objectName: "roleService_" + field.roleKey
             Layout.fillWidth: true; Layout.preferredWidth: 1; Layout.maximumWidth: field.width * (entry.visible ? .48 : 1)
@@ -45,13 +48,13 @@ ColumnLayout {
             Accessible.name: field.label + " · " + qsTr("模型 ID")
             onActiveFocusChanged: if (activeFocus) field.reveal(field) }
     }
-    Text { visible: !!field.selected.pendingRoles?.includes(field.roleKey); Layout.fillWidth: true
+    Text { visible: field.showConnection && !!field.selected.pendingRoles?.includes(field.roleKey); Layout.fillWidth: true
         text: qsTr("当前使用 %1，应用后切换到新的连接设置。").arg(field.effective.baseUrl || "")
         color: Studio.muted; font.pixelSize: 12; wrapMode: Text.Wrap; textFormat: Text.PlainText }
-    Tool { visible: !!field.selected.id && !field.selected.hasKey && field.selected.auth !== "none"
+    Tool { visible: field.showConnection && !!field.selected.id && !field.selected.hasKey && field.selected.auth !== "none"
         text: qsTr("填写 API Key"); onClicked: field.editRequested(field.selected) }
     ModelDiscovery {
-        id: discovery; visible: field.expanded; Layout.fillWidth: true
+        id: discovery; visible: field.showConnection && field.expanded; Layout.fillWidth: true
         showFetchButton: false
         protocol: field.selected.protocol || ""; baseUrl: field.selected.baseUrl || ""
         purpose: "service:" + field.serviceId; revision: field.revision

@@ -17,13 +17,16 @@ ColumnLayout {
     readonly property var profiles: config.serviceProfiles || []
     readonly property bool retain: !watch && (config.mode === "custom" || (config.mode === "legacy" && !resetLegacy))
     readonly property bool inherit: watch && selection === "inherit"
-    readonly property bool needsEncoder: embedding.selected.protocol === "ark" && embedding.modelId.trim().startsWith("ep-")
+    property bool localEmbedding: false
+    readonly property var download: typeof embeddingDownload !== "undefined" ? embeddingDownload : null
+    readonly property bool savedLocal: config.form?.embeddingMode === "local"
+    readonly property bool needsEncoder: !localEmbedding && embedding.selected.protocol === "ark" && embedding.modelId.trim().startsWith("ep-")
     readonly property bool busy: !workspace.ready || workspace.savingKeys || workspace.busyImport || workspace.searching
     readonly property bool complete: retain ? Object.values(secretEdits).some(v => v.trim()) :
         inherit ? !!Object.keys(config.watchSettings || {}).length :
         watch ? !!activeProfile.id && (activeProfile.auth === "none" || activeProfile.hasKey) && !!watchModel.text.trim() :
-            vision.complete && transcription.complete && embedding.complete && rerank.complete && Number(dimensions.text) >= 1 &&
-            Number(dimensions.text) <= 2048 && (!needsEncoder || !!encoder.text.trim())
+            vision.complete && transcription.complete && rerank.complete && (localEmbedding ? download?.state === "ready"
+                : embedding.complete && Number(dimensions.text) >= 1 && Number(dimensions.text) <= 2048 && (!needsEncoder || !!encoder.text.trim()))
     readonly property var choices: (watch ? [{id:"inherit", name:qsTr("沿用资料库")}] : []).concat(profiles)
     readonly property var roleNames: ({vision:qsTr("视频理解"), transcription:qsTr("语音转录"), embedding:qsTr("向量嵌入"),
         rerank:qsTr("重排"), ocr:qsTr("文字识别"), summarize:qsTr("摘要"), agent:qsTr("通用模型"), supervisor:qsTr("复核"),
@@ -46,13 +49,18 @@ ColumnLayout {
         if (!watch) {
             const bound = config.parseRoleServices || ({})
             const form = config.form || ({})
+            localEmbedding = savedLocal
             for (const field of [vision, transcription, embedding, rerank]) {
+                if (field === embedding && savedLocal) {
+                    field.setService(selection, null)
+                    continue
+                }
                 const original = field.optional && !form.rerank ? "" : (bound[field.roleKey] || assigned?.id)
                 const source = original || (field.optional ? "" : selection)
                 field.setService(source, source && original === source ? form[field.roleKey] : null)
             }
-            dimensions.text = String(form.dimensions || embedding.selected.dimensions || "")
-            encoder.text = form.encoderModel || embedding.selected.encoderModel || ""
+            dimensions.text = String((savedLocal ? null : form.dimensions) || embedding.selected.dimensions || "")
+            encoder.text = (savedLocal ? "" : form.encoderModel) || embedding.selected.encoderModel || ""
         }
     }
     function choose(id) {
@@ -70,10 +78,17 @@ ColumnLayout {
         } else if (inherit) {
             workspace.saveWatchConnection({inherit:true, revision:revision}, "")
         } else {
-            const roles = watch ? {watchModel:watchModel.text.trim()} : {roleServices:{vision:vision.serviceId,transcription:transcription.serviceId,embedding:embedding.serviceId,rerank:rerank.serviceId},
+            const roles = watch ? {watchModel:watchModel.text.trim()} : {
+                roleServices:{vision:vision.serviceId, transcription:transcription.serviceId, rerank:rerank.serviceId},
                 vision:vision.modelId.trim(), transcription:transcription.modelId.trim(),
-                embedding:embedding.modelId.trim(), rerank:rerank.serviceId ? rerank.modelId.trim() : "", encoderModel:needsEncoder ? encoder.text.trim() : "",
-                dimensions:Number(dimensions.text)}
+                rerank:rerank.serviceId ? rerank.modelId.trim() : "", embeddingMode:localEmbedding ? "local" : "api"
+            }
+            if (!watch && !localEmbedding) {
+                roles.roleServices.embedding = embedding.serviceId
+                roles.embedding = embedding.modelId.trim()
+                roles.dimensions = Number(dimensions.text)
+                roles.encoderModel = needsEncoder ? encoder.text.trim() : ""
+            }
             roles.revision = revision; roles.servicesRevision = servicesRevision
             workspace.applyServiceProfile(watch ? selection : vision.serviceId, purpose, roles)
         }
@@ -108,12 +123,15 @@ ColumnLayout {
         Note { visible: page.watch && !!page.activeProfile.pendingRoles?.includes("watch")
             text: qsTr("当前使用 %1，应用后切换到新的连接设置。").arg(page.config.effectiveRoleServices?.watch?.baseUrl || "") }
         Note { visible: page.inherit; text: page.config.watchInheritedModel || qsTr("资料库尚未配置视觉模型。") }
-        Note { visible: !page.choices.length; text: qsTr("先添加服务连接，再为这个用途选择模型。") }
+        Note {
+            visible: !page.choices.length
+            text: !page.watch && page.localEmbedding ? qsTr("视频理解和语音转录需要服务连接。") : qsTr("先添加服务连接，再为这个用途选择模型。")
+        }
         Tool { visible: !!page.activeProfile.id && page.activeProfile.auth !== "none" && !page.activeProfile.hasKey
             text: qsTr("填写 API Key"); onClicked: page.editRequested(page.activeProfile) }
     }
     ColumnLayout {
-        Layout.fillWidth: true; visible: !page.retain && (page.watch ? !!page.activeProfile.id : page.profiles.length > 0); spacing: 12
+        Layout.fillWidth: true; visible: !page.retain && (!page.watch || !!page.activeProfile.id); spacing: 12
         ModelDiscovery {
             id: discovery; visible: page.watch; Layout.fillWidth: true; enabled: !page.busy
             protocol: page.activeProfile.protocol || ""; baseUrl: page.activeProfile.baseUrl || ""
@@ -128,16 +146,43 @@ ColumnLayout {
                 onEditRequested: profile => page.editRequested(profile)
                 onReveal: item => page.reveal(item)
             }
-            SourceField { id: vision; roleKey:"vision"; label:qsTr("视频理解") }
-            SourceField { id: transcription; roleKey:"transcription"; label:qsTr("语音转录") }
-            SourceField { id: embedding; roleKey:"embedding"; label:qsTr("向量嵌入")
-                onServiceIdChanged: { dimensions.text = selected.dimensions ? String(selected.dimensions) : ""; encoder.text = selected.encoderModel || "" } }
-            RowLayout { Layout.fillWidth: true
+            SourceField { id: vision; visible: page.profiles.length > 0; roleKey:"vision"; label:qsTr("视频理解") }
+            SourceField { id: transcription; visible: page.profiles.length > 0; roleKey:"transcription"; label:qsTr("语音转录") }
+            SourceField {
+                id: embedding; roleKey:"embedding"; label:qsTr("向量嵌入")
+                showConnection: !page.localEmbedding && page.profiles.length > 0
+                onServiceIdChanged: { dimensions.text = selected.dimensions ? String(selected.dimensions) : ""; encoder.text = selected.encoderModel || "" }
+                headingControl: Component {
+                    Rectangle {
+                        implicitWidth: modeRow.implicitWidth + 4; implicitHeight: 32
+                        radius: 7; color: Studio.wash; border.color: Studio.line
+                        Row {
+                            id: modeRow; anchors.centerIn: parent; spacing: 1
+                            component Mode: Tool {
+                                implicitHeight: 27; textSize: 12; corner: 5
+                                Accessible.role: Accessible.RadioButton; Accessible.checked: chosen
+                                Keys.onLeftPressed: { apiMode.click(); apiMode.forceActiveFocus(Qt.TabFocusReason) }
+                                Keys.onRightPressed: { localMode.click(); localMode.forceActiveFocus(Qt.TabFocusReason) }
+                            }
+                            Mode {
+                                id: apiMode; objectName: "embeddingUseApi"; text: qsTr("使用 API"); chosen: !page.localEmbedding
+                                onClicked: page.localEmbedding = false
+                            }
+                            Mode {
+                                id: localMode; objectName: "embeddingUseLocal"; text: qsTr("本机模型"); chosen: page.localEmbedding
+                                onClicked: page.localEmbedding = true
+                            }
+                        }
+                    }
+                }
+            }
+            LocalEmbeddingModel { visible: page.localEmbedding; Layout.fillWidth: true; download: page.download }
+            RowLayout { visible: embedding.showConnection; Layout.fillWidth: true
                 RoleField { id: dimensions; inputName:"embeddingDimensions"; label:qsTr("向量维度"); placeholder:"1–2048"
                     validator:IntValidator {bottom:1; top:2048} }
                 RoleField { id: encoder; inputName:"encoderModel"; visible:page.needsEncoder; label:qsTr("底层嵌入模型"); placeholder:qsTr("接入点对应的实际模型 ID") }
             }
-            SourceField { id: rerank; roleKey:"rerank"; label:qsTr("重排"); optional:true }
+            SourceField { id: rerank; visible: page.profiles.length > 0; roleKey:"rerank"; label:qsTr("重排"); optional:true }
         }
         RoleField { id: watchModel; visible: page.watch; inputName:"watchModelId"; label: qsTr("视觉模型 ID"); placeholder: qsTr("支持图片输入的模型") }
         Note { visible: page.watch; text: qsTr("提问时，Kino 会把当前画面和问题发送给所选模型。") }
@@ -155,6 +200,7 @@ ColumnLayout {
                 Note { text: (modelData.roles || []).map(r => (page.roleNames[r.role] || r.role) + "   " + r.model).join("\n") }
             }
         }
+        LocalEmbeddingModel { visible: page.savedLocal; Layout.fillWidth: true; download: page.download }
         Repeater {
             id: retainedKeys; model: page.retain ? page.config.credentialNames || [] : []
             RoleField {

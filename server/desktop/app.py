@@ -141,8 +141,12 @@ class Application:
 
     def _open(self, profile, keys, *, start=True):
         config, environ = profile.for_gateway(keys)
-        # Existing failed tasks can be resumed with just their frozen model credentials.
-        process = any(profile.ready_sources(keys).values())
+        # A restored library opens for playback even when its downloaded weights are missing.
+        try:
+            profile.verify_local_embedding()
+        except (OSError, ValueError):
+            pass
+        process = profile.can_start_processing(keys)
         unconfigured = profile.view(keys)["mode"] == "new"
         library = open_library(self._root, gateway_config=config, gateway_environ=environ,
                                start_consumer=start and process and not unconfigured)
@@ -161,6 +165,7 @@ class Application:
         keys = candidate.values({**self.keys, **args.get("keys", {})})
         required = {candidate.config.resolve_model_binding(role, environ={}).source for role in
                     ("vision", "transcription", "embedding", "rerank")} if candidate.form else set()
+        candidate.verify_local_embedding()
         available = candidate.ready_sources(keys)
         if any(not available.get(name) for name in required):
             raise ValueError("请为此服务填写 API Key。")
@@ -173,7 +178,7 @@ class Application:
             ModelProfile.read(self._root).check_revision(current.revision)
             if changed:
                 candidate.persist()
-            if candidate.view(keys)["mode"] != "new" and any(candidate.ready_sources(keys).values()):
+            if candidate.view(keys)["mode"] != "new" and candidate.can_start_processing(keys):
                 replacement.start_processing()
         except Exception:
             if replacement is not None:
@@ -279,6 +284,7 @@ class Application:
                 return None
             case "search":
                 if not args["keywords"] and not self.profile.view(self.keys)["searchReady"]:
+                    self.profile.verify_local_embedding()
                     raise ValueError("请先配置用于描述搜索的向量模型。")
                 try:
                     result = library.search(args["query"], series_ids=args["seriesIDs"], keywords_only=args["keywords"],
@@ -326,6 +332,7 @@ class Application:
         from server.storage.sqlite_index import DEFERRED_UPLOAD_PREFIX
         model_view = self.profile.view(self.keys)
         if model_view["mode"] != "new" and not model_view["importReady"]:
+            self.profile.verify_local_embedding()
             raise ValueError("已配置的解析模型缺少凭据，请先在设置中补齐。")
         path = Path(args["path"]).resolve(strict=True)
         state = library.series(args["seriesID"])
@@ -432,9 +439,14 @@ def _dispatch(action, args):
         return _application.profile.view(_application.keys)["credentials"]
     if _application is None:
         raise RuntimeError("资料库尚未打开")
-    if action in {"saveModelSettings", "saveWatchSettings", "rotateServiceCredentials"}:
+    if action in {"saveModelSettings", "saveWatchSettings", "rotateServiceCredentials", "refreshLocalEmbedding"}:
         if args.get("root") and Path(args["root"]).resolve() != _application._root.resolve():
             raise ValueError("模型设置不属于当前资料库")
+        if action == "refreshLocalEmbedding":
+            profile, keys = _application.profile, _application.keys
+            if profile.local_embedding() and profile.can_start_processing(keys):
+                _application.library.start_processing()
+            return profile.view(keys) | watch_view(_application._root, profile, keys)
         if action == "rotateServiceCredentials":
             root, profile = _application._root, _application.profile
             ModelProfile.read(root).check_revision(args.get("revision"))
@@ -480,7 +492,7 @@ def dispatch(raw: str) -> str:
     try:
         request = json.loads(raw)
         action, args = request["action"], request["args"]
-        with _using_library(action in {"open", "close", "saveModelSettings", "saveWatchSettings", "rotateServiceCredentials", "deleteImport", "deleteVersion", "deleteHistory"}):
+        with _using_library(action in {"open", "close", "saveModelSettings", "saveWatchSettings", "rotateServiceCredentials", "refreshLocalEmbedding", "deleteImport", "deleteVersion", "deleteHistory"}):
             result = _dispatch(action, args)
         return json.dumps({"value": result}, ensure_ascii=False, allow_nan=False)
     except StaleEvidenceError:
