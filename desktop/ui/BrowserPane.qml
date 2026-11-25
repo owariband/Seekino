@@ -45,37 +45,32 @@ Item {
     }
     onBrowsingSeriesChanged: Qt.callLater(() => page.positionViewAtBeginning())
 
-    Rectangle {
+    GridLayout {
         id: welcome
         objectName: "firstImportArea"
+        readonly property bool narrow: browser.width - 2 * browser.gutter < 448
         anchors.centerIn: parent
         anchors.verticalCenterOffset: -12
-        width: Math.min(652, parent.width - 2 * browser.gutter)
-        readonly property bool narrow: width < 492
-        readonly property int inset: narrow ? 24 : 32
-        height: copy.implicitHeight + 2 * inset
+        width: Math.min(implicitWidth, parent.width - 2 * browser.gutter)
         visible: !browser.browsingSeries && workspace.series.length === 0
-        radius: 14; color: Studio.mix("#edf2ee", "#131a17"); border.color: Studio.line
+        columns: narrow ? 1 : 2
+        columnSpacing: 40
+        rowSpacing: 20
 
         ColumnLayout {
-            id: copy
-            x: welcome.inset; y: welcome.inset
-            width: welcome.width - 2 * welcome.inset - (welcome.narrow ? 0 : still.width + 20)
-            spacing: 0
+            Layout.row: welcome.narrow ? 1 : 0
+            Layout.column: 0
+            spacing: 16
             Text {
                 Layout.fillWidth: true
                 text: qsTr("把视频拖到这里"); textFormat: Text.PlainText
                 font.pixelSize: Studio.pageTitleSize; font.weight: Font.Medium
                 color: Studio.ink; wrapMode: Text.Wrap
-            }
-            Text {
-                Layout.fillWidth: true; Layout.topMargin: 7
-                text: qsTr("导入并解析后，就能按台词和画面找到片段。")
-                font.pixelSize: Studio.labelSize + 1; color: Studio.muted
-                wrapMode: Text.Wrap; lineHeightMode: Text.FixedHeight; lineHeight: 22
+                horizontalAlignment: welcome.narrow ? Text.AlignHCenter : Text.AlignLeft
             }
             RowLayout {
-                Layout.topMargin: 22; spacing: 8
+                Layout.alignment: welcome.narrow ? Qt.AlignHCenter : Qt.AlignLeft
+                spacing: 8
                 Tool {
                     objectName: "emptyImport"; text: qsTr("选择视频…"); glyph: "plus"
                     primary: true; symbolSize: 14; implicitHeight: 34; corner: 8
@@ -89,30 +84,12 @@ Item {
             }
         }
 
-        Rectangle {
-            id: still
-            visible: !welcome.narrow
-            anchors.right: parent.right; anchors.rightMargin: welcome.inset
-            anchors.verticalCenter: parent.verticalCenter
-            width: 144; height: 88; radius: 6
-            color: Studio.mix("#e1ebe4", "#1a2822"); border.color: Studio.line
-            Column {
-                anchors.centerIn: parent; spacing: still.height - 22
-                Repeater {
-                    model: 2
-                    Row {
-                        spacing: 9
-                        Repeater {
-                            model: 9
-                            Rectangle { width: 5; height: 3; radius: 1; color: Studio.mix("#b8c8bd", "#384b41") }
-                        }
-                    }
-                }
-            }
-            Kino {
-                anchors.centerIn: parent
-                width: 128; height: 56; focusPolicy: Qt.ClickFocus
-            }
+        Kino {
+            Layout.row: 0
+            Layout.column: welcome.narrow ? 0 : 1
+            Layout.alignment: Qt.AlignCenter
+            Layout.preferredWidth: 128; Layout.preferredHeight: 56
+            focusPolicy: Qt.ClickFocus
         }
     }
 

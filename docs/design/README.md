@@ -169,6 +169,7 @@ Event / Sub-Chunk 的实施入口是 [sub-chunk-trd.md](02-agent-harness/sub-chu
 | 桌面交互延迟 | [首页封面、拖动预览与启动](03-product-reassessment/desktop-interaction-latency-trd.md) | 桌面交互延迟基线、媒体校验与回归。 |
 | 桌面 Kino 动作 | [拖动、停靠和问答气泡](03-product-reassessment/desktop-kino-motion-trd.md) | 观看入口与聊天动作、真实指针和像素对照。 |
 | 桌面观看设置与模型连接 | [浮窗和统一连接编辑器](03-product-reassessment/desktop-provider-panel-settings-trd.md) | 浮窗与右栏的布局、自动淡化、按用途选择不同连接。 |
+| 桌面首次导入 | [空资料库布局](03-product-reassessment/desktop-empty-library-layout.md) | 导入操作与 Kino 在宽窄窗口下的排列及验收。 |
 | 桌面向量嵌入 | [API 与本机模型](03-product-reassessment/desktop-local-embedding-trd.md) | 自备 API、Qwen3 权重下载与进程内编码，以及已有资料库切换模型的限制。 |
 | 桌面陪看与关闭窗口 | [浮窗占用与 macOS 关闭命令](03-product-reassessment/desktop-companion-window-close-trd.md) | 同帧测量空状态，验证 ⌘W 命中的窗口。 |
 | 桌面与 Web 工作流 | [原生桌面交互接入](03-product-reassessment/desktop-web-workflows-trd.md) | 续看、片内查找、检索证据、问答和本地素材管理。 |

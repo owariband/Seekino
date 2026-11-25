@@ -6,6 +6,8 @@
 
 ## 本阶段的提出背景
 
+2026-11-25，空资料库首页清理导入框和 Kino 周围的胶片装饰，窄窗口也会显示 Kino 和地面。[空资料库布局](desktop-empty-library-layout.md)
+
 2026-11-25，桌面向量模型原先需要服务地址，本机使用也要另外启动服务。模型用途页增加按需下载 Qwen3 的入口，已有 API 资料库沿用其编码配置。[桌面向量嵌入 TRD](desktop-local-embedding-trd.md) · [PR #191](https://github.com/owariband/Seekino/pull/191)
 
 2026-11-23，Seekino 桌面版确定用原生 UI 在进程内直接调用 Python 业务与 FFmpeg 库，由应用管理本地资料库。后端先交付 SQLite、检索、媒体适配和最小嵌入验收，再接原生播放器和安装包。 [后端 TRD](macos-desktop-backend-trd.md) · [PR #183](https://github.com/owariband/Seekino/pull/183)

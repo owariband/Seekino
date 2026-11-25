@@ -209,7 +209,6 @@ MESSAGES: dict[str, str] = {
     "配置模型": "Configure models",
     # Library browsing and tasks.
     "把视频拖到这里": "Drop videos here",
-    "导入并解析后，就能按台词和画面找到片段。": "After importing and parsing, find clips by dialogue and visuals.",
     "选择视频…": "Choose videos…",
     "配置解析模型…": "Configure parsing models…",
     "%1 集": "%1 episodes",
